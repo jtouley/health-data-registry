@@ -20,7 +20,8 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 | `make test` | Offline tests with coverage (floor 85%) |
 | `make test-network` | Live publisher checks in `tests/integration` (marker `network`) |
 | `make mutate` | Mutation tests on modules changed since `BASE` (`scripts/mutate_changed.py`, floor 70%) |
-| `make docs` | Regenerate `docs/helpers.md` from `helpers.py` |
+| `make docs` | Regenerate `docs/helpers.md`, `template/.claude/skills/`, `plugin/` and the marketplace from `helpers.py` |
+| `make kit` | Build the Claude Projects kit into `dist/projects-kit/` ([docs/dev/distribution.md](docs/dev/distribution.md)) |
 | `make refresh` / `make serve` | Fetch every source into the lake / run the MCP server on stdio |
 | `make check-contracts` | Check each publisher still serves the fields its contract reads |
 | `make eval` | Verify the sealed sets; never run or read the held-out pool while developing |
@@ -67,7 +68,9 @@ src/health_data_registry/
   tools.py        list_sources, search_datasets, describe_dataset, suggest_datasets, get_series,
                   get_aligned_with_gbd, get_rate, get_provenance, list_caveats, find_prior_work
                   ("index not built yet"), query_sql (guarded escape hatch); CSV by default, fmt="json"
-  helpers.py      the clinician helpers (MCP prompts); docs/helpers.md is generated from it
+  helpers.py      the clinician workflows: MCP prompts, and the source of docs/helpers.md and the
+                  template's Claude Code skills (template/.claude/skills/)
+  distribution.py the plugin (plugin/), its marketplace and the Claude Projects kit, from helpers.py
   registry.py     loads and cross-checks catalog/, contracts/ (ODCS v3.2.0) and semantic/; strict on purpose
   query.py        the read path: attaches snapshots read-only, compiles semantic-model metrics to SQL,
                   runs guarded SQL, wraps every answer with its source, version, SQL and method
@@ -88,7 +91,7 @@ contracts/        one ODCS v3.2.0 contract per dataset
 semantic/         one dbt-style semantic model per dataset
 eval/sealed/      held-out blind sets, hash-sealed; don't read them while developing
 tests/            synthetic data only; tests/integration holds the live `network` checks
-scripts/          mutate_changed.py, write_helpers_doc.py
+scripts/          mutate_changed.py, write_template.py
 docs/             setup.md and helpers.md (clinicians), dev/ (developers), architecture.md, adr/
 ```
 

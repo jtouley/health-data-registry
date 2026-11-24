@@ -1,6 +1,7 @@
 # Tagged release: vX.Y.Z on a commit of main, with a "## [X.Y.Z]" section in CHANGELOG.md.
 #
-#   build       sdist + wheel (uv build) and a CycloneDX SBOM of the locked runtime environment
+#   build       sdist + wheel (uv build), a CycloneDX SBOM of the locked runtime environment, and the
+#               Claude Projects kit (make kit), zipped for the release
 #   provenance  SLSA v1.0 build provenance (*.intoto.jsonl) for every built file
 #   sign        Sigstore signatures (*.sigstore.json) for every built file
 #   release     GitHub release: notes from CHANGELOG.md; dists, SBOM, signatures and provenance attached
@@ -62,6 +63,15 @@ jobs:
             --pyproject pyproject.toml --of JSON --output-reproducible \
             -o "sbom/health-data-registry-${TAG#v}.cdx.json" .venv/bin/python
 
+      # Built outside dist/ so the dist artifact stays exactly what PyPI accepts.
+      - name: Claude Projects kit
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          make kit KIT_DIR=kit/projects-kit
+          (cd kit/projects-kit && zip -X -r "../health-data-registry-projects-kit-${TAG#v}.zip" .)
+          rm -r kit/projects-kit
+
       - name: Hash the dists for provenance
         id: hash
         working-directory: dist
@@ -71,6 +81,13 @@ jobs:
         with:
           name: dist
           path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: projects-kit
+          path: kit/
           if-no-files-found: error
           retention-days: 7
 

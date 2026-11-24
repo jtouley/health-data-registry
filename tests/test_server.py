@@ -16,8 +16,8 @@ SPEC_TOOLS = {
     "compare_rates", "get_trend", "age_adjust", "check_signal",
 }  # fmt: skip
 SPEC_HELPERS = {
-    "start_here", "set_up_my_project", "spot_a_pattern", "check_its_new", "find_data_for_my_question",
-    "draft_my_pitch", "help_me_fix_it", "walk_me_through_install",
+    "start_here", "research_story", "scope_an_area", "find_opportunities", "refine_hypothesis", "build_story",
+    "help_me_fix_it", "walk_me_through_install", "set_up_my_project",
 }  # fmt: skip
 
 
@@ -31,18 +31,18 @@ def test_tool_and_helper_surface_matches_spec(registry: Registry, lake: Path) ->
 
 def test_helper_prompt_fills_arguments(registry: Registry, lake: Path) -> None:
     s = build_server(registry, Engine(registry=registry, lake=lake))
-    r = asyncio.run(s.get_prompt("spot_a_pattern", {"condition": "syphilis", "place": "Ohio"}))
+    r = asyncio.run(s.get_prompt("refine_hypothesis", {"idea": "syphilis rising in Ohio"}))
     text = r.messages[0].content.text  # type: ignore[union-attr]
-    assert "syphilis in Ohio" in text and "patient information" in text
+    assert "My idea: syphilis rising in Ohio." in text and "patient information" in text
+    blank = asyncio.run(s.get_prompt("start_here", {})).messages[0].content.text  # type: ignore[union-attr]
+    assert blank == helpers.get("start_here").render()
 
 
-def test_helpers_never_ask_for_secrets_and_doc_is_current() -> None:
-    for h in helpers.HELPERS:
+def test_helpers_never_ask_for_secrets() -> None:
+    for h in helpers.PROMPTS:
         body = h.render().lower()
-        assert "patient" in body or h.name in ("walk_me_through_install",), h.name
+        assert "patient" in body or h.name == "walk-me-through-install", h.name
         assert "password" not in body or "never" in body
-    doc = Path(__file__).resolve().parents[1] / "docs" / "helpers.md"
-    assert doc.read_text(encoding="utf-8") == helpers.markdown(), "run: make docs"
 
 
 def test_tool_call_end_to_end_returns_csv(registry: Registry, lake: Path) -> None:

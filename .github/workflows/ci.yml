@@ -88,6 +88,29 @@ jobs:
       - name: Tests with coverage
         run: make test
 
+  kit:
+    name: Claude Projects kit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+      # Project instructions, knowledge files and skill zips, built from helpers.py (never committed).
+      - name: Build the kit
+        run: make kit
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: projects-kit
+          path: dist/projects-kit/
+          if-no-files-found: error
+          retention-days: 30
+
   mutation:
     name: Mutation tests (changed modules)
     if: github.event_name == 'pull_request'

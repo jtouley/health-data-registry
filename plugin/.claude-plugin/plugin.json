@@ -1,0 +1,19 @@
+{
+  "name": "health-data-registry",
+  "displayName": "Health Data Registry",
+  "version": "0.0.1",
+  "description": "Observed public health data for infectious disease research (CDC, WHO), with source, version and method on every number, plus step-by-step research workflows for clinician-researchers.",
+  "author": {
+    "name": "Jason Touleyrou",
+    "url": "https://github.com/jtouley/health-data-registry"
+  },
+  "homepage": "https://github.com/jtouley/health-data-registry",
+  "repository": "https://github.com/jtouley/health-data-registry",
+  "license": "Apache-2.0",
+  "keywords": [
+    "public-health",
+    "infectious-disease",
+    "surveillance",
+    "research"
+  ]
+}
