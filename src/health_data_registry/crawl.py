@@ -55,13 +55,16 @@ class Robots:
         self.waited = 0.0
 
     def _rules(self, host: str) -> RobotFileParser | None:
+        from health_data_registry import deadline
         from health_data_registry.fetch import FetchRefused, fetch
 
         if host in self.rules:
             return self.rules[host]
         rp = RobotFileParser()
         try:
-            r = fetch(f"https://{host}/robots.txt", allowed_hosts=self.hosts, timeout=ROBOTS_TIMEOUT_S)
+            r = fetch(
+                f"https://{host}/robots.txt", allowed_hosts=self.hosts, timeout=deadline.cap(ROBOTS_TIMEOUT_S)
+            )
         except FetchRefused:
             return None  # can't be read now: asked again on the next fetch
         if r.status == 200:
@@ -77,6 +80,7 @@ class Robots:
 
     def wait_turn(self, url: str) -> None:
         """Refuse a path robots.txt disallows; otherwise wait out the host's crawl delay, within the budget."""
+        from health_data_registry import deadline
         from health_data_registry.fetch import FetchRefused
 
         host = (urlsplit(url).hostname or "").lower()
@@ -93,6 +97,9 @@ class Robots:
         if host in self.last and delay > 0:
             due = self.last[host] + delay - self.clock()
             if due > 0:
+                left = deadline.remaining()
+                if left is not None and left <= due:  # inside a hosted call: never sleep past its deadline
+                    raise deadline.DeadlineExceeded()
                 if self.waited + due > self.budget:
                     raise FetchRefused(
                         "crawl_delay_budget",
@@ -112,7 +119,13 @@ def fetcher(
     robots: Robots | None | bool = True,
 ) -> Getter:
     """A getter for catalogued publisher URLs that honours robots.txt, retries slow publishers and logs every
-    attempt. `robots=True` (the default) reads each host's robots.txt; tests pass False or their own Robots."""
+    attempt. `robots=True` (the default) reads each host's robots.txt; tests pass False or their own Robots.
+
+    Inside a call deadline (deadline.call_deadline, the hosted server), every attempt is capped by what is left of
+    the budget and no retry starts once the budget can't cover its back-off: the call stops with
+    deadline.DeadlineExceeded instead of retrying past it.
+    """
+    from health_data_registry import deadline
     from health_data_registry.fetch import FetchRefused, fetch
 
     hosts = registry.hosts
@@ -128,17 +141,23 @@ def fetcher(
                 raise
         for attempt in range(RETRIES):
             when = datetime.now(UTC)
+            budget = deadline.cap(FETCH_TIMEOUT_S)  # raises DeadlineExceeded when nothing is left
             try:
-                r = fetch(
-                    url, allowed_hosts=hosts, headers={"Accept": "application/json"}, timeout=FETCH_TIMEOUT_S
-                )
+                r = fetch(url, allowed_hosts=hosts, headers={"Accept": "application/json"}, timeout=budget)
             except FetchRefused as e:
                 if log is not None:
                     log.record(url, ok=False, when=when, error=str(e))
                 # A slow or briefly unreachable publisher is retried; a refused URL or host never is.
                 if e.code not in ("timeout", "connect_failed") or attempt == RETRIES - 1:
+                    left = deadline.remaining()
+                    if e.code == "timeout" and left is not None and left <= 0:
+                        raise deadline.DeadlineExceeded() from e
                     raise
-                sleep(2 ** (attempt + 1))
+                pause = 2 ** (attempt + 1)
+                left = deadline.remaining()
+                if left is not None and left <= pause:
+                    raise deadline.DeadlineExceeded() from e
+                sleep(pause)
                 continue
             if r.status != 200:
                 msg = f"the publisher answered with status {r.status} instead of the data"

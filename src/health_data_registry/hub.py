@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from health_data_registry import deadline
 from health_data_registry.publish import HF_PREFIX, data_path, hf_repo_id, sha256_file
 from health_data_registry.registry import Dataset
 from health_data_registry.store import Manifest
@@ -226,6 +227,7 @@ class Hub:
 
             repo, _ = _split(self.url)
             rev = self.revision()
+            deadline.cap(1.0)  # a hosted call whose budget is spent starts no download
             try:
                 got = Path(
                     hf_hub_download(

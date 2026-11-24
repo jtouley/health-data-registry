@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `serve --http`: the hosted, read-only connector over stateless Streamable HTTP (hub releases and live reads
+  only), with one deadline per tool call, a result-size cap, rate limits per MCP session and overall, and no
+  request content in any log; `space/` for a Hugging Face Docker Space and `docs/dev/hosting.md`.
 - Repository scaffolding under the Apache License 2.0, with a NOTICE for material adapted from the author's
   earlier MIT-licensed work.
 - SECURITY.md (private reporting through GitHub advisories, 14-day first response), CONTRIBUTING.md,
