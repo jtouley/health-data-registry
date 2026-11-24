@@ -1,0 +1,62 @@
+# Deploy the hosted MCP server: sync space/ to the Hugging Face Space (free CPU hardware).
+#
+# space/ comes from the HTTP-server work (branch wip/http-server). Until it is on main, and whenever no token
+# is set, the job skips with a notice. The Space's own files are replaced by space/ exactly: anything in the
+# Space that is not in space/ is deleted, so space/ must hold the Space's README.md (its config header).
+name: Deploy Space
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "space/**"
+      - ".github/workflows/deploy-space.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Deploys never overlap; a newer push waits for the running deploy, then replaces any older pending one.
+concurrency:
+  group: deploy-space
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Sync space/ to the Space
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      HF_TOKEN: ${{ secrets.HF_SPACE_TOKEN || secrets.HF_TOKEN }}
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      SPACE_REPO: ${{ vars.HDR_SPACE || 'jtouley/health-data-registry-mcp' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check space/ and the token
+        id: gate
+        run: |
+          if [ ! -f space/README.md ]; then
+            echo "::notice::No space/README.md on main yet (the HTTP server is on wip/http-server). Nothing deployed."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          elif [ -z "$HF_TOKEN" ]; then
+            echo "::notice::No HF_SPACE_TOKEN or HF_TOKEN secret. Nothing deployed."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        if: steps.gate.outputs.go == 'true'
+        with:
+          python-version: "3.12"
+          enable-cache: false
+      - name: Install dependencies (locked)
+        if: steps.gate.outputs.go == 'true'
+        run: uv sync --locked --no-dev
+      - name: Upload space/ as one commit
+        if: steps.gate.outputs.go == 'true'
+        run: |
+          uv run --no-sync hf upload "$SPACE_REPO" space . --repo-type space --delete "*" \
+            --commit-message "Deploy ${GITHUB_SHA}"

@@ -1,0 +1,88 @@
+# Weekly drift check and keep-alive.
+#
+#   drift       check-contracts: does each publisher still serve every field its contract reads? On failure
+#               (main only), opens an issue or comments on the open one; issues: write on that job only.
+#   keep-alive  GitHub disables scheduled workflows in a public repository after 60 days with no repository
+#               activity. This job re-enables each scheduled workflow through the API every week (actions:
+#               write on that job only), so a quiet month doesn't silently stop the refresh and the crawls.
+#               It can't help once this workflow itself has been disabled: re-enable it in the Actions tab.
+name: Drift check and keep-alive
+
+on:
+  schedule:
+    # Friday 05:37 UTC; off the hour, and away from the Tuesday refresh.
+    - cron: "37 5 * * 5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: drift-check
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    name: Check contracts against publishers
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+          enable-cache: false
+      - name: Install dependencies (locked)
+        run: uv sync --locked --no-dev
+      - name: Check every source against its contract
+        run: uv run --no-sync health-data-registry check-contracts
+
+  report-drift:
+    name: Open or update the drift issue
+    needs: drift
+    if: ${{ failure() && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or comment on the drift issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TITLE: "Contract drift: a publisher changed"
+        run: |
+          body="The weekly contract check failed: $RUN_URL
+
+          A publisher no longer serves a field its contract reads, or its metadata could not be read. Check
+          the run log, then update the adapter or contract in a pull request."
+          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "\"$TITLE\" in:title" --json number,title \
+            --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body "Failed again: $RUN_URL"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$body"
+          fi
+
+  keep-alive:
+    name: Keep the scheduled workflows enabled
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Re-enable each scheduled workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for wf in refresh.yml crawl-croi.yml drift-check.yml scorecard.yml; do
+            if gh api --method PUT "repos/$GITHUB_REPOSITORY/actions/workflows/$wf/enable" --silent; then
+              echo "enabled $wf"
+            else
+              echo "::warning::could not re-enable $wf"
+            fi
+          done

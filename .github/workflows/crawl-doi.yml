@@ -1,0 +1,38 @@
+# DOI-based conference abstracts (IDWeek, SHEA, APIC, ICID): metadata from Crossref, OpenAlex or Europe PMC,
+# which publish the supplements' abstracts by DOI (no site crawl, no crawl delay).
+#
+# NOT BUILT YET. There is no harvester command; this stub fails with a clear message so nobody mistakes a
+# green run for an index. TODO(ledger task 16a): build the DOI harvester (a CLI command such as
+# `health-data-registry harvest-doi --source <id>`), then replace the stub step with it, keep the outputs in
+# the private tier as the CROI crawl does (crawl-croi.yml), and turn the schedule below on.
+name: DOI conference crawl
+
+on:
+  # TODO(ledger task 16a): enable once the harvester exists (weekly, off the hour).
+  # schedule:
+  #   - cron: "41 3 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: doi-crawl
+  cancel-in-progress: false
+
+jobs:
+  harvest:
+    name: Harvest ${{ matrix.source }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [idweek, shea, apic, icid]
+    steps:
+      - name: Not built yet
+        env:
+          SOURCE: ${{ matrix.source }}
+        run: |
+          echo "::error::The DOI harvester for $SOURCE is not built yet (ledger task 16a). Nothing was crawled."
+          exit 1
