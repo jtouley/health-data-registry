@@ -37,8 +37,8 @@ def pages(
         from health_data_registry.adapters import https_csv
 
         yield from https_csv.pages(entry, fetcher, max_rows=max_rows, fields=fields)
-    else:  # pragma: no cover - the catalog model forbids other portals
-        raise ValueError(f"no adapter for portal {entry.source.portal}")
+    else:  # croi: crawled page by page by croi_index.py into a private store, never paged here
+        raise ValueError(f"{entry.id} is not read through a portal adapter; see croi_index.py")
 
 
 def publisher_fields(entry: CatalogEntry, fetcher: Fetcher) -> set[str]:
@@ -49,4 +49,8 @@ def publisher_fields(entry: CatalogEntry, fetcher: Fetcher) -> set[str]:
         return socrata.publisher_fields(entry, fetcher)
     if entry.source.portal == "who_gho":
         return who_gho.publisher_fields(entry, fetcher)
+    if entry.source.portal == "croi":
+        raise ValueError(
+            f"{entry.id}: CROI pages are checked by the parser itself (LayoutError) on every crawl"
+        )
     return https_csv.publisher_fields(entry, fetcher)

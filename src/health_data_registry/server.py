@@ -223,11 +223,13 @@ def build_server(registry: Registry | None = None, engine: Engine | None = None)
         dataset: str | None = None,
         fmt: Fmt = "csv",
     ) -> Out:
-        """Conference abstracts, case reports and health department reports on a condition, with the datasets
-        each used. (The index is not built yet; the tool says so rather than guessing.)"""
+        """Has this been presented before? CROI conference abstracts on a condition, optionally in a place
+        (geography), years ('2020-2024') or using a kind of data (dataset, e.g. surveillance): title, year,
+        session type and the link to read it on CROI's site, with a short excerpt when available. Says plainly when
+        the index isn't built yet."""
         return _safe(
             lambda: tools.find_prior_work(reg, condition=condition, geography=geography, years=years,
-                                          dataset=dataset, fmt=fmt),
+                                          dataset=dataset, fmt=fmt, lake=eng.lake),
             fmt,
         )  # fmt: skip
 

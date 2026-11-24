@@ -44,6 +44,7 @@ from typing import Any
 import duckdb
 import yaml
 
+from health_data_registry.private import private_root
 from health_data_registry.product import Port, load_ports
 from health_data_registry.registry import Dataset, Registry
 from health_data_registry.store import Manifest, latest_snapshot
@@ -371,9 +372,15 @@ def listed_card(ds: Dataset, *, release: str, run_date: str) -> str:
         "",
         "## How to get the data",
         "",
-        "The health-data-registry MCP server reads it live from the publisher each time you ask about it, and "
-        "keeps no copy: no file, snapshot or cache of the table is written anywhere. Nothing is downloaded from "
-        "this hub.",
+        (
+            "The health-data-registry MCP server reads it from this source's own private store, which is never "
+            "published; when that store is empty or deleted, it gives links to the publisher's own pages. "
+            "Nothing is downloaded from this hub."
+            if e.tier == "private"
+            else "The health-data-registry MCP server reads it live from the publisher each time you ask about "
+            "it, and keeps no copy: no file, snapshot or cache of the table is written anywhere. Nothing is "
+            "downloaded from this hub."
+        ),
         "",
         "## Add it to a Claude project",
         "",
@@ -605,12 +612,16 @@ def lake_snapshots(registry: Registry, lake: Path) -> dict[str, tuple[Path, Mani
     snaps: dict[str, tuple[Path, Manifest]] = {}
     problems: list[str] = []
     for ds in registry:
-        if not ds.entry.licence.redistribution:
-            continue
+        if ds.entry.tier != "public":
+            continue  # live and private-tier sources are listed, never hosted
         found = latest_snapshot(lake, ds.id)
         if found is None:
             problems.append(
                 f"{ds.id}: there is no snapshot in the lake to publish; run `health-data-registry fetch {ds.id}`"
+            )
+        elif _inside(found[0], private_root(lake)):
+            problems.append(
+                f"{ds.id}: its snapshot is inside the private area of the lake and is never published"
             )
         else:
             snaps[ds.id] = found
@@ -657,7 +668,7 @@ def stage(
             release["data_product"] = {"id": port.product_id, "version": port.product_version}
         folder = out / ds.id
         folder.mkdir()
-        hosted = ds.entry.licence.redistribution
+        hosted = ds.entry.tier == "public"
         snap = snaps[ds.id][1] if hosted else None
         sm = _source_manifest(
             ds,
@@ -778,9 +789,14 @@ def check_release(registry: Registry, lake: Path, out: Path) -> list[str]:
         data_files = sorted(
             p for p in folder.rglob("*") if p.is_file() and p.suffix in (".parquet", ".duckdb")
         )
-        if not e.licence.redistribution:
-            if data_files:
+        if e.tier != "public" or not e.licence.redistribution:
+            if data_files or (out / data_path(ds.id)).exists():
                 problems.append(f"{ds.id}: its terms forbid redistribution but data files were staged")
+            extra = sorted(p.name for p in folder.rglob("*") if p.is_file() and p.name not in LISTED_FILES)
+            if extra:
+                problems.append(
+                    f"{ds.id}: only a card and a manifest may be staged for it, not {', '.join(extra)}"
+                )
             continue
         # Licence confirmed and recorded.
         snap_found = latest_snapshot(lake, ds.id)
@@ -812,6 +828,53 @@ def check_release(registry: Registry, lake: Path, out: Path) -> list[str]:
             problems += suppression_problems(snap_dir / "data.duckdb", ds.id, exported)
         else:
             problems.append(f"{ds.id}: the data file is missing")
+    problems += private_leaks(registry, lake, out)
+    return problems
+
+
+LISTED_FILES = frozenset({"README.md", "manifest.json"})
+MIN_LEAK_CHARS = 24  # shorter private values (numbers, years, short names) are too common to search for
+
+
+def _inside(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def private_values(registry: Registry, lake: Path) -> set[str]:
+    """Every long text value held in a private-tier source's local private store."""
+    from health_data_registry import private
+
+    values: set[str] = set()
+    for ds in registry:
+        if ds.entry.tier != "private":
+            continue
+        found = private.read_rows(lake, ds, downloader=lambda *_: None)
+        for row in found.rows if found else []:
+            values |= {v for v in row.values() if isinstance(v, str) and len(v) >= MIN_LEAK_CHARS}
+    return values
+
+
+def private_leaks(registry: Registry, lake: Path, out: Path) -> list[str]:
+    """No file from the private area, and no private value, is in the staged release."""
+    problems: list[str] = []
+    values = private_values(registry, lake)
+    for p in sorted(out.rglob("*")):
+        if not p.is_file():
+            continue
+        if p.is_symlink() and _inside(p, private_root(lake)):
+            problems.append(f"{p.relative_to(out)} points into the private area of the lake")
+            continue
+        if not values:
+            continue
+        text = p.read_bytes().decode("utf-8", errors="ignore")
+        if any(v in text for v in values):
+            problems.append(
+                f"{p.relative_to(out)} holds text from a private-tier source; nothing private is published"
+            )
     return problems
 
 

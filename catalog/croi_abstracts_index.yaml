@@ -1,0 +1,35 @@
+id: croi_abstracts_index
+title: CROI conference abstracts (metadata index)
+agency: CROI Foundation
+publisher: "Conference on Retroviruses and Opportunistic Infections (CROI Foundation; organised with IAS-USA)"
+level: international
+country: null
+research_areas: [infectious_disease, research_landscape]
+id_areas: [hiv, stis, hepatitis, tb]
+years: {start: 2014, end: null}
+geography: [world]
+shape: registry
+grain: "One row is one CROI abstract in one conference year (abstract number plus year): its title, authors as published, session, links to its page and poster on CROI's site, and our own rule-based tags. No abstract text."
+refresh: annual
+licence:
+  id: croi-metadata-index
+  redistribution: false
+  terms_url: https://www.croiconference.org/
+hosting: private
+citation: "Conference on Retroviruses and Opportunistic Infections (CROI) <year>, abstract <abstract_number>: <title>. <page_url> (accessed <retrieved_at>)."
+source:
+  portal: croi
+  host: www.croiconference.org
+  dataset: search-abstracts
+  landing_url: https://www.croiconference.org/search-abstracts/
+  api_url: https://www.croiconference.org/search-abstracts/
+codebook_url: https://www.croiconference.org/search-abstracts/
+caveats:
+  - "Metadata index; abstract text © CROI Foundation, personal non-commercial use, linked not hosted. Read each abstract and poster on CROI's site through its link."
+  - "Kept in this source's private store only, until the maintainer confirms the metadata may be redistributed; never in a public release."
+  - "Condition, design, data-source and geography tags come from fixed word rules over the title and text, not from a model; a missing tag doesn't mean the topic is absent."
+  - "An abstract is not a peer-reviewed paper; many are never published in full."
+  - "Crawled at CROI's own pace (one request per robots.txt crawl delay, 120 s), so a year can be partly indexed; find_prior_work says how many abstracts each year holds."
+contract: contracts/croi_abstracts_index.odcs.yaml
+semantic_model: semantic/croi_abstracts_index.yaml
+status: draft

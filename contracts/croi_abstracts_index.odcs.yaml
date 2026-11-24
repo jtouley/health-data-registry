@@ -1,0 +1,198 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: croi_abstracts_index
+name: CROI conference abstracts (metadata index)
+version: 0.1.0
+status: draft
+domain: research_landscape
+description:
+  purpose: An index of CROI abstracts (2014 on) so a fellow can see what has been presented on a condition, place
+    or year, with each abstract's link on CROI's site.
+  usage: find_prior_work reads it. Each answer gives the title, year, session type and link; the abstract and poster
+    are read on CROI's site.
+  limitations: Metadata only. Tags are from fixed word rules. A year may be partly indexed while the crawl runs
+    at CROI's crawl delay.
+  authoritativeDefinitions:
+  - type: canonicalUrl
+    url: https://www.croiconference.org/search-abstracts/
+    description: CROI's searchable abstract database (structure read 2026-11-24)
+servers:
+- id: croi
+  server: www.croiconference.org
+  type: https
+  location: https://www.croiconference.org/search-abstracts/
+  description: 'Server-rendered HTML: a listing of 10 abstracts a page and one page per abstract. Read one request
+    per robots.txt crawl delay.'
+schema:
+- name: croi_abstracts_index
+  physicalName: croi_abstracts_index
+  physicalType: table
+  logicalType: object
+  description: One row per abstract and conference year.
+  dataGranularityDescription: abstract number x conference year
+  customProperties:
+  - property: totalRows
+    value: none
+  - property: tableShape
+    value: registry
+  properties:
+  - name: abstract_number
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The abstract or electronic poster number CROI gives it, as shown on the abstract page (e.g. 957).
+      Not CROI's internal page id.
+    primaryKey: true
+    customProperties:
+    - property: role
+      value: dimension
+  - name: year
+    physicalType: INTEGER
+    logicalType: integer
+    required: true
+    description: Conference year the abstract was presented in.
+    primaryKey: true
+    customProperties:
+    - property: role
+      value: dimension
+  - name: title
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The abstract's title as published.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: authors
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Authors' names exactly as CROI lists them on the abstract page.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: session_type
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Kind of session it was presented in, from the page's own session-type label (e.g. poster session).
+    customProperties:
+    - property: role
+      value: dimension
+  - name: session_title
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: The session's number and title as published, e.g. (N-02) and its topic.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: category
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: CROI's own topic category for the abstract, from the page's category label.
+    customProperties:
+    - property: role
+      value: dimension
+  - name: page_url
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: Link to the abstract's page on CROI's site, where its text is read.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: poster_url
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Link to the poster PDF on CROI's site, when there is one; the PDF itself is never copied.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: condition_tags
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Conditions named in the title or text by our fixed word rules (e.g. hiv; tuberculosis), separated
+      by '; '.
+    customProperties:
+    - property: role
+      value: dimension
+  - name: design_tags
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Study designs named in the title or text by our fixed word rules (e.g. randomized_trial; cohort).
+    customProperties:
+    - property: role
+      value: dimension
+  - name: data_source_tags
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Kinds of data named in the title or text by our fixed word rules (e.g. surveillance; claims).
+    customProperties:
+    - property: role
+      value: dimension
+  - name: geography_tags
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Countries and regions named in the title or text by our fixed word rules (e.g. brazil; south_africa).
+    customProperties:
+    - property: role
+      value: dimension
+  - name: pubmed_pmid
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: PubMed id of the full paper matched to this abstract, once matching is built; empty until then.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: retrieved_at
+    physicalType: VARCHAR
+    logicalType: timestamp
+    required: true
+    description: When the abstract page was read (ISO 8601, UTC).
+    customProperties:
+    - property: role
+      value: attribute
+  - name: page_sha256
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: SHA-256 of the page as read, for provenance; the page itself is not kept.
+    customProperties:
+    - property: role
+      value: attribute
+customProperties:
+- property: licence
+  value: croi-metadata-index
+- property: licenceNote
+  value: metadata index; abstract text © CROI Foundation, personal non-commercial use, linked not hosted
+- property: redistribution
+  value: false
+- property: hosting
+  value: private
+- property: attribution
+  value: Index of abstracts presented at the Conference on Retroviruses and Opportunistic Infections (CROI). Abstract
+    text © CROI Foundation, on CROI's site.
+- property: citation
+  value: 'Conference on Retroviruses and Opportunistic Infections (CROI) <year>, abstract <abstract_number>: <title>.
+    <page_url>'
+- property: refresh
+  value: annual
+- property: openQuestions
+  value:
+  - Redistribution of this metadata index (titles, author names, links and our tags) is to be confirmed by the maintainer.
+    Until then redistribution is false and the index stays in its private store, out of the public hub.
+  - 'Terms: the CROI terms quoted in the spec (''copy, or print ... for personal, noncommercial use only ... may
+    not otherwise reproduce ... without prior written consent''; copyright CROI Foundation) were read during research,
+    not re-read here; terms_url points at the home page until the maintainer records the exact terms page.'
+  - Two pages can carry the same abstract number in a year (e.g. /abstract/1739-2025-td/ for a themed discussion
+    and the poster page). Rows are keyed on abstract number plus year, so the page read last wins; confirm whether
+    both pages should be kept.
+  - Matching to PubMed (pubmed_pmid) is not built yet.

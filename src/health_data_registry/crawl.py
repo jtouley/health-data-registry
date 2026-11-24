@@ -26,6 +26,10 @@ class LiveOnly(ValueError):
     """The source's terms forbid storing it; the server reads it live instead."""
 
 
+class PrivateTier(LiveOnly):
+    """The source is kept in its own private store, built by its own command (e.g. index-croi)."""
+
+
 def fetcher(
     registry: Registry, log: FetchLog | None = None, *, sleep: Callable[[float], None] = time.sleep
 ) -> Getter:
@@ -68,6 +72,15 @@ def refresh_dataset(ds: Dataset, lake: Path, get: Getter, *, max_rows: int | Non
     """Page through one source, keep its raw bytes, and build its snapshot (partial when max_rows is set)."""
     from health_data_registry.adapters import pages
 
+    if ds.entry.tier == "private":
+        raise PrivateTier(
+            f"{ds.id} is kept only in its private store (lake/private/{ds.id}/), never in the public lake; "
+            + (
+                "build it with `health-data-registry index-croi --year <year>`"
+                if ds.entry.source.portal == "croi"
+                else "it has no crawl command yet"
+            )
+        )
     if not ds.entry.licence.redistribution:
         raise LiveOnly(
             f"{ds.id} is read live from {ds.entry.publisher} only: its terms ({ds.entry.licence.id}) attach to "

@@ -1,0 +1,8 @@
+dataset: croi_abstracts_text
+version: 0.1.0
+dimensions:
+  - {name: abstract_number, column: abstract_number, type: categorical, description: "CROI's abstract or electronic poster number."}
+  - {name: year, column: year, type: time, description: "Conference year."}
+measures: []
+metrics: []
+series: []
