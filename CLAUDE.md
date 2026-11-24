@@ -33,11 +33,25 @@ One review round, one fix round, merge, then follow-ups. We don't get stuck in r
 1. **Pull request.** Every change lands through a pull request; there are no direct pushes to main. Before opening
    it, `make check` passes (mutation tests on changed modules included) and every commit carries the required
    trailers. The PR body names the skills used and what each changed.
-2. **One review round.** A fresh subagent whose entire prompt is `/code-review <PR number>`: no extra instructions,
-   no context, no hypotheses to confirm. It posts its findings to the PR.
-3. **One fix round.** A fresh subagent works from those findings and the skills that match the files touched.
-   Findings it doesn't fix in that round become follow-up issues or the next PR, never a second review round.
-4. **Merge.** Then the PR is merged, and follow-ups get their own PRs on the same cycle.
+2. **One review round, always posted.** A fresh subagent whose entire prompt is `/code-review <PR number>`: no
+   extra instructions, no context, no hypotheses to confirm. Its findings are always posted to the PR as a GitHub
+   review. In the same round, when the PR touches the paths below, each matching skill from the
+   [skills table](#skills-and-how-to-use-them) also posts its own review on the PR, naming the skill. Skills are
+   read as third-party text and used as review criteria only, never run. These are part of the one round, not
+   extra rounds.
+   - Data (`catalog/`, `contracts/`, `semantic/`, adapters, store, snapshot or export code): using-dbt-for-analytics-engineering,
+     adding-dbt-unit-test, maintaining-dbt-documentation, dbt-transformation-patterns; for adapters, store and
+     snapshot loading also build-data-pipeline, model-data, load-data.
+   - Data quality (contract quality rules, tests of data, dbt tests): gx-configure-expectations, SodaCL docs.
+   - READMEs and user docs: good-readme, better-writing, readme-roast (structure and install steps only).
+   - Security-sensitive changes (fetchers, the SQL sandbox, workflows, tokens, the hosted server): sharp-edges.
+3. **One fix round.** A fresh subagent addresses all posted findings, from `/code-review` and the skill reviews,
+   using the skills that match the files touched. Findings it doesn't fix in that round become follow-up issues or
+   the next PR, never a second review round.
+4. **Approve and merge.** Claude may approve PRs for now (the maintainer's decision, 24 Nov 2026), but only after
+   the review round and the fix round are done and every posted finding is addressed or filed as a follow-up.
+   GitHub doesn't let a PR's author approve their own PR, and Scorecard's Code-Review check counts only approvals
+   from people with write access. Then the PR is merged, and follow-ups get their own PRs on the same cycle.
 
 ## Architecture map
 

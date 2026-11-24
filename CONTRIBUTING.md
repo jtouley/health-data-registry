@@ -33,7 +33,11 @@ publishers and are left out of `make test`; run them with `make test-network`.
 ## Review
 
 Every change, including the maintainer's, lands through a pull request; nothing is pushed straight to main. Each
-pull request gets one review round, then one round of fixes, and then it is merged. Anything the fix round doesn't
+pull request gets one review round, then one round of fixes, and then it is merged. The review is always posted on
+the pull request. If your change touches data (catalog entries, contracts, semantic models, adapters, storage or
+export code), data-quality rules and tests, or the README and user docs, you'll also see a separate posted review
+for each matching skill in [CLAUDE.md](CLAUDE.md#skills-and-how-to-use-them), in the same round. The fix round
+addresses every posted finding. Anything the fix round doesn't
 cover becomes a follow-up issue or a later pull request, which goes through the same cycle. There is no second
 review round, so expect a short, predictable path to merge rather than repeated back-and-forth.
 
