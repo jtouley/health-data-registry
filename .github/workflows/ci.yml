@@ -30,6 +30,27 @@ jobs:
       - name: Lint and format check
         run: make lint
 
+  pre-commit:
+    name: Pre-commit hooks (all files)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+      # Same hooks as every local commit, so a commit that skipped them still fails here.
+      - name: Run every hook on every file
+        run: uv run pre-commit run --all-files --show-diff-on-failure
+      - name: Lint workflows
+        run: uvx --from actionlint-py actionlint
+
   types:
     name: Types (mypy)
     runs-on: ubuntu-latest

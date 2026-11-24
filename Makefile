@@ -1,6 +1,6 @@
 # Developer and CI entry points. `make help` lists the targets.
 .DEFAULT_GOAL := help
-.PHONY: help install lint fmt typecheck test test-network mutate docs check refresh serve check-contracts eval
+.PHONY: help install lint fmt typecheck test test-network mutate docs check refresh serve check-contracts eval hooks
 
 UV ?= uv
 COV_FLOOR ?= 85
@@ -12,6 +12,9 @@ help: ## Show this help
 
 install: ## Install the locked environment, dev tools included (uv sync)
 	$(UV) sync
+
+hooks: ## Install the git hooks (pre-commit and pre-push) from .pre-commit-config.yaml
+	$(UV) run pre-commit install --hook-type pre-commit --hook-type pre-push
 
 lint: ## Lint and check formatting (ruff check, ruff format --check)
 	$(UV) run ruff check src tests

@@ -14,8 +14,11 @@ git clone https://github.com/jtouley/health-data-registry.git
 cd health-data-registry
 make install            # uv sync, dev tools included
 make check              # what CI runs
-pre-commit install      # once, to enable the hooks in .pre-commit-config.yaml
+make hooks              # once: uv run pre-commit install (pre-commit and pre-push hooks)
 ```
+
+Every commit, by people, subagents and the lead, goes through these hooks; `--no-verify` is never used. Unfinished
+work is not committed to the PR branch: it stays uncommitted or goes on a separate WIP branch until it passes the hooks.
 
 ## Commands
 

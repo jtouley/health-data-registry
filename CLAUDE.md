@@ -16,6 +16,7 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 |---|---|
 | `make install` | `uv sync` |
 | `make check` | lint, typecheck, test, mutate: what CI runs; run before every push |
+| `make hooks` | Install the pre-commit hooks (`uv run pre-commit install`); once per checkout |
 | `make test` | Offline tests with coverage (floor 85%) |
 | `make test-network` | Live publisher checks in `tests/integration` (marker `network`) |
 | `make mutate` | Mutation tests on modules changed since `BASE` (`scripts/mutate_changed.py`, floor 70%) |
@@ -33,6 +34,9 @@ One review round, one fix round, merge, then follow-ups. We don't get stuck in r
 1. **Pull request.** Every change lands through a pull request; there are no direct pushes to main. Before opening
    it, `make check` passes (mutation tests on changed modules included) and every commit carries the required
    trailers. The PR body names the skills used and what each changed.
+   Every commit, by people, subagents and the lead, goes through the pre-commit hooks (`make hooks`); `--no-verify`
+   is never used. Unfinished work is not committed to the PR branch: it stays uncommitted or goes on a separate WIP
+   branch until it passes the hooks.
 2. **One review round, always posted.** A fresh subagent whose entire prompt is `/code-review <PR number>`: no
    extra instructions, no context, no hypotheses to confirm. Its findings are always posted to the PR as a GitHub
    review. In the same round, when the PR touches the paths below, each matching skill from the
