@@ -24,6 +24,8 @@ release would add them, and are not in place yet.
 from __future__ import annotations
 
 import json
+import logging
+import math
 import os
 import re
 import shutil
@@ -70,11 +72,31 @@ _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 COMPATIBLE_CONTRACTS: dict[str, dict[str, set[str]]] = {}
 
 DEFAULT_CACHE_MAX_BYTES = 5 * 1024**3
+MIN_CACHE_GB = 0.5
+logger = logging.getLogger(__name__)
 
 
 def cache_max_bytes() -> int:
-    env = os.environ.get("HDR_CACHE_MAX_GB")
-    return int(float(env) * 1024**3) if env else DEFAULT_CACHE_MAX_BYTES
+    """The cache limit from HDR_CACHE_MAX_GB: a finite number of gigabytes, at least MIN_CACHE_GB.
+
+    Anything else (empty, '5GB', 0, a negative number, nan, inf) falls back to the default with a warning in the
+    log, so a mistyped setting never stops the server or empties the cache on every question.
+    """
+    env = os.environ.get("HDR_CACHE_MAX_GB", "").strip()
+    if not env:
+        return DEFAULT_CACHE_MAX_BYTES
+    try:
+        gb = float(env)
+    except ValueError:
+        gb = math.nan
+    if not math.isfinite(gb) or gb < MIN_CACHE_GB:
+        logger.warning(
+            "HDR_CACHE_MAX_GB=%r is not a number of gigabytes of at least %s; using the default of 5",
+            env,
+            MIN_CACHE_GB,
+        )
+        return DEFAULT_CACHE_MAX_BYTES
+    return int(gb * 1024**3)
 
 
 def is_immutable_ref(rev: str) -> bool:
@@ -138,6 +160,8 @@ class Hub:
     api: Any = field(default=None, repr=False)  # a huggingface_hub.HfApi; None builds one without a token
     _release: dict[str, Any] | None = field(default=None, repr=False)
     _rev: str | None = field(default=None, repr=False)
+    # Files handed to a reader (a DuckDB view reads them by path): never evicted while this hub is in use.
+    _in_use: set[Path] = field(default_factory=set, repr=False)
 
     @property
     def is_remote(self) -> bool:
@@ -228,7 +252,7 @@ class Hub:
             got.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src, got)
         os.utime(got)  # most recently used
-        evict(self.cache / "hub", self.max_bytes, keep={got.resolve()})
+        evict(self.cache / "hub", self.max_bytes, keep={got.resolve(), *self._in_use})
         return got
 
     def release(self) -> dict[str, Any]:
@@ -278,6 +302,7 @@ class Hub:
                 "it was not used. It may have been damaged in transit; ask again to download it afresh, and "
                 "report it if it keeps happening.",
             )
+        self._in_use.add(local.resolve())  # the server's views read this file from now on
         allowed = set(Manifest.__dataclass_fields__)
         snap = {k: v for k, v in dict(sm["snapshot"]).items() if k in allowed}
         files = {f"{ds.id}/{k}": str(v["sha256"]) for k, v in (sm.get("files") or {}).items()}

@@ -360,6 +360,7 @@ class Engine:
     _con: duckdb.DuckDBPyConnection | None = None
     _hub_files: dict[str, tuple[Path, Manifest]] = field(default_factory=dict)
     _live: dict[str, Any] = field(default_factory=dict)  # dataset id -> live.LiveTable (memory only)
+    _live_failed: set[str] = field(default_factory=set)  # live tables that could not be loaded (refused once)
 
     def connect(self) -> duckdb.DuckDBPyConnection:
         if self._con is not None:
@@ -373,7 +374,12 @@ class Engine:
                 table = self._live.get(ds.id)
                 if table is None:
                     continue  # restricted sources are never read from disk, even a maintainer's lake
-                load_live(con, ds, table.records)
+                try:
+                    load_live(con, ds, table.records)
+                except Exception:  # noqa: BLE001 - one bad publisher table must not break the other sources
+                    del self._live[ds.id]
+                    self._live_failed.add(ds.id)
+                    continue
                 manifest = table.manifest
             elif (found := latest_snapshot(self.lake, ds.id)) is not None:
                 path, manifest = found
@@ -381,6 +387,9 @@ class Engine:
                 db = str(path / "data.duckdb").replace("'", "''")
                 con.execute(f"ATTACH '{db}' AS {_q(alias)} (READ_ONLY)")
                 con.execute(f"CREATE VIEW {_q(ds.id)} AS SELECT * FROM {_q(alias)}.{_q(ds.id)}")  # noqa: S608 - quoted contract identifiers, bound values
+            elif ds.id in self._hub_files and not self._hub_files[ds.id][0].is_file():
+                del self._hub_files[ds.id]  # removed from the cache: downloaded again on next use
+                continue
             elif ds.id in self._hub_files:
                 file, manifest = self._hub_files[ds.id]
                 lit = str(file).replace("'", "''")
@@ -439,6 +448,14 @@ class Engine:
         if m is None and ds is not None and self._obtain(ds):
             self._reconnect()
             m = self.manifests.get(dataset_id)
+        if m is None and dataset_id in self._live_failed:
+            self._live_failed.discard(dataset_id)  # the next question reads the publisher afresh
+            raise QueryRefused(
+                "publisher_bad_table",
+                f"{ds.entry.publisher if ds else 'The publisher'} sent a table for {dataset_id} that could not be "
+                "read (a value did not match its column), so no numbers are shown for it. Other sources are not "
+                "affected. Try again later; if it keeps happening, run the Something's wrong helper.",
+            )
         if m is None:
             raise QueryRefused(
                 "no_snapshot",

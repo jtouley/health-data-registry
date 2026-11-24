@@ -566,3 +566,64 @@ def test_cli_refresh_skips_restricted(tmp_path: Path, monkeypatch: Any, capsys: 
     out = capsys.readouterr().out
     assert "skip toy_listed: toy_listed is read live from" in out and "ok   toy_cases" in out
     assert not (tmp_path / "lake" / "datasets" / "toy_listed").exists()
+
+
+def test_a_bad_live_table_is_refused_for_that_source_only(
+    tmp_path: Path, reg: Registry, released: Path
+) -> None:
+    bad = [{**RECORDS[0], "year": "not a year"}]
+    calls: list[str] = []
+
+    def get(url: str) -> Any:
+        calls.append(url)
+        return raw_fetch(url, bad if len(calls) == 1 else RECORDS)
+
+    eng = engine(reg, tmp_path, released, fetch_at_run_time=True, getter=get)
+    with pytest.raises(QueryRefused) as e:
+        eng.manifest("toy_listed")
+    assert e.value.code == "publisher_bad_table" and "Other sources are not affected" in str(e.value)
+    # The hub source still answers, and the next question reads the publisher afresh.
+    assert eng.manifest("toy_cases").origin == "hub"
+    assert eng.manifest("toy_listed").origin == "publisher" and len(calls) == 2
+
+
+def test_cache_never_evicts_a_file_a_view_reads(tmp_path: Path, reg: Registry, released: Path) -> None:
+    eng = engine(reg, tmp_path, released)
+    eng.manifest("toy_cases")
+    file = eng._hub_files["toy_cases"][0]
+    eng.hub.max_bytes = 1  # every later download tries to empty the cache
+    eng.hub.fetch("toy_listed/README.md")
+    assert file.is_file()
+    eng._reconnect()
+    assert eng.query_sql("SELECT count(*) AS n FROM toy_cases")["rows"] == [[len(RECORDS)]]
+
+
+def test_a_cached_file_removed_elsewhere_is_downloaded_again(
+    tmp_path: Path, reg: Registry, released: Path
+) -> None:
+    eng = engine(reg, tmp_path, released)
+    eng.manifest("toy_cases")
+    eng._hub_files["toy_cases"][0].unlink()
+    eng._reconnect()
+    assert "toy_cases" not in eng._hub_files
+    assert eng.query_sql("SELECT count(*) AS n FROM toy_cases")["rows"] == [[len(RECORDS)]]
+
+
+@pytest.mark.parametrize("value", ["5GB", "0", "-1", "0.4", "nan", "inf", "abc"])
+def test_a_mistyped_cache_limit_falls_back_to_the_default(monkeypatch: Any, value: str, caplog: Any) -> None:
+    monkeypatch.setenv("HDR_CACHE_MAX_GB", value)
+    assert hub.cache_max_bytes() == hub.DEFAULT_CACHE_MAX_BYTES
+    assert "HDR_CACHE_MAX_GB" in caplog.text
+
+
+def test_live_tables_are_never_loaded_into_a_file(tmp_path: Path, reg: Registry) -> None:
+    from health_data_registry.live import load_live
+
+    con = duckdb.connect(str(tmp_path / "x.duckdb"))
+    with pytest.raises(ValueError, match="never written to disk"):
+        load_live(con, reg.get("toy_listed"), RECORDS)
+    mem = duckdb.connect(":memory:")
+    with pytest.raises(duckdb.Error):
+        load_live(mem, reg.get("toy_listed"), [{**RECORDS[0], "year": "x"}])
+    tables = mem.execute("SELECT table_name FROM duckdb_tables()").fetchall()
+    assert tables == []  # nothing half-loaded is left behind

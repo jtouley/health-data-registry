@@ -85,7 +85,16 @@ def fetch_live(ds: Dataset, get: Any) -> LiveTable:
 
 
 def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[str, Any]]) -> None:
-    """Normalise records into an in-memory table named after the dataset (the connection must be in-memory)."""
+    """Normalise records into an in-memory table named after the dataset.
+
+    Refuses a file-backed connection: the source's terms forbid keeping a copy (ADR 0009), so this checks the
+    connection itself rather than trusting the caller. A table that can't be normalised leaves nothing behind.
+    """
+    where = con.execute(
+        "SELECT path FROM duckdb_databases() WHERE database_name = current_database()"
+    ).fetchone()
+    if where is None or where[0] is not None:
+        raise ValueError(f"{ds.id} is never written to disk: load_live needs an in-memory connection")
     fields = sorted({c.source_field for c in ds.contract.columns})
     raw = f"_live_raw_{ds.id}"
     con.execute("SET max_temp_directory_size = '0B'")  # never spill WHO-derived rows to disk
@@ -94,11 +103,13 @@ def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[st
         return '"' + ident.replace('"', '""') + '"'
 
     con.execute(f"CREATE TEMP TABLE {q(raw)} ({', '.join(q(f) + ' VARCHAR' for f in fields)})")
-    if records:
-        marks = ", ".join("?" for _ in fields)
-        con.executemany(
-            f"INSERT INTO {q(raw)} VALUES ({marks})",  # noqa: S608 - quoted contract identifiers, bound values
-            [[r.get(f) for f in fields] for r in records],
-        )
-    con.execute(f"CREATE TEMP TABLE {q(ds.id)} AS SELECT\n  {select_list(ds.contract)}\nFROM {q(raw)}")  # noqa: S608 - quoted contract identifiers
-    con.execute(f"DROP TABLE {q(raw)}")
+    try:
+        if records:
+            marks = ", ".join("?" for _ in fields)
+            con.executemany(
+                f"INSERT INTO {q(raw)} VALUES ({marks})",  # noqa: S608 - quoted contract identifiers, bound values
+                [[r.get(f) for f in fields] for r in records],
+            )
+        con.execute(f"CREATE TEMP TABLE {q(ds.id)} AS SELECT\n  {select_list(ds.contract)}\nFROM {q(raw)}")  # noqa: S608 - quoted contract identifiers
+    finally:
+        con.execute(f"DROP TABLE IF EXISTS {q(raw)}")
