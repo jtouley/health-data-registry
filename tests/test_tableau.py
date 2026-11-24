@@ -369,6 +369,8 @@ def test_apply_suppressed_by_empties_the_alias_too() -> None:
     unflagged = {"AGG(N)": 4, "AGG(T) flag": ""}
     assert tb.apply_suppressed_by(unflagged, {"AGG(N)": "AGG(T)"}) == unflagged
     assert tb.apply_suppressed_by(rec, {}) == rec
+    other_layer = {"AGG(Avg)": 2.5, "AGG(T) flag": "<6"}  # a mark of another layer: no count to suppress
+    assert tb.apply_suppressed_by(other_layer, {"AGG(N)": "AGG(T)"}) == other_layer
 
 
 @pytest.mark.parametrize("bad", [{"": "AGG(T)"}, {"AGG(N)": " "}, {"AGG(N)": "AGG(N)"}])

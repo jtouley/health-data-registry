@@ -263,8 +263,8 @@ def apply_suppressed_by(record: Mapping[str, Any], suppressed_by: Mapping[str, s
     out = dict(record)
     for count, marker_field in suppressed_by.items():
         marker = record.get(marker_field + FLAG_SUFFIX)
-        if not marker:
-            continue
+        if not marker or (count not in record and count + ALIAS_SUFFIX not in record):
+            continue  # nothing shown suppressed, or this mark (another layer of the chart) has no such count
         for k in (count, count + ALIAS_SUFFIX):
             if k in out:
                 out[k] = None
