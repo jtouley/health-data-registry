@@ -80,7 +80,7 @@ metrics:
     measure: ytd
     aggregation: cumulative_latest
     order_by: week
-    restated_by: {measure: prior_ytd}
+    restated_by: {measure: prior_ytd, resolution_policy: require_domain_review}
   - name: annual_own_only
     description: Annual cases, no restatement
     measure: ytd
@@ -157,40 +157,52 @@ def _series(reg: Registry, eng: Engine, places: list[str], **kw: Any) -> dict[st
     return out
 
 
-def test_each_year_reports_its_own_total_and_next_years_figure_side_by_side(tmp_path: Path) -> None:
+OWN, NEXT = "year_end_ytd", "subsequent_year_restatement"
+UNV = "unverified_restatement: as published in next year's table"
+NOT_FINAL = "; not a final disease count"
+
+
+def _obs(out: dict[str, Any]) -> list[list[Any]]:
+    """location, year, value, observation_type, period_status, flag."""
+    return [[r[0], r[1], r[2], r[5], r[6], r[7]] for r in out["rows"]]
+
+
+def test_each_year_keeps_its_own_total_and_next_years_figure_as_separate_observations(tmp_path: Path) -> None:
     reg, eng = _setup(tmp_path)
     out = _series(reg, eng, ["Michigan"])
-    assert out["columns"][:9] == ["location", "year", "value", "lower", "upper", "period_status", "flag",
-                                  "restated_next_year", "restated_status"]  # fmt: skip
-    assert [[r[0], r[1], r[2], r[5], r[6], r[7], r[8]] for r in out["rows"]] == [
-        # Own total 10 (not the weekly sum 3), next year's figure 12 beside it: never swapped.
-        ["Michigan", 2022, 10, "as published at year end (through week 3)", None, 12,
-         "as published in next year's table (through week 4)"],
-        # A 4-week year: the 2024 table reaches week 3 only, so it doesn't cover the year.
-        ["Michigan", 2023, 16, "as published at year end (through week 4)", None, 14,
-         "as published in next year's table (through week 3); covers weeks 1-3 of 4 only, not the whole year"],
-        ["Michigan", 2024, 3, "as published at year end (through week 3)", None, 4,
-         "as published in next year's table (through week 2); covers weeks 1-2 of 3 only, not the whole year"],
+    assert out["columns"][:8] == ["location", "year", "value", "lower", "upper", "observation_type",
+                                  "period_status", "flag"]  # fmt: skip
+    assert _obs(out) == [
+        # Own total 10 (not the weekly sum 3); next year's figure 12 is a separate, unverified observation.
+        ["Michigan", 2022, 10, OWN, "provisional: as published at year end (through week 3)", None],
+        ["Michigan", 2022, 12, NEXT, f"{UNV} (through week 4){NOT_FINAL}", None],
+        # A 4-week (53-week-like) year: the 2024 table reaches week 3 only, so it doesn't cover the year.
+        ["Michigan", 2023, 16, OWN, "provisional: as published at year end (through week 4)", None],
+        ["Michigan", 2023, 14, NEXT,
+         f"{UNV} (through week 3); covers weeks 1-3 of 4 only, not the whole year{NOT_FINAL}", None],
+        ["Michigan", 2024, 3, OWN, "provisional: as published at year end (through week 3)", None],
+        ["Michigan", 2024, 4, NEXT,
+         f"{UNV} (through week 2); covers weeks 1-2 of 3 only, not the whole year{NOT_FINAL}", None],
         # The number comes from week 1; week 2 is flagged U, and the row says so in the codebook's words.
-        ["Michigan", 2025, 1, "incomplete: running total last published at week 1 of 2; later weeks have no "
-         "number (flag at week 2: 'U' = unavailable), so this is not the year total", "U", None,
-         "no next-year table yet"],
+        ["Michigan", 2025, 1, OWN, "incomplete: running total last published at week 1 of 2; later weeks have no "
+         "number (flag at week 2: 'U' = unavailable), so this is not the year total", "U"],
     ]  # fmt: skip
-    assert not any("final" in str(c) for r in out["rows"] for c in r)
+    assert not any(str(c).startswith("final") or " final:" in str(c) for r in out["rows"] for c in r)
     notes = " ".join(out["notes"])
-    assert "neither is called final" in notes
+    assert "it is not a final disease count, and neither is final until a domain reviewer approves" in notes
     assert "'-' = no reported cases; 'U' = unavailable; 'N' = not reportable in this jurisdiction" in notes
 
 
 def test_empty_restatement_never_replaces_a_count(tmp_path: Path) -> None:
     reg, eng = _setup(tmp_path)
     out = _series(reg, eng, ["Ohio"])
-    assert [[r[1], r[2], r[5], r[6], r[7], r[8]] for r in out["rows"]] == [
-        [2023, 8, "as published at year end (through week 4)", None, None,
-         "next year's table has no number for this year (flag: 'N' = not reportable in this jurisdiction)"],
-        [2024, None, "no number published through week 3 (flag: '-' = no reported cases)", "-", None,
-         "next year's table has no number for this year (flag: 'N' = not reportable in this jurisdiction)"],
-        [2025, 5, "provisional: running total so far (through week 2)", None, None, "no next-year table yet"],
+    no_number = "unverified_restatement: next year's table has no number for this year (flag: 'N' = not reportable in this jurisdiction)"
+    assert [r[1:] for r in _obs(out)] == [
+        [2023, 8, OWN, "provisional: as published at year end (through week 4)", None],
+        [2023, None, NEXT, no_number, "N"],
+        [2024, None, OWN, "no number published through week 3 (flag: '-' = no reported cases)", "-"],
+        [2024, None, NEXT, no_number, "N"],
+        [2025, 5, OWN, "provisional: running total so far (through week 2)", None],
     ]  # fmt: skip
 
 
@@ -198,16 +210,17 @@ def test_renamed_area_joins_its_next_year_table(tmp_path: Path) -> None:
     reg, eng = _setup(tmp_path)
     for asked in (["Northern Mariana Islands"], ["Commonwealth of Northern Mariana Islands"]):
         out = _series(reg, eng, asked)
-        assert [[r[0], r[1], r[2], r[7]] for r in out["rows"]] == [
-            ["Northern Mariana Islands", 2024, 2, 3],
-            ["Northern Mariana Islands", 2025, 1, None],
+        assert [r[:4] for r in _obs(out)] == [
+            ["Northern Mariana Islands", 2024, 2, OWN],
+            ["Northern Mariana Islands", 2024, 3, NEXT],
+            ["Northern Mariana Islands", 2025, 1, OWN],
         ]
 
 
 def test_period_filter_still_sees_next_years_table(tmp_path: Path) -> None:
     reg, eng = _setup(tmp_path)
     out = _series(reg, eng, ["Michigan"], year_start=2023, year_end=2023)
-    assert [[*r[:3], r[7]] for r in out["rows"]] == [["Michigan", 2023, 16, 14]]
+    assert [r[:4] for r in _obs(out)] == [["Michigan", 2023, 16, OWN], ["Michigan", 2023, 14, NEXT]]
 
 
 def test_weekly_counts_are_never_the_annual_figure(tmp_path: Path) -> None:
@@ -227,7 +240,7 @@ def test_without_a_restatement_no_year_is_said_to_be_over(tmp_path: Path) -> Non
         ["MICHIGAN", 2022, 10, "provisional: running total so far (through week 3)"],
         ["MICHIGAN", 2023, 16, "provisional: running total so far (through week 4)"],
     ]
-    assert "restated" not in out["method"]
+    assert "restatement" not in out["method"]
     assert out["method"] == (
         "Running total (ytd) read at the last week of each year that has a number, labelled with that week; "
         "publisher total rows excluded. Weekly counts are never added up, because late reports land in the "
@@ -238,14 +251,24 @@ def test_without_a_restatement_no_year_is_said_to_be_over(tmp_path: Path) -> Non
 def test_method_says_the_two_figures_are_never_swapped(tmp_path: Path) -> None:
     reg, _ = _setup(tmp_path)
     cm = compile_metric(reg.get("toy_cases"), "annual", group_by=["state", "year"])
-    assert cm.columns == ["state", "year", "annual", "period_status", "flag", "restated", "restated_status"]
+    assert cm.columns == ["state", "year", "annual", "period_status", "flag", "restated", "restated_status",
+                          "restated_flag"]  # fmt: skip
     assert cm.method == (
         "Running total (ytd) read at the last week of each year that has a number, labelled with that week; "
-        "next year's table's figure for the same year (prior_ytd) is shown beside it as 'restated', with the "
-        "week it reaches. The two are never swapped or combined, because the publisher doesn't say they count "
-        "the same thing; publisher total rows excluded. Weekly counts are never added up, because late reports "
-        "land in the running total, not the week."
+        "next year's table's figure for the same year (prior_ytd) is kept as a separate observation, an "
+        "unverified restatement, with the week it reaches. The two are never swapped or combined and neither is "
+        "final until a domain reviewer approves that they count the same thing; publisher total rows excluded. "
+        "Weekly counts are never added up, because late reports land in the running total, not the week."
     )
+
+
+def test_a_restatement_needs_a_resolution_policy(tmp_path: Path) -> None:
+    bad = SEMANTIC.replace(", resolution_policy: require_domain_review", "")
+    with pytest.raises(RegistryError, match="resolution_policy"):
+        _registry(tmp_path, bad)
+    final = SEMANTIC.replace("require_domain_review", "treat_as_final")
+    with pytest.raises(RegistryError, match="resolution_policy"):
+        _registry(tmp_path / "x", final)
 
 
 def test_total_rows_are_left_out(tmp_path: Path) -> None:

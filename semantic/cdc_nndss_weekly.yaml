@@ -36,11 +36,11 @@ metrics:
     exclude_total_rows: false
     filters: ["upper(states) IN ('US RESIDENTS', 'U.S. RESIDENTS')"]
   - name: annual_cases
-    description: "Cases in an MMWR year: the year-to-date count at the last week of the year that has a number, labelled with that week. Next year's prior-year year-to-date for the same year is shown beside it (restated), never in its place, because the publisher doesn't say the two count the same thing. Weekly counts are not added up because late reports are added to the running total, not to the week."
+    description: "Cases in an MMWR year, as two separate observations: year_end_ytd, the year's own year-to-date count at the last week of the year that has a number (provisional, labelled with that week); and subsequent_year_restatement, next year's prior-year year-to-date for the same year (unverified_restatement, not a final disease count). Neither is final until a domain reviewer approves that they count the same thing. Weekly counts are not added up because late reports are added to the running total, not to the week."
     measure: cases_year_to_date
     aggregation: cumulative_latest
     order_by: mmwr_week
-    restated_by: {measure: cases_prior_year_to_date}
+    restated_by: {measure: cases_prior_year_to_date, resolution_policy: require_domain_review}
     exclude_total_rows: true
     filters: []
   - name: us_resident_annual_cases
@@ -48,7 +48,7 @@ metrics:
     measure: cases_year_to_date
     aggregation: cumulative_latest
     order_by: mmwr_week
-    restated_by: {measure: cases_prior_year_to_date}
+    restated_by: {measure: cases_prior_year_to_date, resolution_policy: require_domain_review}
     exclude_total_rows: false
     filters: ["upper(states) IN ('US RESIDENTS', 'U.S. RESIDENTS')"]
   - name: us_resident_weekly_cases

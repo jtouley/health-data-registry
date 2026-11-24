@@ -221,6 +221,7 @@ customProperties:
   - {property: licence, value: public-domain-us-federal}
   - {property: citation, value: "Centers for Disease Control and Prevention, National Healthcare Safety Network. National Healthcare Safety Network - Antimicrobial Resistance (2011-2025). https://data.cdc.gov/d/7wz3-n6um"}
   - {property: refresh, value: annual}
+  - {property: geographyBasis, value: "unresolved: the dataset doesn't say whether places are by facility location or patient residence (see openQuestions), so comparisons with residence-based figures are blocked"}
   - {property: unreliableRule, value: "Publisher: resistant counts and percent resistant are shown only when at least 20 isolates were tested; smaller cells are empty (column descriptions of isolates_resistant and percent_resistant)."}
   - property: openQuestions
     value:

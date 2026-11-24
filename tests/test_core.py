@@ -210,12 +210,15 @@ def test_get_series_csv(lake: Path, registry: Registry) -> None:
     )
     lines = out.splitlines()
     assert lines[0].startswith(
-        "location,year,value,lower,upper,period_status,flag,restated_next_year,restated_status,measure,"
-        "condition,case_status"
+        "location,year,value,lower,upper,observation_type,period_status,flag,measure,condition,case_status"
     )
-    assert lines[1].startswith("Michigan,2022,300,,,,,,,cases,Legionellosis,confirmed and probable")
-    assert lines[3].startswith("Michigan,2024,,,,,,,,cases")  # the publisher's 'N' stays empty, not 0
-    assert lines[4].startswith("Ohio,2023,400,,,,,,,cases")
+    assert lines[1].startswith(
+        "Michigan,2022,300,,,as_published,,,cases,Legionellosis,confirmed and probable"
+    )
+    assert lines[3].startswith(
+        "Michigan,2024,,,,as_published,,,cases"
+    )  # the publisher's 'N' stays empty, not 0
+    assert lines[4].startswith("Ohio,2023,400,,,as_published,,,cases")
     assert "# toy_cases has no rows for: Atlantis." in out
     assert "never a zero" in out
 
@@ -224,7 +227,7 @@ def test_get_series_mixed_measures_warns(lake: Path, registry: Registry) -> None
     eng = Engine(registry=registry, lake=lake)
     out = tools.get_series(registry, eng, condition="legionellosis", locations=["Michigan"], year_start=2023,
                            year_end=2023, fmt="json")  # fmt: skip
-    assert {r[9] for r in out["rows"]} == {"cases", "rate"}
+    assert {r[8] for r in out["rows"]} == {"cases", "rate"}
     assert out["notes"][0].startswith("Rows mix measures")
 
 

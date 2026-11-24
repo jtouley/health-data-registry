@@ -76,7 +76,7 @@ def test_places_asked_of_a_pooled_source_return_nothing_with_a_plain_note(
         "state, so nothing is shown for Michigan." in " ".join(out["notes"])
     )
     series = _json(tools.get_series(reg, eng, condition="syphilis", locations=["Michigan"], fmt="json"))
-    assert all(r[10] == "Syphilis" for r in series["rows"])
+    assert all(r[9] == "Syphilis" for r in series["rows"])
 
 
 def test_a_pooled_source_never_gets_a_gbd_location(setup: tuple[Registry, Engine]) -> None:
@@ -200,3 +200,40 @@ def test_caveats_name_the_c_auris_source_and_the_unreliable_rule(setup: tuple[Re
     assert "Values marked unreliable or suppressed: not stated in the contract" in str(
         tools.describe_dataset(plain, "toy_cases")
     )
+
+
+# ---------------------------------------------------------------- staff review: geography basis, denominators
+
+
+def test_unresolved_geography_basis_blocks_gbd_keys(tmp_path: Path) -> None:
+    blocked = CONTRACT.replace(
+        "customProperties:\n  - {property: openQuestions",
+        "customProperties:\n"
+        '  - {property: geographyBasis, value: "unresolved: facility location or patient residence"}\n'
+        '  - {property: rateDenominator, value: "residents per 100,000"}\n'
+        "  - {property: openQuestions",
+    )
+    reg = load_registry(write_registry(tmp_path / "reg", contract=blocked))
+    lake = tmp_path / "lake"
+    lake.mkdir()
+    f = tmp_path / "p.ndjson"
+    write_ndjson(f, RECORDS)
+    build_snapshot(
+        lake, reg.get("toy_cases"), [raw_fetch("https://data.cdc.gov/resource/t.json", RECORDS)], [f]
+    )
+    eng = Engine(registry=reg, lake=lake)
+    out = _json(
+        tools.get_aligned_with_gbd(reg, eng, condition="legionellosis", locations=["Michigan"], fmt="json")
+    )
+    assert out["rows"] and all(r[0] == "" and r[1] == "" and r[-1] == "" for r in out["rows"])
+    notes = out["notes"]
+    assert any("Comparison is blocked until a maintainer resolves it." in n for n in notes)
+    assert "toy_cases: places are by unresolved: facility location or patient residence." in notes
+    assert "toy_cases: rate denominator: residents per 100,000." in notes
+    assert not any("as real" in n for n in notes)
+    assert any(
+        "establish how the two differ in case definition, ascertainment, geography" in n for n in notes
+    )
+    text = str(tools.describe_dataset(reg, "toy_cases"))
+    assert "Places are by: unresolved: facility location or patient residence" in text
+    assert "Rate denominator: residents per 100,000" in text

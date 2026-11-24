@@ -255,7 +255,7 @@ def _compile_cumulative(
         f" || CASE WHEN c.last_flag <> '' THEN ' (flag: ' || {_flag_text(m_flag, 'c.last_flag')} || ')' ELSE '' END"
         f" WHEN c.v_at < c.last_at THEN 'incomplete: running total last published at {unit} ' || c.v_at"
         f" || ' of ' || c.last_at || {gap} || ', so this is not the {span} total'"
-        f" WHEN {{ended}} THEN 'as published at {span} end (through {unit} ' || c.v_at || ')'"
+        f" WHEN {{ended}} THEN 'provisional: as published at {span} end (through {unit} ' || c.v_at || ')'"
         f" ELSE 'provisional: running total so far (through {unit} ' || c.v_at || ')' END"
     )
     flag_out = "CASE WHEN c.v_at IS DISTINCT FROM c.last_at THEN nullif(c.last_flag, '') END"
@@ -269,21 +269,24 @@ def _compile_cumulative(
         ctes += f", nxt AS ({running(r_col, f'{t} - 1')})"
         join = " LEFT JOIN nxt n USING (" + ", ".join(_q(g) for g in [*others, tname]) + ")"
         status = status.replace("{ended}", "n.last_at IS NOT NULL")
+        # Until a domain reviewer approves the two as the same count (resolution_policy), the next table's figure
+        # is an unverified restatement: never a final disease count, never in place of the year's own total.
         r_status = (
             f"CASE WHEN n.last_at IS NULL THEN 'no next-{span} table yet'"
-            f" WHEN n.v IS NULL THEN 'next {span}''s table has no number for this {span}'"
+            f" WHEN n.v IS NULL THEN 'unverified_restatement: next {span}''s table has no number for this {span}'"
             f" || CASE WHEN n.last_flag <> '' THEN ' (flag: ' || {_flag_text(r_flag, 'n.last_flag')} || ')' ELSE '' END"
-            f" ELSE 'as published in next {span}''s table (through {unit} ' || n.v_at || ')'"
+            f" ELSE 'unverified_restatement: as published in next {span}''s table (through {unit} ' || n.v_at || ')'"
             f" || CASE WHEN n.v_at < c.last_at THEN '; covers {unit}s 1-' || n.v_at || ' of ' || c.last_at"
-            f" || ' only, not the whole {span}' ELSE '' END END"
+            f" || ' only, not the whole {span}' ELSE '' END || '; not a final disease count' END"
         )
         sel += [
             f"{status} AS period_status",
             f"{flag_out} AS flag",
             "n.v AS restated",
             f"{r_status} AS restated_status",
+            "CASE WHEN n.v_at IS DISTINCT FROM n.last_at THEN nullif(n.last_flag, '') END AS restated_flag",
         ]
-        columns += ["restated", "restated_status"]
+        columns += ["restated", "restated_status", "restated_flag"]
     else:
         # Without a restatement there is no sign the period has ended, so the last week read is provisional.
         sel += [f"{status.replace('{ended}', 'false')} AS period_status", f"{flag_out} AS flag"]
@@ -297,9 +300,9 @@ def _compile_cumulative(
         f"number, labelled with that {unit}"
         + (
             f"; next {span}'s table's figure for the same {span} "
-            f"({sem.measure(metric.restated_by.measure).name}) is shown beside it as 'restated', with the {unit} "
-            "it reaches. The two are never swapped or combined, because the publisher doesn't say they count the "
-            "same thing"
+            f"({sem.measure(metric.restated_by.measure).name}) is kept as a separate observation, an unverified "
+            f"restatement, with the {unit} it reaches. The two are never swapped or combined and neither is final "
+            "until a domain reviewer approves that they count the same thing"
             if metric.restated_by
             else ""
         )

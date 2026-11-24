@@ -97,7 +97,8 @@ Claude's menu of starters. If your Claude app doesn't show them, copy them from 
 
 You ask: *"How many clinical C. auris cases did Michigan and Ohio report each year from 2022 to 2025?"*
 
-Claude calls `get_series` and gets back this table (trimmed to the columns that matter here):
+Claude calls `get_series`, which returns each figure as its own row with an `observation_type`; here they are
+side by side, trimmed to the columns that matter:
 
 | Place | Year | Cases, as published at year end | Same year in next year's table |
 |---|---|---|---|
@@ -114,10 +115,12 @@ Every row also carries its source (`cdc_nndss_weekly`, [data.cdc.gov/d/x9gk-5huc
 when it was fetched, and a plain note on how the number was read:
 
 - **Cases, as published at year end** is CDC's running year-to-date count at the last week of that year that has
-  a number. A year still open says **provisional**; a year whose later weeks have no number says **incomplete**.
-- **Same year in next year's table** is the figure CDC's following yearly table gives for that year, with the
-  week it reaches. CDC doesn't say the two count the same thing, and for some states they differ a lot, so both
-  are shown and neither is called final.
+  a number (`year_end_ytd`). It is always **provisional**; a year whose later weeks have no number says
+  **incomplete**.
+- **Same year in next year's table** (`subsequent_year_restatement`) is the figure CDC's following yearly table
+  gives for that year, with the week it reaches. CDC doesn't say the two count the same thing, and for some
+  states they differ a lot, so both are kept and this one is marked an unverified restatement: not a final
+  disease count. Neither is final until a domain reviewer confirms they count the same thing.
 - Counts are read from CDC's running year-to-date column. Adding up the weekly column would under-count badly,
   because late reports land in the running total, not in the week: for Michigan in 2023 that gives 62, not 103.
 - An empty count is never a zero: the flag column carries CDC's reason (`-` no reported cases, `U` unavailable,
@@ -176,7 +179,8 @@ Put these rules in your Claude Project's instructions, or run the `set_up_my_pro
 - Every number cites its tool output: "GBD 2023 (IHME)", or the source web address, fetch date and dataset
   version that health-data-registry returns.
 - Report GBD's 95% uncertainty intervals. Observed counts have none; say so.
-- Don't call a gap between GBD and observed data real unless it falls outside GBD's 95% interval.
+- Before interpreting any difference between GBD and observed data, establish how they differ in case
+  definition, ascertainment, geography and uncertainty model; GBD's interval is not a test of observed data.
 - Flag provisional, suppressed or partial-geography rows.
 - Don't compare age-standardised rates across different standard populations.
 - Population-level patterns are hypotheses, not causes. No patient information in any chat.

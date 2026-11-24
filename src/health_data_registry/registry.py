@@ -187,6 +187,14 @@ class Contract:
     raw: Mapping[str, Any] = field(repr=False, compare=False)
     # The rule, if any, by which the publisher suppresses or marks unreliable values (from its own codebook).
     unreliable_rule: str | None = None
+    # What a place means here (e.g. "patient residence"); "unresolved: ..." blocks GBD comparisons by place.
+    geography_basis: str | None = None
+    # The population a published rate divides by, in plain words.
+    rate_denominator: str | None = None
+
+    @property
+    def geography_basis_unresolved(self) -> bool:
+        return (self.geography_basis or "").lower().startswith("unresolved")
 
     def column(self, name: str) -> Column:
         for c in self.columns:
@@ -302,10 +310,14 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
         table_shape=str(obj_custom.get("tableShape", "")),
         open_questions=tuple(str(q) for q in oq),
         raw=doc,
-        unreliable_rule=None
-        if top_custom.get("unreliableRule") is None
-        else str(top_custom["unreliableRule"]),
+        unreliable_rule=_text(top_custom.get("unreliableRule")),
+        geography_basis=_text(top_custom.get("geographyBasis")),
+        rate_denominator=_text(top_custom.get("rateDenominator")),
     )
+
+
+def _text(value: Any) -> str | None:
+    return None if value is None else str(value)
 
 
 # --------------------------------------------------------------------------------------------- semantic
@@ -342,6 +354,9 @@ class Restatement(_Strict):
     """
 
     measure: str  # cumulative count for the previous period, as published in the current period's table
+    # How the two figures are reconciled. The only policy so far: a domain reviewer must approve that they count
+    # the same thing before either is called final; until then the restatement is an unverified observation.
+    resolution_policy: Literal["require_domain_review"]
 
 
 class Metric(_Strict):

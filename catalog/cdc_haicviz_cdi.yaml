@@ -24,7 +24,7 @@ source:
 codebook_url: https://www.cdc.gov/ncezid/dpei/eip/index.html
 caveats:
   - "Population-based surveillance in the Emerging Infections Program catchment areas, not all US states; the figures are pooled across sites and give no state-level values."
-  - "Latest data year is 2022 (checked 2026-11-24) although the dataset was updated in 2025."
+  - "Coverage after 2022 is unknown: the latest data year is 2022 (checked 2026-11-24) although the dataset was updated in 2025. Not known to be discontinued; later years may not be published yet."
   - "Cases are split into healthcare-associated (HA) and community-associated (CA) by the EIP epidemiologic classification."
   - "Topic and grouping labels change spelling between years ('Number of Cases' vs 'Number of cases'; 'Epi Class' vs 'Epi class'); filters must ignore case."
   - "Counts and rates for the same series are separate rows; rates are never added."
