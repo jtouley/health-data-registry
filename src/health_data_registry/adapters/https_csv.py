@@ -51,6 +51,11 @@ def _keys(spec: WideToLong, header: list[str]) -> list[str]:
         raise ValueError(f"no columns named {spec.stubs[0]}<key> in the file")
     if any(v != first for v in found.values()):
         raise ValueError("the stubs do not have the same keys, so the file can't be pivoted row for row")
+    if spec.expected_keys and set(order) != set(spec.expected_keys):
+        raise ValueError(
+            f"the file has {spec.stubs[0]} columns for {', '.join(order)}, but its layout lists exactly "
+            f"{', '.join(spec.expected_keys)}; a renamed, missing or extra column is not pivoted"
+        )
     return order
 
 

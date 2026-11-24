@@ -78,6 +78,9 @@ class WideToLong(_Strict):
     stubs: list[str]
     key_field: str
     key_pattern: str = r"\d{4}"
+    # The exact keys the file layout (codebook) lists, e.g. the vintage's years; a file with any other set of
+    # keys (a year renamed, missing or added) is refused rather than pivoted. Empty: not declared.
+    expected_keys: list[str] = Field(default_factory=list)
 
 
 class Reshape(_Strict):

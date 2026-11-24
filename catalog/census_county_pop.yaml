@@ -28,6 +28,8 @@ source:
       stubs: [POPESTIMATE]
       key_field: YEAR
       key_pattern: "\\d{4}"
+      # Vintage 2025 file layout (codebook_url): POPESTIMATE2020 through POPESTIMATE2025, nothing else.
+      expected_keys: ["2020", "2021", "2022", "2023", "2024", "2025"]
 codebook_url: https://www2.census.gov/programs-surveys/popest/technical-documentation/file-layouts/2020-2025/CO-EST2025-ALLDATA.pdf
 caveats:
   - "These are Census Bureau estimates of the resident population on July 1 of each year, not counts; each new vintage revises every earlier year, so a rate's denominator can change between releases."

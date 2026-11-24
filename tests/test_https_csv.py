@@ -149,3 +149,23 @@ def test_weekly_series_rules() -> None:
                 {**ok, "age_dimension": "nope"}):  # fmt: skip
         with pytest.raises(ValidationError):
             SemanticModel.model_validate({**base, "series": [bad]})
+
+
+def test_the_layouts_year_columns_are_required_exactly() -> None:
+    """Outside review: a renamed, missing or extra POPESTIMATE<year> column fails loudly, never pivots."""
+    from health_data_registry.adapters import pages
+
+    def with_years(years: list[str]) -> CatalogEntry:
+        e = entry()
+        assert e.source.reshape is not None
+        wtl = e.source.reshape.wide_to_long.model_copy(update={"expected_keys": years})
+        reshape = e.source.reshape.model_copy(update={"wide_to_long": wtl})
+        return e.model_copy(update={"source": e.source.model_copy(update={"reshape": reshape})})
+
+    assert list(pages(with_years(["2020", "2021"]), fetcher(), fields=["YEAR", "POPESTIMATE"]))
+    for years in (["2020", "2021", "2022"], ["2020"]):
+        with pytest.raises(ValueError, match="layout lists exactly"):
+            list(pages(with_years(years), fetcher(), fields=["YEAR", "POPESTIMATE"]))
+    renamed = FILE.replace(b"POPESTIMATE2021", b"POPESTIMATE2O21")
+    with pytest.raises(ValueError, match="layout lists exactly"):
+        list(pages(with_years(["2020", "2021"]), fetcher(renamed), fields=["YEAR", "POPESTIMATE"]))
