@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Adapted from md_data_explorer tests/sql/test_validate.py and tests/sql/test_sandbox.py (MIT).
+# Adapted from the author's earlier MIT-licensed work (see NOTICE).
 """Read-only SQL guard and engine sandbox: refusals, regeneration, limits, joins, escapes, timeout."""
 
 from __future__ import annotations

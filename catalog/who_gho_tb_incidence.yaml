@@ -30,7 +30,7 @@ caveats:
   - "These are WHO model estimates with uncertainty bounds, not notified case counts; quote the bounds with the estimate."
   - "Incidence includes new and relapse tuberculosis of all forms, including people with HIV, per 100,000 population per year."
   - "WHO re-estimates the whole series each year, so earlier years can change between releases."
-  - "WHO terms are non-commercial and share-alike; the data are fetched from WHO at run time, never mirrored, and the terms are shown with every result."
+  - "WHO's Terms and Conditions for datasets (https://www.who.int/about/policies/publishing/data-policy/terms-and-conditions, read 2026-11-24) allow use for public health purposes with attribution, forbid use in promoting a commercial enterprise, and allow only minimal changes without WHO's written authorization; the data are fetched from WHO at run time, never mirrored, and the terms are shown with every result."
   - "Rows for WHO regions, World Bank income groups and the globe are aggregates, not countries; never add rates."
   - "Country is given as an ISO 3166-1 alpha-3 code; GHO WHO regions differ from GBD regions."
 gbd:

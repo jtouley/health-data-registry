@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Adapted from md_data_explorer src/clinical_analytics/sql/validate.py, sql/sandbox.py,
-# sql/render.py and sql/errors.py (MIT).
+# Adapted from the author's earlier MIT-licensed work (see NOTICE).
 """Read-only SQL over catalogued public datasets: a static guard, then a locked-down engine.
 
 ``query_sql`` is the escape hatch for questions no metric covers, so the SQL it runs is typed by a

@@ -13,12 +13,8 @@ Adapted material
 Parts of this repository (GitHub workflows and repository templates, SECURITY.md,
 CONTRIBUTING.md, CODE_OF_CONDUCT.md, CITATION.cff, the pre-commit and Makefile
 patterns, and code patterns for contracts, evaluation and the SQL sandbox) are
-adapted from these projects by the same author:
-
-  coffee-data-tracker  https://github.com/jtouley/coffee-data-tracker
-  md_data_explorer     https://github.com/jtouley/md_data_explorer
-
-Both are distributed under the MIT License, reproduced here:
+adapted from earlier work by the same author, distributed under the MIT License,
+reproduced here:
 
 MIT License
 

@@ -6,7 +6,7 @@
 
 ## Context
 
-The sibling repos, coffee-data-tracker and md_data_explorer, use MIT. ODCS, the contract standard this repo builds
+The author's earlier projects, from which some code is adapted, use MIT. ODCS, the contract standard this repo builds
 on, uses Apache-2.0. Apache-2.0 adds an explicit patent grant. OpenSSF Scorecard and Best Practices need a
 recognised open-source licence at the root either way.
 
@@ -18,6 +18,6 @@ keeps its publishers' terms, recorded in `licenses/` and in each catalog entry.
 ## Consequences
 
 - Matches ODCS and gives contributors and users a patent grant.
-- Differs from the sibling repos; code ported from them (MIT) keeps its notice.
+- Differs from that earlier work; code adapted from it (MIT) keeps its notice (NOTICE).
 - If the maintainer chooses MIT instead, this ADR is superseded and `LICENSE`, `NOTICE`, `pyproject.toml` and the
   README badge change together, before the first release.

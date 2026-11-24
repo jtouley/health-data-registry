@@ -8,8 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
-- Repository scaffolding under the Apache License 2.0, with a NOTICE for material adapted from
-  coffee-data-tracker and md_data_explorer (MIT).
+- Repository scaffolding under the Apache License 2.0, with a NOTICE for material adapted from the author's
+  earlier MIT-licensed work.
 - SECURITY.md (private reporting through GitHub advisories, 14-day first response), CONTRIBUTING.md,
   CODE_OF_CONDUCT.md (Contributor Covenant 2.1), CITATION.cff, CODEOWNERS, pull request and issue templates
   (bug, dataset request, wrong number).

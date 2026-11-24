@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Adapted from md_data_explorer src/clinical_analytics/storage/url_fetch.py (MIT).
+# Adapted from the author's earlier MIT-licensed work (see NOTICE).
 """Fetch one resource from a catalogued publisher over HTTPS, refusing anything else.
 
 Every URL this package fetches comes from a reviewed catalog entry, but a catalog entry can be

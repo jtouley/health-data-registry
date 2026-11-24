@@ -1,6 +1,6 @@
 # ODPS data product: the open health data hub on Hugging Face, and the output ports it serves. Each port is one
 # catalogued source; its contract is the ODCS file in this folder whose id is the port's contractId. Follows the
-# ODPS version coffee-data-tracker's contracts/coffee-data.odps.yaml uses (Bitol ODPS v1.1.0).
+# Bitol ODPS v1.1.0.
 # tests/test_publish.py checks every port against the catalog and contracts, so the two never drift apart.
 apiVersion: v1.1.0
 kind: DataProduct
@@ -20,8 +20,9 @@ description:
     data files: the MCP server reads them live from the publisher per question and keeps no copy.
   limitations: >-
     Only sources whose licence allows redistribution are hosted (US federal public domain today). Publishers'
-    suppression and missing-value codes are kept exactly as published: an empty cell is never a zero and is
-    never filled in. Contracts are drafts until a maintainer reviews them.
+    suppression and missing-value codes are kept exactly as published: an empty cell is never silently turned
+    into a zero and is never filled in. The only exception is a publisher's own no-cases code (NNDSS '-'), which
+    is read as 0 and labelled as such. Contracts are drafts until a maintainer reviews them.
 tags: [public-health, infectious-disease, surveillance, open-data, weekly]
 authoritativeDefinitions:
   - type: license

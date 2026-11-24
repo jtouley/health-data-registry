@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Adapted from md_data_explorer tests/storage/test_url_fetch.py and tests/fixtures/https_server.py (MIT).
+# Adapted from the author's earlier MIT-licensed work (see NOTICE).
 """HTTPS fetcher: allowlist, SSRF address checks, redirects, rebinding, size, time, proxy tunnel.
 
 Every request goes to a local HTTPS server on 127.0.0.1 with a throwaway certificate; fake DNS

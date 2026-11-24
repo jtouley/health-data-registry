@@ -1,9 +1,9 @@
 """export-public: publish the redistributable sources to the open health data hub, and list the rest.
 
-Ported from coffee-data-tracker's src/coffeedata/public.py (MIT, same owner): one commit per export with a
+Adapted from the author's earlier MIT-licensed work (see NOTICE): one commit per export with a
 manifest.json beside the licence text, holding the release id and run date, the contract and data licence, and
 each file's sha256 and row count; the commit is tagged release-<run date> so a study can pin the week it used.
-Unlike coffee-data-tracker, a tag is never moved or deleted: a correction for the same run date is a new release
+A tag is never moved or deleted: a correction for the same run date is a new release
 id under release-<run date>.2 (.3, ...), and CHANGELOG.md names the release it supersedes.
 
 Destinations: hf://datasets/<org>/<name> (staged in build/hub, then one commit), or a local directory.
@@ -110,7 +110,7 @@ def sha256_file(path: Path) -> str:
 
 
 def hf_repo_id(url: str) -> str:
-    """`hf://datasets/<owner>/<name>[@rev][/path]` -> `<owner>/<name>` (as in coffee-data-tracker)."""
+    """`hf://datasets/<owner>/<name>[@rev][/path]` -> `<owner>/<name>`."""
     repo = "/".join(url.removeprefix(HF_PREFIX).split("@")[0].strip("/").split("/")[:2])
     if not url.startswith(HF_PREFIX) or repo.count("/") != 1 or not all(repo.split("/")):
         raise ValueError(f"{url!r} is not hf://datasets/<org>/<name>")
@@ -947,7 +947,7 @@ def _tagged_release(api: Any, repo_id: str, tag: str) -> str | None:
 
 
 def upload_hf(out: Path, dest: str, release: dict[str, Any], api: Any = None) -> str:
-    """One commit with the release, then its new tag on that commit (after coffee-data-tracker's _upload_hf).
+    """One commit with the release, then its new tag on that commit.
 
     The token is read only from HF_TOKEN at run time. Tags are immutable: this never deletes or moves one, and
     refuses if the release's tag already exists (export_public picks a new tag for a correction).
