@@ -53,6 +53,19 @@ inputPorts:
       - type: canonicalUrl
         url: https://www.census.gov/programs-surveys/popest.html
         description: Census Bureau Population Estimates Program.
+  - name: croiconference-org
+    tags: [croi, html]
+    customProperties:
+      - property: description
+        value: >-
+          CROI's searchable abstract pages (server-rendered HTML), crawled at its robots.txt crawl delay into a
+          private store; never mirrored publicly.
+      - property: license
+        value: croi-metadata-index
+    authoritativeDefinitions:
+      - type: canonicalUrl
+        url: https://www.croiconference.org/search-abstracts/
+        description: CROI abstract search.
   - name: who-gho
     tags: [who, odata]
     customProperties:
@@ -105,6 +118,22 @@ outputPorts:
     type: tables
     version: 0.1.0
     contractId: who_gho_tb_incidence
+    customProperties:
+      - {property: hosted, value: false}
+  - name: croi_abstracts_index
+    description: >-
+      CROI conference abstracts, metadata index. Listed, not hosted: kept in its private store until the
+      maintainer confirms the metadata may be redistributed.
+    type: tables
+    version: 0.1.0
+    contractId: croi_abstracts_index
+    customProperties:
+      - {property: hosted, value: false}
+  - name: croi_abstracts_text
+    description: CROI abstract text (copyright CROI Foundation). Listed, not hosted; private store only.
+    type: tables
+    version: 0.1.0
+    contractId: croi_abstracts_text
     customProperties:
       - {property: hosted, value: false}
 customProperties:

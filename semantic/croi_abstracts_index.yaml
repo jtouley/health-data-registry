@@ -1,0 +1,14 @@
+dataset: croi_abstracts_index
+version: 0.1.0
+dimensions:
+  - {name: abstract_number, column: abstract_number, type: categorical, description: "CROI's abstract or electronic poster number."}
+  - {name: year, column: year, type: time, description: "Conference year."}
+  - {name: session_type, column: session_type, type: categorical, description: "Kind of session, e.g. poster session."}
+  - {name: category, column: category, type: categorical, description: "CROI's topic category."}
+  - {name: condition, column: condition_tags, type: categorical, description: "Conditions named, by our word rules."}
+  - {name: design, column: design_tags, type: categorical, description: "Study designs named, by our word rules."}
+  - {name: data_source, column: data_source_tags, type: categorical, description: "Kinds of data named, by our word rules."}
+  - {name: geography, column: geography_tags, type: categorical, description: "Countries and regions named, by our word rules."}
+measures: []
+metrics: []
+series: []

@@ -429,6 +429,8 @@ class Engine:
         con = duckdb.connect(":memory:")
         parquet: list[str] = []
         for ds in self.registry:
+            if ds.entry.tier == "private":
+                continue  # private stores are read by private.py for the tools that use them, never as tables
             if not ds.entry.licence.redistribution:
                 table = self._live.get(ds.id)
                 if table is None:
@@ -472,6 +474,8 @@ class Engine:
         """Bring one source in: from the hub release, or live from the publisher (memory only)."""
         from health_data_registry.hub import HubError
 
+        if ds.entry.tier == "private":
+            return False  # never fetched per question: built by the maintainer's crawl into its private store
         if ds.entry.licence.redistribution:
             if self.hub is None:
                 return False
@@ -538,6 +542,11 @@ class Engine:
                 "hub": f"the open data hub, release {m.release_ref} ({m.release_id})",
                 "publisher": f"{ds.entry.publisher}, read live at {m.retrieved_at[:16]} UTC and not stored",
             }.get(m.origin, m.origin)
+        elif ds.entry.tier == "private":
+            origin = (
+                f"this source's private store (its terms forbid public copies); when that is empty, links to "
+                f"{ds.entry.publisher}'s own pages"
+            )
         elif ds.entry.licence.redistribution:
             origin = (
                 f"not loaded yet: the open data hub ({self.hub.url}) on first use"

@@ -88,7 +88,7 @@ class Reshape(_Strict):
 
 
 class Source(_Strict):
-    portal: Literal["socrata", "who_gho", "https_csv"]
+    portal: Literal["socrata", "who_gho", "https_csv", "croi"]
     host: str
     dataset: str
     landing_url: str
@@ -144,6 +144,14 @@ Shape = Literal[
 ]
 
 
+# Where a source's rows may live (ADR 0009, licences decide mirroring):
+#   public   redistribution allowed: snapshotted in the lake and published on the open data hub
+#   live     redistribution forbidden: read from the publisher per question, in memory only, never stored
+#   private  redistribution forbidden: kept only in that source's own private store (lake/private/<id>/ locally,
+#            one private Hugging Face dataset per source for the hosted server), never in a public release
+Hosting = Literal["public", "live", "private"]
+
+
 # The hub's infectious-disease areas: one Hugging Face collection per area, and a tag on each dataset card.
 IdArea = Literal[
     "hiv",
@@ -181,6 +189,23 @@ class CatalogEntry(_Strict):
     contract: str
     semantic_model: str
     status: Literal["draft", "reviewed"]
+    # Unset: public when the licence allows redistribution, else live. Set "private" to keep a restricted
+    # source in its own private store (store.private) instead of reading it live.
+    hosting: Hosting | None = None
+
+    @property
+    def tier(self) -> Hosting:
+        if self.hosting is not None:
+            return self.hosting
+        return "public" if self.licence.redistribution else "live"
+
+    @model_validator(mode="after")
+    def _hosting_matches_licence(self) -> CatalogEntry:
+        if self.hosting == "public" and not self.licence.redistribution:
+            raise ValueError("hosting: public needs licence.redistribution: true")
+        if self.hosting in ("live", "private") and self.licence.redistribution:
+            raise ValueError(f"hosting: {self.hosting} is for sources whose licence forbids redistribution")
+        return self
 
     @field_validator("id")
     @classmethod
@@ -752,6 +777,15 @@ def check_predicate(sql: str, columns: frozenset[str], *, where: str) -> None:
 def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticModel) -> None:
     if semantic.dataset != entry.id:
         raise RegistryError(f"{entry.id}: semantic model names dataset {semantic.dataset!r}")
+    top = _custom(contract.raw.get("customProperties"))
+    if "redistribution" in top and bool(top["redistribution"]) != entry.licence.redistribution:
+        raise RegistryError(f"{entry.id}: the contract and the catalog disagree on redistribution")
+    if "hosting" in top and top["hosting"] != entry.tier:
+        raise RegistryError(
+            f"{entry.id}: the contract says hosting {top['hosting']!r} but the catalog says {entry.tier!r}"
+        )
+    if entry.tier == "private" and top.get("hosting") != "private":
+        raise RegistryError(f"{entry.id}: a private-tier source's contract must say hosting: private too")
     cols = contract.column_names
     if contract.total_rows:
         check_predicate(contract.total_rows, cols, where=f"{entry.id}: totalRows")

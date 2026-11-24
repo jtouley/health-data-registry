@@ -1,0 +1,33 @@
+id: croi_abstracts_text
+title: CROI conference abstracts (abstract text, private store)
+agency: CROI Foundation
+publisher: "Conference on Retroviruses and Opportunistic Infections (CROI Foundation; organised with IAS-USA)"
+level: international
+country: null
+research_areas: [infectious_disease, research_landscape]
+id_areas: [hiv, stis, hepatitis, tb]
+years: {start: 2014, end: null}
+geography: [world]
+shape: registry
+grain: "One row is the text of one CROI abstract in one conference year (abstract number plus year), as shown on its page on CROI's site."
+refresh: annual
+licence:
+  id: croi-abstract-text
+  redistribution: false
+  terms_url: https://www.croiconference.org/
+hosting: private
+citation: "Conference on Retroviruses and Opportunistic Infections (CROI) <year>, abstract <abstract_number>. Abstract text © CROI Foundation. <page_url> (accessed <retrieved_at>)."
+source:
+  portal: croi
+  host: www.croiconference.org
+  dataset: abstract-pages
+  landing_url: https://www.croiconference.org/search-abstracts/
+  api_url: https://www.croiconference.org/search-abstracts/
+codebook_url: https://www.croiconference.org/search-abstracts/
+caveats:
+  - "Abstract text © CROI Foundation: copy or print for personal, non-commercial use only. Kept only in this source's private store, shown to the fellow as a short excerpt with the link, never published."
+  - "Poster PDFs and figures are never copied; they are linked on CROI's site."
+  - "Delete every private copy with `health-data-registry purge-private croi_abstracts_text`; the tools then fall back to links."
+contract: contracts/croi_abstracts_text.odcs.yaml
+semantic_model: semantic/croi_abstracts_text.yaml
+status: draft

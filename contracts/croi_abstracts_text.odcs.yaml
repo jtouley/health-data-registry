@@ -1,0 +1,119 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: croi_abstracts_text
+name: CROI conference abstracts (abstract text, private store)
+version: 0.1.0
+status: draft
+domain: research_landscape
+description:
+  purpose: The text of each CROI abstract, kept only in a private store so find_prior_work can quote a short excerpt
+    with CROI's copyright line and the link.
+  usage: Short excerpts only, always with 'Abstract text © CROI Foundation' and the page link; never the full text
+    in a public answer or artifact.
+  limitations: Text as shown on the page; figures and tables are not kept. Purge it with purge-private and the tools
+    fall back to links.
+  authoritativeDefinitions:
+  - type: canonicalUrl
+    url: https://www.croiconference.org/search-abstracts/
+    description: CROI's searchable abstract database (structure read 2026-11-24)
+servers:
+- id: croi
+  server: www.croiconference.org
+  type: https
+  location: https://www.croiconference.org/search-abstracts/
+  description: 'Server-rendered HTML: a listing of 10 abstracts a page and one page per abstract. Read one request
+    per robots.txt crawl delay.'
+schema:
+- name: croi_abstracts_text
+  physicalName: croi_abstracts_text
+  physicalType: table
+  logicalType: object
+  description: One row per abstract and conference year.
+  dataGranularityDescription: abstract number x conference year
+  customProperties:
+  - property: totalRows
+    value: none
+  - property: tableShape
+    value: registry
+  properties:
+  - name: abstract_number
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The abstract or electronic poster number CROI gives it, as on the abstract page.
+    primaryKey: true
+    customProperties:
+    - property: role
+      value: dimension
+  - name: year
+    physicalType: INTEGER
+    logicalType: integer
+    required: true
+    description: Conference year the abstract was presented in.
+    primaryKey: true
+    customProperties:
+    - property: role
+      value: dimension
+  - name: abstract_text
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The abstract body as shown on its page (Background, Methods, Results, Conclusions), one paragraph
+      a line. © CROI Foundation; private store only.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: page_url
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: Link to the abstract's page on CROI's site.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: retrieved_at
+    physicalType: VARCHAR
+    logicalType: timestamp
+    required: true
+    description: When the page was read (ISO 8601, UTC).
+    customProperties:
+    - property: role
+      value: attribute
+  - name: page_sha256
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: SHA-256 of the page as read, for provenance.
+    customProperties:
+    - property: role
+      value: attribute
+customProperties:
+- property: licence
+  value: croi-abstract-text
+- property: licenceNote
+  value: abstract text © CROI Foundation; personal, non-commercial use; kept in a private store, shown as short
+    excerpts with the link
+- property: redistribution
+  value: false
+- property: hosting
+  value: private
+- property: attribution
+  value: Abstract text © CROI Foundation; personal, non-commercial use only. Read it in full on CROI's site.
+- property: citation
+  value: Conference on Retroviruses and Opportunistic Infections (CROI) <year>, abstract <abstract_number>. Abstract
+    text © CROI Foundation. <page_url>
+- property: refresh
+  value: annual
+- property: unreliableRule
+  value: {kind: none, description: "None: a registry of conference abstracts; it holds no counts or rates."}
+- property: openQuestions
+  value:
+  - The private Hugging Face dataset for this source (<owner>/health-data-registry-private-croi-abstracts-text,
+    named as in docs/dev/naming.md) and its read-only Space secret are created by the maintainer; the code never
+    creates or uploads it.
+  - 'Terms: the CROI terms quoted in the spec (''copy, or print ... for personal, noncommercial use only ... may
+    not otherwise reproduce ... without prior written consent''; copyright CROI Foundation) were read during research,
+    not re-read here; terms_url points at the home page until the maintainer records the exact terms page.'
+  - Two pages can carry the same abstract number in a year (e.g. /abstract/1739-2025-td/ for a themed discussion
+    and the poster page). Rows are keyed on abstract number plus year, so the page read last wins; confirm whether
+    both pages should be kept.

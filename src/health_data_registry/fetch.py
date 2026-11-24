@@ -96,11 +96,14 @@ _ALWAYS_BLOCKED: Final = (
 class FetchRefused(Exception):
     """Nothing was fetched (or the response was discarded). ``code`` is for programs."""
 
-    def __init__(self, code: str, message: str, *, status: int | None = None) -> None:
+    def __init__(
+        self, code: str, message: str, *, status: int | None = None, location: str | None = None
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.status = status
+        self.location = location  # where a redirect pointed, when the fetch stopped at one
 
 
 @dataclass(frozen=True)
@@ -499,6 +502,7 @@ def fetch(
     max_bytes: int = 50_000_000,
     timeout: float = 60.0,
     headers: Mapping[str, str] | None = None,
+    max_redirects: int = MAX_REDIRECTS,
 ) -> FetchResult:
     """GET ``url`` from a catalogued host over HTTPS, following checked redirects. See the module doc.
 
@@ -508,6 +512,8 @@ def fetch(
         max_bytes: cap on the body, on the wire and after decompression.
         timeout: deadline for the whole fetch, redirects included, in seconds.
         headers: extra request headers (e.g. an API app token), sent only to the original host.
+        max_redirects: redirects to follow (at most ``MAX_REDIRECTS``). A polite crawler passes 0 so one call
+            is exactly one request; a redirect then raises ``too_many_redirects`` with its ``location``.
 
     Raises:
         FetchRefused: with a ``code`` and a plain-language ``message``.
@@ -517,6 +523,8 @@ def fetch(
         raise ValueError(f"max_bytes must be positive, got {max_bytes!r}")
     if not timeout > 0:
         raise ValueError(f"timeout must be positive, got {timeout!r}")
+    if not 0 <= max_redirects <= MAX_REDIRECTS:
+        raise ValueError(f"max_redirects must be between 0 and {MAX_REDIRECTS}, got {max_redirects!r}")
     extra = _check_headers(headers)
     proxy = _proxy_from_env()
     if proxy is not None:
@@ -526,7 +534,7 @@ def fetch(
     original = url.strip()
     origin_host = validate_url(original, allowed_hosts).hostname
     current = original
-    for hop in range(MAX_REDIRECTS + 1):
+    for hop in range(max_redirects + 1):
         parts = validate_url(current, allowed_hosts)
         host = (parts.hostname or "").lower()
         addresses = public_addresses(host)
@@ -556,6 +564,13 @@ def fetch(
                         "http_error", f"The publisher answered {status} with nowhere to go.", status=status
                     )
                 current = urljoin(current, location.strip())
+                if hop == max_redirects:
+                    raise FetchRefused(
+                        "too_many_redirects",
+                        f"The link redirected more than {max_redirects} times, so it was stopped.",
+                        status=status,
+                        location=current,
+                    )
                 logger.info("fetch redirect: host=%s status=%d hop=%d", host, status, hop)
                 continue
             if status != 200:
@@ -604,6 +619,6 @@ def fetch(
             retrieved_at=datetime.now(UTC),
         )
 
-    raise FetchRefused(
-        "too_many_redirects", f"The link redirected more than {MAX_REDIRECTS} times, so it was stopped."
+    raise FetchRefused(  # pragma: no cover - the last hop raises inside the loop
+        "too_many_redirects", f"The link redirected more than {max_redirects} times, so it was stopped."
     )

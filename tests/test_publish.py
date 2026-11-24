@@ -339,7 +339,8 @@ def test_restricted_data_staged_by_mistake_fails(
         out / "toy_cases" / "data" / "toy_cases.parquet", out / "toy_listed" / "data" / "x.parquet"
     )
     assert check_release(hub_registry, hub_lake, out) == [
-        "toy_listed: its terms forbid redistribution but data files were staged"
+        "toy_listed: its terms forbid redistribution but data files were staged",
+        "toy_listed: only a card and a manifest may be staged for it, not x.parquet",
     ]
     shutil.rmtree(out / "toy_listed" / "data")
     (out / "toy_cases" / "data" / "toy_cases.parquet").unlink()

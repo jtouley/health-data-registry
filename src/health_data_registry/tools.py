@@ -13,6 +13,7 @@ import io
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal, NamedTuple
 
 from health_data_registry import geo
@@ -372,6 +373,8 @@ def describe_dataset(
         "review": e.status,
         "last_fetched": _freshness(engine, ds),
         "provenance": engine.provenance(ds.id) if engine else None,
+        "hosting": e.tier,
+        "private_store": _private_store_line(ds, engine),
     }
     if fmt == "json":
         return info
@@ -408,6 +411,8 @@ def describe_dataset(
     if c.open_questions:
         lines += ["", "Not yet confirmed with the publisher:"] + [f"- {x}" for x in c.open_questions]
     lines += ["", f"How to cite: {e.citation}", f"Licence: {info['licence']}", f"Review status: {e.status}"]
+    if info["private_store"]:
+        lines.append(info["private_store"])
     if prov := info["provenance"]:
         lines += [
             f"Contract: {prov['contract_id']} version {prov['contract_version']}"
@@ -427,6 +432,23 @@ def describe_dataset(
             *prov["add_to_claude"],
         ]
     return "\n".join(lines) + "\n"
+
+
+def _private_store_line(ds: Dataset, engine: Engine | None) -> str | None:
+    """For a private-tier source: how many rows its private store holds, or the plain fallback note."""
+    from health_data_registry import private
+    from health_data_registry.store import lake_root
+
+    if not private.is_private(ds):
+        return None
+    found = private.read_rows(engine.lake if engine is not None else lake_root(), ds)
+    if found is None:
+        return (
+            "Private store: empty on this server (not built yet, or deleted), so answers give links to "
+            f"{ds.entry.publisher}'s own pages instead."
+        )
+    where = "this computer's private area" if found.origin == "local" else "its private hub dataset"
+    return f"Private store: {len(found.rows)} rows, read from {where}; never published."
 
 
 def suggest_datasets(registry: Registry, question: str, *, fmt: Fmt = "csv") -> Out:
@@ -901,15 +923,14 @@ def list_caveats(
     return Result(["source_id", "kind", "caveat"], rows).render(fmt)
 
 
-def find_prior_work(
-    registry: Registry,
-    *,
-    condition: str,
-    geography: str | None = None,
-    years: str | None = None,
-    dataset: str | None = None,
-    fmt: Fmt = "csv",
-) -> Out:
+INDEX_SOURCES = ("croi_abstracts_index",)  # the research landscape index; more conferences join later
+TEXT_SOURCE = {"croi_abstracts_index": "croi_abstracts_text"}
+EXCERPT_CHARS = 280
+MAX_PRIOR_WORK = 50
+_YEARS = re.compile(r"^\s*(\d{4})?\s*(?:(-|–|to)\s*(\d{4})?)?\s*$")
+
+
+def _not_built(condition: str, geography: str | None, fmt: Fmt) -> Out:
     where = f" in {geography}" if geography else ""
     return message(
         "The index of conference abstracts, case reports and health department reports isn't built yet, so "
@@ -918,6 +939,144 @@ def find_prior_work(
         fmt,
         refused="index_not_built",
     )
+
+
+def year_range(years: str | None) -> tuple[int | None, int | None]:
+    """'2023', '2020-2024', '2020-' or '-2019' as a closed or open range; ValueError otherwise."""
+    if not years:
+        return None, None
+    m = _YEARS.match(years)
+    if not m or not (m.group(1) or m.group(3)):
+        raise ValueError(f"'{years}' isn't a year or a range of years like 2020-2024")
+    lo = int(m.group(1)) if m.group(1) else None
+    hi = int(m.group(3)) if m.group(3) else (None if m.group(2) else lo)
+    return lo, hi
+
+
+def _rule_tags(rules: dict[str, tuple[str, ...]], text: str) -> set[str]:
+    return {t for t, pats in rules.items() if any(re.search(p, text, re.I) for p in pats)}
+
+
+def _matches(want: str, tags: str, *texts: str) -> bool:
+    """A row matches when its rule-based tags include the asked term's tag, or the words appear in it."""
+    from health_data_registry.adapters import croi
+
+    asked = _rule_tags({**croi.CONDITION_RULES, **croi.DESIGN_RULES, **croi.DATA_SOURCE_RULES,
+                        **croi.GEOGRAPHY_RULES}, want)  # fmt: skip
+    have = {t.strip() for t in (tags or "").split(";") if t.strip()}
+    if asked & have:
+        return True
+    pattern = rf"\b{re.escape(want.strip())}\b"
+    return any(t and re.search(pattern, t, re.I) for t in texts)
+
+
+def excerpt(text: str, limit: int = EXCERPT_CHARS) -> str:
+    """The opening of an abstract's body (its section labels dropped), cut at a word, never the whole text."""
+    lines = [
+        ln
+        for ln in text.splitlines()
+        if ln.strip().lower() not in {"background", "methods", "results", "conclusions", "conclusion"}
+    ]
+    body = " ".join(lines).strip()
+    cap = min(limit, len(body) * 2 // 3)  # never the whole text, however short
+    if cap < 40:
+        return ""
+    return body[:cap].rsplit(" ", 1)[0] + " …"
+
+
+def find_prior_work(
+    registry: Registry,
+    *,
+    condition: str,
+    geography: str | None = None,
+    years: str | None = None,
+    dataset: str | None = None,
+    fmt: Fmt = "csv",
+    lake: Path | None = None,
+) -> Out:
+    from health_data_registry import private
+    from health_data_registry.store import lake_root
+
+    lake = lake if lake is not None else lake_root()
+    try:
+        lo, hi = year_range(years)
+    except ValueError as e:
+        return message(f"{e}. Give one year (2023) or a range (2020-2024).", fmt, refused="bad_years")
+    rows: list[list[Any]] = []
+    notes: list[str] = []
+    held = 0
+    for sid in INDEX_SOURCES:
+        ds = registry.datasets.get(sid)
+        if ds is None or not private.is_private(ds):
+            continue
+        index = private.read_rows(lake, ds)
+        if index is None:
+            continue
+        held += len(index.rows)
+        text_ds = registry.datasets.get(TEXT_SOURCE.get(sid, ""))
+        texts: dict[tuple[str, int], str] = {}
+        text_found = (
+            private.read_rows(lake, text_ds) if text_ds is not None and private.is_private(text_ds) else None
+        )
+        for t in text_found.rows if text_found else []:
+            texts[(str(t["abstract_number"]), int(t["year"]))] = str(t.get("abstract_text") or "")
+        per_year: dict[int, int] = {}
+        for r in index.rows:
+            y = int(r["year"])
+            per_year[y] = per_year.get(y, 0) + 1
+            if (lo is not None and y < lo) or (hi is not None and y > hi):
+                continue
+            body = texts.get((str(r["abstract_number"]), y), "")
+            if not _matches(condition, r.get("condition_tags") or "", r.get("title") or "", body):
+                continue
+            if geography and not _matches(
+                geography, r.get("geography_tags") or "", r.get("title") or "", body
+            ):
+                continue
+            if dataset and not _matches(dataset, r.get("data_source_tags") or "", r.get("title") or "", body):
+                continue
+            rows.append(
+                ["CROI", y, r["abstract_number"], r["title"], r.get("session_type") or "", r["page_url"],
+                 r.get("poster_url") or "", excerpt(body) if body else ""]
+            )  # fmt: skip
+        coverage = ", ".join(f"{y}: {n}" for y, n in sorted(per_year.items()))
+        notes.append(
+            "CROI abstracts: the full text and posters are on CROI's site; open each link to read them. "
+            f"Abstracts held in this index by year: {coverage}."
+        )
+        if text_found is None:
+            notes.append(
+                "Excerpts aren't available here (the private text store is empty or was deleted), so only the links "
+                "are shown."
+            )
+        notes += private.notes(ds)
+        if text_found is not None and text_ds is not None:
+            notes += private.notes(text_ds)
+    if not held:
+        return _not_built(condition, geography, fmt)
+    rows.sort(key=lambda r: (-int(r[1]), str(r[2])))
+    if len(rows) > MAX_PRIOR_WORK:
+        notes.insert(
+            0, f"Showing the {MAX_PRIOR_WORK} most recent of {len(rows)} matches; narrow the years or place."
+        )
+        rows = rows[:MAX_PRIOR_WORK]
+    if not rows:
+        notes.insert(0, f"No indexed CROI abstract matches '{condition}'" + (f" in {geography}" if geography else "")
+                     + (f" for {years}" if years else "") + ". Search PubMed too: the index covers CROI only.")  # fmt: skip
+    else:
+        notes.insert(0, "Matches come from fixed word rules over each abstract's title and text, not from reading "
+                     "it; check each one. The index covers CROI only, so search PubMed too.")  # fmt: skip
+    cols = [
+        "conference",
+        "year",
+        "abstract_number",
+        "title",
+        "session_type",
+        "link",
+        "poster_link",
+        "excerpt",
+    ]
+    return Result(cols, rows, notes).render(fmt)
 
 
 def query_sql(engine: Engine, sql: str, *, fmt: Fmt = "csv") -> Out:

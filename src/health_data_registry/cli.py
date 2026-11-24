@@ -1,5 +1,5 @@
 """Command line: serve, refresh, fetch, export-public, check-contracts, validate, eval, publication-outlook,
-and the analysis tools."""
+index-croi, purge-private, find-prior-work, and the analysis tools."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def refresh(registry: Registry, ids: Sequence[str], *, max_rows: int | None, lak
         try:
             ds = registry.get(dataset_id)
             m = refresh_dataset(ds, lake, _fetcher(registry, FetchLog(lake, ds.id)), max_rows=max_rows)
-        except LiveOnly as e:  # restricted terms: never stored, read live by the server
+        except LiveOnly as e:  # restricted terms: never in the public lake (read live, or kept privately)
             print(f"skip {dataset_id}: {e}")
             continue
         except Exception as e:  # report and carry on with the next dataset
@@ -58,6 +58,9 @@ def check_contracts(registry: Registry) -> int:
     get = _fetcher(registry)
     bad = 0
     for ds in registry:
+        if ds.entry.source.portal == "croi":
+            print(f"skip {ds.id}: CROI pages are checked by the parser on every crawl (index-croi)")
+            continue
         try:
             served = publisher_fields(ds.entry, get)
         except Exception as e:
@@ -71,6 +74,47 @@ def check_contracts(registry: Registry) -> int:
         else:
             print(f"ok   {ds.id}: all {len(ds.contract.columns)} contract fields served")
     return 1 if bad else 0
+
+
+def index_croi(registry: Registry, year: int, *, max_requests: int | None, lake: Path) -> int:
+    from health_data_registry.croi_index import index_croi as run
+
+    try:
+        summary = run(registry, lake, year, max_requests=max_requests)
+    except ValueError as e:
+        print(f"index-croi stopped: {e}", file=sys.stderr)
+        return 1
+    for line in summary.lines():
+        print(line)
+    return 0 if summary.ok else 1
+
+
+def purge_private(source_id: str, *, lake: Path) -> int:
+    from health_data_registry.private import PrivateRefused, purge
+
+    try:
+        lines = purge(lake, source_id)
+    except PrivateRefused as e:
+        print(f"purge-private stopped: {e}", file=sys.stderr)
+        return 1
+    for line in lines:
+        print(line)
+    return 0
+
+
+def find_prior_work(registry: Registry, a: argparse.Namespace) -> int:
+    import json
+
+    from health_data_registry import tools
+
+    out = tools.find_prior_work(
+        registry, condition=a.condition, geography=a.geography, years=a.years, dataset=a.dataset,
+        fmt="json" if a.json else "csv", lake=lake_root(),
+    )  # fmt: skip
+    print(
+        out if isinstance(out, str) else json.dumps(out, indent=2), end="" if isinstance(out, str) else "\n"
+    )
+    return 0
 
 
 def run_eval(sealed: Path, run: Path | None) -> int:
@@ -202,6 +246,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     ev.add_argument("--sealed", type=Path, default=Path("eval/sealed"))
     ev.add_argument("--run", type=Path, default=None, help="JSON lines of a client's answers")
+    ic = sub.add_parser(
+        "index-croi",
+        help="index one CROI year into its private store, at CROI's robots.txt crawl delay (resumable)",
+    )
+    ic.add_argument("--year", type=int, required=True)
+    ic.add_argument(
+        "--max-requests", type=int, default=None, help="stop after this many requests (robots.txt included)"
+    )
+    pp = sub.add_parser(
+        "purge-private", help="delete every private copy of one source (local area and its hub dataset)"
+    )
+    pp.add_argument("source_id")
+    fp = sub.add_parser("find-prior-work", help="conference abstracts on a condition (same as the MCP tool)")
+    fp.add_argument("condition")
+    fp.add_argument("--geography")
+    fp.add_argument("--years", help="a year (2023) or a range (2020-2024)")
+    fp.add_argument("--dataset", help="a kind of data, e.g. surveillance")
+    fp.add_argument("--json", action="store_true", help="structured output instead of CSV")
     _add_analysis_commands(sub)
     po = sub.add_parser(
         "publication-outlook",
@@ -236,6 +298,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_eval(a.sealed, a.run)
     if a.cmd in ANALYSIS_COMMANDS:
         return run_analysis(registry, a)
+    if a.cmd == "index-croi":
+        return index_croi(registry, a.year, max_requests=a.max_requests, lake=lake_root())
+    if a.cmd == "purge-private":
+        return purge_private(a.source_id, lake=lake_root())
+    if a.cmd == "find-prior-work":
+        return find_prior_work(registry, a)
     if a.cmd == "check-contracts":
         return check_contracts(registry)
     if a.cmd == "export-public":
