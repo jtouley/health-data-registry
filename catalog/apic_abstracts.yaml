@@ -44,7 +44,7 @@ source:
     page_prefix: S
     from_pub_date: '2026-06-01'
     until_pub_date: '2026-06-30'
-    verified: false
+    verified: true
     evidence: 'Crossref, read 24 Nov 2026: AJIC volume 54 issue 6 (June 2026) holds 252 works, 223 of them on supplement
       pages (S1 on), with abstract-style titles; Crossref has no abstract text for them and their licence is Elsevier''s
       own (a few CC BY-NC-ND or CC BY). That these supplement pages are the APIC 2026 conference abstracts is inferred

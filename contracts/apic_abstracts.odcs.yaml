@@ -262,7 +262,8 @@ schema:
     logicalType: string
     required: false
     description: The article's licence as the API gives it (a URL such as https://creativecommons.org/licenses/by/4.0/,
-      or an id such as cc-by); empty when no API gives one.
+      or an id such as cc-by), or Crossref's text-mining licence when that is all it gives (such a licence never
+      allows keeping the text); empty when no API gives one.
     customProperties:
     - property: role
       value: attribute

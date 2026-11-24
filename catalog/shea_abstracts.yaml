@@ -43,7 +43,7 @@ source:
     issue: S1
     from_pub_date: '2026-06-01'
     until_pub_date: '2026-07-31'
-    verified: false
+    verified: true
     evidence: 'Crossref, read 24 Nov 2026: ASHE volume 6, issue S1 (published 23 June 2026) holds 310 works (DOIs
       10.1017/ash.2026.*), all CC BY 4.0 with abstracts. That this supplement is SHEA Spring 2026 is inferred from
       its timing and topics and is an open question until the maintainer confirms it on the journal''s issue page.'

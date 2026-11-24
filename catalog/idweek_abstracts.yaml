@@ -47,12 +47,13 @@ source:
     volume: '13'
     issue: Supplement_1
     doi_prefix: 10.1093/ofid/ofaf695.
-    from_pub_date: '2025-10-01'
-    until_pub_date: '2026-03-31'
-    verified: false
+    from_pub_date: '2026-01-01'
+    until_pub_date: '2026-01-31'
+    verified: true
     evidence: 'Crossref, read 24 Nov 2026: OFID volume 13, issue Supplement_1 (published January 2026) holds 2,368
       works, all under 10.1093/ofid/ofaf695.*, each title starting with an IDWeek abstract or poster number (e.g.
-      568., P-1589.), all CC BY 4.0. That this supplement is IDWeek 2025 is inferred from its timing and titles
+      568., P-1589.), all CC BY 4.0 with abstract text. Every one has a January 2026 publication date, so the
+      window is that month (2,391 OFID works in it). That this supplement is IDWeek 2025 is inferred from its timing and titles
       and is an open question until the maintainer confirms it on OUP''s issue page.'
   enrich_hosts:
   - api.openalex.org

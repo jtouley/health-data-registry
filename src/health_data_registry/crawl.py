@@ -95,15 +95,15 @@ class Robots:
 
         host = (urlsplit(url).hostname or "").lower()
         rp = self._rules(host)
-        if rp is None:
-            return
-        if not rp.can_fetch(ROBOTS_AGENT, url):
+        if rp is not None and not rp.can_fetch(ROBOTS_AGENT, url):
             raise FetchRefused(
                 "robots_disallowed",
                 f"The publisher's robots.txt at {host} asks automated tools not to read this address, so it was "
                 "not fetched.",
             )
-        delay = max(float(rp.crawl_delay(ROBOTS_AGENT) or 0), self.min_interval.get(host, 0.0))
+        # An API's own rate limit applies even while its robots.txt can't be read.
+        crawl_delay = float(rp.crawl_delay(ROBOTS_AGENT) or 0) if rp is not None else 0.0
+        delay = max(crawl_delay, self.min_interval.get(host, 0.0))
         if host in self.last and delay > 0:
             due = self.last[host] + delay - self.clock()
             if due > 0:
@@ -137,14 +137,15 @@ def fetcher(
     policy = Robots(hosts, sleep=sleep) if robots is True else robots or None
 
     def get(url: str) -> RawFetch:
-        if policy is not None:
-            try:
-                policy.wait_turn(url)
-            except FetchRefused as e:
-                if log is not None:
-                    log.record(url, ok=False, when=datetime.now(UTC), error=str(e))
-                raise
         for attempt in range(RETRIES):
+            # Every attempt, retries included, waits its turn: a retry never comes sooner than the crawl delay.
+            if policy is not None:
+                try:
+                    policy.wait_turn(url)
+                except FetchRefused as e:
+                    if log is not None:
+                        log.record(url, ok=False, when=datetime.now(UTC), error=str(e))
+                    raise
             when = datetime.now(UTC)
             try:
                 r = fetch(
@@ -152,7 +153,7 @@ def fetcher(
                 )
             except FetchRefused as e:
                 if log is not None:
-                    log.record(url, ok=False, when=when, error=str(e))
+                    log.record(url, ok=False, when=when, http_status=e.status, error=str(e))
                 # A slow, busy or briefly unreachable publisher is retried; a refused URL or host never is.
                 rate_limited = e.code == "http_error" and e.status in (429, 503)
                 if (

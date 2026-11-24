@@ -32,6 +32,7 @@ from typing import Any
 
 from health_data_registry import private, research_tags
 from health_data_registry.adapters import doi_abstracts as doi
+from health_data_registry.fetch import FetchRefused
 from health_data_registry.registry import Dataset, Registry, Supplement
 from health_data_registry.store import FetchLog, RawFetch, write_raw
 
@@ -101,7 +102,7 @@ class HarvestSummary:
     licences: dict[str, int] = field(default_factory=dict)
     crossref_total: int | None = None  # works in the publication-date window, before the supplement filters
     complete: bool = False  # every page of the window was read (no --max-records stop)
-    stopped: str | None = None
+    skipped: list[str] = field(default_factory=list)  # an enriching API that couldn't be read, in plain words
 
     def lines(self) -> list[str]:
         reqs = ", ".join(f"{k} {v}" for k, v in sorted(self.requests.items())) or "none"
@@ -114,8 +115,7 @@ class HarvestSummary:
             if self.complete
             else "a sample: the supplement was not read in full",
         ]
-        if self.stopped:
-            out.append(f"stopped: {self.stopped}")
+        out += [f"note: {s}" for s in self.skipped]
         return out
 
 
@@ -228,12 +228,19 @@ def harvest(
     # 2. OpenAlex and Europe PMC for the same DOIs.
     found: list[doi.ApiRecord] = list(listed)
     if enrich and dois:
-        for batch in _batches(dois, doi.OPENALEX_BATCH):
-            content, _ = client("openalex", doi.openalex_url(batch))
-            found += [r for r in doi.parse_openalex(content) if r.doi in origin]
-        for batch in _batches(dois, doi.EUROPEPMC_BATCH):
-            content, _ = client("europepmc", doi.europepmc_url(batch))
-            found += [r for r in doi.parse_europepmc(content) if r.doi in origin]
+        # Crossref alone makes a row; an API that adds to it and can't be read now is noted, not fatal.
+        enrichers = (
+            ("openalex", "OpenAlex", doi.OPENALEX_BATCH, doi.openalex_url, doi.parse_openalex),
+            ("europepmc", "Europe PMC", doi.EUROPEPMC_BATCH, doi.europepmc_url, doi.parse_europepmc),
+        )
+        for api, label, size, url_of, parse in enrichers:
+            try:
+                for batch in _batches(dois, size):
+                    content, _ = client(api, url_of(batch))
+                    found += [r for r in parse(content) if r.doi in origin]
+            except (FetchRefused, RuntimeError) as e:
+                why = e.message if isinstance(e, FetchRefused) else str(e)
+                summary.skipped.append(f"{label} could not be read ({why}); its fields are missing this run")
 
     # 3. One row per DOI, into the private store.
     merged = doi.merge(found)

@@ -11,10 +11,13 @@ bibliographic APIs, never from the publishers' sites:
   2026): without a ``mailto`` (we send none) list queries are limited to 1 a second, one at a time, and 429
   means back off. Its metadata is free to use for any purpose; some abstracts may be under copyright.
 - OpenAlex (api.openalex.org): ``/works?filter=doi:<a>|<b>...`` for the DOIs Crossref listed (at most 100 OR
-  values a filter, ``per_page`` at most 100; no key: 10 requests a second). Its data is CC0.
+  values a filter, ``per_page`` at most 100; no key: 10 requests a second and a $0.10 daily budget, about 1,000
+  list calls; help.openalex.org, read 24 Nov 2026). Its data is CC0 (help.openalex.org/access/pricing).
+  api.openalex.org's robots.txt allows everything.
 - Europe PMC REST (www.ebi.ac.uk/europepmc/webservices/rest/search): ``DOI:"<a>" OR DOI:"<b>"`` with
-  ``resultType=core`` for the abstract, licence and PubMed ids. www.ebi.ac.uk's robots.txt asks for 10 seconds
-  between requests.
+  ``resultType=core`` for the abstract, licence and PubMed ids (queries up to 1,500 characters). www.ebi.ac.uk's
+  robots.txt asks for 10 seconds between requests and allows /europepmc/webservices/rest/. A harvest that can't
+  read OpenAlex or Europe PMC keeps Crossref's rows and says which API was missing (doi_harvest).
 
 Each API's answer becomes ``ApiRecord`` rows; ``merge`` folds them into one ``Abstract`` per DOI (the same DOI
 from two APIs is one record). Nothing is inferred: titles and author names are as the API gives them (markup
@@ -267,7 +270,9 @@ def crossref_authors(authors: Any) -> str | None:
 
 
 def crossref_licence(licences: Any) -> str | None:
-    """The article's licence: the version-of-record one, else an unspecified one (never a text-mining licence)."""
+    """The article's licence: the version-of-record one, else an unspecified one, else the text-mining licence
+    (e.g. Elsevier's user licence, all AJIC gives), so every record names the terms it came with. Only a Creative
+    Commons licence ever lets text be kept (abstract_tier); a text-mining licence never does."""
     if not isinstance(licences, list):
         return None
     by_version: dict[str, list[str]] = {}
@@ -276,7 +281,7 @@ def crossref_licence(licences: Any) -> str | None:
             by_version.setdefault(str(lic.get("content-version") or "unspecified"), []).append(
                 str(lic["URL"])
             )
-    for version in ("vor", "unspecified"):
+    for version in ("vor", "unspecified", "tdm"):
         urls = sorted(by_version.get(version, []), key=lambda u: licence_kind(u) == "other")
         if urls:
             return urls[0]
@@ -473,13 +478,11 @@ def merge(records: Iterable[ApiRecord]) -> dict[str, Abstract]:
             continue
         slot = acc.setdefault(doi, _Acc())
         prev = slot.by_api.get(r.api)
-        # Two answers from one API for one DOI (a repeated page): keep the fuller one, deterministically.
-        if (
-            prev is None
-            or _fullness(r) > _fullness(prev)
-            or (_fullness(r) == _fullness(prev) and repr(r) < repr(prev))
-        ):
-            slot.by_api[r.api] = replace(r, doi=doi)
+        cand = replace(r, doi=doi)  # compared in its normal form, so a DOI's spelling never decides
+        # Two answers from one API for one DOI (a repeated page): keep the one with a title, then the fuller one,
+        # then the first in sort order, so the result doesn't depend on arrival order.
+        if prev is None or _rank(cand) < _rank(prev):
+            slot.by_api[r.api] = cand
     out: dict[str, Abstract] = {}
     for doi in sorted(acc):
         recs = [acc[doi].by_api[a] for a in API_ORDER if a in acc[doi].by_api]
@@ -507,3 +510,7 @@ def merge(records: Iterable[ApiRecord]) -> dict[str, Abstract]:
 
 def _fullness(r: ApiRecord) -> int:
     return sum(1 for f in (*_FIELDS, "abstract", "licence") if getattr(r, f))
+
+
+def _rank(r: ApiRecord) -> tuple[bool, int, str]:
+    return (r.title is None, -_fullness(r), repr(r))

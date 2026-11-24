@@ -116,8 +116,9 @@ class Supplement(_Strict):
     # by_licence: keep text where the article licence allows (doi_abstracts.abstract_tier). link_only: never keep
     # text, whatever an API says (e.g. a subscriber-only supplement): metadata and the DOI link only.
     text_policy: Literal["by_licence", "link_only"] = "by_licence"
-    # False until a maintainer has checked the supplement-to-conference mapping on the journal's issue page; an
-    # unverified year harvests one record at most (a route check), never a full year.
+    # False until a real sample harvest has shown the route (ISSN, filters, licences) answers as catalogued; an
+    # unverified year harvests one record at most (a route check), never a full year. Which conference year a
+    # supplement holds stays the maintainer's to confirm (an open question in the contract) either way.
     verified: bool = False
 
     @field_validator("issn")
