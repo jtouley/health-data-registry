@@ -1,0 +1,59 @@
+dataset: cdc_haicviz_cdi
+version: 0.1.0
+dimensions:
+  - {name: year, column: yearname, type: time, description: "Surveillance year."}
+  - {name: topic, column: topic, type: categorical, description: "Case count, case rate per 100,000, or strain type."}
+  - {name: view, column: viewby, type: categorical, description: "Total, Age, Sex, Race or Ribotype breakdown."}
+  - {name: epi_grouping, column: grouping, type: categorical, description: "All cases, or split into healthcare- vs community-associated."}
+  - {name: stratum, column: series, type: categorical, description: "Specific stratum, e.g. 'HA - 65+ years' or 'Total'."}
+measures:
+  - {name: cdi_cases, column: value, kind: count, unit: "cases", description: "Number of C. difficile infection cases in EIP catchment areas."}
+  - {name: cdi_rate, column: value, kind: rate, unit: "per 100,000 population", description: "C. difficile infection cases per 100,000 catchment population."}
+metrics:
+  - name: cdi_cases_total
+    description: "Total C. difficile infection cases in a year across EIP surveillance sites, read from the published total row."
+    measure: cdi_cases
+    aggregation: sum
+    exclude_total_rows: false
+    filters: ["lower(topic) = 'number of cases'", "viewby = 'Total'", "series = 'Total'"]
+  - name: cdi_cases_by_epi_class
+    description: "C. difficile infection cases by healthcare-associated vs community-associated onset (group by stratum, or add the two)."
+    measure: cdi_cases
+    aggregation: sum
+    exclude_total_rows: true
+    filters: ["lower(topic) = 'number of cases'", "viewby = 'Total'", "lower(grouping) = 'epi class'"]
+  - name: cdi_cases_by_sex
+    description: "C. difficile infection cases among female and male patients, all epidemiologic classes."
+    measure: cdi_cases
+    aggregation: sum
+    exclude_total_rows: true
+    filters: ["lower(topic) = 'number of cases'", "viewby = 'Sex'", "lower(grouping) = 'all cases'"]
+  - name: cdi_cases_by_age
+    description: "C. difficile infection cases by age group, all epidemiologic classes."
+    measure: cdi_cases
+    aggregation: sum
+    exclude_total_rows: true
+    filters: ["lower(topic) = 'number of cases'", "viewby = 'Age'", "lower(grouping) = 'all cases'"]
+  - name: cdi_incidence_rate
+    description: "Overall C. difficile infection incidence per 100,000 population in EIP catchment areas, from the published total row."
+    measure: cdi_rate
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["topic = 'Case rates (cases per 100,000)'", "viewby = 'Total'", "series = 'Total'"]
+  - name: cdi_incidence_rate_by_stratum
+    description: "C. difficile infection incidence per 100,000 for one published stratum (epi class, age, sex or race); never added."
+    measure: cdi_rate
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["topic = 'Case rates (cases per 100,000)'"]
+series:
+  - condition: "Clostridioides difficile infection"
+    label: "C. difficile infection (EIP sites, all ages)"
+    metric: cdi_cases_total
+    measure: cases
+    time_dimension: year
+  - condition: "Clostridioides difficile infection"
+    label: "C. difficile infection (EIP sites, all ages)"
+    metric: cdi_incidence_rate
+    measure: rate
+    time_dimension: year

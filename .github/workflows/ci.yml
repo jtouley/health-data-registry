@@ -66,3 +66,24 @@ jobs:
       # Offline tests only (-m "not network"), with the coverage floor; see the Makefile.
       - name: Tests with coverage
         run: make test
+
+  mutation:
+    name: Mutation tests (changed modules)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+      # Only the modules this pull request changes (spec: mutation tests on changed functions).
+      - name: Mutation tests
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: make mutate BASE="origin/${BASE_REF}"

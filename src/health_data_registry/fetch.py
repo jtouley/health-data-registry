@@ -81,7 +81,13 @@ _HEADER_NAME: Final = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 
 # Prefixes whose IPv6 addresses carry an IPv4 address that decides where packets go.
 _NAT64_PREFIXES: Final = (ipaddress.IPv6Network("64:ff9b::/96"), ipaddress.IPv6Network("64:ff9b:1::/48"))
-_CGNAT: Final = ipaddress.IPv4Network("100.64.0.0/10")
+# Ranges refused even where Python's ``is_global`` admits a few special-purpose addresses in them
+# (e.g. 192.0.0.9 PCP anycast, 2001:1::1 port control): no publisher is hosted there.
+_ALWAYS_BLOCKED: Final = (
+    ipaddress.IPv4Network("100.64.0.0/10"),  # carrier-grade NAT
+    ipaddress.IPv4Network("192.0.0.0/24"),  # IETF protocol assignments
+    ipaddress.IPv6Network("2001::/23"),  # IETF protocol assignments (Teredo included)
+)
 
 
 class FetchRefused(Exception):
@@ -136,7 +142,9 @@ def validate_url(url: str, allowed_hosts: frozenset[str]) -> SplitResult:
         raise FetchRefused("invalid_url", "Only standard https:// links are fetched (no port number).")
     host = parts.hostname.lower()
     if host not in {h.lower() for h in allowed_hosts}:
-        raise FetchRefused("host_not_allowed", f"{host} is not a catalogued publisher host, so it is not fetched.")
+        raise FetchRefused(
+            "host_not_allowed", f"{host} is not a catalogued publisher host, so it is not fetched."
+        )
     return parts
 
 
@@ -152,7 +160,7 @@ def is_public_address(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool
             return is_public_address(embedded)
         if ip.sixtofour is not None or ip.teredo is not None:
             return False
-    elif ip in _CGNAT:
+    if any(ip in net for net in _ALWAYS_BLOCKED):
         return False
     return ip.is_global and not (
         ip.is_multicast or ip.is_reserved or ip.is_loopback or ip.is_link_local or ip.is_private
@@ -177,9 +185,13 @@ def public_addresses(host: str) -> list[str]:
         try:
             ip = ipaddress.ip_address(text.split("%", 1)[0])
         except ValueError as e:
-            raise FetchRefused("blocked_address", f"{host} did not resolve to a public internet address.") from e
+            raise FetchRefused(
+                "blocked_address", f"{host} did not resolve to a public internet address."
+            ) from e
         if not is_public_address(ip):
-            raise FetchRefused("blocked_address", f"{host} resolves to a private or reserved address; not fetched.")
+            raise FetchRefused(
+                "blocked_address", f"{host} resolves to a private or reserved address; not fetched."
+            )
     return raw
 
 
@@ -244,7 +256,9 @@ def _open_tunnel(proxy: _Proxy, host: str, timeout: float) -> socket.socket:
     """A TCP stream to ``host``:443 through an HTTP CONNECT proxy, naming the host (not an address)."""
     sock = _open_tcp(proxy.host, proxy.port, timeout)
     try:
-        sock.sendall(f"CONNECT {host}:{HTTPS_PORT} HTTP/1.1\r\nHost: {host}:{HTTPS_PORT}\r\n\r\n".encode("ascii"))
+        sock.sendall(
+            f"CONNECT {host}:{HTTPS_PORT} HTTP/1.1\r\nHost: {host}:{HTTPS_PORT}\r\n\r\n".encode("ascii")
+        )
         reply = b""
         while not reply.endswith(b"\r\n\r\n"):  # byte by byte: nothing past the reply is consumed
             byte = sock.recv(1)
@@ -308,7 +322,9 @@ class _GuardedHTTPSConnection(http.client.HTTPSConnection):
 
 
 def _too_large(max_bytes: int) -> FetchRefused:
-    return FetchRefused("too_large", f"The response is larger than the {max_bytes:,}-byte limit; it was not kept.")
+    return FetchRefused(
+        "too_large", f"The response is larger than the {max_bytes:,}-byte limit; it was not kept."
+    )
 
 
 def _timed_out() -> FetchRefused:
@@ -371,7 +387,9 @@ class _BoundedBody:
         elif encoding == "deflate":
             self._wbits = zlib.MAX_WBITS  # zlib-wrapped; raw deflate is tried if the header is wrong
         else:
-            raise FetchRefused("bad_encoding", f"The publisher sent an encoding this fetcher can't read ({encoding}).")
+            raise FetchRefused(
+                "bad_encoding", f"The publisher sent an encoding this fetcher can't read ({encoding})."
+            )
         self._inflater = zlib.decompressobj(wbits=self._wbits) if self._wbits is not None else None
         self._parts: list[bytes] = []
         self._size = 0
@@ -514,12 +532,16 @@ def fetch(
             if status in REDIRECT_STATUSES:
                 location = response.getheader("Location")
                 if not location:
-                    raise FetchRefused("http_error", f"The publisher answered {status} with nowhere to go.", status=status)
+                    raise FetchRefused(
+                        "http_error", f"The publisher answered {status} with nowhere to go.", status=status
+                    )
                 current = urljoin(current, location.strip())
                 logger.info("fetch redirect: host=%s status=%d hop=%d", host, status, hop)
                 continue
             if status != 200:
-                raise FetchRefused("http_error", f"The publisher answered with status {status}.", status=status)
+                raise FetchRefused(
+                    "http_error", f"The publisher answered with status {status}.", status=status
+                )
             content_type = response.getheader("Content-Type")
             content = _read_body(response, connection.live_socket, deadline, max_bytes)
             if watchdog.fired:  # the read ended because the watchdog cut it, not at the end
@@ -533,7 +555,9 @@ def fetch(
         except ssl.SSLError as e:
             if watchdog.fired:
                 raise _timed_out() from e
-            raise FetchRefused("tls_error", f"The certificate of {host} could not be verified; nothing was fetched.") from e
+            raise FetchRefused(
+                "tls_error", f"The certificate of {host} could not be verified; nothing was fetched."
+            ) from e
         except TimeoutError as e:
             raise _timed_out() from e
         except (OSError, ValueError, http.client.HTTPException) as e:  # ValueError: read on a cut socket
@@ -547,7 +571,9 @@ def fetch(
             connection.close()
 
         digest = hashlib.sha256(content).hexdigest()
-        logger.info("fetched: host=%s bytes=%d redirects=%d proxied=%s", host, len(content), hop, proxy is not None)
+        logger.info(
+            "fetched: host=%s bytes=%d redirects=%d proxied=%s", host, len(content), hop, proxy is not None
+        )
         return FetchResult(
             url=original,
             final_url=current,
@@ -558,4 +584,6 @@ def fetch(
             retrieved_at=datetime.now(UTC),
         )
 
-    raise FetchRefused("too_many_redirects", f"The link redirected more than {MAX_REDIRECTS} times, so it was stopped.")
+    raise FetchRefused(
+        "too_many_redirects", f"The link redirected more than {MAX_REDIRECTS} times, so it was stopped."
+    )

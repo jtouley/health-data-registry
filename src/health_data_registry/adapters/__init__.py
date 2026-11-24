@@ -22,11 +22,13 @@ class Page:
     records: list[dict[str, Any]]
 
 
-def pages(entry: CatalogEntry, fetcher: Fetcher, *, max_rows: int | None = None) -> Iterator[Page]:
+def pages(
+    entry: CatalogEntry, fetcher: Fetcher, *, max_rows: int | None = None, fields: list[str] | None = None
+) -> Iterator[Page]:
     if entry.source.portal == "socrata":
         from health_data_registry.adapters import socrata
 
-        yield from socrata.pages(entry, fetcher, max_rows=max_rows)
+        yield from socrata.pages(entry, fetcher, max_rows=max_rows, fields=fields)
     elif entry.source.portal == "who_gho":
         from health_data_registry.adapters import who_gho
 

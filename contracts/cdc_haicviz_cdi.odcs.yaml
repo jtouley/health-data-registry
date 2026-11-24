@@ -1,0 +1,110 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: cdc_haicviz_cdi
+name: HAICViz - CDI
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Annual Clostridioides difficile infection (CDI) case counts and rates from the healthcare-associated infection component of CDC's Emerging Infections Program, pooled across EIP sites (dataset description, https://data.cdc.gov/api/views/abgz-qs4g.json)."
+  usage: "Read the published total row for overall cases or rate; add counts only within one view (Total by epi class, or one demographic view) and never across views."
+  limitations: "EIP catchment areas only, no state breakdown; data through 2022; the Socrata metadata has no column descriptions, so most meanings below come from the published labels themselves."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://data.cdc.gov/d/abgz-qs4g", description: "Publisher dataset page"}
+    - {type: businessDefinition, url: "https://data.cdc.gov/api/views/abgz-qs4g.json", description: "Socrata metadata (dataset description; columns have no descriptions)"}
+    - {type: businessDefinition, url: "https://www.cdc.gov/ncezid/dpei/eip/index.html", description: "Emerging Infections Program, linked from the dataset description"}
+    - {type: businessDefinition, url: "https://www.cdc.gov/ncezid/dpei/eip/eip-sites.html", description: "EIP site network, linked from the dataset description"}
+servers:
+  - id: data_cdc_gov
+    server: data.cdc.gov
+    type: api
+    location: https://data.cdc.gov/resource/abgz-qs4g.json
+schema:
+  - name: cdc_haicviz_cdi
+    physicalName: cdc_haicviz_cdi
+    physicalType: table
+    logicalType: object
+    description: "Long table: one value per year x topic x view x grouping x series."
+    dataGranularityDescription: "year x topic x viewby x grouping x series"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://data.cdc.gov/api/views/abgz-qs4g.json"}
+    customProperties:
+      - property: totalRows
+        value: "viewby = 'Total' AND series = 'Total'"
+        description: "The overall all-cases row for each topic and year (labels observed in the full table, 718 rows, 2026-11-24). Rows with grouping 'All cases' inside the Age, Sex and Race views are strata of those views, not totals."
+      - {property: tableShape, value: frequency_table}
+      - property: idDimensions
+        value:
+          condition: null
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: series
+          period: yearname
+          provisionalFlag: null
+        description: "The whole dataset is one condition (Clostridioides difficile infection), so there is no condition column. Strain (ribotype) appears in series for topic 'Strain type' only; no resistance field. Healthcare- vs community-associated is an epidemiologic class (grouping/series), not a case status. Period is calendar year. No case definition, case status or provisional column."
+    properties:
+      - name: yearname
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "Surveillance year (2011-2022 in the data on 2026-11-24)."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: yearname}
+      - name: topic
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "What the value measures: number of CDI cases, case rate per 100,000 population, or strain type (ribotype). Spelling varies by year ('Number of Cases' to 2021, 'Number of cases' in 2022)."
+        examples: ["Number of Cases", "Number of cases", "Case rates (cases per 100,000)", "Strain type"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: topic}
+      - name: viewby
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Which breakdown the row belongs to: Total, Age, Sex, Race or Ribotype. Each view covers the same cases."
+        enum: [{value: Total}, {value: Age}, {value: Sex}, {value: Race}, {value: Ribotype}]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: viewby}
+      - name: grouping
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "All cases, or split by epidemiologic class into healthcare-associated (HA) and community-associated (CA) cases. Spelling varies ('Epi Class' / 'Epi class')."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: grouping}
+      - name: series
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The specific stratum, prefixed by epi class where split: e.g. Total, Healthcare-associated, Community-associated, 'All cases - 65+ years', 'HA - Female', 'CA - 027' (ribotype)."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: series}
+      - name: value
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "The published number: a case count when topic is number of cases, cases per 100,000 population when topic is case rates, unconfirmed for strain type. Published as text; cast to number."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: value}
+          - {property: unit, value: "see topic: 1 (cases) or /100000"}
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: citation, value: "Centers for Disease Control and Prevention, Emerging Infections Program HAIC. HAICViz - CDI. https://data.cdc.gov/d/abgz-qs4g"}
+  - {property: refresh, value: annual}
+  - property: openQuestions
+    value:
+      - "Licence: no licence field in the Socrata metadata; public-domain-us-federal assumed from its being a CDC work."
+      - "No column descriptions or codebook are published on data.cdc.gov. Which EIP sites and counties contribute, and did the catchment change over 2011-2022? (EIP site page on www.cdc.gov not fetched.)"
+      - "Strain type rows: is value the percent of typed isolates with that ribotype, or a count? Unit not stated; no metric defined for it."
+      - "Definitions of healthcare-associated vs community-associated (onset setting and look-back windows) are not on data.cdc.gov."
+      - "Case rate denominators: which population estimates, and are rates crude? Assumed crude, not confirmed."
+      - "'Number of Cases' rows for Total by epi class exist for 2011-2019 and 2022 under 'Epi Class' and for 2020-2021 under 'Epi class': confirm these are one series."
+      - "Data end in 2022 although rowsUpdatedAt is 2025-05-13. Is the series discontinued or lagged? Affects whether refresh should stay annual."
+      - "Case definition: EIP CDI case definition (positive C. difficile toxin or molecular assay in a catchment resident, with the incident-case window) and its effective years are not in the data; add as caseDefinitions after a maintainer reads the EIP CDI methods."

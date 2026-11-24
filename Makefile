@@ -1,9 +1,11 @@
 # Developer and CI entry points. `make help` lists the targets.
 .DEFAULT_GOAL := help
-.PHONY: help install lint fmt typecheck test test-network check refresh serve check-contracts eval
+.PHONY: help install lint fmt typecheck test test-network mutate docs check refresh serve check-contracts eval
 
 UV ?= uv
 COV_FLOOR ?= 85
+MUTATION_FLOOR ?= 70
+BASE ?= origin/main
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -28,7 +30,13 @@ test: ## Offline tests with coverage (fails under COV_FLOOR, default 85%)
 test-network: ## Tests that hit live publishers (network marker)
 	$(UV) run pytest -m network
 
-check: lint typecheck test ## Everything CI runs: lint, typecheck, test
+mutate: ## Mutation tests on the modules changed since BASE (default origin/main); fails under MUTATION_FLOOR
+	$(UV) run python scripts/mutate_changed.py --base $(BASE) --floor $(MUTATION_FLOOR)
+
+docs: ## Regenerate docs/helpers.md from the helpers in code
+	$(UV) run python scripts/write_helpers_doc.py
+
+check: lint typecheck test mutate ## Everything CI runs: lint, typecheck, test, mutation tests on changed modules
 
 refresh: ## Fetch every catalogued source into the local lake
 	$(UV) run health-data-registry refresh --all

@@ -17,20 +17,25 @@ from health_data_registry.registry import CatalogEntry
 PAGE_SIZE = 50_000
 
 
-def page_url(api_url: str, *, limit: int, offset: int) -> str:
+def page_url(api_url: str, *, limit: int, offset: int, fields: list[str] | None = None) -> str:
     parts = urlsplit(api_url)
-    query = [(k, v) for k, v in parse_qsl(parts.query) if k not in ("$limit", "$offset", "$order")]
+    query = [(k, v) for k, v in parse_qsl(parts.query) if k not in ("$limit", "$offset", "$order", "$select")]
+    if fields:
+        # Only the columns the contract reads: the rest are never used, so they aren't fetched.
+        query.append(("$select", ",".join(sorted(fields))))
     query += [("$order", ":id"), ("$limit", str(limit)), ("$offset", str(offset))]
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
 
 
-def pages(entry: CatalogEntry, fetcher: Fetcher, *, max_rows: int | None = None) -> Iterator[Page]:
+def pages(
+    entry: CatalogEntry, fetcher: Fetcher, *, max_rows: int | None = None, fields: list[str] | None = None
+) -> Iterator[Page]:
     offset = 0
     while True:
         limit = PAGE_SIZE if max_rows is None else min(PAGE_SIZE, max_rows - offset)
         if limit <= 0:
             return
-        raw = fetcher(page_url(entry.source.api_url, limit=limit, offset=offset))
+        raw = fetcher(page_url(entry.source.api_url, limit=limit, offset=offset, fields=fields))
         records = json.loads(raw.content)
         if not isinstance(records, list):
             raise ValueError(f"{entry.id}: expected a JSON array from {raw.url}")

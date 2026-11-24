@@ -18,7 +18,7 @@ advisory is published, with credit if you want it, once a fixed release is out.
 
 - **Fetcher SSRF or host escape:** a source adapter that can be made to request a host outside the catalogued
   publisher hosts, a non-HTTPS URL, a private or link-local address, or to follow a redirect to one.
-- **SQL sandbox escapes:** a `query_sql` or `query_metric` call that reads or writes files, attaches a database,
+- **SQL sandbox escapes:** a `query_sql` call (or any tool) that reads or writes files, attaches a database,
   loads an extension, reaches the network, changes settings, or reads a table outside the catalogued read-only views.
 - **Workflow and token issues:** a GitHub Actions workflow that runs untrusted input, has more permissions than it
   needs, or exposes a secret or the OIDC token; anything that could tamper with a release, its signatures, its SBOM

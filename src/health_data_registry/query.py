@@ -13,7 +13,7 @@ from typing import Any
 
 import duckdb
 
-from health_data_registry.registry import Dataset, Registry
+from health_data_registry.registry import Dataset, Metric, Registry
 from health_data_registry.sql_guard import GuardedQuery, guard_sql, harden, run_guarded
 from health_data_registry.store import Manifest, latest_snapshot
 
@@ -81,18 +81,37 @@ def compile_metric(
         else:
             where.append(f"{col} = ?")
             params.append(value)
+    period_where: list[str] = []
+    period_params: list[Any] = []
+    period_col: str | None = None
     if period:
         time_dims = [d for d in sem.dimensions if d.type == "time"]
         pname = str(period.get("dimension") or (time_dims[0].name if time_dims else ""))
         if not pname or dims.get(pname) is None or dims[pname].type != "time":
             raise QueryRefused("no_time_dimension", f"{ds.id}: period needs a time dimension")
-        col = _q(dims[pname].column)
-        if period.get("start") is not None:
-            where.append(f"{col} >= ?")
-            params.append(period["start"])
-        if period.get("end") is not None:
-            where.append(f"{col} <= ?")
-            params.append(period["end"])
+        tcol = dims[pname].column
+        period_col = pname
+        col = _q(tcol)
+        is_date = ds.contract.column(tcol).physical_type in ("DATE", "TIMESTAMP")
+        start, end = period.get("start"), period.get("end")
+        # A year asked of a date dimension means that whole calendar year.
+        if is_date and isinstance(start, int):
+            start = f"{start}-01-01"
+        if is_date and isinstance(end, int):
+            end = f"{end}-12-31"
+        is_text = ds.contract.column(tcol).physical_type == "VARCHAR"
+        if is_text:
+            # Text periods ("2025", "2025-01-04", "2025-26") compare as text: a year bound covers every value
+            # that starts with that year.
+            start = None if start is None else str(start)
+            end = None if end is None else str(end) + "\uffff"
+        cast = f"CAST(? AS {ds.contract.column(tcol).physical_type})" if is_date else "?"
+        if start is not None:
+            period_where.append(f"{col} >= {cast}")
+            period_params.append(start)
+        if end is not None:
+            period_where.append(f"{col} <= {cast}")
+            period_params.append(end)
 
     group_cols = [dim(g) for g in group_by]
     select_dims = [f"{_q(c)} AS {_q(g)}" for g, c in zip(group_by, group_cols, strict=True)]
@@ -103,9 +122,15 @@ def compile_metric(
             ("lower", sem.measure(metric.uncertainty.lower).column),
             ("upper", sem.measure(metric.uncertainty.upper).column),
         ]
-    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
     table = _q(ds.id)
     out_cols = [*group_by, metric.name, *(b for b, _ in bounds)]
+    if metric.aggregation == "cumulative_latest":
+        return _compile_cumulative(
+            ds, metric, where, params, period_where, period_params, period_col, group_by
+        )
+    where = where + period_where
+    params = params + period_params
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
     if metric.aggregation == "sum":
         sel = [*select_dims, f"sum({m_col}) AS {_q(metric.name)}"]
         sql = f"SELECT {', '.join(sel)} FROM {table}{where_sql}"  # noqa: S608 - quoted contract identifiers, bound values
@@ -131,6 +156,88 @@ def compile_metric(
             " Lower and upper are the publisher's own uncertainty bounds." if bounds else ""
         )
     return CompiledMetric(sql=sql, params=params, columns=out_cols, method=method)
+
+
+def _compile_cumulative(
+    ds: Dataset,
+    metric: Metric,
+    where: list[str],
+    params: list[Any],
+    period_where: list[str],
+    period_params: list[Any],
+    period_col: str | None,
+    group_by: Sequence[str],
+) -> CompiledMetric:
+    """A running total read at the last week of each period, replaced by the next period's restatement once
+    that covers the whole period (e.g. NNDSS: year-to-date at week 52, or next year's prior-year column).
+
+    The rows say which they are: 'final' (restated) or 'provisional' (as of the last week published).
+    """
+    sem = ds.semantic
+    time_dims = [d.name for d in sem.dimensions if d.type == "time" and d.name != metric.order_by]
+    tname = period_col or (time_dims[0] if time_dims else None)
+    if tname is None or tname not in group_by:
+        raise QueryRefused(
+            "needs_period",
+            f"{metric.name} is a running total, so it is read once per {tname or 'period'}; "
+            f"group by {tname or 'the time dimension'}.",
+        )
+    if tname == metric.order_by:
+        raise QueryRefused(
+            "needs_period", f"{metric.name} can't be grouped by {tname}, the within-period order."
+        )
+    col = {d.name: d.column for d in sem.dimensions}
+    ob = _q(col[str(metric.order_by)])
+    others = [g for g in group_by if g != tname]
+    # Publishers re-case labels between years (NNDSS: MICHIGAN in 2024, Michigan from 2025), so a period and its
+    # restatement are matched on the label ignoring case, edge spaces and dots (U.S. RESIDENTS = US RESIDENTS).
+    keys = [
+        f"regexp_replace(upper(trim(CAST({_q(col[g])} AS VARCHAR))), '[.]', '', 'g') AS {_q(g)}"
+        for g in others
+    ]
+    t = _q(col[tname])
+    m_col = _q(sem.measure(metric.measure).column)
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+    key_list = ", ".join([*keys, f"{t} AS {_q(tname)}"])
+    cur = f"SELECT {key_list}, arg_max({m_col}, {ob}) AS v, max({ob}) AS last_at FROM base GROUP BY ALL"  # noqa: S608 - quoted contract identifiers
+    final_sql = "'provisional: running total as of ' || c.last_at"
+    if metric.restated_by:
+        r_col = _q(sem.measure(metric.restated_by.measure).column)
+        nxt_keys = ", ".join([*keys, f"{t} - 1 AS {_q(tname)}"])
+        nxt = f"SELECT {nxt_keys}, arg_max({r_col}, {ob}) AS v, max({ob}) AS last_at FROM base GROUP BY ALL"  # noqa: S608 - quoted contract identifiers
+        done = f"n.last_at >= {int(metric.restated_by.complete_at)}"
+        value = f"CASE WHEN {done} THEN n.v ELSE c.v END"
+        status = f"CASE WHEN {done} THEN 'final: restated in the next table' ELSE {final_sql} END"
+        join = " LEFT JOIN nxt n USING (" + ", ".join(_q(g) for g in [*others, tname]) + ")"
+        ctes = f"WITH base AS (SELECT * FROM {_q(ds.id)}{where_sql}), cur AS ({cur}), nxt AS ({nxt})"  # noqa: S608 - quoted contract identifiers
+    else:
+        value, status, join = "c.v", final_sql, ""
+        ctes = f"WITH base AS (SELECT * FROM {_q(ds.id)}{where_sql}), cur AS ({cur})"  # noqa: S608 - quoted contract identifiers
+    outer_where = [w.replace(t, f"c.{_q(tname)}", 1) for w in period_where]
+    sel = ", ".join(
+        [*(f"c.{_q(g)}" for g in group_by), f"{value} AS {_q(metric.name)}", f"{status} AS period_status"]
+    )
+    sql = f"{ctes} SELECT {sel} FROM cur c{join}"  # noqa: S608 - quoted contract identifiers, bound values
+    if outer_where:
+        sql += " WHERE " + " AND ".join(outer_where)
+    sql += " ORDER BY ALL"
+    method = (
+        f"Running total ({sem.measure(metric.measure).name}) read at the last {metric.order_by} of each {tname}"
+        + (
+            f"; once the next {tname}'s table restates it through {metric.order_by} "
+            f"{metric.restated_by.complete_at}, that restated total is used instead"
+            if metric.restated_by
+            else ""
+        )
+        + ("; publisher total rows excluded" if metric.exclude_total_rows and ds.contract.total_rows else "")
+        + ". Weekly counts are never added up, because late reports land in the running total, not the week."
+    )
+    return CompiledMetric(
+        sql=sql,
+        params=[*params, *period_params],
+        columns=[*group_by, metric.name, "period_status"],
+        method=method,
+    )
 
 
 @dataclass
@@ -166,8 +273,8 @@ class Engine:
         if m is None:
             raise QueryRefused(
                 "no_snapshot",
-                f"{dataset_id} is catalogued but has no local snapshot yet. "
-                f"Run: health-data-registry refresh {dataset_id}",
+                f"The data for {dataset_id} hasn't been downloaded on this computer yet, so there are no numbers "
+                "to show. The one-time 'load the data' step in the setup guide (docs/setup.md) fixes this.",
             )
         return m
 
@@ -202,6 +309,19 @@ class Engine:
                 f"{metric} is published per group and can't be added up; choose group_by from: {dims}.",
             )
         return envelope(ds, manifest, cm.columns, rows, sql=cm.sql, params=cm.params, method=cm.method)
+
+    def distinct_values(self, dataset_id: str, column: str) -> list[Any]:
+        """Every value a dimension column takes in the snapshot (for matching place names)."""
+        ds = self.registry.get(dataset_id)
+        self.manifest(dataset_id)
+        if column not in ds.contract.column_names:
+            raise QueryRefused("unknown_column", f"{dataset_id} has no column {column}")
+        rows = (
+            self.connect()
+            .execute(f"SELECT DISTINCT {_q(column)} FROM {_q(dataset_id)} ORDER BY 1")  # noqa: S608 - quoted contract identifiers
+            .fetchall()
+        )  # noqa: S608 - quoted contract identifiers
+        return [r[0] for r in rows if r[0] is not None]
 
     def query_sql(self, sql: str) -> dict[str, Any]:
         con = self.connect()

@@ -28,6 +28,7 @@ health-data-registry = "health_data_registry.cli:main"
 [dependency-groups]
 dev = [
     "hypothesis>=6.100",
+    "mutmut>=3.3",
     "mypy>=1.13",
     "pytest>=8",
     "pytest-cov>=5",
@@ -58,6 +59,7 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S608"]
+"scripts/**" = ["S603", "S607"]  # developer scripts run git and mutmut with fixed arguments
 
 [tool.mypy]
 python_version = "3.12"
@@ -73,3 +75,10 @@ markers = ["network: hits a live publisher (deselected in CI by default)"]
 [tool.coverage.run]
 source = ["health_data_registry"]
 branch = true
+
+[tool.mutmut]
+# Mutation tests run on the modules a change touches (scripts/mutate_changed.py, `make mutate`), not the whole tree.
+source_paths = ["src/health_data_registry/"]
+also_copy = ["catalog/", "contracts/", "semantic/", "docs/"]
+pytest_add_cli_args = ["-m", "not network", "-x", "-q", "-p", "no:cacheprovider"]
+pytest_add_cli_args_test_selection = ["tests/", "--ignore=tests/integration", "--ignore=tests/test_metamorphic.py"]

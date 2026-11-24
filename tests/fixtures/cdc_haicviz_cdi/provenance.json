@@ -1,6 +1,0 @@
-{
-  "url": "https://data.cdc.gov/resource/abgz-qs4g.json?%24query=SELECT%20%2A%20WHERE%20viewby%20%3D%20%27Total%27%20OR%20%28viewby%20%3D%20%27Sex%27%20AND%20yearname%20%3E%3D%202018%29%20ORDER%20BY%20yearname%2C%20topic%2C%20viewby%2C%20grouping%2C%20series%20LIMIT%20300",
-  "retrieved_at": "2026-11-24T15:51:56Z",
-  "sha256": "844e858dbe3234b753bdf9b264846b4c19af3924c310dcf183402a466af9837b",
-  "licence": "public-domain-us-federal"
-}

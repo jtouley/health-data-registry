@@ -254,7 +254,11 @@ def _require_single_select(sql: str) -> None:
         raise SqlRefused("parse_error", "The query is not valid SQL.") from e
     if len(statements) != 1:
         raise SqlRefused("multiple_statements" if statements else "empty", ONE_STATEMENT)
-    if statements[0].type != duckdb.StatementType.SELECT:
+    try:
+        kind = statements[0].type
+    except ValueError as e:  # a statement type this duckdb build has no enum member for
+        raise SqlRefused("not_select", READ_ONLY) from e
+    if kind != duckdb.StatementType.SELECT:
         raise SqlRefused("not_select", READ_ONLY)
 
 
@@ -395,7 +399,8 @@ def _unqualified_known(scope: Scope, name: str, tables: Mapping[str, frozenset[s
 def _check_columns(scope: Scope, tables: Mapping[str, frozenset[str]]) -> None:
     if isinstance(scope.expression, exp.SetOperation):
         return  # ORDER BY of a set operation names its output columns
-    for column in scope.columns:
+    stars = [c for c in scope.stars if isinstance(c, exp.Column)]
+    for column in [*scope.columns, *stars]:
         if column.find_ancestor(exp.Select, exp.SetOperation) is not scope.expression:
             continue  # inside a subquery: checked in that subquery's own scope
         qualifier = column.table

@@ -1,0 +1,168 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: who_gho_tb_incidence
+name: Incidence of tuberculosis (per 100 000 population per year)
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "WHO estimates of tuberculosis incidence per 100,000 population per year, with uncertainty bounds, by country, WHO region, World Bank income group and globally (GHO indicator MDG_0000000020)."
+  usage: "Read one estimate and its bounds for a place and year; compare places or years only with the bounds shown; never add rates. Fetched from WHO at run time; never mirrored."
+  limitations: "Modelled estimates, revised in full each year; WHO terms are non-commercial (CC BY-NC-SA 3.0 IGO)."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://ghoapi.azureedge.net/api/MDG_0000000020", description: "GHO OData endpoint for the indicator (fetched 2026-11-24)"}
+    - {type: businessDefinition, url: "https://ghoapi.azureedge.net/api/Indicator", description: "GHO indicator list giving the code and name"}
+    - {type: businessDefinition, url: "https://www.who.int/data/gho/indicator-metadata-registry/imr-details/1076", description: "WHO indicator metadata registry entry (not fetched; see openQuestions)"}
+servers:
+  - id: who_gho
+    server: ghoapi.azureedge.net
+    type: api
+    location: https://ghoapi.azureedge.net/api/MDG_0000000020
+    description: "OData v4 JSON; rows are under the 'value' array. The adapter keeps only the columns listed in the schema."
+schema:
+  - name: who_gho_tb_incidence
+    physicalName: who_gho_tb_incidence
+    physicalType: table
+    logicalType: object
+    description: "One row per place and year."
+    dataGranularityDescription: "place (country, WHO region, income group or global) x year"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://ghoapi.azureedge.net/api/MDG_0000000020"}
+    customProperties:
+      - property: totalRows
+        value: "spatial_dim_type IN ('REGION', 'WORLDBANKINCOMEGROUP', 'GLOBAL')"
+        description: "Aggregate places; SpatialDimType values observed for 2024 on 2026-11-24: COUNTRY 196, REGION 6, WORLDBANKINCOMEGROUP 4, GLOBAL 1."
+      - {property: tableShape, value: estimate_table}
+      - property: idDimensions
+        value:
+          condition: indicator_code
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: null
+          period: time_dim
+          provisionalFlag: null
+        description: "Measure kind (estimate with bounds) is declared in the semantic model. Case definition, case status, organism/resistance and a provisional flag are not published in this indicator."
+    properties:
+      - name: id
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "WHO's row identifier in the GHO database; used only for provenance."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: Id}
+      - name: indicator_code
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "GHO indicator code; always MDG_0000000020 (incidence of tuberculosis per 100,000 population per year)."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: IndicatorCode}
+      - name: spatial_dim_type
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Kind of place: COUNTRY, REGION (WHO region), WORLDBANKINCOMEGROUP or GLOBAL."
+        enum: [{value: COUNTRY}, {value: REGION}, {value: WORLDBANKINCOMEGROUP}, {value: GLOBAL}]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: SpatialDimType}
+      - name: spatial_dim
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Place code: ISO 3166-1 alpha-3 for countries (e.g. USA), WHO region code (e.g. AMR for the Americas), income-group code, or GLOBAL."
+        examples: ["USA", "AMR", "GLOBAL"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: SpatialDim}
+      - name: parent_location_code
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "WHO region code of the country (e.g. AMR); empty for aggregate rows."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: ParentLocationCode}
+      - name: parent_location
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "WHO region name of the country (e.g. Americas); empty for aggregate rows."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: ParentLocation}
+      - name: time_dim
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "Calendar year of the estimate (TimeDimType YEAR)."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: TimeDim}
+      - name: value_text
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "WHO's display string: estimate followed by the bounds in brackets, e.g. '2.9 [2.3-3.5]'. Kept for display only; numbers come from the numeric columns."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: Value}
+      - name: numeric_value
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Estimated new and relapse tuberculosis cases (all forms) per 100,000 population in the year: a modelled estimate, not a notified count."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: NumericValue}
+          - {property: unit, value: "/100000/a"}
+      - name: low
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Lower bound of WHO's uncertainty interval for the incidence estimate."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: Low}
+          - {property: unit, value: "/100000/a"}
+      - name: high
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Upper bound of WHO's uncertainty interval for the incidence estimate."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: High}
+          - {property: unit, value: "/100000/a"}
+      - name: comments
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "WHO's free-text note on the row, when given."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: Comments}
+      - name: date
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "Timestamp WHO gives for the row in the GHO database (ISO 8601 with offset), read as the date the value was last loaded."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: Date}
+customProperties:
+  - {property: licence, value: CC-BY-NC-SA-3.0-IGO}
+  - {property: redistribution, value: false}
+  - {property: citation, value: "World Health Organization. Global Health Observatory, indicator MDG_0000000020: Incidence of tuberculosis (per 100 000 population per year). https://ghoapi.azureedge.net/api/MDG_0000000020"}
+  - {property: refresh, value: annual}
+  - property: openQuestions
+    value:
+      - "Licence and terms: CC BY-NC-SA 3.0 IGO and the terms URL are taken from the brief, not read from WHO (www.who.int was not fetched). Maintainer to confirm."
+      - "Is the Low-High range a 95% uncertainty interval? Not stated in the GHO API response."
+      - "Does incidence include people with HIV and relapses for every year back to 2000? The definition is taken from the indicator name only; WHO's metadata registry entry was not fetched and its id (1076) is unverified."
+      - "WHO has announced a successor to the GHO OData API; when ghoapi.azureedge.net is retired the adapter and api_url must move. Current status not checked."
+      - "Is the Date column the load date or the WHO release date? Needed for the snapshot version string."
+      - "The GHO record has empty Dim1-Dim3 and DataSourceDim columns for this indicator; they are dropped. Confirm none are ever used (e.g. for sex or HIV status)."
+      - "GBD location crosswalk: spatial_dim holds ISO3 codes for countries; WHO region and income-group codes have no GBD equivalent and must not be mapped."

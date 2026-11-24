@@ -9,159 +9,216 @@ Ask Claude about public health data — GBD, CDC, WHO and more — in plain Engl
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/health-data-registry)](https://pypi.org/project/health-data-registry/)
 
-A read-only [MCP](https://modelcontextprotocol.io) server for clinician-researchers. You ask a question; it finds
-the public datasets that fit, runs a checked query and returns a table with its source, version and method. It
-works next to the [IHME GBD connector](https://claude.com/connectors/ihme-gbd): GBD gives modelled burden, this
-server gives the observed and local numbers GBD doesn't have.
+A free, open-source tool for clinician-researchers. You ask Claude a question about infectious disease in plain
+words. Claude uses this tool to find the public data that fits, and gives you a table with the source, the date it
+was fetched and what the data can't tell you. It works next to the IHME GBD and PubMed connectors you may already
+use.
 
-**Status:** pre-alpha. Tools, datasets and names may change. Not yet on PyPI.
+**Status:** pre-alpha. Infectious disease only, five starter datasets, and every dataset's description is still a
+draft awaiting review. "health-data-registry" is a working name.
 
-**Contents:** [What it does](#what-it-does-and-doesnt-do) · [Quick start](#quick-start) · [Example](#example) ·
-[Datasets](#datasets) · [How answers stay correct](#how-answers-stay-correct) ·
-[With the GBD connector](#using-it-with-the-ihme-gbd-connector) · [Contributing a dataset](#contributing-a-dataset) ·
-[Security, licence, citation](#security-licence-and-citation)
+**Contents:** [What it does](#what-it-does-and-doesnt-do) · [Quick start](#quick-start) · [Helpers](#helpers) ·
+[Example](#example) · [Tools](#tools) · [Data](#data) ·
+[With GBD, PubMed and others](#using-it-with-gbd-pubmed-and-others) ·
+[How answers stay correct](#how-answers-stay-correct) · [Contributing](#contributing) ·
+[Security, licence, citation](#security-licence-and-citation) · [For developers](#for-developers)
 
 ## What it does and doesn't do
 
 It does:
 
-- **Finds the datasets that fit a question.** Ask "which public data could support a project on hepatitis B
-  screening?" and get 3–5 datasets ranked by fit, each with its grain, years, geography and caveats.
-- **Answers with a sourced table.** Every result carries the source URL, retrieval date, dataset version, the SQL
-  that ran and a one-line method. Published uncertainty ranges are kept, never dropped.
-- **Knows each dataset's quirks for you.** Missing-value codes, total rows, and counts versus rates live in
-  reviewed contracts, so you never pick a file, a column or a join.
+- **Finds the data that fits your question.** Ask "which public datasets could support a project on C. diff in
+  older adults?" and get the few that fit, each with its years, places and what it can't answer.
+- **Answers with a sourced table.** Every number comes with its source web address, the date it was fetched, the
+  dataset version and a one-line method, so you or a mentor can check it.
+- **Handles each dataset's quirks for you.** Which code means "missing", which row is a total, and whether a column
+  is a count or a rate are written down and reviewed once, so you never pick a file or a column.
 
 It doesn't:
 
-- **Touch patient data.** It reads only catalogued public, population-level sources. There is no upload or
-  local-file tool. Never paste patient information into the chat.
-- **Call, copy or second-guess GBD.** GBD comes only through the IHME connector. This server returns observed data
-  keyed to GBD names; it never says whether GBD or a local source is "right".
-- **Guess.** If a contract can't say what a number means, the tool declines and says why. It never fills a number
-  from memory, the news or a secondary source.
+- **Touch patient data.** It reads only public, population-level data. You can't upload anything to it. Never put
+  patient information in the chat.
+- **Call, copy or second-guess GBD.** GBD comes only through the IHME GBD connector. This tool gives you the
+  reported numbers, labelled with GBD's place and cause names, and never says which one is "right".
+- **Guess.** If it can't say what a number means, it tells you so in plain words and suggests what to try next.
+  It never fills a number from memory or the news.
 
 ## Quick start
 
-You need [uv](https://docs.astral.sh/uv/) (it installs Python 3.12 if you don't have it). The server runs on your
-machine over stdio; nothing leaves it except reads from the publishers.
+A **connector** is an add-on that lets Claude use an outside tool. You add it once.
 
-1. **Add the connector.**
-   - **Claude Code:**
+> [!IMPORTANT]
+> **For now, this connector needs a one-time install on your computer** and works in the Claude Desktop app, not
+> yet in Claude on the web or on your phone. There is no web address to paste yet. The install takes about 15
+> minutes: follow [the setup guide](docs/setup.md), or let Claude walk you through it by pasting the
+> [Walk me through an install](docs/helpers.md#walk-me-through-an-install) helper into a chat. Once the tool is
+> hosted, step 1 becomes pasting one web address into Settings → Connectors.
 
-     ```bash
-     claude mcp add health-data-registry -- \
-       uvx --from git+https://github.com/jtouley/health-data-registry health-data-registry serve
-     ```
+1. **Add the connector.** Follow [the setup guide](docs/setup.md).
+   You should see "health-data-registry" listed in Claude Desktop under Settings → Connectors.
+   If you don't, quit Claude Desktop fully and open it again.
+   <!-- SCREENSHOT: Claude Desktop, Settings → Connectors, with health-data-registry listed -->
+2. **Start a new chat.**
+   A connector only appears in chats started after you add it.
+   <!-- SCREENSHOT: the new-chat button in Claude Desktop -->
+3. **Run the "Start here" helper.** In the message box, open the menu of ready-made starters, choose
+   health-data-registry, then **Start here: check my tools work**.
+   You should see one line per tool saying whether it works, and steps for any that are missing.
+   If the menu doesn't show the helpers, copy [Start here](docs/helpers.md#start-here-check-my-tools-work) from
+   the helpers page and paste it as your message.
+   <!-- SCREENSHOT: the starters menu in the message box, with "Start here: check my tools work" highlighted -->
+4. **Ask one question,** for example: "Use health-data-registry: how many legionellosis cases were reported in
+   Michigan each year since 2022?"
+   You should see a table, then lines saying where the numbers came from and when.
+   If you see a message instead of a table, it says why and what to try. Still stuck? Run the
+   [Something's wrong](docs/helpers.md#somethings-wrong) helper.
+   <!-- SCREENSHOT: a question and the sourced answer table -->
 
-   - **Claude Desktop:** add this to `claude_desktop_config.json` (Settings → Developer → Edit Config), then
-     restart Claude Desktop:
+## Helpers
 
-     ```json
-     {
-       "mcpServers": {
-         "health-data-registry": {
-           "command": "uvx",
-           "args": ["--from", "git+https://github.com/jtouley/health-data-registry",
-                    "health-data-registry", "serve"]
-         }
-       }
-     }
-     ```
+Helpers are ready-made starters, one for each step from setup to pitch. Once the connector is added, they appear in
+Claude's menu of starters. If your Claude app doesn't show them, copy them from the
+[helpers page](docs/helpers.md).
 
-   - **claude.ai custom connector:** needs a hosted URL, which comes later
-     ([ADR 0011](docs/adr/0011-local-stdio-first.md)). Use Claude Desktop or Claude Code for now.
-2. **Start a new chat.** Connectors added mid-chat don't load.
-3. **Ask one question,** for example: "Which public datasets could support a project on hepatitis B screening?"
-
-Once it is on PyPI, the command shortens to `uvx health-data-registry serve`.
+| Step | Helper | What it does for you |
+|---|---|---|
+| Check it works | `start_here` | Tests each connected tool (this one, GBD, PubMed and others) and says which work and how to add any that are missing |
+| Set up a Claude Project | `set_up_my_project` | Writes the Project instructions to paste, with the guardrails, and says where to paste them |
+| Spot a pattern | `spot_a_pattern` | For a condition and a place, checks GBD, then the reported numbers, and shows what changed and what the data can't say |
+| Check it's new | `check_its_new` | Searches PubMed, OpenEvidence if connected, and the prior-work index, then says what has been done and where the gap is |
+| Find data for my question | `find_data_for_my_question` | Takes your question in your own words and returns datasets that fit, with what each can't answer |
+| Draft the pitch | `draft_my_pitch` | Builds a one-page summary with every number's source, case definition and citation, ready for a mentor |
+| Something's wrong | `help_me_fix_it` | Asks what you see and gives the fix one step at a time |
+| Optional installs | `walk_me_through_install` | Step-by-step help installing an optional tool in Claude Desktop; never asks for a password |
 
 ## Example
 
-<!-- EXAMPLE: filled from a real test run by the lead -->
+<!-- EXAMPLE: from a real run on 24 November 2026 against CDC's NNDSS weekly tables, fetched that day. -->
 
-## Datasets
+You ask: *"How many clinical C. auris cases did Michigan and Ohio report each year from 2022 to 2025?"*
 
-Each dataset has a reviewed catalog entry in [`catalog/`](catalog/): agency, years, geography, grain, licence,
-citation and known caveats. `find_datasets` browses them by research area:
+Claude calls `get_series` and gets back this table (trimmed to the columns that matter here):
 
-| Research area | First sources to cover |
+| Place | Year | Cases | Status |
+|---|---|---|---|
+| Michigan | 2022 | 33 | final |
+| Michigan | 2023 | 110 | final |
+| Michigan | 2024 | 184 | final |
+| Michigan | 2025 | 178 | provisional (as of MMWR week 53) |
+| Ohio | 2022 | 83 | final |
+| Ohio | 2023 | 151 | final |
+| Ohio | 2024 | 322 | final |
+| Ohio | 2025 | 404 | provisional (as of MMWR week 53) |
+
+Every row also carries its source (`cdc_nndss_weekly`, [data.cdc.gov/d/x9gk-5huc](https://data.cdc.gov/d/x9gk-5huc)),
+when it was fetched, and a plain note on how the number was read:
+
+- **Final** means CDC's next yearly table restated the whole year, so late reports are included.
+- **Provisional** means the year is still open to late reports, so the number can still go up.
+- Counts are read from CDC's running year-to-date column. Adding up the weekly column would under-count badly,
+  because late reports land in the running total, not in the week: for Michigan in 2023 that gives 62, not 110.
+
+The same answer lists what the data can't tell you: counts are by state of residence; clinical and screening
+cases are separate series; this source's contract is still a draft no reviewer has checked.
+
+## Tools
+
+You don't call these yourself; Claude picks them. They are listed so you know what Claude can do. All of them only
+read data.
+
+| Tool | What it gives you |
 |---|---|
-| Infectious disease and AMR | CDC NNDSS, WONDER, AtlasPlus, NHSN and the AR & Patient Safety Portal; WHO GHO |
-| Cardiometabolic | CDC PLACES and BRFSS, NHANES, CMS chronic conditions |
-| Maternal and child health | CDC WONDER natality, PRAMS, WHO GHO, UNICEF |
-| Cancer | CDC USCS, SEER summary tables |
-| Behavioural health and substance use | CDC drug overdose tables, SAMHSA NSDUH |
-| Health services and quality | CMS Hospital Compare and Medicare data, AHRQ HCUP summaries |
-| Context and denominators | Census population, CDC/ATSDR SVI, NOAA weather |
-| Global comparisons | WHO GHO, OECD Health, World Bank health indicators, PAHO |
+| `list_sources` | What data is loaded: publisher, years, places, how fresh it is, its licence and whether it has been reviewed |
+| `search_datasets` | Datasets that fit a topic, ranked, with one line on why each fits |
+| `describe_dataset` | One dataset explained in clinical words: what one row is, case definitions, counts vs rates, caveats, how to cite it |
+| `suggest_datasets` | For a research question: which datasets can answer it, which can't, and why |
+| `get_series` | Reported numbers over time for a condition and places, each row with its source, fetch date and case definition |
+| `get_aligned_with_gbd` | The same numbers labelled with GBD's place and cause names, plus the exact GBD connector question to ask next |
+| `get_rate` | A crude rate per 100,000 from case counts and Census population, marked as computed here and never age-standardised |
+| `get_provenance` | Where the numbers came from: web addresses, fetch dates and a fingerprint of each downloaded file |
+| `list_caveats` | What the data can't tell you: place traps, hidden small numbers, provisional years, unreviewed descriptions |
+| `find_prior_work` | Conference abstracts, case reports and health department reports. Not built yet; it says so rather than guess |
+| `query_sql` | A last resort for questions the others don't cover; it refuses anything but a careful, read-only lookup |
 
-Infectious disease comes first. The first adapters read CDC's Socrata portals and the WHO Global Health
-Observatory. The table is the plan; [`catalog/`](catalog/) is what ships today.
+Results come back as CSV (a plain table you can paste into a spreadsheet), followed by lines on where the numbers
+came from.
 
-GBD itself is never mirrored. Every catalog entry carries its GBD cause and location crosswalk instead.
+## Data
 
-## How answers stay correct
+Infectious disease only, for now. The five starter datasets are in [`catalog/`](catalog/):
 
-- **Contracts.** Each dataset has an [ODCS v3.2.0](https://bitol-io.github.io/open-data-contract-standard/latest/)
-  contract in [`contracts/`](contracts/): what one row is, units, codes, missing values and total rows. A fact that
-  changes a number comes only from the publisher's codebook, an exact structural fact or a maintainer's reviewed
-  declaration. Anything else stays an open question in the contract.
-- **Semantic models.** Each dataset has a model in [`semantic/`](semantic/) that defines what can be asked and how
-  to aggregate it: counts in frequency tables are summed with total rows left out; rates and estimates are never
-  summed. `query_metric` compiles these metrics to SQL, so the model doesn't write it.
-- **Blind evaluation.** For each dataset, an author who never sees the connector writes 8–10 clinician questions,
-  computes each answer twice, and seals the set with a hash. Datasets are split by agency; the held-out agencies
-  run once per release and are never used to tune anything.
+| Dataset | Publisher | What it covers |
+|---|---|---|
+| `cdc_nndss_weekly` | CDC | Notifiable disease cases, weekly, by state and region, 2022 on |
+| `cdc_nhsn_ar_hai` | CDC (NHSN) | Percent resistant among pathogens from hospital-reported infections (CLABSI, CAUTI, SSI), nation, region and state, 2011 on |
+| `cdc_respnet` | CDC (RESP-NET) | Hospitalisation rates for COVID-19, flu and RSV, nation and state, 2016 on |
+| `cdc_haicviz_cdi` | CDC (Emerging Infections Program) | C. difficile infection counts and rates in the program's surveillance areas (not by state), 2011–2022 |
+| `who_gho_tb_incidence` | WHO | Tuberculosis incidence per 100,000, by country, 2000 on |
 
-**The release bar,** measured on held-out agencies with Claude as the client:
+Every dataset's description (its contract) is still a draft awaiting review; `list_caveats` says so with each
+answer. WHO data is for non-commercial use, and that is shown with every WHO result.
 
-- at most **2%** of answered questions wrong, and
-- at least **80%** of answerable questions right.
+## Using it with GBD, PubMed and others
 
-Results, when published, live in [`eval/`](eval/). Design decisions are in [`docs/adr/`](docs/adr/README.md); the
-data flow is in [`docs/architecture.md`](docs/architecture.md).
+Each tool has its own lane: GBD for modelled burden, this tool for reported and local numbers, PubMed for papers.
+[The setup guide](docs/setup.md) covers adding the IHME GBD and PubMed connectors too.
 
-## Using it with the IHME GBD connector
-
-1. In a Claude Project, add the [IHME GBD connector](https://claude.com/connectors/ihme-gbd) and this server.
-2. Start a new chat.
-3. Paste this into the Project instructions:
+Put these rules in your Claude Project's instructions, or run the `set_up_my_project` helper to write them for you:
 
 ```text
-- Use the IHME GBD connector for modelled burden and health-data-registry for observed and local data.
-  Never fill a number from memory or the news.
-- Every number cites its tool output: "GBD 2023 (IHME)", or the source URL, retrieval date and dataset
+- Use the IHME GBD connector for modelled burden, health-data-registry for observed and local data and
+  datasets, and PubMed for papers. Never fill a number from memory or the news.
+- Every number cites its tool output: "GBD 2023 (IHME)", or the source web address, fetch date and dataset
   version that health-data-registry returns.
 - Report GBD's 95% uncertainty intervals. Observed counts have none; say so.
 - Don't call a gap between GBD and observed data real unless it falls outside GBD's 95% interval.
 - Flag provisional, suppressed or partial-geography rows.
 - Don't compare age-standardised rates across different standard populations.
-- Population-level patterns are hypotheses, not causes. No patient information in the chat.
+- Population-level patterns are hypotheses, not causes. No patient information in any chat.
 ```
 
-A later tool, `get_aligned_with_gbd`, will return observed rows keyed to GBD location and cause names, with the
-exact GBD call to make next.
+## How answers stay correct
 
-## Contributing a dataset
+- **Reviewed descriptions.** Each dataset has a contract: a file that says what one row is, the units, the codes,
+  which values mean "missing" and which rows are totals. A fact that changes a number comes only from the
+  publisher's own documentation, an exact fact about the file's structure, or a maintainer's reviewed note.
+  Anything else stays an open question, and the tool says so.
+- **Rules for adding up.** Counts are added with total rows left out. Rates and estimates are never added.
+  Published uncertainty ranges are kept, never dropped.
+- **Blind testing.** For each dataset, someone who has never seen the tool writes 8–10 clinician questions and
+  works out each answer twice. Those questions are sealed and run once per release, on datasets from agencies the
+  tool was never tuned on.
 
-A dataset is three reviewed files plus a blind question set:
+**The release bar,** with Claude as the client:
 
-1. `catalog/<id>.yaml`: agency, years, geography, shape, licence and terms, citation, source and codebook URLs.
-2. `contracts/<id>.odcs.yaml`: the physical truth, in ODCS v3.2.0. Facts come from the publisher's codebook, an
-   exact structural fact or a maintainer's declaration; anything else goes in as an open question.
-3. `semantic/<id>.yaml`: dimensions, measures and metrics, each with its aggregation rule.
-4. Blind questions, written by someone other than the contract's author, sealed under `eval/sealed/`.
+- at most **2%** of answered questions wrong, and
+- at least **80%** of answerable questions right.
 
-Run `make check` before you open the pull request. **The review rule:** a contract or semantic model merges only
-after a maintainer reviews it, even when inference or a model drafted it. Data files are never committed, except
-tiny test fixtures. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Before each release, two or three clinicians with no technical background also try it from this page, unaided.
+Results, when published, live in [`eval/`](eval/).
+
+## Contributing
+
+To suggest a dataset or report a wrong number, open an issue. To add a dataset yourself, see
+[CONTRIBUTING.md](CONTRIBUTING.md) and the [developer docs](docs/dev/README.md). A dataset's contract merges only
+after a maintainer reviews it.
 
 ## Security, licence and citation
 
-- **Security:** report vulnerabilities privately through GitHub security advisories. See [SECURITY.md](SECURITY.md).
-- **Licence:** code under [Apache-2.0](LICENSE). Each dataset keeps its publisher's terms, recorded in its catalog
-  entry and returned with every result. WHO data is non-commercial and is fetched from WHO at run time, not
-  mirrored.
-- **Citation:** cite this software with [CITATION.cff](CITATION.cff). Cite the data by the citation each result
-  returns.
+- **Security:** report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
+- **Licence:** the code is [Apache-2.0](LICENSE). Each dataset keeps its publisher's terms, shown with every
+  result. Data is never stored in this repository.
+- **Citation:** cite this software with [CITATION.cff](CITATION.cff). Cite the data with the citation each result
+  gives.
+
+## For developers
+
+```bash
+git clone https://github.com/jtouley/health-data-registry.git
+cd health-data-registry
+make install   # uv sync
+make check     # lint, type check, tests, mutation tests on changed modules
+```
+
+Commands, architecture, tests and how to add a dataset: [docs/dev/README.md](docs/dev/README.md). Design
+decisions: [docs/adr/](docs/adr/README.md).

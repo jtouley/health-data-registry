@@ -35,6 +35,15 @@ schema:
         value: "location2 IS NOT NULL AND upper(location2) NOT IN ('NON-US RESIDENTS', 'NON-U.S. RESIDENTS')"
         description: "Summary areas (TOTAL, US RESIDENTS, US TERRITORIES and the nine census divisions) carry location2; single jurisdictions carry location1. Non-U.S. Residents also carries location2 but is its own bucket, not a sum. Structural fact checked live 2026-11-24: for Legionellosis 2024 week 52 the 51 state/DC rows plus New York City (7012 + 249) equal US RESIDENTS (7261), and US RESIDENTS + US TERRITORIES + NON-US RESIDENTS (7261 + 3 + 1) equal TOTAL (7265)."
       - {property: tableShape, value: surveillance_series}
+      - property: idDimensions
+        value:
+          condition: label
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: null
+          period: [year, week]
+          provisionalFlag: null
+        description: "Condition is the publisher label (no NNDSS event code or ICD-10 code is published in this dataset). Case definitions are not in the data (see openQuestions; https://ndc.services.cdc.gov/). Case status is not a column: counts are published per condition without a confirmed/probable split. Organism is part of the label for Candida auris only; no resistance field. Period is MMWR year and week. Provisional status is by reporting year per the dataset footnote, not a column."
     properties:
       - name: states
         physicalType: VARCHAR
@@ -190,3 +199,6 @@ customProperties:
       - "Should the adapter normalize the 2025+ title-case reporting-area names to the 2022-2024 upper-case form, or the reverse? Filters on states are case-sensitive today."
       - "Mapping Candida auris screening (colonization) to GBD Candida spp. / Other infectious diseases is a coarse pairing; colonization is not disease. Keep, or map screening to no GBD cause?"
       - "Earlier NNDSS weekly years (before 2022) sit in separate per-table Socrata datasets; not covered by this contract."
+      - "Case definitions: which CSTE position statement and effective year applies to each condition and MMWR year (e.g. Candida auris clinical vs screening, Legionellosis, syphilis stages, TB)? Not in the data; list them as a caseDefinitions customProperty from https://ndc.services.cdc.gov/ after a maintainer reads it."
+      - "Case status: do these weekly counts include confirmed and probable cases together (per each condition's case definition)? The dataset does not say; until answered, counts must be described as 'reported cases' with status unspecified."
+      - "Is a provisional/final indicator published anywhere for this dataset (e.g. a finalized annual table)? Not a column here."

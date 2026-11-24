@@ -14,8 +14,9 @@ State and county reports vary. Mirroring data whose terms limit redistribution w
 - Each catalog entry records the source's licence and terms. They come back with every result.
 - Sources whose terms allow redistribution, such as US federal data, are snapshotted, and may be published to a
   public Hugging Face dataset.
-- Sources whose terms limit redistribution, such as WHO, are not mirrored. The server fetches them from the
-  publisher at run time and shows their terms with each result.
+- Sources whose terms limit redistribution, such as WHO, are not mirrored. They are fetched from the publisher
+  onto the user's own machine (with the local server, by `refresh`), never published, and their terms show with
+  each result.
 - GBD is never fetched at all ([ADR 0004](0004-aligned-data-no-gbd-verdicts.md)).
 - Data is never committed to the repo, whatever its licence, except tiny test fixtures.
 

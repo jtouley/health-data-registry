@@ -1,0 +1,40 @@
+id: cdc_respnet
+title: RESP-NET Rates and Clinical Data
+agency: CDC
+publisher: "Centers for Disease Control and Prevention, Respiratory Virus Hospitalization Surveillance Network (RESP-NET: COVID-NET, FluSurv-NET, RSV-NET)"
+level: federal
+country: US
+research_areas: [infectious_disease]
+years: {start: 2016, end: null}
+geography: [nation, state]
+shape: rate_table
+grain: "One row is one surveillance network (COVID-NET, FluSurv-NET, RSV-NET or Combined), season, week-ending date or whole season, RESP-NET site (or all sites), age group, race/ethnicity and sex, holding one estimate: a weekly or cumulative hospitalization rate per 100,000 (observed, age-adjusted or estimated) or a percent of hospitalized patients with a clinical outcome."
+refresh: weekly
+licence:
+  id: public-domain-us-federal
+  redistribution: true
+  terms_url: https://www.usa.gov/government-works
+citation: "RESP-NET: Respiratory Virus Hospitalization Surveillance Network, Centers for Disease Control and Prevention. RESP-NET Rates and Clinical Data. https://data.cdc.gov/d/kvib-3txy (accessed <retrieved_at>)."
+source:
+  portal: socrata
+  host: data.cdc.gov
+  dataset: kvib-3txy
+  landing_url: https://www.cdc.gov/resp-net/dashboard/index.html
+  api_url: https://data.cdc.gov/resource/kvib-3txy.json
+codebook_url: https://www.cdc.gov/resp-net/dashboard/index.html
+caveats:
+  - "Rates cover the catchment population of each RESP-NET surveillance site, not necessarily the whole state (dataset geographic coverage: RESP-NET Sites)."
+  - "Only laboratory-confirmed RSV, COVID-19 and influenza hospitalizations are counted."
+  - "Rates are per 100,000 population and are never added; observed, age-adjusted and estimated rates are different series."
+  - "Overall means all participating sites of that network combined; site lists differ by network and season."
+  - "Some estimated cumulative rates for the current season are published with an empty estimate."
+  - "Clinical outcome percents (ICU, mechanical ventilation, in-hospital death, underlying condition) are per season, not per week."
+gbd:
+  location_column: state
+  causes:
+    - {condition: "FluSurv-NET", cause: "Lower respiratory infections", pathogen: "Influenza"}
+    - {condition: "RSV-NET", cause: "Lower respiratory infections", pathogen: "Respiratory syncytial virus"}
+    - {condition: "COVID-NET", cause: "COVID-19", pathogen: null}
+contract: contracts/cdc_respnet.odcs.yaml
+semantic_model: semantic/cdc_respnet.yaml
+status: draft

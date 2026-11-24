@@ -157,46 +157,112 @@ def test_filter_values_are_bound_never_spliced(registry: Registry, value: str) -
 
 def test_no_snapshot_is_a_plain_refusal(registry: Registry, tmp_path: Path) -> None:
     eng = Engine(registry=registry, lake=tmp_path / "empty")
-    out = tools.query_metric(eng, "toy_cases", "case_count")
-    assert out["refused"] == "no_snapshot" and "refresh toy_cases" in out["message"]
+    out = tools.get_series(registry, eng, condition="legionellosis", locations=["Michigan"], measure="cases")
+    assert "hasn't been downloaded" in out and "docs/setup.md" in out and "Traceback" not in out
 
 
 def test_query_sql_guarded(lake: Path, registry: Registry) -> None:
     eng = Engine(registry=registry, lake=lake)
-    out = tools.query_sql(eng, "SELECT reporting_area, cases FROM toy_cases WHERE year = 2022")
+    out = tools.query_sql(eng, "SELECT reporting_area, cases FROM toy_cases WHERE year = 2022", fmt="json")
     assert out["rows"] == [["MICHIGAN", 300]]
-    assert out["source"]["dataset"] == "toy_cases"
     bad = tools.query_sql(eng, "SELECT * FROM read_csv('/etc/passwd')")
-    assert "refused" in bad
+    assert bad.startswith("That query can't run")
 
 
 # ------------------------------------------------------------------ catalog tools
 
 
-def test_find_datasets(registry: Registry) -> None:
-    hit = tools.find_datasets(registry, topic="legionella in states", geography="state")
-    assert hit["datasets"][0]["id"] == "toy_cases"
-    assert "legionella" in hit["datasets"][0]["fit"]
-    assert tools.find_datasets(registry, topic="cancer")["datasets"] == []
-    assert tools.find_datasets(registry, geography="county")["datasets"] == []
-    assert tools.find_datasets(registry, year_start=2030)["datasets"] == []
+def test_search_datasets(registry: Registry) -> None:
+    hit = tools.search_datasets(registry, topic="legionella in states", geography="state", fmt="json")
+    assert hit["rows"][0][0] == "toy_cases"
+    assert "legionella" in hit["rows"][0][-1]
+    assert tools.search_datasets(registry, topic="cancer", fmt="json")["rows"] == []
+    assert tools.search_datasets(registry, geography="county", fmt="json")["rows"] == []
+    assert tools.search_datasets(registry, year_start=2030, fmt="json")["rows"] == []
 
 
 def test_suggest_datasets_says_why_not(registry: Registry) -> None:
-    yes = tools.suggest_datasets(registry, "Is syphilis rising in Michigan since 2022?")
-    assert [d["id"] for d in yes["can_answer"]] == ["toy_cases"]
-    assert yes["read_as"]["places"] == ["michigan"]
-    no = tools.suggest_datasets(registry, "Syphilis by county in Michigan in 2010")
-    why = no["cannot_answer"][0]["why_not"]
+    yes = tools.suggest_datasets(registry, "Is syphilis rising in Michigan since 2022?", fmt="json")
+    assert yes["rows"][0][:2] == ["toy_cases", "yes"]
+    no = tools.suggest_datasets(registry, "Syphilis by county in Michigan in 2010", fmt="json")
+    why = no["rows"][0][2]
     assert "county" in why and "2022-2024" in why
 
 
 def test_describe_dataset(registry: Registry, lake: Path) -> None:
-    d = tools.describe_dataset(registry, "toy_cases", Engine(registry=registry, lake=lake))
+    eng = Engine(registry=registry, lake=lake)
+    d = tools.describe_dataset(registry, "toy_cases", eng, fmt="json")
     assert d["total_rows"] == "reporting_area = 'US RESIDENTS'"
-    assert "rate: rate (never summed)" in d["rates_vs_counts"]
-    assert d["snapshot"]["rows"] == 6
+    assert "rate: rate (never added up)" in d["counts_and_rates"]
     assert d["open_questions"]
+    text = tools.describe_dataset(registry, "toy_cases", eng)
+    assert "Legionellosis: cases; case status: confirmed and probable" in text
+    assert "Use search_datasets" in tools.describe_dataset(registry, "nope")
+
+
+# ------------------------------------------------------------------ series tools
+
+
+def test_get_series_csv(lake: Path, registry: Registry) -> None:
+    eng = Engine(registry=registry, lake=lake)
+    out = tools.get_series(
+        registry, eng, condition="Legionellosis", locations=["MI", "ohio", "Atlantis"], measure="cases"
+    )
+    lines = out.splitlines()
+    assert lines[0].startswith("location,year,value,lower,upper,period_status,measure,condition,case_status")
+    assert lines[1].startswith("Michigan,2022,300,,,,cases,Legionellosis,confirmed and probable")
+    assert lines[3].startswith("Michigan,2024,,,,,cases")  # the publisher's 'N' stays empty, not 0
+    assert lines[4].startswith("Ohio,2023,400,,,,cases")
+    assert "# toy_cases has no rows for: Atlantis." in out
+    assert "not zeros" in out
+
+
+def test_get_series_mixed_measures_warns(lake: Path, registry: Registry) -> None:
+    eng = Engine(registry=registry, lake=lake)
+    out = tools.get_series(registry, eng, condition="legionellosis", locations=["Michigan"], year_start=2023,
+                           year_end=2023, fmt="json")  # fmt: skip
+    assert {r[6] for r in out["rows"]} == {"cases", "rate"}
+    assert out["notes"][0].startswith("Rows mix measures")
+
+
+def test_get_series_refusals(lake: Path, registry: Registry) -> None:
+    eng = Engine(registry=registry, lake=lake)
+    assert "Conditions available now: Legionellosis, Syphilis" in tools.get_series(
+        registry, eng, condition="mumps"
+    )
+    assert "both-sexes" in tools.get_series(registry, eng, condition="syphilis", sex="female")
+
+
+def test_aligned_with_gbd(lake: Path, registry: Registry) -> None:
+    eng = Engine(registry=registry, lake=lake)
+    out = tools.get_aligned_with_gbd(registry, eng, condition="legionellosis", locations=["Michigan"],
+                                     year_start=2022, year_end=2025, fmt="json")  # fmt: skip
+    row = out["rows"][0]
+    assert row[:3] == ["Michigan", "26", 2022]
+    assert row[10:12] == ["Lower respiratory infections", "Legionella spp"]
+    assert row[12].startswith("get_etiology(pathogen_name='Legionella spp'") and "year=2023" in row[12]
+    syph = tools.get_aligned_with_gbd(registry, eng, condition="syphilis", locations=["Michigan"], fmt="json")
+    assert syph["rows"][0][12].startswith("get_multi_location_trend(cause_name='Syphilis'")
+    assert any("never calls GBD" in n for n in out["notes"])
+
+
+def test_rate_provenance_caveats_prior_work(lake: Path, registry: Registry) -> None:
+    eng = Engine(registry=registry, lake=lake)
+    assert "aren't loaded yet" in tools.get_rate(registry, eng, condition="syphilis", year=2023)
+    prov = tools.get_provenance(registry, eng, source_id="toy_cases", fmt="json")
+    assert prov["rows"][0][1] == "https://data.cdc.gov/resource/toy0-toy0.json"
+    assert len(prov["rows"][0][3]) == 64
+    assert "CSTE 2005" in prov["notes"][0]
+    cav = tools.list_caveats(registry, condition="syphilis", fmt="json")
+    assert ["toy_cases", "not yet confirmed", "Is 'N' a true zero or not notifiable?"] in cav["rows"]
+    assert "isn't built yet" in tools.find_prior_work(registry, condition="C. auris")
+    assert "Use search_datasets" in tools.get_provenance(registry, eng, source_id="nope")
+
+
+def test_list_sources(lake: Path, registry: Registry) -> None:
+    out = tools.list_sources(registry, Engine(registry=registry, lake=lake), fmt="json")
+    assert out["rows"][0][0] == "toy_cases" and out["rows"][0][6] == "2026-11-24"
+    assert tools.list_sources(registry, condition="mumps", fmt="json")["rows"] == []
 
 
 # ------------------------------------------------------------------ adapters
@@ -266,6 +332,13 @@ def test_total_rows_predicate_is_checked(tmp_path: Path, predicate: str) -> None
 
 def test_allowed_predicate_functions(tmp_path: Path) -> None:
     contract = CONTRACT.replace(
-        "\"reporting_area = 'US RESIDENTS'\"", json.dumps("upper(trim(reporting_area)) IN ('US RESIDENTS', 'TOTAL')")
+        "\"reporting_area = 'US RESIDENTS'\"",
+        json.dumps("upper(trim(reporting_area)) IN ('US RESIDENTS', 'TOTAL')"),
     )
+    assert load_registry(write_registry(tmp_path, contract=contract))
+
+
+def test_compound_predicates_allowed(tmp_path: Path) -> None:
+    pred = "(reporting_area = 'US RESIDENTS' OR upper(reporting_area) LIKE '%TOTAL%') AND NOT (year IS NULL)"
+    contract = CONTRACT.replace("\"reporting_area = 'US RESIDENTS'\"", json.dumps(pred))
     assert load_registry(write_registry(tmp_path, contract=contract))

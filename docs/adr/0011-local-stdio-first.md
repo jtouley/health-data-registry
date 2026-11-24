@@ -21,6 +21,7 @@ the Space's cold starts hurt.
 
 ## Consequences
 
-- Phase 2 users need Claude Desktop or Claude Code, plus uv.
+- Until then, users need Claude Desktop or Claude Code, plus uv and Git; [docs/setup.md](../setup.md) and the
+  `walk_me_through_install` helper take a clinician through the one-time install ([ADR 0012](0012-built-for-clinicians.md)).
 - claude.ai and ChatGPT custom connectors wait for the hosted server.
 - The server code must not assume stdio, so the same tools can run over Streamable HTTP.

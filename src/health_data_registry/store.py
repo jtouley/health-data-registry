@@ -101,9 +101,11 @@ def write_raw(lake: Path, fetches: Sequence[RawFetch]) -> None:
     raw = lake / "raw"
     raw.mkdir(parents=True, exist_ok=True)
     for f in fetches:
+        target = raw / f.sha256
+        if target.exists() and not f.content:
+            continue  # already stored when the page arrived (refresh streams pages to disk)
         if hashlib.sha256(f.content).hexdigest() != f.sha256:
             raise ValueError(f"sha256 mismatch for {f.url}")
-        target = raw / f.sha256
         if not target.exists():
             tmp = target.with_suffix(".tmp")
             tmp.write_bytes(f.content)

@@ -270,14 +270,46 @@ class Uncertainty(_Strict):
     upper: str
 
 
+class Restatement(_Strict):
+    """A later table restating a whole earlier period (e.g. NNDSS's prior-year year-to-date column)."""
+
+    measure: str  # cumulative count for the previous period, as restated in the current period's table
+    complete_at: int  # the order_by value from which the restatement covers the whole previous period
+
+
 class Metric(_Strict):
     name: str
     description: str
     measure: str
-    aggregation: Literal["sum", "none"]
+    # sum: add counts; none: read as published; cumulative_latest: read a running total at the last
+    # order_by value of each period, or the next period's restatement of it once that is complete.
+    aggregation: Literal["sum", "none", "cumulative_latest"]
     exclude_total_rows: bool = True
     filters: list[str] = Field(default_factory=list)
     uncertainty: Uncertainty | None = None
+    order_by: str | None = None
+    restated_by: Restatement | None = None
+
+
+SeriesMeasure = Literal["cases", "deaths", "rate", "percent", "estimate", "population"]
+
+
+class Series(_Strict):
+    """How a clinical question ("legionellosis cases in Michigan by year") maps onto one metric.
+
+    `condition` is the internal code shared with the catalog's gbd.causes, so get_aligned_with_gbd can key
+    a series to its GBD cause and pathogen. Case status and case definition are stated, never inferred.
+    """
+
+    condition: str
+    label: str
+    metric: str
+    measure: SeriesMeasure
+    filters: dict[str, str | int | list[str | int]] = Field(default_factory=dict)
+    location_dimension: str | None = None
+    time_dimension: str
+    case_status: str | None = None
+    case_definition: str | None = None
 
 
 class SemanticModel(_Strict):
@@ -286,6 +318,7 @@ class SemanticModel(_Strict):
     dimensions: list[Dimension]
     measures: list[Measure]
     metrics: list[Metric]
+    series: list[Series] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _rules(self) -> SemanticModel:
@@ -297,10 +330,41 @@ class SemanticModel(_Strict):
             # The spec's core rule: sum a frequency count, never sum a rate or an estimate.
             if metric.aggregation == "sum" and m.kind != "count":
                 raise ValueError(f"metric {metric.name} would sum a {m.kind}; only counts may be summed")
+            if metric.aggregation == "cumulative_latest":
+                if m.kind != "count":
+                    raise ValueError(f"metric {metric.name}: cumulative_latest needs a running count")
+                if metric.order_by is None or metric.order_by not in {d.name for d in self.dimensions}:
+                    raise ValueError(f"metric {metric.name}: cumulative_latest needs order_by, a dimension")
+                if metric.restated_by and measures.get(metric.restated_by.measure) is None:
+                    raise ValueError(f"metric {metric.name}: restated_by names an unknown measure")
+            elif metric.order_by is not None or metric.restated_by is not None:
+                raise ValueError(
+                    f"metric {metric.name}: order_by and restated_by only apply to cumulative_latest"
+                )
             if metric.uncertainty:
                 for b in (metric.uncertainty.lower, metric.uncertainty.upper):
                     if b not in measures:
                         raise ValueError(f"metric {metric.name} uncertainty names unknown measure {b}")
+        dims = {d.name: d for d in self.dimensions}
+        metrics = {m.name: m for m in self.metrics}
+        for ser in self.series:
+            met = metrics.get(ser.metric)
+            if met is None:
+                raise ValueError(f"series {ser.condition} names unknown metric {ser.metric}")
+            for d in [
+                *ser.filters,
+                ser.time_dimension,
+                *([ser.location_dimension] if ser.location_dimension else []),
+            ]:
+                if d not in dims:
+                    raise ValueError(f"series {ser.condition} names unknown dimension {d}")
+            if dims[ser.time_dimension].type != "time":
+                raise ValueError(f"series {ser.condition}: {ser.time_dimension} is not a time dimension")
+            kind = measures[met.measure].kind
+            if ser.measure in ("cases", "deaths", "population") and kind != "count":
+                raise ValueError(f"series {ser.condition} says {ser.measure} but its metric reads a {kind}")
+            if ser.measure in ("rate", "percent", "estimate") and kind == "count":
+                raise ValueError(f"series {ser.condition} says {ser.measure} but its metric reads a count")
         for group in (self.dimensions, self.measures, self.metrics):
             names = [g.name for g in group]
             if len(set(names)) != len(names):
@@ -427,7 +491,9 @@ def check_predicate(sql: str, columns: frozenset[str], *, where: str) -> None:
                 raise RegistryError(f"{where}: predicate names unknown column {node.sql()!r}")
         elif isinstance(node, exp.Anonymous):
             raise RegistryError(f"{where}: predicate calls unknown function {node.name!r}")
-        elif isinstance(node, exp.Func) and not isinstance(node, exp.Cast | exp.TryCast):
+        elif isinstance(node, exp.Func) and not isinstance(
+            node, exp.Cast | exp.TryCast | exp.Connector | exp.Predicate | exp.Binary | exp.Unary | exp.Paren
+        ):
             name = (node.sql_name() or "").lower()
             if name not in _PREDICATE_FUNCS:
                 raise RegistryError(f"{where}: predicate function {name!r} is not allowed")

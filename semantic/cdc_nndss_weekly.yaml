@@ -35,9 +35,128 @@ metrics:
     aggregation: sum
     exclude_total_rows: false
     filters: ["upper(states) IN ('US RESIDENTS', 'U.S. RESIDENTS')"]
+  - name: annual_cases
+    description: "Cases in an MMWR year: the year-to-date count at the year's last published week, replaced by next year's restated prior-year count once that table reaches week 52. Weekly counts are not added up because late reports are added to the running total, not to the week."
+    measure: cases_year_to_date
+    aggregation: cumulative_latest
+    order_by: mmwr_week
+    restated_by: {measure: cases_prior_year_to_date, complete_at: 52}
+    exclude_total_rows: true
+    filters: []
+  - name: us_resident_annual_cases
+    description: "Annual cases among US residents from the published US RESIDENTS row, read the same way as annual_cases."
+    measure: cases_year_to_date
+    aggregation: cumulative_latest
+    order_by: mmwr_week
+    restated_by: {measure: cases_prior_year_to_date, complete_at: 52}
+    exclude_total_rows: false
+    filters: ["upper(states) IN ('US RESIDENTS', 'U.S. RESIDENTS')"]
+  - name: us_resident_weekly_cases
+    description: "Cases among US residents reported in a given week, read from the published US RESIDENTS row and added across weeks."
+    measure: cases_this_week
+    aggregation: sum
+    exclude_total_rows: false
+    filters: ["upper(states) IN ('US RESIDENTS', 'U.S. RESIDENTS')"]
   - name: max_weekly_cases_prior_52_weeks
     description: "Highest weekly case count in the previous 52 weeks for one place and condition, as published; never added up."
     measure: max_weekly_cases_prior_52_weeks
     aggregation: none
     exclude_total_rows: false
     filters: []
+series:
+  - condition: "Candida auris, clinical"
+    label: "C. auris (clinical cases)"
+    metric: annual_cases
+    measure: cases
+    filters: {condition: "Candida auris, clinical"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Candida auris, clinical"
+    label: "C. auris (clinical cases)"
+    metric: us_resident_annual_cases
+    measure: cases
+    filters: {condition: "Candida auris, clinical"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Candida auris, screening"
+    label: "C. auris (screening, colonisation)"
+    metric: annual_cases
+    measure: cases
+    filters: {condition: "Candida auris, screening"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Candida auris, screening"
+    label: "C. auris (screening, colonisation)"
+    metric: us_resident_annual_cases
+    measure: cases
+    filters: {condition: "Candida auris, screening"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Legionellosis"
+    label: "Legionellosis"
+    metric: annual_cases
+    measure: cases
+    filters: {condition: "Legionellosis"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Legionellosis"
+    label: "Legionellosis"
+    metric: us_resident_annual_cases
+    measure: cases
+    filters: {condition: "Legionellosis"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Syphilis, Primary and secondary"
+    label: "Syphilis (primary and secondary)"
+    metric: annual_cases
+    measure: cases
+    filters: {condition: "Syphilis, Primary and secondary"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Syphilis, Primary and secondary"
+    label: "Syphilis (primary and secondary)"
+    metric: us_resident_annual_cases
+    measure: cases
+    filters: {condition: "Syphilis, Primary and secondary"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Syphilis, Congenital"
+    label: "Congenital syphilis"
+    metric: annual_cases
+    measure: cases
+    filters: {condition: "Syphilis, Congenital"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Syphilis, Congenital"
+    label: "Congenital syphilis"
+    metric: us_resident_annual_cases
+    measure: cases
+    filters: {condition: "Syphilis, Congenital"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Tuberculosis"
+    label: "Tuberculosis"
+    metric: annual_cases
+    measure: cases
+    filters: {condition: "Tuberculosis"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Tuberculosis"
+    label: "Tuberculosis"
+    metric: us_resident_annual_cases
+    measure: cases
+    filters: {condition: "Tuberculosis"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    case_status: "as published (NNDSS does not split confirmed and probable here)"

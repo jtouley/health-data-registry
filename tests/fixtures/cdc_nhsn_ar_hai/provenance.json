@@ -1,6 +1,0 @@
-{
-  "url": "https://data.cdc.gov/resource/7wz3-n6um.json?%24query=SELECT%20%2A%20WHERE%20geography%20IN%20%28%27Michigan%27%2C%27United%20States%27%29%20AND%20phenotype%20IN%20%28%27Methicillin-resistant%20Staphylococcus%20aureus%27%2C%27Carbapenem-resistant%20Enterobacterales%27%2C%27Carbapenem-resistant%20Acinetobacter%27%29%20AND%20event_type%20%3D%20%27All%20Infectious%20Event%20Type%20Data%27%20AND%20age_category%20%3D%20%27All%20Ages%20Data%27%20AND%20sex%20%3D%20%27All%20Sexes%20%28total%29%27%20AND%20teaching_hospital%20%3D%20%27All%20Teaching%20Hospitals%20Data%27%20AND%20hospital_size%20%3D%20%27All%20Hospital%20Size%20Data%27%20AND%20facility%20%3D%20%27All%20Facility%20Data%27%20AND%20procedure%20%3D%20%27All%20Procedure%20Data%27%20AND%20location%20%3D%20%27All%20Location%20within%20Hospital%20Data%27%20ORDER%20BY%20geography%2C%20phenotype%2C%20year%20LIMIT%20300",
-  "retrieved_at": "2026-11-24T15:52:09Z",
-  "sha256": "935a235266b45ccbe988d4e12b354cb106847a1bb308be2ee6922f50c46d20a5",
-  "licence": "public-domain-us-federal"
-}

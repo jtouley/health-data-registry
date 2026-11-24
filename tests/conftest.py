@@ -108,6 +108,30 @@ measures:
 metrics:
   - {name: case_count, description: Reported cases, measure: cases, aggregation: sum, exclude_total_rows: true}
   - {name: case_rate, description: Published rate per 100k, measure: rate, aggregation: none, exclude_total_rows: false}
+series:
+  - condition: legionellosis
+    label: Legionellosis
+    metric: case_count
+    measure: cases
+    filters: {condition: Legionellosis}
+    location_dimension: state
+    time_dimension: year
+    case_status: confirmed and probable
+    case_definition: CSTE 2005 (09-ID-04)
+  - condition: legionellosis
+    label: Legionellosis
+    metric: case_rate
+    measure: rate
+    filters: {condition: Legionellosis}
+    location_dimension: state
+    time_dimension: year
+  - condition: syphilis
+    label: Syphilis
+    metric: case_count
+    measure: cases
+    filters: {condition: Syphilis}
+    location_dimension: state
+    time_dimension: year
 """
 
 RECORDS = [

@@ -1,0 +1,43 @@
+id: cdc_nhsn_ar_hai
+title: National Healthcare Safety Network - Antimicrobial Resistance (2011-2025)
+agency: CDC
+publisher: Centers for Disease Control and Prevention, National Center for Emerging and Zoonotic Infectious Diseases, National Healthcare Safety Network (NHSN)
+level: federal
+country: US
+research_areas: [infectious_disease]
+years: {start: 2011, end: null}
+geography: [nation, region, state]
+shape: rate_table
+grain: "One row is one year, geography (US, census division or state) and resistance phenotype within one combination of HAI type, age group, sex, teaching status, hospital size, facility type, procedure and unit type (each of which may be its 'All ...' margin), giving isolates tested, isolates resistant and percent resistant with a 95% confidence interval."
+refresh: annual
+licence:
+  id: public-domain-us-federal
+  redistribution: true
+  terms_url: https://www.usa.gov/government-works
+citation: "Centers for Disease Control and Prevention, National Healthcare Safety Network. National Healthcare Safety Network - Antimicrobial Resistance (2011-2025). https://data.cdc.gov/d/7wz3-n6um (accessed <retrieved_at>)."
+source:
+  portal: socrata
+  host: data.cdc.gov
+  dataset: 7wz3-n6um
+  landing_url: https://data.cdc.gov/d/7wz3-n6um
+  api_url: https://data.cdc.gov/resource/7wz3-n6um.json
+codebook_url: https://arpsp.cdc.gov/resources/AR_DataMethodology_2026.pdf
+caveats:
+  - "Covers pathogens from healthcare-associated infections reported to NHSN (CLABSI, CAUTI and SSI) in acute care hospitals, inpatient rehabilitation facilities and long-term acute care hospitals; it is not all clinical isolates in a state."
+  - "Resistant count and percent resistant are shown only when at least 20 isolates were tested; smaller cells are empty."
+  - "Confidence intervals are 95% mid-P exact intervals around percent resistant and describe precision only."
+  - "Small territories are not shown as states but are in the national figures; Puerto Rico is shown as a state but is excluded from regions."
+  - "Each stratifier has an 'All ...' margin row; pin every stratifier to one value before reading a number, and never add percentages."
+  - "Some phenotypes count non-susceptible rather than strictly resistant isolates; see the phenotype definitions."
+gbd:
+  location_column: geography
+  causes:
+    - {condition: "Methicillin-resistant Staphylococcus aureus", cause: "Other infectious diseases", pathogen: "Staphylococcus aureus"}
+    - {condition: "Carbapenem-resistant Klebsiella", cause: "Other infectious diseases", pathogen: "Klebsiella pneumoniae"}
+    - {condition: "Carbapenem-resistant E.coli", cause: "Other infectious diseases", pathogen: "Escherichia coli"}
+    - {condition: "Carbapenem-resistant Enterobacter", cause: "Lower respiratory infections", pathogen: "Enterobacter spp"}  # GBD 2023 models Enterobacter spp only under LRI (checked with list_cause_pathogen_pairs, 2026-11-24)
+    - {condition: "Carbapenem-resistant Acinetobacter", cause: "Other infectious diseases", pathogen: "Acinetobacter baumannii"}
+    - {condition: "Carbapenem-resistant Pseudomonas aeruginosa", cause: "Other infectious diseases", pathogen: "Pseudomonas aeruginosa"}
+contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
+semantic_model: semantic/cdc_nhsn_ar_hai.yaml
+status: draft

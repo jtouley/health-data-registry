@@ -5,20 +5,37 @@ from __future__ import annotations
 import argparse
 import sys
 import tempfile
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
 from health_data_registry.registry import Registry, RegistryError, load_registry
-from health_data_registry.store import RawFetch, build_snapshot, lake_root, write_ndjson
+from health_data_registry.store import RawFetch, build_snapshot, lake_root, write_ndjson, write_raw
+
+RETRIES = 4
+FETCH_TIMEOUT_S = 180.0
 
 
 def _fetcher(registry: Registry):  # type: ignore[no-untyped-def]
-    from health_data_registry.fetch import fetch
+    from health_data_registry.fetch import FetchRefused, fetch
 
     hosts = registry.hosts
 
     def get(url: str) -> RawFetch:
-        r = fetch(url, allowed_hosts=hosts, headers={"Accept": "application/json"})
+        r = None
+        for attempt in range(RETRIES):
+            try:
+                r = fetch(
+                    url, allowed_hosts=hosts, headers={"Accept": "application/json"}, timeout=FETCH_TIMEOUT_S
+                )
+                break
+            except FetchRefused as e:
+                # A slow or briefly unreachable publisher is retried; a refused URL or host never is.
+                if e.code not in ("timeout", "connect_failed") or attempt == RETRIES - 1:
+                    raise
+                time.sleep(2 ** (attempt + 1))
+        if r is None:  # pragma: no cover - the loop either breaks with a result or raises
+            raise RuntimeError(f"{url}: no response")
         if r.status != 200:
             raise RuntimeError(f"{url}: HTTP {r.status}")
         return RawFetch(url=r.final_url, content=r.content, sha256=r.sha256, retrieved_at=r.retrieved_at)
@@ -36,11 +53,16 @@ def refresh(registry: Registry, ids: Sequence[str], *, max_rows: int | None, lak
         with tempfile.TemporaryDirectory() as tmp:
             fetches, files = [], []
             try:
-                for i, page in enumerate(pages(ds.entry, get, max_rows=max_rows)):
-                    fetches.append(page.fetch)
-                    f = Path(tmp) / f"page-{i:05d}.ndjson"
-                    write_ndjson(f, page.records)
-                    files.append(f)
+                fields = sorted({c.source_field for c in ds.contract.columns})
+                for i, page in enumerate(pages(ds.entry, get, max_rows=max_rows, fields=fields)):
+                    write_raw(lake, [page.fetch])  # keep the bytes on disk now, not in memory
+                    f = page.fetch
+                    fetches.append(
+                        RawFetch(url=f.url, content=b"", sha256=f.sha256, retrieved_at=f.retrieved_at)
+                    )
+                    nd = Path(tmp) / f"page-{i:05d}.ndjson"
+                    write_ndjson(nd, page.records)
+                    files.append(nd)
                 m = build_snapshot(lake, ds, fetches, files, partial=max_rows is not None)
             except Exception as e:  # report and carry on with the next dataset
                 failed += 1
