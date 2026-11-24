@@ -19,7 +19,7 @@ id_areas:
 - enteric
 - vector_borne
 years:
-  start: 2022
+  start: 2012
   end: null
 geography:
 - world
@@ -43,6 +43,70 @@ source:
   conference: icid
   conference_name: International Congress on Infectious Diseases (ICID)
   supplements:
+  - year: 2012
+    issn: 1201-9712
+    volume: '16'
+    doi_prefix: 10.1016/j.ijid.2012.05.
+    from_pub_date: '2012-06-01'
+    until_pub_date: '2012-06-30'
+    verified: true
+    evidence: 'Crossref, read 24 Nov 2026: IJID volume 16 (June 2012) holds 1,010 one-abstract works under
+      10.1016/j.ijid.2012.05.* (e pages, e1 to about e313), beside regular articles under other DOI stems and an
+      author index titled 15th International Congress on Infectious Diseases (ICID) Ab... (10.1016/j.ijid.2012.07.001,
+      outside the prefix). Licence: Elsevier''s open-access user licence, not Creative Commons, and no abstract
+      text, so link only. That these are the 15th ICID (Bangkok, 2012) abstracts is inferred from that index and is
+      an open question until the maintainer confirms it.'
+  - year: 2014
+    issn: 1201-9712
+    volume: '21'
+    doi_prefix: 10.1016/j.ijid.2014.03.
+    exclude_dois:
+    - 10.1016/j.ijid.2014.03.1371
+    from_pub_date: '2014-04-01'
+    until_pub_date: '2014-04-30'
+    verified: true
+    evidence: 'Crossref, read 24 Nov 2026: IJID volume 21 (April 2014) holds 959 works under 10.1016/j.ijid.2014.03.*:
+      958 one-page abstracts (.408 to .1370, pages 1 to 460) and an author index titled 16th International Congress
+      on Infectious Diseases (ICID) Ab... (.1371, pages 461-483), excluded. No S pages and no issue in Crossref.
+      CC BY-NC-ND 4.0 without abstract text in Crossref. That these are the 16th ICID (Cape Town, 2014) abstracts is
+      inferred from that index and is an open question until the maintainer confirms it.'
+  - year: 2016
+    issn: 1201-9712
+    volume: '45'
+    doi_pattern: 10\.1016/j\.ijid\.2016\.02\.(?:02[6-9]|0[3-9]\d|[1-9]\d\d|100[0-6])
+    from_pub_date: '2016-04-01'
+    until_pub_date: '2016-04-30'
+    verified: true
+    evidence: 'Crossref, read 24 Nov 2026: IJID volume 45 (April 2016) mixes regular articles and the congress
+      abstracts under one DOI stem, 10.1016/j.ijid.2016.02.*. The abstracts are the contiguous range .026 to .1006
+      (pages 1 to 477, about 980 works); the regular articles are .002 to .025 and .1007 to .1008 (multi-page), and
+      .021 is an author index titled 17th International Congress on Infectious Diseases (pages 478-499). The DOI
+      pattern keeps the abstract range only. CC BY-NC-ND 4.0. That these are the 17th ICID (Hyderabad, 2016)
+      abstracts is inferred from that index and is an open question until the maintainer confirms it.'
+  - year: 2018
+    issn: 1201-9712
+    volume: '73'
+    doi_prefix: 10.1016/j.ijid.2018.04.
+    from_pub_date: '2018-08-01'
+    until_pub_date: '2018-08-31'
+    verified: true
+    evidence: 'Crossref, read 24 Nov 2026: IJID volume 73 (Crossref date August 2018) holds 879 one-page abstracts
+      under 10.1016/j.ijid.2018.04.* (.3437 to .4325), beside regular articles under 2018.05.* and 2018.06.* and a
+      front item titled 18th International Congress on Infectious Diseases. CC BY-NC-ND 4.0. That these are the
+      18th ICID (Buenos Aires, 2018) abstracts is inferred and is an open question until the maintainer confirms it.'
+  - year: 2020
+    issn: 1201-9712
+    volume: '101'
+    doi_pattern: 10\.1016/j\.ijid\.2020\.(?:09|11)\.\d+
+    from_pub_date: '2020-12-01'
+    until_pub_date: '2020-12-31'
+    verified: false
+    evidence: 'Crossref, read 24 Nov 2026: not verified, no structural route. IJID volume 101 (December 2020) holds
+      about 1,290 works, opening with Abstracts: International Congress on Infectious Diseases
+      (10.1016/j.ijid.2020.11.001), but the abstracts and about 330 regular articles share the DOI stems
+      2020.09.* and 2020.11.*, interleave in DOI order and share page numbers, and Crossref gives no issue. No
+      filter the catalog can declare separates them; a maintainer-reviewed exclude list or another route is needed.
+      CC BY-NC-ND 4.0 (a few CC BY).'
   - year: 2022
     issn: 1201-9712
     volume: '130'
@@ -59,6 +123,18 @@ source:
       of listeriosis among dairy farmers in Malaysia); the other 11 (DOIs 10.1016/j.ijid.2023.02.*, .03.*, .04.001
       and .04.006) are a World TB Day supplement on the same page numbers. That the 373 are ICID 2022 (Kuala Lumpur)
       abstracts is inferred and is an open question until the maintainer confirms it.'
+  - year: 2024
+    issn: 1201-9712
+    volume: '152'
+    doi_pattern: 10\.1016/j\.ijid\.202[45]\.\d+
+    from_pub_date: '2025-03-01'
+    until_pub_date: '2025-03-31'
+    verified: false
+    evidence: 'Crossref, read 24 Nov 2026: not verified, the conference is unknown. IJID volume 152 (Crossref date
+      March 2025) is one abstract supplement of 424 one-abstract works (10.1016/j.ijid.2024.107375 to .107774 and
+      10.1016/j.ijid.2025.107789 to .107839, titles in alphabetical order), CC BY-NC-ND 4.0 (4 CC BY), plus a
+      Supplement Title Page and editorial board. Nothing in Crossref names the congress, and its One Health topics
+      fit another ISID meeting as well as an ICID, so which meeting it holds needs the maintainer.'
   enrich_hosts:
   - api.openalex.org
   - www.ebi.ac.uk

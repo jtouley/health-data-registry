@@ -351,8 +351,18 @@ customProperties:
   - Confirm that IJID volume 130's supplement works under 10.1016/j.ijid.2023.04.* (May 2023, 373 works, excluding
     .001 and .006 of the World TB Day supplement) are the ICID 2022 abstracts. IJID's site blocks agents, so this
     was read from Crossref only.
-  - IJID volume 152 (March 2025) also holds 427 works with article numbers (107xxx), which look like a later ISID
-    meeting's abstracts (ICID 2024 or IMED 2024); not catalogued until the maintainer says which meeting it is.
+  - IJID volume 152 (March 2025) also holds 424 abstracts with article numbers (107xxx), which look like a later ISID
+    meeting's abstracts (ICID 2024 or IMED 2024); catalogued as 2024 with verified false until the maintainer says
+    which meeting it is.
+  - 'ICID is held every other year. Earlier congresses are catalogued from Crossref, each checked with a three-record
+    sample harvest, and each named by the author index or front item Crossref lists beside the abstracts (15th ICID
+    2012, 16th 2014, 17th 2016, 18th 2018): IJID volumes 16, 21, 45 and 73, one DOI per abstract every year, not
+    only 2022. The route differs by year: e pages and a DOI prefix in 2012; a DOI prefix without S pages in 2014 and
+    2018; in 2016 a DOI range, since the abstracts share their DOI stem with that volume''s regular articles. Licence:
+    Elsevier''s open-access user licence in 2012 (link only), CC BY-NC-ND 4.0 from 2014.'
+  - 'ICID 2020: IJID volume 101 (December 2020) opens with Abstracts: International Congress on Infectious Diseases,
+    but its abstracts and regular articles share DOI stems and page numbers, so no catalog filter separates them;
+    catalogued as verified false until a maintainer-reviewed exclude list or another route exists.'
   - 'Crossref gives no abstract text for these works and most are CC BY-NC-ND 4.0: a row keeps the text (private
     tier) only when an API supplies it.'
   - 'Redistribution: CC BY (any version) and CC0 text may now be shared publicly with full attribution on every
