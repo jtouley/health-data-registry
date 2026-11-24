@@ -428,7 +428,7 @@ def test_real_product_file_matches_catalog_and_contracts() -> None:
         assert p.name == ds.id and p.version == ds.contract.version
         assert p.hosted == ds.entry.licence.redistribution
         assert p.product_id == "health-data-registry-hub"
-        assert ds.entry.id_areas, ds.id
+        assert ds.entry.id_areas or "infectious_disease" not in ds.entry.research_areas, ds.id
     doc = yaml.safe_load((reg.root / "contracts" / "health-data-registry.odps.yaml").read_text())
     assert doc["apiVersion"] == "v1.1.0" and doc["kind"] == "DataProduct"
     # Every redistributable source has a recorded licence text to ship beside its data.

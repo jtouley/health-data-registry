@@ -160,3 +160,112 @@ series:
     location_dimension: reporting_area
     time_dimension: mmwr_year
     case_status: "as published (NNDSS does not split confirmed and probable here)"
+  # Weekly series feed check_signal only (get_series never adds weeks up into a year).
+  - condition: "Candida auris, clinical"
+    label: "C. auris (clinical cases)"
+    metric: weekly_cases
+    measure: cases
+    filters: {condition: "Candida auris, clinical"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    week_dimension: mmwr_week
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Candida auris, clinical"
+    label: "C. auris (clinical cases)"
+    metric: us_resident_weekly_cases
+    measure: cases
+    filters: {condition: "Candida auris, clinical"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    week_dimension: mmwr_week
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Candida auris, screening"
+    label: "C. auris (screening, colonisation)"
+    metric: weekly_cases
+    measure: cases
+    filters: {condition: "Candida auris, screening"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    week_dimension: mmwr_week
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Candida auris, screening"
+    label: "C. auris (screening, colonisation)"
+    metric: us_resident_weekly_cases
+    measure: cases
+    filters: {condition: "Candida auris, screening"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    week_dimension: mmwr_week
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Legionellosis"
+    label: "Legionellosis"
+    metric: weekly_cases
+    measure: cases
+    filters: {condition: "Legionellosis"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    week_dimension: mmwr_week
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Legionellosis"
+    label: "Legionellosis"
+    metric: us_resident_weekly_cases
+    measure: cases
+    filters: {condition: "Legionellosis"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    week_dimension: mmwr_week
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Syphilis, Primary and secondary"
+    label: "Syphilis (primary and secondary)"
+    metric: weekly_cases
+    measure: cases
+    filters: {condition: "Syphilis, Primary and secondary"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    week_dimension: mmwr_week
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Syphilis, Primary and secondary"
+    label: "Syphilis (primary and secondary)"
+    metric: us_resident_weekly_cases
+    measure: cases
+    filters: {condition: "Syphilis, Primary and secondary"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    week_dimension: mmwr_week
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Syphilis, Congenital"
+    label: "Congenital syphilis"
+    metric: weekly_cases
+    measure: cases
+    filters: {condition: "Syphilis, Congenital"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    week_dimension: mmwr_week
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Syphilis, Congenital"
+    label: "Congenital syphilis"
+    metric: us_resident_weekly_cases
+    measure: cases
+    filters: {condition: "Syphilis, Congenital"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    week_dimension: mmwr_week
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Tuberculosis"
+    label: "Tuberculosis"
+    metric: weekly_cases
+    measure: cases
+    filters: {condition: "Tuberculosis"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    week_dimension: mmwr_week
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
+  - condition: "Tuberculosis"
+    label: "Tuberculosis"
+    metric: us_resident_weekly_cases
+    measure: cases
+    filters: {condition: "Tuberculosis"}
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    week_dimension: mmwr_week
+    case_status: "as published (NNDSS does not split confirmed and probable here)"

@@ -13,6 +13,7 @@ from health_data_registry.server import build_server
 SPEC_TOOLS = {
     "list_sources", "search_datasets", "describe_dataset", "suggest_datasets", "get_series",
     "get_aligned_with_gbd", "get_rate", "get_provenance", "list_caveats", "find_prior_work", "query_sql",
+    "compare_rates", "get_trend", "age_adjust", "check_signal",
 }  # fmt: skip
 SPEC_HELPERS = {
     "start_here", "set_up_my_project", "spot_a_pattern", "check_its_new", "find_data_for_my_question",

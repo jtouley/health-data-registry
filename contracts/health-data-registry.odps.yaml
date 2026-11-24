@@ -41,6 +41,17 @@ inputPorts:
       - type: canonicalUrl
         url: https://data.cdc.gov/
         description: CDC open data portal.
+  - name: www2-census-gov
+    tags: [census, csv]
+    customProperties:
+      - property: description
+        value: Census Bureau population estimates files (CSV over HTTPS), read when a new vintage is released.
+      - property: license
+        value: public-domain-us-federal
+    authoritativeDefinitions:
+      - type: canonicalUrl
+        url: https://www.census.gov/programs-surveys/popest.html
+        description: Census Bureau Population Estimates Program.
   - name: who-gho
     tags: [who, odata]
     customProperties:
@@ -79,6 +90,13 @@ outputPorts:
     type: tables
     version: 0.1.0
     contractId: cdc_respnet
+    customProperties:
+      - {property: hosted, value: true}
+  - name: census_county_pop
+    description: Census Bureau county and state resident population estimates, the denominator for rates.
+    type: tables
+    version: 0.1.0
+    contractId: census_county_pop
     customProperties:
       - {property: hosted, value: true}
   - name: who_gho_tb_incidence

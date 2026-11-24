@@ -131,7 +131,7 @@ def citation(ds: Dataset, manifest: Manifest | None) -> str:
 def tags(ds: Dataset) -> list[str]:
     """Card tags: ID area, condition, geography and publisher."""
     e = ds.entry
-    out = ["infectious-disease", *(AREA_TAGS[a] for a in e.id_areas)]
+    out = [*(slug(r) for r in e.research_areas), *(AREA_TAGS[a] for a in e.id_areas)]
     out += [slug(s.label) for s in ds.semantic.series]
     out += [slug(c.cause) for c in e.gbd.causes]
     out += [f"geography-{slug(g)}" for g in e.geography]
@@ -547,7 +547,7 @@ def check_release(registry: Registry, lake: Path, out: Path) -> list[str]:
         if sm["citation"] not in card_text or not e.citation.strip():
             problems.append(f"{ds.id}: the card does not carry the publisher's citation")
         # The source shows up under its ID area tag, on its card and on the hub.
-        if not e.id_areas:
+        if "infectious_disease" in e.research_areas and not e.id_areas:
             problems.append(f"{ds.id}: no ID area is recorded in its catalog entry (id_areas)")
         for area in e.id_areas:
             tag = AREA_TAGS[area]

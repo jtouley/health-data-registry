@@ -13,7 +13,7 @@ from typing import Any, Literal
 from mcp import types
 from mcp.server.mcpserver import MCPServer
 
-from health_data_registry import __version__, helpers, tools
+from health_data_registry import __version__, analysis, helpers, tools
 from health_data_registry.query import Engine
 from health_data_registry.registry import Registry, load_registry
 from health_data_registry.store import lake_root
@@ -131,11 +131,72 @@ def build_server(registry: Registry | None = None, engine: Engine | None = None)
 
     @mcp.tool(annotations=READ_ONLY)
     def get_rate(condition: str, year: int, locations: list[str] | None = None, fmt: Fmt = "csv") -> Out:
-        """Crude rate per 100,000 from case counts and Census population, marked as computed here; never
-        age-standardised."""
+        """How common is it here? Crude rate per 100,000 (cases / Census population) with an exact Poisson 95%
+        interval, computed here and never age-standardised. Suppressed counts stay empty, never zero; the source's
+        own unreliable-rate rule is applied when its contract records one."""
         return _safe(
-            lambda: tools.get_rate(
+            lambda: analysis.get_rate(
                 reg, eng, condition=condition, locations=locations or [], year=year, fmt=fmt
+            ),
+            fmt,
+        )
+
+    @mcp.tool(annotations=READ_ONLY)
+    def compare_rates(
+        condition: str,
+        location: str,
+        year: int,
+        other_location: str | None = None,
+        other_year: int | None = None,
+        fmt: Fmt = "csv",
+    ) -> Out:
+        """Is it higher here than there, or now than then? Rate ratio and rate difference with 95% intervals,
+        between two places in one year (other_location) or one place in two years (other_year)."""
+        return _safe(
+            lambda: analysis.compare_rates(
+                reg, eng, condition=condition, location=location, year=year, other_location=other_location,
+                other_year=other_year, fmt=fmt,
+            ),
+            fmt,
+        )  # fmt: skip
+
+    @mcp.tool(annotations=READ_ONLY)
+    def get_trend(
+        condition: str,
+        location: str,
+        year_start: int | None = None,
+        year_end: int | None = None,
+        include_provisional: bool = False,
+        fmt: Fmt = "csv",
+    ) -> Out:
+        """Is it rising? Annual percent change with a 95% interval from a Poisson regression on year. Split where
+        the case definition changed; provisional years are left out unless include_provisional is true; needs at
+        least 3 usable years."""
+        return _safe(
+            lambda: analysis.get_trend(
+                reg, eng, condition=condition, location=location, year_start=year_start, year_end=year_end,
+                include_provisional=include_provisional, fmt=fmt,
+            ),
+            fmt,
+        )  # fmt: skip
+
+    @mcp.tool(annotations=READ_ONLY)
+    def age_adjust(condition: str, location: str, year: int, fmt: Fmt = "csv") -> Out:
+        """Does age explain the difference? Rate directly standardised to the 2000 US standard population, with
+        the gamma (Fay-Feuer) interval NCHS uses. Runs only when case counts and populations exist for the same
+        age groups; never comparable with GBD's age-standardised rates."""
+        return _safe(
+            lambda: analysis.age_adjust(reg, eng, condition=condition, location=location, year=year, fmt=fmt),
+            fmt,
+        )
+
+    @mcp.tool(annotations=READ_ONLY)
+    def check_signal(condition: str, location: str, year: int, week: int, fmt: Fmt = "csv") -> Out:
+        """Is this week unusual? The last 4 weeks' cases against the same, preceding and following 4 weeks of the
+        past 5 years, in the style of CDC's historical limits for notifiable diseases. A flag is not an outbreak."""
+        return _safe(
+            lambda: analysis.check_signal(
+                reg, eng, condition=condition, location=location, year=year, week=week, fmt=fmt
             ),
             fmt,
         )
