@@ -400,7 +400,11 @@ def test_harden_settingsLocked(con: duckdb.DuckDBPyConnection) -> None:
     }
 
 
-@pytest.mark.parametrize(("kwargs"), [{"threads": 0}, {"memory_limit": "1GB'; SET x='"}])
+@pytest.mark.parametrize(
+    ("kwargs"),
+    [{"threads": 0}, {"memory_limit": "1GB'; SET x='"}, {"memory_limit": "2GB2"}, {"memory_limit": "GB"},
+     {"memory_limit": "2 PB"}, {"memory_limit": ""}],
+)  # fmt: skip
 def test_harden_badArguments_valueError(kwargs: dict[str, object]) -> None:
     with duckdb.connect(":memory:") as connection, pytest.raises(ValueError):
         harden(connection, **kwargs)  # type: ignore[arg-type]
@@ -694,3 +698,18 @@ def test_runGuarded_onAnUnhardenedConnection_refused() -> None:
     with pytest.raises(SqlRefused) as e:
         sql_guard.run_guarded(con, guard("SELECT state FROM deaths"))
     assert e.value.code == "not_hardened"
+
+
+@pytest.mark.parametrize("limit", ["512MB", "2GB", "1.5 GiB", "1TB"])
+def test_harden_memoryLimit_acceptsPlainSizes(limit: str) -> None:
+    with duckdb.connect(":memory:") as connection:
+        harden(connection, memory_limit=limit)
+
+
+def test_guard_limitAll_isClampedOrRefused() -> None:
+    try:
+        q = guard("SELECT state FROM deaths LIMIT ALL", max_rows=10)
+    except SqlRefused as e:
+        assert e.code in {"bad_limit", "forbidden_construct", "parse_error"}
+    else:
+        assert q.limit <= 10 and q.sql.endswith("LIMIT 10")

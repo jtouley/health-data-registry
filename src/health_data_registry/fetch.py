@@ -31,9 +31,12 @@ naming the *host name* (``CONNECT data.cdc.gov:443``) and runs TLS end to end th
 and verification against the original host. Trade-off: the proxy does its own DNS lookup, so the
 local address check is advisory in this mode (the TCP target is no longer pinned to the checked
 address); the operator-chosen proxy is trusted to enforce its own egress policy. A proxy that
-re-terminates TLS needs its CA trusted: in proxy mode the files named by ``SSL_CERT_FILE`` and
-``REQUESTS_CA_BUNDLE`` are added to the default trust store. The generic ``HTTPS_PROXY`` variable is
-deliberately ignored, so a stray environment variable cannot silently route production traffic.
+re-terminates TLS needs its CA trusted: in proxy mode the file named by ``HDR_EXTRA_CA_FILE`` (and only
+that one) is added to the default trust store. The generic ``HTTPS_PROXY`` and ``REQUESTS_CA_BUNDLE``
+variables are deliberately ignored, so a stray environment variable set by another tool can neither route
+production traffic nor widen the CAs trusted for a publisher (``SSL_CERT_FILE`` is read by OpenSSL itself
+for every TLS context, in or out of proxy mode). Proxy mode logs one
+warning per process saying that the address checks are advisory.
 
 Failures raise :class:`FetchRefused` with a short machine ``code`` and a plain sentence.
 """
@@ -231,14 +234,29 @@ def _proxy_from_env() -> _Proxy | None:
     return _Proxy(parts.hostname, port or 80)
 
 
+EXTRA_CA_ENV: Final = "HDR_EXTRA_CA_FILE"
+_proxy_warned = False
+
+
+def _warn_proxy_once() -> None:
+    global _proxy_warned  # noqa: PLW0603 - one warning per process
+    if not _proxy_warned:
+        _proxy_warned = True
+        logger.warning(
+            "%s is set: fetches go through that proxy, which does its own DNS lookup, so the private-address "
+            "check is advisory and %s (if set) is trusted for every publisher",
+            PROXY_ENV,
+            EXTRA_CA_ENV,
+        )
+
+
 def _tls_context(*, proxied: bool) -> ssl.SSLContext:
     """Verifying TLS context (chain and host name), TLS 1.2 or newer."""
     context = ssl.create_default_context()
     if proxied:
-        for var in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE"):
-            path = os.environ.get(var)
-            if path and os.path.isfile(path):
-                context.load_verify_locations(cafile=path)
+        path = os.environ.get(EXTRA_CA_ENV)
+        if path and os.path.isfile(path):
+            context.load_verify_locations(cafile=path)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     return context
 
@@ -501,6 +519,8 @@ def fetch(
         raise ValueError(f"timeout must be positive, got {timeout!r}")
     extra = _check_headers(headers)
     proxy = _proxy_from_env()
+    if proxy is not None:
+        _warn_proxy_once()
     deadline = _Deadline(timeout)
     context = _tls_context(proxied=proxy is not None)
     original = url.strip()

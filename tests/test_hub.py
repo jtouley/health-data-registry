@@ -650,3 +650,14 @@ def test_every_engine_connection_is_locked_down(tmp_path: Path, reg: Registry, r
     assert locked()
     eng.manifest("toy_listed")  # live table: another reconnect
     assert locked()
+
+
+def test_eviction_orders_by_last_use_not_access_time(tmp_path: Path) -> None:
+    import os
+
+    old, new = tmp_path / "old.parquet", tmp_path / "new.parquet"
+    old.write_bytes(b"x" * 10)
+    new.write_bytes(b"y" * 10)
+    os.utime(old, (2_000_000_000, 1))  # read recently on a noatime mount: only atime moved
+    os.utime(new, (1, 1_000_000))
+    assert hub.evict(tmp_path, 10, set()) == [old]

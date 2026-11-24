@@ -811,14 +811,20 @@ def test_fetch_badProxySetting_proxyConfig(monkeypatch: pytest.MonkeyPatch, valu
     assert caught.value.code == "proxy_config"
 
 
-def test_tlsContext_proxied_addsCaBundleFromEnvironment(
+def test_tlsContext_proxied_addsOnlyTheDedicatedCaFile(
     certificate: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("SSL_CERT_FILE", str(certificate[0]))
-    monkeypatch.setenv("REQUESTS_CA_BUNDLE", "/nonexistent/bundle.pem")
+    def subjects() -> list[str | None]:
+        ctx = fetch_mod._tls_context(proxied=True)
+        return [dict(x[0] for x in c["subject"]).get("commonName") for c in ctx.get_ca_certs()]
+
+    monkeypatch.delenv("HDR_EXTRA_CA_FILE", raising=False)
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)  # read by OpenSSL itself, outside this code
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(certificate[0]))  # a generic variable: never read here
+    assert "data.example.test" not in subjects()
+    monkeypatch.setenv("HDR_EXTRA_CA_FILE", str(certificate[0]))
+    assert "data.example.test" in subjects()
     context = fetch_mod._tls_context(proxied=True)
-    subjects = [dict(x[0] for x in c["subject"]).get("commonName") for c in context.get_ca_certs()]
-    assert "data.example.test" in subjects
     assert context.verify_mode == ssl.CERT_REQUIRED and context.check_hostname
 
 
@@ -841,3 +847,12 @@ def test_fetch_live_cdcSocrataMetadata(request: pytest.FixtureRequest) -> None:
     result = fetch("https://data.cdc.gov/api/views/x9gk-5huc.json", allowed_hosts=frozenset({"data.cdc.gov"}))
     assert result.status == 200
     assert b'"id"' in result.content
+
+
+def test_proxyMode_warnsOncePerProcess(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(fetch_mod, "_proxy_warned", False)
+    fetch_mod._warn_proxy_once()
+    fetch_mod._warn_proxy_once()
+    assert caplog.text.count("check is advisory") == 1

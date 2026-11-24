@@ -134,7 +134,9 @@ def evict(root: Path, max_bytes: int, keep: set[Path]) -> list[Path]:
     files = [p for p in root.rglob("*") if p.is_file()] if root.is_dir() else []
     total = sum(p.stat().st_size for p in files)
     removed: list[Path] = []
-    for p in sorted(files, key=lambda f: f.stat().st_atime_ns):
+    # Last use is the modification time fetch() sets on every read (os.utime): access times are not kept on
+    # relatime or noatime mounts, so they can't order a cache.
+    for p in sorted(files, key=lambda f: f.stat().st_mtime_ns):
         if total <= max_bytes:
             break
         if p.resolve() in keep:

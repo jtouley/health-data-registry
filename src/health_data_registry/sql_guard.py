@@ -37,6 +37,7 @@ are ported. ``polars``/``structlog`` are replaced by plain tuples and stdlib ``l
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -521,6 +522,9 @@ def _apply_limit(tree: exp.Query, max_rows: int) -> int:
 # ---------------------------------------------------------------------------
 
 
+_MEMORY_LIMIT = re.compile(r"\d+(\.\d+)?\s*(MB|GB|TB|MiB|GiB)")
+
+
 def harden(
     con: duckdb.DuckDBPyConnection,
     *,
@@ -536,8 +540,10 @@ def harden(
     """
     if threads < 1:
         raise ValueError(f"threads must be positive, got {threads!r}")
-    if not memory_limit.replace(" ", "").isalnum():
-        raise ValueError(f"memory_limit must look like '2GB', got {memory_limit!r}")
+    if not _MEMORY_LIMIT.fullmatch(memory_limit):
+        raise ValueError(
+            f"memory_limit must be a size such as '2GB' or '512MB' (MB, GB, TB, MiB, GiB), got {memory_limit!r}"
+        )
     paths = [str(p) for p in allowed_paths]
     con.execute("SET autoinstall_known_extensions = false")
     con.execute("SET autoload_known_extensions = false")
