@@ -252,7 +252,7 @@ schema:
     physicalType: VARCHAR
     logicalType: string
     required: true
-    description: 'Where the abstract''s text may go: public (CC BY), private (another Creative Commons licence,
+    description: 'Where the abstract''s text may go: public (CC BY or CC0, with every attribution field), private (another Creative Commons licence,
       e.g. BY-NC-ND) or link_only (a publisher''s own licence, no licence, or no text from any API).'
     customProperties:
     - property: role
@@ -355,11 +355,11 @@ customProperties:
     meeting's abstracts (ICID 2024 or IMED 2024); not catalogued until the maintainer says which meeting it is.
   - 'Crossref gives no abstract text for these works and most are CC BY-NC-ND 4.0: a row keeps the text (private
     tier) only when an API supplies it.'
-  - 'Redistribution: Crossref says its metadata is free to use for any purpose and OpenAlex is CC0, so titles, authors
-    and links could be public, and CC BY abstracts could be too. Neither CC0 nor CC BY is on the reviewed licence
-    list (registry.REDISTRIBUTABLE_LICENCES), so until the maintainer adds them in a reviewed change this source
-    is hosting: private and nothing reaches the public release. abstract_tier already marks which rows could be
-    public.'
+  - 'Redistribution: CC BY (any version) and CC0 text may now be shared publicly with full attribution on every
+    record and result (authors, title, journal, DOI link, licence; owner decision, 24 Nov 2026), and both are on
+    registry.REDISTRIBUTABLE_LICENCES with registry.require_attribution. A public export of the CC BY and CC0
+    rows of this mixed-licence source is not built yet, so it stays hosting: private; abstract_tier public
+    marks the rows that carry full attribution and could be shared.'
   - Abstract text from OpenAlex is rebuilt from its inverted index and from Crossref by removing JATS markup; confirm
     that this plain-text form is acceptable as published text.
   - Matching to full papers (pubmed_pmid) comes only from Europe PMC when it indexes the abstract itself; matching

@@ -161,11 +161,14 @@ def abstract_number(title: str | None) -> str | None:
     return m.group(1) if m else None
 
 
-def licence_kind(licence: str | None) -> Literal["cc-by", "cc-other", "other", "none"]:
-    """cc-by: Creative Commons Attribution only (any version); cc-other: another CC licence (NC, ND, SA)."""
+def licence_kind(licence: str | None) -> Literal["cc-by", "cc0", "cc-other", "other", "none"]:
+    """cc-by: Creative Commons Attribution only (any version); cc0: the CC0 public-domain dedication;
+    cc-other: another CC licence (NC, ND, SA)."""
     if not licence:
         return "none"
     low = licence.strip().lower()
+    if "creativecommons.org/publicdomain/zero/" in low or re.fullmatch(r"cc[ -]?0(?:[ -]1\.0)?", low):
+        return "cc0"
     m = re.search(r"creativecommons\.org/licenses/([a-z-]+)/", low)
     code = m.group(1) if m else None
     if code is None:
@@ -177,7 +180,8 @@ def licence_kind(licence: str | None) -> Literal["cc-by", "cc-other", "other", "
 
 
 def abstract_tier(licence: str | None, *, has_text: bool) -> Tier:
-    """Where an abstract's text may go: public (CC BY), private (another CC licence) or link_only.
+    """Where an abstract's text may go: public (CC BY or CC0, shared only with full attribution:
+    registry.require_attribution), private (another CC licence) or link_only.
 
     link_only also covers every abstract whose licence is a publisher's own or unknown, and every DOI for which
     no API gave text: only the link and metadata are kept.
@@ -185,7 +189,7 @@ def abstract_tier(licence: str | None, *, has_text: bool) -> Tier:
     if not has_text:
         return "link_only"
     kind = licence_kind(licence)
-    if kind == "cc-by":
+    if kind in ("cc-by", "cc0"):
         return "public"
     if kind == "cc-other":
         return "private"
@@ -239,6 +243,8 @@ def in_supplement(item: Mapping[str, Any], sup: Supplement) -> bool:
     if sup.issue is not None and _clean(item.get("issue")) != sup.issue:
         return False
     if sup.page_prefix is not None and not str(item.get("page") or "").startswith(sup.page_prefix):
+        return False
+    if sup.doi_pattern is not None and not re.fullmatch(sup.doi_pattern, doi):
         return False
     return not (sup.doi_prefix is not None and not doi.startswith(sup.doi_prefix.lower()))
 
