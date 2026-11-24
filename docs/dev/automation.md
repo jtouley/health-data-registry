@@ -25,8 +25,9 @@ CI, CodeQL, Scorecard, release and npm-publish are unchanged and described in th
    artifact kept 7 days. Nothing is restored from the Actions cache, and `setup-uv` caching is off, so a
    release never depends on, or is poisoned by, another run's cache.
 3. **raw** (optional) uploads the raw publisher bytes (`raw/<sha256>`) and fetch logs to a maintainer-only
-   PRIVATE dataset named by the `HDR_RAW_DATASET` variable. They never go in the public release. Skipped with a
-   notice if the variable or token is missing.
+   PRIVATE dataset named by the `HDR_RAW_DATASET` variable, which must be
+   `<owner>/health-data-registry-ops-raw-archive` ([naming.md](naming.md)). They never go in the public release.
+   Skipped with a notice if the variable or token is missing; fails if the variable names any other dataset.
 4. **publish** (main only, full runs only) merges the per-source lakes, runs `validate` and `check-contracts`,
    stages the release locally (all pre-publish checks), then runs `export-public --to hf://datasets/<repo>`.
    `export-public` stops before uploading if a check fails, never moves a tag, and publishes a correction for the
@@ -54,11 +55,13 @@ Each run:
    run and obeys its Crawl-delay and Disallow rules; it writes a checkpoint after every request.
 4. Uploads the state, even if the slice failed or hit its step timeout.
 
+The names come from `naming.py` ([naming.md](naming.md)); `<owner>` is `HDR_PRIVATE_HF_OWNER` (default `jtouley`).
+
 | Private dataset | Holds |
 |---|---|
-| `HDR_CROI_STATE_DATASET` (default `jtouley/hdr-private-croi-crawl-state`) | `crawl_state/` (checkpoint and last-request time), `fetch_log/`, metadata rows so far |
-| `<owner>/hdr-private-croi_abstracts_index` | Metadata rows, read by the hosted server (`private.py`) |
-| `<owner>/hdr-private-croi_abstracts_text` | Abstract text. Private tier only; never in a public release |
+| `<owner>/health-data-registry-ops-croi-crawl` | `crawl_state/` (checkpoint and last-request time), `fetch_log/`, metadata rows so far |
+| `<owner>/health-data-registry-private-croi-abstracts-index` | Metadata rows, read by the hosted server (`private.py`) |
+| `<owner>/health-data-registry-private-croi-abstracts-text` | Abstract text. Private tier only; never in a public release |
 
 **The public gate stays with the maintainer.** `catalog/croi_abstracts_index.yaml` says `hosting: private`.
 Nothing from the crawl reaches the public release until a maintainer changes that in a reviewed pull request;
@@ -119,7 +122,7 @@ Hugging Face step with a notice.
 | Secret | Used by | Access it needs |
 |---|---|---|
 | `HF_PUBLISH_TOKEN` | `refresh.yml` publish | Write to `jtouley/health-data-registry` |
-| `HF_CRAWL_TOKEN` | `crawl-croi.yml`; `refresh.yml` raw archive | Read and write to the private crawl datasets (and `HDR_RAW_DATASET`) |
+| `HF_CRAWL_TOKEN` | `crawl-croi.yml`; `refresh.yml` raw archive | Read and write to the private and ops datasets listed in [naming.md](naming.md), and no others |
 | `HF_SPACE_TOKEN` | `deploy-space.yml` | Write to the Space `jtouley/health-data-registry-mcp` |
 | `HF_TOKEN` | Any of the above, as a fallback | All of the above |
 
@@ -129,14 +132,13 @@ can't change the public release or the Space. One `HF_TOKEN` with write access t
 | Variable | Default | Meaning |
 |---|---|---|
 | `HDR_HUB_DATASET` | `jtouley/health-data-registry` | Public dataset that `export-public` publishes to |
-| `HDR_RAW_DATASET` | unset (no archive) | PRIVATE dataset for raw bytes and fetch logs, e.g. `jtouley/hdr-private-raw` |
-| `HDR_CROI_STATE_DATASET` | `jtouley/hdr-private-croi-crawl-state` | Private CROI crawl state |
-| `HDR_PRIVATE_HF_OWNER` | `jtouley` | Owner of `hdr-private-<source_id>` datasets (as in `private.py`) |
+| `HDR_RAW_DATASET` | unset (no archive) | PRIVATE dataset for raw bytes and fetch logs; only `jtouley/health-data-registry-ops-raw-archive` is accepted |
+| `HDR_PRIVATE_HF_OWNER` | `jtouley` | Owner of the `health-data-registry-private-<source-id>` and `-ops-<job>` datasets (`naming.py`) |
 | `HDR_CROI_YEAR` | `2025` | CROI year to crawl |
 | `HDR_SPACE` | `jtouley/health-data-registry-mcp` | Space to deploy |
 
-Before the first CROI run, create the three private datasets (state, index, text) on Hugging Face; the
-workflow doesn't create them, and it fails rather than start over if one is missing. Create the Space before the
+Before the first CROI run, the three private datasets (ops, index, text) must exist on Hugging Face; they were
+created on 24 Nov 2026 with only a dataset card. The workflow doesn't create them, and it fails rather than start over if one is missing. Create the Space before the
 first deploy, with its SDK set in `space/README.md`.
 
 ## Run a workflow by hand

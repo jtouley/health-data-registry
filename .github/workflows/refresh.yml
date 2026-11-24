@@ -123,7 +123,7 @@ jobs:
           RAW_DATASET: ${{ vars.HDR_RAW_DATASET }}
         run: |
           if [ -z "$RAW_DATASET" ]; then
-            echo "::notice::Raw bytes not archived: set the repository variable HDR_RAW_DATASET to a PRIVATE dataset (e.g. jtouley/hdr-private-raw)."
+            echo "::notice::Raw bytes not archived: set the repository variable HDR_RAW_DATASET to a PRIVATE dataset named <owner>/health-data-registry-ops-raw-archive (docs/dev/naming.md)."
             echo "go=false" >> "$GITHUB_OUTPUT"
           elif [ -z "$HF_TOKEN" ]; then
             echo "::notice::Raw bytes not archived: no HF_CRAWL_TOKEN or HF_TOKEN secret."
@@ -155,6 +155,13 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_CRAWL_TOKEN || secrets.HF_TOKEN }}
           RAW_DATASET: ${{ vars.HDR_RAW_DATASET }}
         run: |
+          # Only the governed name is accepted (naming.py, docs/dev/naming.md), so the crawl token's repo list holds.
+          want=$(uv run --no-sync python -m health_data_registry.naming --owner "${RAW_DATASET%%/*}" ops raw-archive) \
+            || { echo "::error::HDR_RAW_DATASET's owner is not a Hugging Face user or organisation name"; exit 1; }
+          if [ "$RAW_DATASET" != "$want" ]; then
+            echo "::error::HDR_RAW_DATASET must be $want (docs/dev/naming.md)"
+            exit 1
+          fi
           # raw/<sha256> is content-addressed, so a file already archived is the same bytes.
           uv run --no-sync hf upload "$RAW_DATASET" lake . --repo-type dataset --private \
             --include "raw/*" --include "fetch_log/*" \

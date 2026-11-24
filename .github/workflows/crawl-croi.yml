@@ -3,12 +3,13 @@
 # A year is ~1,400 requests, about 47 hours at 120 s, so it is crawled in slices: each run is one job of at
 # most ~4.7 hours of requests (CROI_MAX_REQUESTS) inside the 6-hour job limit, four runs a day.
 #
-# Between runs the state lives in PRIVATE Hugging Face datasets, never in the Actions cache:
-#   vars.HDR_CROI_STATE_DATASET (default jtouley/hdr-private-croi-crawl-state)
+# Between runs the state lives in PRIVATE Hugging Face datasets, never in the Actions cache. Their names come
+# from naming.py (docs/dev/naming.md), with <owner> from vars.HDR_PRIVATE_HF_OWNER (default jtouley):
+#   <owner>/health-data-registry-ops-croi-crawl
 #       lake/crawl_state/ (checkpoint and the polite client's last-request time), the fetch log and the
 #       metadata rows so far (private/croi_abstracts_index/)
-#   <owner>/hdr-private-croi_abstracts_index   metadata rows, read by the hosted server (private.py)
-#   <owner>/hdr-private-croi_abstracts_text    abstract text: private tier only, never in a public release
+#   <owner>/health-data-registry-private-croi-abstracts-index   metadata rows, read by the hosted server
+#   <owner>/health-data-registry-private-croi-abstracts-text    abstract text: private tier only, never public
 # The maintainer creates these three private datasets; this workflow never creates a repository.
 #
 # robots.txt is read first on every run by `index-croi` (polite.py), and its Crawl-delay and Disallow rules
@@ -53,7 +54,6 @@ jobs:
       HDR_LAKE: ${{ github.workspace }}/lake
       HF_TOKEN: ${{ secrets.HF_CRAWL_TOKEN || secrets.HF_TOKEN }}
       HF_HUB_DISABLE_TELEMETRY: "1"
-      STATE_DATASET: ${{ vars.HDR_CROI_STATE_DATASET || 'jtouley/hdr-private-croi-crawl-state' }}
       PRIVATE_OWNER: ${{ vars.HDR_PRIVATE_HF_OWNER || 'jtouley' }}
       YEAR_IN: ${{ inputs.year || vars.HDR_CROI_YEAR || '2025' }}
       MAX_IN: ${{ inputs.max_requests || '140' }}
@@ -87,7 +87,10 @@ jobs:
             echo "::error::max_requests must be 1 to 160 (160 x 120 s is 5.3 h, inside the 6 h job limit)"
             exit 1
           fi
-          if ! [[ "$PRIVATE_OWNER" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
+          # Every repo name comes from naming.py, which also refuses a bad HDR_PRIVATE_HF_OWNER.
+          name() { uv run --no-sync python -m health_data_registry.naming --owner "$PRIVATE_OWNER" "$@"; }
+          if ! state_repo=$(name ops croi-crawl) || ! index_repo=$(name private croi_abstracts_index) \
+            || ! text_repo=$(name private croi_abstracts_text); then
             echo "::error::HDR_PRIVATE_HF_OWNER is not a Hugging Face user or organisation name"
             exit 1
           fi
@@ -95,8 +98,9 @@ jobs:
             echo "go=$go"
             echo "year=$YEAR_IN"
             echo "max=$MAX_IN"
-            echo "index_repo=$PRIVATE_OWNER/hdr-private-croi_abstracts_index"
-            echo "text_repo=$PRIVATE_OWNER/hdr-private-croi_abstracts_text"
+            echo "state_repo=$state_repo"
+            echo "index_repo=$index_repo"
+            echo "text_repo=$text_repo"
           } >> "$GITHUB_OUTPUT"
 
       # Fails (and crawls nothing) if a private dataset is missing or the token can't read it, so a fresh
@@ -104,6 +108,7 @@ jobs:
       - name: Restore the crawl state and rows so far
         if: steps.gate.outputs.go == 'true'
         env:
+          STATE_DATASET: ${{ steps.gate.outputs.state_repo }}
           INDEX_REPO: ${{ steps.gate.outputs.index_repo }}
           TEXT_REPO: ${{ steps.gate.outputs.text_repo }}
         run: |
@@ -136,11 +141,12 @@ jobs:
       - name: Save the crawl state and rows
         if: ${{ always() && steps.gate.outputs.go == 'true' && steps.crawl.outcome != 'skipped' }}
         env:
+          STATE_DATASET: ${{ steps.gate.outputs.state_repo }}
           INDEX_REPO: ${{ steps.gate.outputs.index_repo }}
           TEXT_REPO: ${{ steps.gate.outputs.text_repo }}
         run: |
           msg="CROI crawl state, run ${GITHUB_RUN_ID}"
-          # State and metadata so far (no abstract text) to the crawl-state dataset.
+          # State and metadata so far (no abstract text) to the ops dataset.
           uv run --no-sync hf upload "$STATE_DATASET" lake . --repo-type dataset --private \
             --include "crawl_state/*" --include "fetch_log/*" --include "private/croi_abstracts_index/*" \
             --exclude "*.tmp" --commit-message "$msg"
