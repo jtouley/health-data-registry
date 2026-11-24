@@ -37,8 +37,9 @@ PLACES: tuple[Place, ...] = (Place("United States", "US", "00", "nation"),) + tu
     Place(n, p, f, "state") for n, p, f in _STATES
 )
 
+# No "total": a publisher's TOTAL row (NNDSS) also counts territories and non-US residents, so it isn't the US.
 _ALIASES = {"usa": "US", "us": "US", "u.s.": "US", "united states": "US", "us residents": "US", "u.s. residents": "US",
-            "national": "US", "nation": "US", "total": "US", "new york state": "NY"}  # fmt: skip
+            "national": "US", "nation": "US", "new york state": "NY"}  # fmt: skip
 
 _BY_KEY: dict[str, Place] = {}
 for _p in PLACES:

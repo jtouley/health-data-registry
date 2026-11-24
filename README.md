@@ -116,26 +116,34 @@ it, broaden it, ask for the caveats, or ask where a number came from.
 
 You ask: *"How many clinical C. auris cases did Michigan and Ohio report each year from 2022 to 2025?"*
 
-Claude calls `get_series` and gets back this table (trimmed to the columns that matter here):
+Claude calls `get_series`, which returns each figure as its own row with an `observation_type`; here they are
+side by side, trimmed to the columns that matter:
 
-| Place | Year | Cases | Status |
+| Place | Year | Cases, as published at year end | Same year in next year's table |
 |---|---|---|---|
-| Michigan | 2022 | 33 | final |
-| Michigan | 2023 | 110 | final |
-| Michigan | 2024 | 184 | final |
-| Michigan | 2025 | 178 | provisional (as of MMWR week 53) |
-| Ohio | 2022 | 83 | final |
-| Ohio | 2023 | 151 | final |
-| Ohio | 2024 | 322 | final |
-| Ohio | 2025 | 404 | provisional (as of MMWR week 53) |
+| Michigan | 2022 | 27 (through week 52) | 33 (through week 52) |
+| Michigan | 2023 | 103 (through week 52) | 110 (through week 52) |
+| Michigan | 2024 | 174 (through week 52) | 184 (through week 53) |
+| Michigan | 2025 | 178 (through week 53) | 217 (through week 45 only, not the whole year) |
+| Ohio | 2022 | 83 (through week 52) | 83 (through week 52) |
+| Ohio | 2023 | 150 (through week 52) | 151 (through week 52) |
+| Ohio | 2024 | 320 (through week 52) | 322 (through week 53) |
+| Ohio | 2025 | 404 (through week 53) | 335 (through week 45 only, not the whole year) |
 
 Every row also carries its source (`cdc_nndss_weekly`, [data.cdc.gov/d/x9gk-5huc](https://data.cdc.gov/d/x9gk-5huc)),
 when it was fetched, and a plain note on how the number was read:
 
-- **Final** means CDC's next yearly table restated the whole year, so late reports are included.
-- **Provisional** means the year is still open to late reports, so the number can still go up.
+- **Cases, as published at year end** is CDC's running year-to-date count at the last week of that year that has
+  a number (`year_end_ytd`). It is always **provisional**; a year whose later weeks have no number says
+  **incomplete**.
+- **Same year in next year's table** (`subsequent_year_restatement`) is the figure CDC's following yearly table
+  gives for that year, with the week it reaches. CDC doesn't say the two count the same thing, and for some
+  states they differ a lot, so both are kept and this one is marked an unverified restatement: not a final
+  disease count. Neither is final until a domain reviewer confirms they count the same thing.
 - Counts are read from CDC's running year-to-date column. Adding up the weekly column would under-count badly,
-  because late reports land in the running total, not in the week: for Michigan in 2023 that gives 62, not 110.
+  because late reports land in the running total, not in the week: for Michigan in 2023 that gives 62, not 103.
+- An empty count is never a zero: the flag column carries CDC's reason (`-` no reported cases, `U` unavailable,
+  `N` not reportable there).
 
 The same answer lists what the data can't tell you: counts are by state of residence; clinical and screening
 cases are separate series; this source's contract is still a draft no reviewer has checked.
@@ -202,7 +210,8 @@ Put these rules in your Claude Project's instructions, or run the `set_up_my_pro
 - Every number cites its tool output: "GBD 2023 (IHME)", or the source web address, fetch date and dataset
   version that health-data-registry returns.
 - Report GBD's 95% uncertainty intervals. Observed counts have none; say so.
-- Don't call a gap between GBD and observed data real unless it falls outside GBD's 95% interval.
+- Before interpreting any difference between GBD and observed data, establish how they differ in case
+  definition, ascertainment, geography and uncertainty model; GBD's interval is not a test of observed data.
 - Flag provisional, suppressed or partial-geography rows.
 - Don't compare age-standardised rates across different standard populations.
 - Population-level patterns are hypotheses, not causes. No patient information in any chat.

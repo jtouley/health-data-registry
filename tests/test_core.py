@@ -209,19 +209,25 @@ def test_get_series_csv(lake: Path, registry: Registry) -> None:
         registry, eng, condition="Legionellosis", locations=["MI", "ohio", "Atlantis"], measure="cases"
     )
     lines = out.splitlines()
-    assert lines[0].startswith("location,year,value,lower,upper,period_status,measure,condition,case_status")
-    assert lines[1].startswith("Michigan,2022,300,,,,cases,Legionellosis,confirmed and probable")
-    assert lines[3].startswith("Michigan,2024,,,,,cases")  # the publisher's 'N' stays empty, not 0
-    assert lines[4].startswith("Ohio,2023,400,,,,cases")
+    assert lines[0].startswith(
+        "location,year,value,lower,upper,observation_type,period_status,flag,measure,condition,case_status"
+    )
+    assert lines[1].startswith(
+        "Michigan,2022,300,,,as_published,,,cases,Legionellosis,confirmed and probable"
+    )
+    assert lines[3].startswith(
+        "Michigan,2024,,,,as_published,,,cases"
+    )  # the publisher's 'N' stays empty, not 0
+    assert lines[4].startswith("Ohio,2023,400,,,as_published,,,cases")
     assert "# toy_cases has no rows for: Atlantis." in out
-    assert "not zeros" in out
+    assert "never a zero" in out
 
 
 def test_get_series_mixed_measures_warns(lake: Path, registry: Registry) -> None:
     eng = Engine(registry=registry, lake=lake)
     out = tools.get_series(registry, eng, condition="legionellosis", locations=["Michigan"], year_start=2023,
                            year_end=2023, fmt="json")  # fmt: skip
-    assert {r[6] for r in out["rows"]} == {"cases", "rate"}
+    assert {r[8] for r in out["rows"]} == {"cases", "rate"}
     assert out["notes"][0].startswith("Rows mix measures")
 
 
@@ -237,13 +243,21 @@ def test_aligned_with_gbd(lake: Path, registry: Registry) -> None:
     eng = Engine(registry=registry, lake=lake)
     out = tools.get_aligned_with_gbd(registry, eng, condition="legionellosis", locations=["Michigan"],
                                      year_start=2022, year_end=2025, fmt="json")  # fmt: skip
-    row = out["rows"][0]
-    assert row[:3] == ["Michigan", "26", 2022]
-    assert row[10:12] == ["Lower respiratory infections", "Legionella spp"]
-    assert row[12].startswith("get_etiology(pathogen_name='Legionella spp'") and "year=2023" in row[12]
+    cols = out["columns"]
+    row = dict(zip(cols, out["rows"][0], strict=True))
+    assert [row["gbd_location_name"], row["fips"], row["location_as_published"], row["year"]] == [
+        "Michigan", "26", "Michigan", 2022
+    ]  # fmt: skip
+    assert [row["gbd_cause"], row["gbd_pathogen"]] == ["Lower respiratory infections", "Legionella spp"]
+    call = row["suggested_gbd_call"]
+    assert call.startswith("get_etiology(pathogen_name='Legionella spp'") and "year=2023" in call
     syph = tools.get_aligned_with_gbd(registry, eng, condition="syphilis", locations=["Michigan"], fmt="json")
-    assert syph["rows"][0][12].startswith("get_multi_location_trend(cause_name='Syphilis'")
+    assert syph["rows"][0][-1].startswith("get_multi_location_trend(cause_name='Syphilis'")
     assert any("never calls GBD" in n for n in out["notes"])
+    # The same dataset notes get_series carries: method, caveats, draft contract.
+    assert any(n.startswith("toy_cases: Sum of cases") for n in out["notes"])
+    assert "toy_cases: Counts for the latest year are provisional." in out["notes"]
+    assert any("still a draft" in n for n in out["notes"])
 
 
 def test_rate_provenance_caveats_prior_work(lake: Path, registry: Registry) -> None:

@@ -13,11 +13,11 @@ import io
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 from health_data_registry import geo
 from health_data_registry.query import Engine, QueryRefused
-from health_data_registry.registry import Dataset, Registry, Series
+from health_data_registry.registry import Dataset, Registry, Series, UnknownDataset
 
 Fmt = Literal["csv", "json"]
 Out = str | dict[str, Any]
@@ -134,9 +134,9 @@ def plain(e: Exception) -> str:
             f"{e} If someone else set this up for you, ask them to run that step; or use the help_me_fix_it "
             "helper, which walks you through it."
         )
-    if code == "unknown_dataset" or isinstance(e, KeyError):
-        detail = e.args[0] if e.args else ""
-        return f"{detail}. Use search_datasets to see what is available."
+    if isinstance(e, UnknownDataset):
+        # Only the registry's own message is echoed; any other KeyError would leak an internal name.
+        return f"{e}. Use search_datasets to see what is available."
     if isinstance(e, QueryRefused):
         return str(e)
     return (
@@ -314,6 +314,22 @@ def describe_dataset(
         f"{m.name}: {m.kind}" + (" (added up)" if m.kind == "count" else " (never added up)")
         for m in s.measures
     ]
+    running = [
+        f"{m.name}: observation_type year_end_ytd is the running total ({m.measure}) at the last week of each "
+        "year that has a number, always provisional ('provisional: as published at year end (through week N)', "
+        "'provisional: running total so far', or 'incomplete' when later weeks have no number)"
+        + (
+            f"; observation_type subsequent_year_restatement is next year's table's figure for the same year "
+            f"({m.restated_by.measure}), with the week it reaches, marked unverified_restatement. An unverified "
+            "restatement is not a final disease count: the publisher doesn't say the two count the same thing, so "
+            f"both are kept as separate observations and neither is final (resolution policy: "
+            f"{m.restated_by.resolution_policy})"
+            if m.restated_by
+            else ""
+        )
+        for m in s.metrics
+        if m.aggregation == "cumulative_latest"
+    ]
     info: dict[str, Any] = {
         "source_id": e.id,
         "title": e.title,
@@ -336,11 +352,18 @@ def describe_dataset(
                 "means": col.description,
                 "unit": col.unit,
                 "missing_codes": list(col.missing_codes),
+                "flag_codes": dict(col.flag_codes),
+                "partial_places": dict(col.partial_places),
+                "renamed_labels": dict(col.renamed_labels),
             }
             for col in c.columns
         ],  # fmt: skip
         "total_rows": c.total_rows or "none: every row is one group",
         "counts_and_rates": counts,
+        "running_totals": running,
+        "unreliable_values": c.unreliable_rule or "not stated in the contract",
+        "geography_basis": c.geography_basis,
+        "rate_denominator": c.rate_denominator,
         "caveats": e.caveats,
         "open_questions": list(c.open_questions),
         "how_to_cite": e.citation,
@@ -368,7 +391,17 @@ def describe_dataset(
     if not s.series:
         lines.append("- none mapped yet (query_sql can still read the table)")
     lines += ["", "What each column means:"] + [f"- {col.name}: {col.description}" for col in c.columns]
+    for col in c.columns:
+        if col.flag_codes:
+            lines.append(f"  {col.name} codes: " + "; ".join(f"'{k}' = {v}" for k, v in col.flag_codes))
+        lines += [f"  '{k}' is {v}." for k, v in col.partial_places if k != "*"]
+        lines += [f"  Every {col.name} place is {v}." for k, v in col.partial_places if k == "*"]
+        lines += [f"  '{k}' continues '{v}' (renamed by the publisher)." for k, v in col.renamed_labels]
     lines += ["", f"Total rows: {info['total_rows']}", "Counts and rates: " + "; ".join(counts)]
+    lines += [f"Running totals: {r}." for r in running]
+    lines.append(f"Values marked unreliable or suppressed: {info['unreliable_values']}")
+    lines += [f"Places are by: {c.geography_basis}"] if c.geography_basis else []
+    lines += [f"Rate denominator: {c.rate_denominator}"] if c.rate_denominator else []
     if e.caveats:
         lines += ["", "What this data can't tell you:"] + [f"- {x}" for x in e.caveats]
     if c.open_questions:
@@ -443,25 +476,41 @@ def suggest_datasets(registry: Registry, question: str, *, fmt: Fmt = "csv") -> 
 def _match_places(
     engine: Engine, ds: Dataset, s: Series, locations: Sequence[str]
 ) -> tuple[dict[Any, str], list[str]]:
-    """Map the dataset's own location labels to the places asked for: (raw label -> place name, unmatched)."""
-    if s.location_dimension is None:
-        return {}, []
-    col = ds.semantic.dimension(s.location_dimension).column
-    raw_values = engine.distinct_values(ds.id, col)
+    """Map the dataset's own location labels to the places asked for: (raw label -> place name, unmatched).
+
+    A label the publisher renamed between years (declared in the contract) matches the place its earlier
+    label does, so both years come back under one name.
+    """
+    assert s.location_dimension is not None  # noqa: S101 - callers check; a series without places has none
+    col = ds.contract.column(ds.semantic.dimension(s.location_dimension).column)
+    raw_values = engine.distinct_values(ds.id, col.name)
 
     def key(text: str) -> str:
         p = geo.place(text)
-        return p.name if p else _norm(text)
+        return p.name if p else _norm(col.canonical_label(text))
 
     wanted = {loc: key(loc) for loc in locations}
     out: dict[Any, str] = {}
     for raw in raw_values:
         k = key(str(raw))
         if not locations or k in wanted.values():
-            p = geo.place(str(raw))
-            out[raw] = p.name if p else str(raw)
+            out[raw] = k if geo.place(str(raw)) else col.display_label(str(raw))
     got = {key(v) for v in out.values()}
     return out, [a for a, k in wanted.items() if k not in got]
+
+
+class SeriesRow(NamedTuple):
+    place: str
+    year: Any
+    value: Any
+    status: str
+    lower: Any
+    upper: Any
+    flag: Any = None
+    # as_published; or, for a running total, year_end_ytd (the year's own figure) and
+    # subsequent_year_restatement (next year's table's figure for it: unverified, never a final count)
+    observation_type: str = "as_published"
+    partial: str | None = None  # the contract's note when the place label covers only part of that place
 
 
 def series_rows(
@@ -471,13 +520,23 @@ def series_rows(
     locations: Sequence[str],
     year_start: int | None,
     year_end: int | None,
-) -> tuple[list[tuple[str, Any, Any, str, Any, Any]], list[str], str]:
-    places, unmatched = _match_places(engine, ds, s, locations)
-    if s.location_dimension and not places:
-        return [], unmatched, ""
+) -> tuple[list[SeriesRow], list[str], str]:
+    if s.location_dimension is None and locations:
+        raise QueryRefused(
+            "no_place_breakdown",
+            f"{s.label} from this source is one figure for "
+            f"{s.place_coverage or 'the publisher areas combined, not by state'}, so nothing is shown for "
+            f"{', '.join(locations)}. Ask again without "
+            "places to see the combined figures, or use list_sources to find a source with state values.",
+        )
+    places: dict[Any, str] = {}
+    unmatched: list[str] = []
     filters: dict[str, Any] = dict(s.filters)
     group_by = [s.time_dimension]
     if s.location_dimension:
+        places, unmatched = _match_places(engine, ds, s, locations)
+        if not places:
+            return [], unmatched, ""
         filters[s.location_dimension] = list(places)
         group_by = [s.location_dimension, s.time_dimension]
     out = engine.query_metric(
@@ -487,21 +546,77 @@ def series_rows(
         group_by=group_by,
         period={"dimension": s.time_dimension, "start": year_start, "end": year_end},
     )
-    rows: list[tuple[str, Any, Any, str, Any, Any]] = []
-    cols = list(out["columns"])
-    at = {c: i for i, c in enumerate(cols)}
+    if out.get("truncated"):
+        raise QueryRefused(
+            "too_many_rows",
+            f"{s.label} has more than {len(out['rows'])} rows for this question"
+            + ("" if locations else " (every place, every period)")
+            + ", so nothing is shown rather than a table cut off part way. Ask again for fewer places or a "
+            "shorter span of years.",
+        )
+    rows: list[SeriesRow] = []
+    at = {c: i for i, c in enumerate(out["columns"])}
+
+    def get(r: Sequence[Any], name: str) -> Any:
+        return r[at[name]] if name in at else None
+
     n_keys = 2 if s.location_dimension else 1
+    loc_col = (
+        ds.contract.column(ds.semantic.dimension(s.location_dimension).column)
+        if s.location_dimension
+        else None
+    )
+    running = "period_status" in at
+    # Running totals come back keyed by the label key, other metrics by the raw label: map both to the place.
+    by_key = {loc_col.canonical_label(str(k)): v for k, v in places.items()} if loc_col else {}
     for r in out["rows"]:
-        status = str(r[at["period_status"]]) if "period_status" in at else ""
-        lo = r[at["lower"]] if "lower" in at else None
-        hi = r[at["upper"]] if "upper" in at else None
-        value = r[n_keys]
-        if s.location_dimension:
-            label = places.get(r[0]) or (lambda p: p.name if p else str(r[0]))(geo.place(str(r[0])))
-            rows.append((label, r[1], value, status, lo, hi))
-        else:
-            rows.append(("as published", r[0], value, status, lo, hi))
+        label, partial = s.place_coverage or "as published", None
+        if loc_col is not None:
+            raw = str(r[0])
+            label = places.get(r[0]) or by_key.get(loc_col.canonical_label(raw)) or raw
+            partial = loc_col.partial_note(raw) if geo.place(label) else None
+        year = r[n_keys - 1]
+        rows.append(
+            SeriesRow(label, year, r[n_keys], str(get(r, "period_status") or ""), get(r, "lower"), get(r, "upper"),
+                      get(r, "flag"), "year_end_ytd" if running else "as_published", partial)
+        )  # fmt: skip
+        r_status = str(get(r, "restated_status") or "")
+        if r_status.startswith("unverified_restatement"):
+            rows.append(
+                SeriesRow(label, year, get(r, "restated"), r_status, None, None, get(r, "restated_flag"),
+                          "subsequent_year_restatement", partial)
+            )  # fmt: skip
     return rows, unmatched, str(out["method"])
+
+
+def _dataset_notes(ds: Dataset, m: Any, method: str, got: Sequence[SeriesRow]) -> list[str]:
+    """The lines every answer from a dataset carries: method, caveats, review state, partial copy, flags."""
+    notes = [f"{ds.id}: {method} Source: {ds.entry.source.landing_url}"]
+    notes += [f"{ds.id}: {c}" for c in ds.entry.caveats[:3]]
+    if ds.entry.status != "reviewed":
+        notes.append(f"{ds.id}: this source's contract is still a draft; no maintainer has reviewed it yet.")
+    if m.partial:
+        notes.append(f"{ds.id}: the local copy is a partial sample, not the full dataset.")
+    if any(r.observation_type == "subsequent_year_restatement" for r in got):
+        notes.append(
+            f"{ds.id}: each year has two observations. year_end_ytd is the year's own running total at the last "
+            "week that has a number (provisional). subsequent_year_restatement is the next year's table's figure "
+            "for the same year (unverified_restatement): the publisher doesn't say they count the same thing, so "
+            "it is not a final disease count, and neither is final until a domain reviewer approves them as one."
+        )
+    if ds.contract.geography_basis:
+        notes.append(f"{ds.id}: places are by {ds.contract.geography_basis}.")
+    if ds.contract.rate_denominator:
+        notes.append(f"{ds.id}: rate denominator: {ds.contract.rate_denominator}.")
+    pairs = dict(p for col in ds.contract.columns for p in col.flag_codes)
+    if pairs:
+        notes.append(
+            f"{ds.id}: the flag column gives the publisher's reason for an empty value: "
+            + "; ".join(f"'{c}' = {t}" for c, t in pairs.items())
+            + ". '-' means no cases were reported, which is different from data that are unavailable or not "
+            "published."
+        )
+    return notes
 
 
 def get_series(
@@ -534,8 +649,8 @@ def get_series(
             fmt,
             refused="unknown_condition",
         )
-    columns = ["location", "year", "value", "lower", "upper", "period_status", "measure", "condition",
-               "case_status", "case_definition", "source_id", "retrieved_at"]  # fmt: skip
+    columns = ["location", "year", "value", "lower", "upper", "observation_type", "period_status", "flag",
+               "measure", "condition", "case_status", "case_definition", "source_id", "retrieved_at"]  # fmt: skip
     rows: list[list[Any]] = []
     notes: list[str] = []
     for ds, s in matches:
@@ -545,28 +660,22 @@ def get_series(
         except Exception as e:  # noqa: BLE001 - one source failing must not hide the others' rows
             notes.append(f"{ds.id}: {plain(e)}")
             continue
-        for place, year, value, status, lo, hi in got:
+        for r in got:
             rows.append(
-                [place, year, value, lo, hi, status, s.measure, s.label, s.case_status or "", s.case_definition or "",
-                 ds.id, m.retrieved_at[:19]]
+                [r.place, r.year, r.value, r.lower, r.upper, r.observation_type, r.status, r.flag, s.measure, s.label, s.case_status or "", s.case_definition or "", ds.id, m.retrieved_at[:19]]
             )  # fmt: skip
         if unmatched:
             notes.append(f"{ds.id} has no rows for: {', '.join(unmatched)}.")
-        notes.append(f"{ds.id}: {method} Source: {ds.entry.source.landing_url}")
-        notes += [f"{ds.id}: {c}" for c in ds.entry.caveats[:3]]
-        if ds.entry.status != "reviewed":
-            notes.append(
-                f"{ds.id}: this source's contract is still a draft; no maintainer has reviewed it yet."
-            )
-        if m.partial:
-            notes.append(f"{ds.id}: the local copy is a partial sample, not the full dataset.")
+        for place, note in sorted({(r.place, r.partial) for r in got if r.partial}):
+            notes.append(f"{ds.id}: '{place}' here is {note}.")
+        notes += _dataset_notes(ds, m, method, got)
     if len({s.measure for _, s in matches}) > 1:
         notes.insert(
             0, "Rows mix measures (see the measure column); never compare or add them across measures."
         )
     notes.append(
         "lower and upper are the publisher's own uncertainty bounds, shown only where published; observed counts "
-        "have none. Empty values mean the publisher marked them missing or suppressed; they are not zeros."
+        "have none. An empty value is never a zero: where the publisher gives a reason, it is in the flag column."
     )
     return Result(columns, rows, notes).render(fmt)
 
@@ -604,14 +713,16 @@ def get_aligned_with_gbd(
             fmt,
             refused="unknown_condition",
         )
-    columns = ["gbd_location_name", "fips", "year", "condition", "observed_value", "period_status", "measure",
-               "case_status", "source_id", "retrieved_at", "gbd_cause", "gbd_pathogen", "suggested_gbd_call"]  # fmt: skip
+    columns = ["gbd_location_name", "fips", "location_as_published", "year", "condition", "observed_value",
+               "observation_type", "period_status", "flag", "measure", "case_status", "source_id", "retrieved_at",
+               "gbd_cause", "gbd_pathogen", "suggested_gbd_call"]  # fmt: skip
     rows: list[list[Any]] = []
     notes = [
         "This server never calls GBD and never judges GBD against local data: run the suggested call with the "
         "IHME GBD connector and compare them yourself.",
-        "GBD values are modelled, with 95% uncertainty intervals; observed counts have none. Treat a gap as real "
-        "only if the observed value falls outside GBD's interval.",
+        "GBD values are modelled, with 95% uncertainty intervals; observed counts have none. GBD's interval is not "
+        "a test of observed surveillance data: before reading anything into a difference, establish how the two "
+        "differ in case definition, ascertainment, geography and uncertainty model.",
         f"GBD 2023 ends in {GBD_LAST_YEAR}; later observed years have no GBD match.",
         "Don't compare age-standardised GBD rates with crude or US 2000-standardised local rates.",
     ]
@@ -621,18 +732,43 @@ def get_aligned_with_gbd(
             notes.append(f"{ds.id}: '{s.label}' has no GBD cause mapping in its catalog entry yet.")
             continue
         try:
-            got, unmatched, _ = series_rows(engine, ds, s, locations, year_start, year_end)
+            got, unmatched, method = series_rows(engine, ds, s, locations, year_start, year_end)
             m = engine.manifest(ds.id)
         except Exception as e:  # noqa: BLE001 - one source failing must not hide the others' rows
             notes.append(f"{ds.id}: {plain(e)}")
             continue
-        call = gbd_call(xw.cause, xw.pathogen, sorted({p for p, *_ in got}), year_start, year_end)
-        for place, year, value, status, _lo, _hi in got:
-            p = geo.place(place)
+        # Only a whole US state or the nation has a GBD location; a partial area, the publisher's pooled sites, or
+        # places whose basis (facility or residence) is unresolved are left unkeyed with the reason.
+        blocked = ds.contract.geography_basis_unresolved
+        keyed = {
+            r.place
+            for r in got
+            if r.partial is None and s.location_dimension and geo.place(r.place) and not blocked
+        }
+        call = gbd_call(xw.cause, xw.pathogen, sorted(keyed), year_start, year_end) if keyed else ""
+        for r in got:
+            p = geo.place(r.place) if r.place in keyed else None
             rows.append(
-                [place, p.fips if p else "", year, s.label, value, status, s.measure, s.case_status or "",
-                 ds.id, m.retrieved_at[:19], xw.cause, xw.pathogen or "", call]
+                [p.name if p else "", p.fips if p else "", r.place, r.year, s.label, r.value, r.observation_type,
+                 r.status, r.flag, s.measure, s.case_status or "", ds.id, m.retrieved_at[:19], xw.cause,
+                 xw.pathogen or "", call if p else ""]
             )  # fmt: skip
+        if got and blocked:
+            notes.append(
+                f"{ds.id}: no row is keyed to a GBD location, because it isn't settled whether places here are by "
+                "facility location or patient residence (GBD is by residence). Comparison is blocked until a "
+                "maintainer resolves it."
+            )
+        elif got and not s.location_dimension:
+            notes.append(
+                f"{ds.id}: {s.label} is one figure for {s.place_coverage or 'the publisher areas combined'}, so it "
+                "has no GBD location and no suggested call."
+            )
+        for place, note in sorted({(r.place, r.partial) for r in got if r.partial}):
+            notes.append(f"{ds.id}: '{place}' is {note}, so it is not keyed to a GBD location.")
+        if s.location_dimension and not blocked:
+            for place in sorted({r.place for r in got if r.partial is None and r.place not in keyed}):
+                notes.append(f"{ds.id}: '{place}' has no GBD location name here, so it is not keyed.")
         if xw.pathogen:
             notes.append(
                 f"{s.label}: GBD models {xw.pathogen} as a share of {xw.cause}; pathogen shares don't add up to "
@@ -640,6 +776,7 @@ def get_aligned_with_gbd(
             )
         if unmatched:
             notes.append(f"{ds.id} has no rows for: {', '.join(unmatched)}.")
+        notes += _dataset_notes(ds, m, method, got)
     return Result(columns, rows, notes).render(fmt)
 
 
@@ -706,6 +843,9 @@ GEOGRAPHY_TRAPS = [
     "Out-Wayne County reports exclude the City of Detroit, which has its own health department.",
     "NNDSS counts cases by state of residence; some CDC tracking pages count by the state of the facility.",
     "C. auris clinical cases and screening (colonisation) cases are different series; never add them.",
+    "C. auris numbers differ by source: NNDSS (cdc_nndss_weekly) counts cases by the week they were reported; "
+    "CDC's C. auris tracking page counts cases by specimen collection date; the AR Lab Network counts isolates, "
+    "not cases. Say which one a number is from, and don't compare them as if they were the same count.",
 ]
 
 
@@ -720,6 +860,9 @@ def list_caveats(
             continue
         rows += [[ds.id, "caveat", c] for c in ds.entry.caveats]
         rows += [[ds.id, "not yet confirmed", q] for q in ds.contract.open_questions]
+        rows.append(
+            [ds.id, "unreliable values", ds.contract.unreliable_rule or "Not stated in the contract."]
+        )
         if ds.entry.status != "reviewed":
             rows.append([ds.id, "review", "Contract is a draft; no maintainer has reviewed it yet."])
     rows += [["all", "geography", t] for t in GEOGRAPHY_TRAPS]

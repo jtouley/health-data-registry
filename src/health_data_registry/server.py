@@ -102,7 +102,10 @@ def build_server(registry: Registry | None = None, engine: Engine | None = None)
     ) -> Out:
         """Observed values over time for a condition (e.g. "legionellosis") in places (e.g. ["Michigan", "Ohio",
         "United States"]), one row per place and year, each with its source, fetch time and case definition.
-        measure: cases, deaths, rate, percent. Counts are added up; rates are shown as published, never added."""
+        measure: cases, deaths, rate, percent. Counts are added up; rates are shown as published, never added.
+        Running totals give two observations per year: year_end_ytd (provisional) and
+        subsequent_year_restatement (unverified, not a final count). The flag column gives the publisher's
+        reason for an empty value."""
         return _safe(
             lambda: tools.get_series(
                 reg, eng, condition=condition, locations=locations or [], year_start=year_start, year_end=year_end,

@@ -108,6 +108,9 @@ schema:
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: state}
+          - property: partialPlaces
+            value: {"*": "a RESP-NET site's catchment counties, not necessarily the whole state; the dataset doesn't list the counties"}
+            description: "Dataset geographic coverage is 'RESP-NET Sites'; no site is stated to cover a whole state, so none is keyed to a whole-state GBD location."
       - name: data_type
         physicalType: VARCHAR
         logicalType: string
@@ -148,6 +151,9 @@ customProperties:
   - {property: licenceSource, value: "Socrata metadata licence 'Public Domain U.S. Government', https://www.usa.gov/government-works"}
   - {property: citation, value: "RESP-NET: Respiratory Virus Hospitalization Surveillance Network, Centers for Disease Control and Prevention. https://data.cdc.gov/d/kvib-3txy. Accessed on <date>."}
   - {property: refresh, value: weekly}
+  - {property: geographyBasis, value: "RESP-NET site catchment areas (dataset geographic coverage: RESP-NET Sites); the counties in each site are not listed in the dataset"}
+  - {property: rateDenominator, value: "the catchment-area population of each site per 100,000; which census estimates and vintage are not stated (see openQuestions)"}
+  - {property: unreliableRule, value: "None stated in the dataset metadata: no rate is marked unreliable or suppressed for small numbers."}
   - property: openQuestions
     value:
       - "Which counties make up each state's catchment area, and how have they changed by season? The RESP-NET methods pages (www.cdc.gov) were not fetched."

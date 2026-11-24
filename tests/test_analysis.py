@@ -116,9 +116,9 @@ measures:
   - {name: prior_ytd, column: prior_ytd, kind: count}
 metrics:
   - {name: annual, description: Annual cases, measure: ytd, aggregation: cumulative_latest, order_by: week,
-     restated_by: {measure: prior_ytd, complete_at: 52}}
+     restated_by: {measure: prior_ytd, resolution_policy: require_domain_review}}
   - {name: us_annual, description: US annual, measure: ytd, aggregation: cumulative_latest, order_by: week,
-     restated_by: {measure: prior_ytd, complete_at: 52}, exclude_total_rows: false,
+     restated_by: {measure: prior_ytd, resolution_policy: require_domain_review}, exclude_total_rows: false,
      filters: ["upper(area) = 'US RESIDENTS'"]}
   - {name: weekly, description: Weekly cases, measure: wk, aggregation: sum}
 series:
