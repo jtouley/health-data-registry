@@ -102,6 +102,7 @@ def browser_fetch(
     capture: Sequence[str] = (),
     timeout: float = 90.0,
     max_bytes: int = 50_000_000,
+    capture_wait: float = CAPTURE_WAIT_S,
     playwright: PlaywrightFactory = _default_factory,
 ) -> BrowserResult:
     """Open ``url`` in headless Chromium under fetch.py's rules (see the module doc).
@@ -112,6 +113,7 @@ def browser_fetch(
         capture: substrings of response paths whose bodies are kept (e.g. "/bootstrapSession/").
         timeout: deadline for loading the page, in seconds.
         max_bytes: cap on each kept body.
+        capture_wait: how long to wait, after the page settles, for a captured response that has not come yet.
         playwright: factory for the Playwright context manager (tests pass a fake).
 
     Raises:
@@ -180,7 +182,7 @@ def browser_fetch(
                 raise FetchRefused(
                     "connect_failed", f"The browser could not load the page from {host}."
                 ) from e
-            deadline = time.monotonic() + min(timeout, CAPTURE_WAIT_S)
+            deadline = time.monotonic() + min(timeout, capture_wait)
             while capture and not captured and time.monotonic() < deadline:
                 page.wait_for_timeout(500)  # the data request can follow the page by a few seconds
         finally:

@@ -1,0 +1,36 @@
+dataset: detroit_dhd_epi_annual
+version: 0.1.0
+dimensions:
+  - {name: condition, column: worksheet, type: categorical, description: "The dashboard's yearly chart, which names the condition."}
+  - {name: place, column: location_label, type: categorical, description: "Detroit or Michigan, as the chart's legend names them."}
+  - {name: year, column: year, type: time, description: "Calendar year."}
+measures:
+  - {name: cases, column: cases, kind: count, unit: "cases", description: "Cases counted in the year."}
+  - {name: case_rate, column: rate, kind: rate, unit: "as published (denominator unconfirmed)", description: "The case rate the dashboard plots."}
+metrics:
+  - name: annual_cases
+    description: "Cases in a year for one place; Detroit and Michigan are never added together (Michigan includes Detroit)."
+    measure: cases
+    aggregation: sum
+    exclude_total_rows: false
+    filters: []
+    single_value_of: []
+  - name: annual_case_rate
+    description: "The dashboard's case rate for one place and year, read as published and never added up."
+    measure: case_rate
+    aggregation: none
+    exclude_total_rows: false
+    filters: []
+series:
+  - {condition: TByear, label: "Tuberculosis cases (Detroit Health Department)", metric: annual_cases, measure: cases, filters: {condition: TByear}, location_dimension: place, time_dimension: year}
+  - {condition: TByear, label: "Tuberculosis case rate (Detroit Health Department)", metric: annual_case_rate, measure: rate, filters: {condition: TByear}, location_dimension: place, time_dimension: year}
+  - {condition: ChlamydiaYear, label: "Chlamydia cases (Detroit Health Department)", metric: annual_cases, measure: cases, filters: {condition: ChlamydiaYear}, location_dimension: place, time_dimension: year}
+  - {condition: ChlamydiaYear, label: "Chlamydia case rate (Detroit Health Department)", metric: annual_case_rate, measure: rate, filters: {condition: ChlamydiaYear}, location_dimension: place, time_dimension: year}
+  - {condition: HepCyear, label: "Hepatitis C cases (Detroit Health Department)", metric: annual_cases, measure: cases, filters: {condition: HepCyear}, location_dimension: place, time_dimension: year}
+  - {condition: HepCyear, label: "Hepatitis C case rate (Detroit Health Department)", metric: annual_case_rate, measure: rate, filters: {condition: HepCyear}, location_dimension: place, time_dimension: year}
+  - {condition: SyphilisPSyear, label: "Primary and secondary syphilis cases (Detroit Health Department)", metric: annual_cases, measure: cases, filters: {condition: SyphilisPSyear}, location_dimension: place, time_dimension: year}
+  - {condition: SyphilisPSyear, label: "Primary and secondary syphilis case rate (Detroit Health Department)", metric: annual_case_rate, measure: rate, filters: {condition: SyphilisPSyear}, location_dimension: place, time_dimension: year}
+  - {condition: SyphilisLyear, label: "Late syphilis cases (Detroit Health Department)", metric: annual_cases, measure: cases, filters: {condition: SyphilisLyear}, location_dimension: place, time_dimension: year}
+  - {condition: SyphilisLyear, label: "Late syphilis case rate (Detroit Health Department)", metric: annual_case_rate, measure: rate, filters: {condition: SyphilisLyear}, location_dimension: place, time_dimension: year}
+  - {condition: SyphilisCyear, label: "Congenital syphilis cases (Detroit Health Department)", metric: annual_cases, measure: cases, filters: {condition: SyphilisCyear}, location_dimension: place, time_dimension: year}
+  - {condition: SyphilisCyear, label: "Congenital syphilis case rate (Detroit Health Department)", metric: annual_case_rate, measure: rate, filters: {condition: SyphilisCyear}, location_dimension: place, time_dimension: year}
