@@ -7,9 +7,9 @@ dimensions:
   - {name: condition, column: label, type: categorical, description: "Nationally notifiable condition, e.g. Legionellosis or Candida auris, clinical."}
 measures:
   - {name: cases_this_week, column: m1, kind: count, unit: "cases", description: "Cases reported in the MMWR week."}
-  - {name: max_weekly_cases_prior_52_weeks, column: m2, kind: count, unit: "cases", description: "Highest weekly count in the previous 52 weeks; a maximum, not addable."}
-  - {name: cases_year_to_date, column: m3, kind: count, unit: "cases", description: "Cumulative cases in the MMWR year up to the week."}
-  - {name: cases_prior_year_to_date, column: m4, kind: count, unit: "cases", description: "Cumulative cases in the previous MMWR year up to the same week."}
+  - {name: max_weekly_cases_prior_52_weeks, column: m2, kind: maximum, unit: "cases", description: "Highest weekly count in the previous 52 weeks; a maximum, never added up."}
+  - {name: cases_year_to_date, column: m3, kind: running_count, unit: "cases", description: "Cumulative cases in the MMWR year up to the week; a running total, added across places only at one week."}
+  - {name: cases_prior_year_to_date, column: m4, kind: running_count, unit: "cases", description: "Cumulative cases in the previous MMWR year up to the same week; a running total, added across places only at one week."}
 metrics:
   - name: weekly_cases
     description: "Number of cases of a notifiable condition reported in a given week, added across the chosen places and weeks."
@@ -18,22 +18,25 @@ metrics:
     exclude_total_rows: true
     filters: []
   - name: year_to_date_cases
-    description: "Cases so far this year as of one MMWR week (filter to a single week, normally the latest; added across places only)."
+    description: "Cases so far this year as of one MMWR week (the compiler refuses it unless mmwr_week is filtered to one week, normally the latest; added across places only)."
     measure: cases_year_to_date
     aggregation: sum
     exclude_total_rows: true
+    single_value_of: [mmwr_week]
     filters: []
   - name: prior_year_to_date_cases
-    description: "Cases in the previous year up to the same week, as revised in the current week's table (filter to a single week)."
+    description: "Cases in the previous year up to the same week, as revised in the current week's table (read at one mmwr_week, which the compiler requires)."
     measure: cases_prior_year_to_date
     aggregation: sum
     exclude_total_rows: true
+    single_value_of: [mmwr_week]
     filters: []
   - name: us_resident_year_to_date_cases
     description: "National year-to-date cases among US residents, read from the published US RESIDENTS row (excludes territories and non-US residents)."
     measure: cases_year_to_date
     aggregation: sum
     exclude_total_rows: false
+    single_value_of: [mmwr_week]
     filters: ["upper(states) IN ('US RESIDENTS', 'U.S. RESIDENTS')"]
   - name: annual_cases
     description: "Cases in an MMWR year, as two separate observations: year_end_ytd, the year's own year-to-date count at the last week of the year that has a number (provisional, labelled with that week); and subsequent_year_restatement, next year's prior-year year-to-date for the same year (unverified_restatement, not a final disease count). Neither is final until a domain reviewer approves that they count the same thing. Weekly counts are not added up because late reports are added to the running total, not to the week."

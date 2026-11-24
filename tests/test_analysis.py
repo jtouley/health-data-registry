@@ -113,8 +113,8 @@ dimensions:
   - {name: week, column: week, type: time}
 measures:
   - {name: wk, column: wk, kind: count}
-  - {name: ytd, column: ytd, kind: count}
-  - {name: prior_ytd, column: prior_ytd, kind: count}
+  - {name: ytd, column: ytd, kind: running_count}
+  - {name: prior_ytd, column: prior_ytd, kind: running_count}
 metrics:
   - {name: annual, description: Annual cases, measure: ytd, aggregation: cumulative_latest, order_by: week,
      restated_by: {measure: prior_ytd, resolution_policy: require_domain_review}}

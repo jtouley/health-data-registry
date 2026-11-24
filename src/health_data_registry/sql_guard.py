@@ -270,8 +270,9 @@ def _function_name(node: exp.Expr) -> str:
     return node.key
 
 
-# Statement words never used as a name (SELECT 1 COPY parses as an alias named copy): refused so the query that
-# runs never even reads like a write, attach or install.
+# Statement words never used as a bare name (SELECT 1 COPY parses as an alias named copy): refused so the query
+# that runs never even reads like a write, attach or install. A quoted name ("update") is an ordinary name: it is
+# regenerated quoted, so it can't read as a statement.
 _STATEMENT_WORDS = frozenset(
     {"copy", "drop", "attach", "detach", "install", "load", "pragma", "export", "import", "call", "insert",
      "update", "delete", "create", "alter"}
@@ -281,7 +282,11 @@ _STATEMENT_WORDS = frozenset(
 def _check_nodes(tree: exp.Expr) -> None:
     """Fail closed: every node is known structure or an allowlisted function."""
     for node in tree.walk():
-        if isinstance(node, exp.Identifier) and str(node.name).casefold() in _STATEMENT_WORDS:
+        if (
+            isinstance(node, exp.Identifier)
+            and not node.args.get("quoted")  # a quoted name stays quoted in the SQL that runs
+            and str(node.name).casefold() in _STATEMENT_WORDS
+        ):
             raise SqlRefused(
                 "forbidden_construct",
                 f"{node.name} can't be used as a name here: choose another name for the column or table.",

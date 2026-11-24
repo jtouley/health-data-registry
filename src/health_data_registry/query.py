@@ -33,6 +33,13 @@ def _q(ident: str) -> str:
     return '"' + ident.replace('"', '""') + '"'
 
 
+def _single(value: Any) -> bool:
+    """A filter that pins a dimension to exactly one value."""
+    if value is None:
+        return False
+    return len(value) == 1 if isinstance(value, list | tuple) else True
+
+
 @dataclass(frozen=True)
 class CompiledMetric:
     sql: str
@@ -59,6 +66,14 @@ def compile_metric(
         ) from None
     measure = sem.measure(metric.measure)
     dims = {d.name: d for d in sem.dimensions}
+    for d in metric.single_value_of:
+        if d in group_by or not _single((filters or {}).get(d)):
+            raise QueryRefused(
+                "needs_single_value",
+                f"{metric.name} is a running total, so it is read at one {d}: filter {d} to a single value "
+                f"(normally the latest) and don't group by it. Adding up the running totals of several {d}s would "
+                "count the same cases many times.",
+            )
 
     def dim(name: str) -> str:
         if name not in dims:
@@ -127,18 +142,24 @@ def compile_metric(
     out_cols = [*group_by, metric.name, *(b for b, _ in bounds), *(["flag"] if flag else [])]
     if metric.aggregation == "cumulative_latest":
         return _compile_cumulative(
-            ds, metric, where, params, period_where, period_params, period_col, group_by
+            ds, metric, where, params, period_where, period_params, period_col, group_by, filters or {}
         )
     where = where + period_where
     params = params + period_params
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
     if metric.aggregation == "sum":
         # A group with any empty (suppressed or missing) value has no total: sum() would skip the empty rows and
-        # return a smaller number as if it were the whole count. suppressed_rows says how many were empty.
-        empty = f"count(*) FILTER (WHERE {m_col} IS NULL)"
+        # return a smaller number as if it were the whole count. suppressed_rows says how many were empty. An
+        # empty value whose flag is the codebook's "no reported cases" code is a zero, not a gap.
+        zero = flag.no_cases_code if flag else None
+        is_empty = f"{m_col} IS NULL" + (
+            f" AND {_q(flag.name)} IS DISTINCT FROM {_lit(zero)}" if flag and zero is not None else ""
+        )
+        empty = f"count(*) FILTER (WHERE {is_empty})"
+        total = f"coalesce(sum({m_col}), 0)" if zero is not None else f"sum({m_col})"
         sel = [
             *select_dims,
-            f"CASE WHEN {empty} = 0 THEN sum({m_col}) END AS {_q(metric.name)}",
+            f"CASE WHEN {empty} = 0 THEN {total} END AS {_q(metric.name)}",
             f"{empty} AS suppressed_rows",
         ]
         out_cols = [*group_by, metric.name, "suppressed_rows", *(["flag"] if flag else [])]
@@ -146,7 +167,7 @@ def compile_metric(
             # The publisher's flags on the empty cells the sum had to leave out, so a gap is never silent.
             f_col = _q(flag.name)
             sel.append(
-                f"string_agg(DISTINCT {f_col}, ', ' ORDER BY {f_col}) FILTER (WHERE {m_col} IS NULL) AS flag"
+                f"string_agg(DISTINCT {f_col}, ', ' ORDER BY {f_col}) FILTER (WHERE {is_empty}) AS flag"
             )
         sql = f"SELECT {', '.join(sel)} FROM {table}{where_sql}"  # noqa: S608 - quoted contract identifiers, bound values
         if group_cols:
@@ -161,6 +182,12 @@ def compile_metric(
             )
             + ". A group with any suppressed or missing value has no total (never a partial sum); "
             "suppressed_rows gives how many of its values were empty."
+            + (
+                f" An empty value flagged '{zero}' counts as 0: the publisher's codebook defines '{zero}' as no "
+                "reported cases."
+                if zero is not None
+                else ""
+            )
         )
     else:
         # Rates, percents and estimates are read as published, never added up. One row per group or refuse.
@@ -206,6 +233,7 @@ def _compile_cumulative(
     period_params: list[Any],
     period_col: str | None,
     group_by: Sequence[str],
+    filters: Mapping[str, FilterValue] = {},  # noqa: B006 - read only
 ) -> CompiledMetric:
     """A running total read at the last week that has a number in each period (e.g. NNDSS year-to-date).
 
@@ -225,6 +253,19 @@ def _compile_cumulative(
     if tname == metric.order_by:
         raise QueryRefused(
             "needs_period", f"{metric.name} can't be grouped by {tname}, the within-period order."
+        )
+    # A running total is read once per group: with a place or condition neither grouped nor pinned, the last
+    # week would pick one group's total at random instead of adding them up.
+    loose = [
+        d.name
+        for d in sem.dimensions
+        if d.type == "categorical" and d.name not in group_by and not _single(filters.get(d.name))
+    ]
+    if loose:
+        raise QueryRefused(
+            "needs_grouping",
+            f"{metric.name} is a running total kept separately for each {', '.join(loose)}, so it can't be read "
+            f"for several at once: group by {', '.join(loose)} or filter each to one value.",
         )
     order_by = str(metric.order_by)
     col = {d.name: d.column for d in sem.dimensions}
@@ -252,6 +293,12 @@ def _compile_cumulative(
             f"arg_max({v}, {ob}) FILTER (WHERE {v} IS NOT NULL) AS v, "
             f"max({ob}) FILTER (WHERE {v} IS NOT NULL) AS v_at, max({ob}) AS last_at, {last_flag} AS last_flag"
         )
+        if fc is not None and fc.no_cases_code is not None:
+            # Every empty value in the period carries the codebook's "no reported cases" code.
+            aggs += (
+                f", coalesce(bool_and(coalesce({_q(fc.name)}, '') = {_lit(fc.no_cases_code)}) "
+                f"FILTER (WHERE {v} IS NULL), false) AS none_reported"
+            )
         return f"SELECT {cols}, {aggs} FROM base GROUP BY ALL"  # noqa: S608 - quoted contract identifiers
 
     m_flag = ds.contract.flag_column(m_col)
@@ -259,8 +306,19 @@ def _compile_cumulative(
         f"'; later {unit}s have no number' || CASE WHEN c.last_flag <> '' THEN ' (flag at {unit} ' || c.last_at"
         f" || ': ' || {_flag_text(m_flag, 'c.last_flag')} || ')' ELSE '' END"
     )
+    zero = m_flag.no_cases_code if m_flag else None
+    # A period whose running total is empty in every week, each flagged with the codebook's "no reported cases"
+    # code, has no reported cases: read as 0 and labelled so (never stored as a number).
+    none_status = (
+        f" WHEN c.v IS NULL AND c.none_reported THEN CASE WHEN {{ended}} THEN 'provisional: as published at {span} "
+        f"end: no reported cases (through {unit} ' || c.last_at || '; flag ''{zero}'' = no reported cases)' ELSE "
+        f"'provisional: running total so far: no reported cases (through {unit} ' || c.last_at || '; flag "
+        f"''{zero}'' = no reported cases)' END"
+        if zero is not None
+        else ""
+    )
     status = (
-        f"CASE WHEN c.v IS NULL THEN 'no number published through {unit} ' || c.last_at"
+        f"CASE{none_status} WHEN c.v IS NULL THEN 'no number published through {unit} ' || c.last_at"
         f" || CASE WHEN c.last_flag <> '' THEN ' (flag: ' || {_flag_text(m_flag, 'c.last_flag')} || ')' ELSE '' END"
         f" WHEN c.v_at < c.last_at THEN 'incomplete: running total last published at {unit} ' || c.v_at"
         f" || ' of ' || c.last_at || {gap} || ', so this is not the {span} total'"
@@ -269,7 +327,8 @@ def _compile_cumulative(
     )
     flag_out = "CASE WHEN c.v_at IS DISTINCT FROM c.last_at THEN nullif(c.last_flag, '') END"
     ctes = f"WITH base AS (SELECT * FROM {_q(ds.id)}{where_sql}), cur AS ({running(m_col, t)})"  # noqa: S608 - quoted contract identifiers
-    sel = [*(f"c.{_q(g)}" for g in group_by), f"c.v AS {_q(metric.name)}"]
+    value = "CASE WHEN c.v IS NULL AND c.none_reported THEN 0 ELSE c.v END" if zero is not None else "c.v"
+    sel = [*(f"c.{_q(g)}" for g in group_by), f"{value} AS {_q(metric.name)}"]
     columns = [*group_by, metric.name, "period_status", "flag"]
     join = ""
     if metric.restated_by:

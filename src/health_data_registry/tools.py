@@ -311,7 +311,11 @@ def describe_dataset(
         return refusal(err, fmt)
     e, c, s = ds.entry, ds.contract, ds.semantic
     counts = [
-        f"{m.name}: {m.kind}" + (" (added up)" if m.kind == "count" else " (never added up)")
+        f"{m.name}: {m.kind}"
+        + {
+            "count": " (added up)",
+            "running_count": " (a running total: added across places only at one week, never across weeks)",
+        }.get(m.kind, " (never added up)")
         for m in s.measures
     ]
     running = [

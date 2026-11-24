@@ -72,8 +72,8 @@ dimensions:
   - {name: week, column: week, type: time}
 measures:
   - {name: wk, column: wk, kind: count}
-  - {name: ytd, column: ytd, kind: count}
-  - {name: prior_ytd, column: prior_ytd, kind: count}
+  - {name: ytd, column: ytd, kind: running_count}
+  - {name: prior_ytd, column: prior_ytd, kind: running_count}
 metrics:
   - name: annual
     description: Annual cases
@@ -296,12 +296,66 @@ def test_cumulative_refusals(tmp_path: Path, group_by: list[str], period: Any, m
     assert str(e.value).endswith(msg)
 
 
-def test_cumulative_refused_on_rates(tmp_path: Path) -> None:
+@pytest.mark.parametrize("kind", ["rate", "count", "maximum"])
+def test_cumulative_needs_a_running_count(tmp_path: Path, kind: str) -> None:
     bad = SEMANTIC.replace(
-        "- {name: ytd, column: ytd, kind: count}", "- {name: ytd, column: ytd, kind: rate}"
+        "- {name: ytd, column: ytd, kind: running_count}", f"- {{name: ytd, column: ytd, kind: {kind}}}"
     )
-    with pytest.raises(RegistryError, match="running count"):
+    with pytest.raises(RegistryError, match="needs a running_count measure"):
         _registry(tmp_path, bad)
+
+
+def test_a_restatement_must_be_a_running_count(tmp_path: Path) -> None:
+    bad = SEMANTIC.replace(
+        "- {name: prior_ytd, column: prior_ytd, kind: running_count}",
+        "- {name: prior_ytd, column: prior_ytd, kind: count}",
+    )
+    with pytest.raises(RegistryError, match="restated_by needs a running_count"):
+        _registry(tmp_path, bad)
+
+
+def test_a_running_total_without_its_place_grouped_is_refused(tmp_path: Path) -> None:
+    """Regression (dbt review 1): grouped by year alone, arg_max picked one area's total (2023: 16, not 24)."""
+    _, eng = _setup(tmp_path)
+    with pytest.raises(QueryRefused) as e:
+        eng.query_metric("toy_cases", "annual", group_by=["year"])
+    assert e.value.code == "needs_grouping" and "group by state or filter each to one value" in str(e.value)
+    with pytest.raises(QueryRefused):
+        eng.query_metric("toy_cases", "annual", filters={"state": ["Ohio", "OHIO"]}, group_by=["year"])
+    one = eng.query_metric("toy_cases", "annual", filters={"state": "OHIO"}, group_by=["year"])
+    assert [r[:2] for r in one["rows"]][0] == [2023, 8]  # Ohio; Michigan is 16, so 24 in all, never 16
+
+
+YTD_SEMANTIC = SEMANTIC.replace(
+    "  - {name: weekly,",
+    "  - {name: ytd_sum, description: Year to date at one week, measure: ytd, aggregation: sum,\n"
+    "     single_value_of: [week]}\n  - {name: weekly,",
+)
+
+
+def test_a_summed_running_total_needs_one_week(tmp_path: Path) -> None:
+    """dbt review 2: year to date is added across places only at a single week, never across weeks."""
+    reg = _registry(tmp_path, YTD_SEMANTIC)
+    ds = reg.get("toy_cases")
+    for kw in ({}, {"filters": {"week": [1, 2]}}, {"filters": {"week": 1}, "group_by": ["week"]}):
+        with pytest.raises(QueryRefused) as e:
+            compile_metric(ds, "ytd_sum", **kw)  # type: ignore[arg-type]
+        assert e.value.code == "needs_single_value" and "count the same cases many times" in str(e.value)
+    assert "sum(" in compile_metric(ds, "ytd_sum", filters={"week": 3}, group_by=["year"]).sql
+    with pytest.raises(RegistryError, match="name the dimension it is read at in single_value_of"):
+        _registry(tmp_path / "a", YTD_SEMANTIC.replace("\n     single_value_of: [week]", ""))
+    with pytest.raises(RegistryError, match="single_value_of names unknown dimension"):
+        _registry(tmp_path / "b", YTD_SEMANTIC.replace("single_value_of: [week]", "single_value_of: [day]"))
+    with pytest.raises(RegistryError, match="would sum a maximum"):
+        _registry(
+            tmp_path / "c",
+            YTD_SEMANTIC.replace(
+                "- {name: ytd, column: ytd, kind: running_count}", "- {name: ytd, column: ytd, kind: maximum}"
+            )
+            .replace("aggregation: cumulative_latest", "aggregation: none")
+            .replace("    order_by: week\n", "")
+            .replace("    restated_by: {measure: prior_ytd, resolution_policy: require_domain_review}\n", ""),
+        )
 
 
 def test_flags_are_kept_as_published(tmp_path: Path) -> None:
@@ -382,3 +436,45 @@ def test_other_period_and_order_names_read_plainly(tmp_path: Path) -> None:
     with pytest.raises(QueryRefused) as e:
         compile_metric(reg.get("toy_cases"), "by_seq", group_by=["state"], period={"dimension": "span_id"})
     assert str(e.value) == "by_seq is a running total, so it is read once per span_id; group by span_id."
+
+
+ALL_CODES = (
+    '{property: flagCodes, value: {"-": "no reported cases", "U": "unavailable", '
+    '"N": "not reportable in this jurisdiction", "NN": "not nationally notifiable", '
+    '"NP": "nationally notifiable but not published", "NC": "not calculated"}}, '
+    '{property: noCasesCode, value: "-"}'
+)
+BY_FLAG = {"-": "OHIO", "U": "MAINE", "N": "IOWA", "NN": "UTAH", "NP": "IDAHO", "NC": "KANSAS"}
+
+
+@pytest.mark.parametrize("code", list(BY_FLAG))
+def test_no_flagged_cell_is_a_bare_zero_or_a_bare_empty(tmp_path: Path, code: str) -> None:
+    """Every NNDSS flag: '-' (no reported cases, by the codebook) reads as 0 with its flag; every other code
+    stays empty with its flag. No flagged cell comes back as a bare 0 or a bare empty value."""
+    contract = CONTRACT.replace(
+        f"{{property: flagFor, value: ytd}}, {FLAG_CODES}", f"{{property: flagFor, value: ytd}}, {ALL_CODES}"
+    )
+    assert contract != CONTRACT
+    reg = load_registry(
+        write_registry(tmp_path / "reg", catalog=CATALOG, contract=contract, semantic=SEMANTIC)
+    )
+    area = BY_FLAG[code]
+    records = [rec(area, 2023, w, None, None, None, code) for w in (1, 2, 3)]
+    records += [rec("MICHIGAN", 2023, w, 1, w, None) for w in (1, 2, 3)]
+    lake = tmp_path / "lake"
+    lake.mkdir()
+    f = tmp_path / "p.ndjson"
+    write_ndjson(f, records)
+    build_snapshot(
+        lake, reg.get("toy_cases"), [raw_fetch("https://data.cdc.gov/resource/x.json", records)], [f]
+    )
+    eng = Engine(registry=reg, lake=lake)
+    out = tools.get_series(reg, eng, condition="legionellosis", locations=[area], fmt="json")
+    assert isinstance(out, dict)
+    cols = out["columns"]
+    (row,) = [dict(zip(cols, r, strict=True)) for r in out["rows"]]
+    assert row["flag"] == code
+    if code == "-":
+        assert row["value"] == 0 and "no reported cases" in row["period_status"]
+    else:
+        assert row["value"] is None and row["period_status"].startswith("no number published")

@@ -196,6 +196,9 @@ class Column:
     partial_places: tuple[tuple[str, str], ...] = ()
     # Labels the publisher renamed between years: (later label, the earlier label it continues).
     renamed_labels: tuple[tuple[str, str], ...] = ()
+    # The flag code the publisher's codebook defines as "no reported cases" (NNDSS: '-'): an empty count with it
+    # is read as zero, labelled so; it is never stored as a number (hard rule 1).
+    no_cases_code: str | None = None
 
     def partial_note(self, label: str) -> str | None:
         """The contract's note when this place label covers only part of the place it is named after."""
@@ -328,6 +331,12 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
                 f"{expected_id}.{name}: a flag column keeps its codes; it can't have missingCodes"
             )
         pairs = {k: _pairs(cp.get(k), f"{expected_id}.{name}.{k}") for k in _PAIR_PROPS}
+        zero = cp.get("noCasesCode")
+        if zero is not None and (cp.get("flagFor") is None or str(zero) not in dict(pairs["flagCodes"])):
+            raise RegistryError(
+                f"{expected_id}.{name}: noCasesCode must be one of this flag column's flagCodes, quoted from the "
+                "publisher's codebook"
+            )
         cols.append(
             Column(
                 name=name,
@@ -343,6 +352,7 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
                 flag_codes=pairs["flagCodes"],
                 partial_places=pairs["partialPlaces"],
                 renamed_labels=pairs["renamedLabels"],
+                no_cases_code=None if zero is None else str(zero),
             )
         )
     if not cols:
@@ -374,7 +384,12 @@ def _text(value: Any) -> str | None:
 
 # --------------------------------------------------------------------------------------------- semantic
 
-MeasureKind = Literal["count", "rate", "estimate", "lower_bound", "upper_bound", "percent"]
+# count: a frequency count, added up. running_count: a running total (year to date), added across places only at
+# a single value of the dimensions in the metric's single_value_of. maximum: a published maximum, never added.
+MeasureKind = Literal[
+    "count", "running_count", "maximum", "rate", "estimate", "lower_bound", "upper_bound", "percent"
+]
+COUNT_KINDS = frozenset({"count", "running_count", "maximum"})
 
 
 class Dimension(_Strict):
@@ -423,6 +438,9 @@ class Metric(_Strict):
     uncertainty: Uncertainty | None = None
     order_by: str | None = None
     restated_by: Restatement | None = None
+    # Dimensions a summed running total must be filtered to one value of (NNDSS year to date: the week), so
+    # every week's running total is never added up. The compiler refuses the metric otherwise.
+    single_value_of: list[str] = Field(default_factory=list)
 
 
 SeriesMeasure = Literal["cases", "deaths", "rate", "percent", "estimate", "population"]
@@ -468,16 +486,31 @@ class SemanticModel(_Strict):
             m = measures.get(metric.measure)
             if m is None:
                 raise ValueError(f"metric {metric.name} names unknown measure {metric.measure}")
-            # The spec's core rule: sum a frequency count, never sum a rate or an estimate.
-            if metric.aggregation == "sum" and m.kind != "count":
+            # The spec's core rule: sum a frequency count, never sum a rate, an estimate or a maximum; a running
+            # total only at one value of its order (single_value_of).
+            if metric.aggregation == "sum" and m.kind not in ("count", "running_count"):
                 raise ValueError(f"metric {metric.name} would sum a {m.kind}; only counts may be summed")
+            if metric.aggregation == "sum" and m.kind == "running_count" and not metric.single_value_of:
+                raise ValueError(
+                    f"metric {metric.name} would sum a running total over every week; name the dimension it is "
+                    "read at in single_value_of"
+                )
+            unknown = [d for d in metric.single_value_of if d not in {x.name for x in self.dimensions}]
+            if unknown:
+                raise ValueError(
+                    f"metric {metric.name}: single_value_of names unknown dimension {unknown[0]}"
+                )
             if metric.aggregation == "cumulative_latest":
-                if m.kind != "count":
-                    raise ValueError(f"metric {metric.name}: cumulative_latest needs a running count")
+                if m.kind != "running_count":
+                    raise ValueError(f"metric {metric.name}: cumulative_latest needs a running_count measure")
                 if metric.order_by is None or metric.order_by not in {d.name for d in self.dimensions}:
                     raise ValueError(f"metric {metric.name}: cumulative_latest needs order_by, a dimension")
-                if metric.restated_by and measures.get(metric.restated_by.measure) is None:
-                    raise ValueError(f"metric {metric.name}: restated_by names an unknown measure")
+                if metric.restated_by:
+                    r = measures.get(metric.restated_by.measure)
+                    if r is None:
+                        raise ValueError(f"metric {metric.name}: restated_by names an unknown measure")
+                    if r.kind != "running_count":
+                        raise ValueError(f"metric {metric.name}: restated_by needs a running_count measure")
             elif metric.order_by is not None or metric.restated_by is not None:
                 raise ValueError(
                     f"metric {metric.name}: order_by and restated_by only apply to cumulative_latest"
@@ -510,9 +543,9 @@ class SemanticModel(_Strict):
                     f"series {ser.condition}: a weekly series needs a time week_dimension and a summed metric"
                 )
             kind = measures[met.measure].kind
-            if ser.measure in ("cases", "deaths", "population") and kind != "count":
+            if ser.measure in ("cases", "deaths", "population") and kind not in ("count", "running_count"):
                 raise ValueError(f"series {ser.condition} says {ser.measure} but its metric reads a {kind}")
-            if ser.measure in ("rate", "percent", "estimate") and kind == "count":
+            if ser.measure in ("rate", "percent", "estimate") and kind in COUNT_KINDS:
                 raise ValueError(f"series {ser.condition} says {ser.measure} but its metric reads a count")
         for group in (self.dimensions, self.measures, self.metrics):
             names = [g.name for g in group]

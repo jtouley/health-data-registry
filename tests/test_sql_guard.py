@@ -670,3 +670,11 @@ def test_property_tokenSoup_neverAcceptsForbidden(tokens: list[str]) -> None:
 def test_guard_statementWordAsName_refused(sql: str) -> None:
     """Regression (found by the token-soup property): a statement word as an alias is refused, never run."""
     assert refused(sql).code == "forbidden_construct"
+
+
+@pytest.mark.parametrize("word", ["update", "load", "delete", "copy"])
+def test_guard_quotedStatementWord_isAnOrdinaryName(word: str) -> None:
+    """code-review 7: a quoted alias named like a SQL command stays a name; the bare word is still refused."""
+    q = guard(f'SELECT state AS "{word}" FROM deaths')
+    assert f'AS "{word}"' in q.sql
+    assert refused(f"SELECT state AS {word} FROM deaths").code in {"forbidden_construct", "parse_error"}
