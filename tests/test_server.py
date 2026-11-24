@@ -65,6 +65,21 @@ def test_unexpected_failure_is_plain_words(
     assert "couldn't be read" in text and "0x7f" not in text and "Traceback" not in text
 
 
+def test_instructions_route_every_tool_and_close_on_numbers(registry: Registry, lake: Path) -> None:
+    from health_data_registry.server import INSTRUCTIONS
+
+    s = build_server(registry, Engine(registry=registry, lake=lake))
+    names = {t.name for t in asyncio.run(s.list_tools())} - {"get_publication_outlook"}
+    missing = [n for n in sorted(names) if f"{n}(" not in INSTRUCTIONS]
+    assert not missing, missing
+    assert "never calls GBD" in INSTRUCTIONS and "IHME GBD connector" in INSTRUCTIONS
+    assert "ONE week" in INSTRUCTIONS and "last resort" in INSTRUCTIONS
+    assert INSTRUCTIONS.rstrip().endswith(
+        "Every number comes from a tool response, with its source and caveats. If no tool returned a number, "
+        "there is no number."
+    )
+
+
 def test_publication_outlook_over_mcp(registry: Registry, lake: Path) -> None:
     s = build_server(registry, Engine(registry=registry, lake=lake))
     out = asyncio.run(s.call_tool("get_publication_outlook", {"conference": "IDWeek"}))
