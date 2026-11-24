@@ -76,17 +76,31 @@ def check_contracts(registry: Registry) -> int:
     return 1 if bad else 0
 
 
-def index_croi(registry: Registry, year: int, *, max_requests: int | None, lake: Path) -> int:
-    from health_data_registry.croi_index import index_croi as run
+def parse_years(text: str) -> list[int]:
+    """'2025' or '2022-2026' as a list of years; ValueError otherwise."""
+    lo, sep, hi = text.partition("-")
+    first, last = int(lo), int(hi) if sep else int(lo)
+    if last < first:
+        raise ValueError(f"{text!r}: the range runs backwards")
+    return list(range(first, last + 1))
+
+
+def index_croi(registry: Registry, years: Sequence[int], *, max_requests: int | None, lake: Path) -> int:
+    from health_data_registry.croi_index import MIN_YEARS, index_years
 
     try:
-        summary = run(registry, lake, year, max_requests=max_requests)
+        summaries = index_years(registry, lake, years, max_requests=max_requests)
     except ValueError as e:
         print(f"index-croi stopped: {e}", file=sys.stderr)
         return 1
-    for line in summary.lines():
-        print(line)
-    return 0 if summary.ok else 1
+    for summary in summaries:
+        for line in summary.lines():
+            print(line)
+    if len(set(years)) < MIN_YEARS:
+        print(
+            f"note: the index's bar is at least {MIN_YEARS} complete CROI years; this run asked for {len(set(years))}"
+        )
+    return 0 if summaries and all(s.ok for s in summaries) else 1
 
 
 def purge_private(source_id: str, *, lake: Path) -> int:
@@ -250,7 +264,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "index-croi",
         help="index one CROI year into its private store, at CROI's robots.txt crawl delay (resumable)",
     )
-    ic.add_argument("--year", type=int, required=True)
+    yrs = ic.add_mutually_exclusive_group()
+    yrs.add_argument("--year", type=int, help="one conference year")
+    yrs.add_argument(
+        "--years", help="a range of conference years, e.g. 2022-2026 (default: the five most recent)"
+    )
     ic.add_argument(
         "--max-requests", type=int, default=None, help="stop after this many requests (robots.txt included)"
     )
@@ -299,7 +317,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if a.cmd in ANALYSIS_COMMANDS:
         return run_analysis(registry, a)
     if a.cmd == "index-croi":
-        return index_croi(registry, a.year, max_requests=a.max_requests, lake=lake_root())
+        from health_data_registry.croi_index import DEFAULT_YEARS
+
+        try:
+            years = [a.year] if a.year else parse_years(a.years) if a.years else list(DEFAULT_YEARS)
+        except ValueError as e:
+            print(f"index-croi stopped: {e}. Give a year (2025) or a range (2022-2026).", file=sys.stderr)
+            return 1
+        return index_croi(registry, years, max_requests=a.max_requests, lake=lake_root())
     if a.cmd == "purge-private":
         return purge_private(a.source_id, lake=lake_root())
     if a.cmd == "find-prior-work":

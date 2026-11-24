@@ -229,7 +229,7 @@ def build_server(registry: Registry | None = None, engine: Engine | None = None)
         """Has this been presented before? CROI conference abstracts on a condition, optionally in a place
         (geography), years ('2020-2024') or using a kind of data (dataset, e.g. surveillance): title, year,
         session type and the link to read it on CROI's site, with a short excerpt when available. Says plainly when
-        the index isn't built yet."""
+        the index isn't built yet, or a year isn't fully indexed."""
         return _safe(
             lambda: tools.find_prior_work(reg, condition=condition, geography=geography, years=years,
                                           dataset=dataset, fmt=fmt, lake=eng.lake),

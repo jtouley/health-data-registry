@@ -107,10 +107,12 @@ def test_other_hosts_are_refused(tmp_path: Path) -> None:
 def test_a_restart_cannot_burst(tmp_path: Path) -> None:
     clock = FakeClock()
     site = FakeSite(clock, {f"https://{HOST}/a/": b"a"})
-    client(tmp_path, site, clock).get(f"https://{HOST}/a/")
+    with client(tmp_path, site, clock) as first:
+        first.get(f"https://{HOST}/a/")
     last = site.calls[-1][1]
     clock.t += 5  # the process restarts five seconds later
-    client(tmp_path, site, clock).get(f"https://{HOST}/a/")
+    with client(tmp_path, site, clock) as second:
+        second.get(f"https://{HOST}/a/")
     # the new run's robots.txt request still waited for the delay recorded by the last run
     assert site.calls[2][0].endswith("/robots.txt")
     assert site.calls[2][1] - last >= 120.0

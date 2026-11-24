@@ -25,6 +25,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -153,13 +154,62 @@ def write_rows(lake: Path, ds: Dataset, partition: str, rows: Iterable[Mapping[s
     for row in rows:
         clean = _clean(ds, row)
         current[_key(clean, keys)] = clean
-    tmp = target.with_suffix(".tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for k in sorted(current):
-            fh.write(json.dumps(current[k], ensure_ascii=False, sort_keys=True) + "\n")
-    tmp.chmod(0o600)
-    tmp.replace(target)
+    atomic_write(
+        target,
+        "".join(json.dumps(current[k], ensure_ascii=False, sort_keys=True) + "\n" for k in sorted(current)),
+    )
     return len(current)
+
+
+def atomic_write(target: Path, text: str) -> None:
+    """Write a whole file or nothing: a private temp file in the same folder, flushed to disk, then renamed
+    over the target (one atomic step on POSIX). A crash at any point leaves the old file or the new one, never
+    half of either; a leftover temp file is never read (readers take ``*.jsonl`` and ``*.json`` only)."""
+    fd, name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".part", dir=target.parent)
+    tmp = Path(name)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        tmp.replace(target)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    dir_fd = os.open(target.parent, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)  # the rename itself survives a power cut
+    finally:
+        os.close(dir_fd)
+
+
+COVERAGE_FILE = "_coverage.json"
+
+
+def write_coverage(lake: Path, ds: Dataset, coverage: Mapping[str, Mapping[str, Any]]) -> None:
+    """Record, per partition, how much of the publisher's own total the store holds (e.g. CROI year=2025:
+    total 1277, done 1277, complete true). Written after the rows, so it never claims rows that aren't there."""
+    require_private(ds)
+    folder = area(lake, ds.id)
+    folder.mkdir(parents=True, exist_ok=True)
+    current = read_coverage(lake, ds) or {}
+    current.update({k: dict(v) for k, v in coverage.items()})
+    atomic_write(folder / COVERAGE_FILE, json.dumps(current, indent=1, sort_keys=True) + "\n")
+
+
+def read_coverage(lake: Path, ds: Dataset) -> dict[str, dict[str, Any]] | None:
+    """The coverage record beside the rows read_rows would read (the local private area when it holds rows,
+    else the hub cache); None when there is none, which callers treat as nothing confirmed complete."""
+    local = area(lake, ds.id)
+    folder = local if local.is_dir() and any(local.glob("*.jsonl")) else hub_cache(lake, ds.id)
+    p = folder / COVERAGE_FILE
+    if not p.is_file():
+        return None
+    raw = json.loads(p.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        return None
+    return {str(k): dict(v) for k, v in raw.items() if isinstance(v, dict)}
 
 
 # ------------------------------------------------------------------------------------------------ read
@@ -176,7 +226,11 @@ def _hf_download(repo_id: str, token: str, local_dir: Path) -> None:
     from huggingface_hub import snapshot_download
 
     snapshot_download(
-        repo_id, repo_type="dataset", token=token, local_dir=str(local_dir), allow_patterns=["*.jsonl"]
+        repo_id,
+        repo_type="dataset",
+        token=token,
+        local_dir=str(local_dir),
+        allow_patterns=["*.jsonl", COVERAGE_FILE],
     )
 
 

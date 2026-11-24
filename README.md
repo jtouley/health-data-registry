@@ -153,7 +153,7 @@ each tool's parameters, what comes back, an example prompt and what it says when
 | `check_signal` | Is this week unusual? The last 4 weeks' cases against the same, preceding and following 4 weeks of the past 5 years, in the style of CDC's historical limits for notifiable diseases. |
 | `get_provenance` | Where a source's numbers came from: the exact URLs, when they were fetched, content hashes, case definitions and how to cite them. |
 | `list_caveats` | What the data can't tell you: geography traps, suppression, provisional years, unreviewed contracts and facts not yet confirmed with the publisher. |
-| `find_prior_work` | Conference abstracts, case reports and health department reports on a condition, with the datasets each used. (The index is not built yet; the tool says so rather than guessing.) |
+| `find_prior_work` | Has this been presented before? CROI conference abstracts on a condition, optionally in a place (geography), years ('2020-2024') or using a kind of data (dataset, e.g. surveillance): title, year, session type and the link to read it on CROI's site, with a short excerpt when available. |
 | `get_publication_outlook` | How often presented abstracts at a conference (e.g. "IDWeek", "CROI") became full papers: one row per stage from idea to paper, each with its source, n and 95% interval, or "unknown". |
 | `query_sql` | Escape hatch for questions the other tools don't cover: one read-only SELECT over loaded sources (tables are named by source_id). |
 

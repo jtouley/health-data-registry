@@ -984,6 +984,32 @@ def excerpt(text: str, limit: int = EXCERPT_CHARS) -> str:
     return body[:cap].rsplit(" ", 1)[0] + " …"
 
 
+def incomplete_years(
+    coverage: dict[str, dict[str, Any]], held: set[int], lo: int | None, hi: int | None
+) -> list[str]:
+    """Each asked-for year the index can't vouch for, in plain words: a year is complete only when its
+    coverage record says the abstracts read equal the listing's own total. A year with rows but no record,
+    or asked for and never indexed, is incomplete too."""
+    from health_data_registry.adapters import croi
+
+    recorded = {int(k[5:]): v for k, v in coverage.items() if k.startswith("year=") and k[5:].isdigit()}
+    if lo is None and hi is None:
+        years = held | set(recorded)
+    else:
+        first = lo if lo is not None else croi.FIRST_YEAR
+        last = hi if hi is not None else max(held | set(recorded) | {first})
+        years = set(range(first, last + 1))
+    out: list[str] = []
+    for y in sorted(years):
+        c = recorded.get(y)
+        total = c.get("total") if c else None
+        if c is None:
+            out.append(f"{y} (partly indexed)" if y in held else f"{y} (not indexed)")
+        elif not (c.get("complete") is True and total is not None and c.get("done") == total):
+            out.append(f"{y} ({c.get('done', 0)} of {total if total is not None else '?'} read)")
+    return out
+
+
 def find_prior_work(
     registry: Registry,
     *,
@@ -1004,6 +1030,7 @@ def find_prior_work(
         return message(f"{e}. Give one year (2023) or a range (2020-2024).", fmt, refused="bad_years")
     rows: list[list[Any]] = []
     notes: list[str] = []
+    incomplete: list[str] = []
     held = 0
     for sid in INDEX_SOURCES:
         ds = registry.datasets.get(sid)
@@ -1044,6 +1071,7 @@ def find_prior_work(
             "CROI abstracts: the full text and posters are on CROI's site; open each link to read them. "
             f"Abstracts held in this index by year: {coverage}."
         )
+        incomplete += incomplete_years(private.read_coverage(lake, ds) or {}, set(per_year), lo, hi)
         if text_found is None:
             notes.append(
                 "Excerpts aren't available here (the private text store is empty or was deleted), so only the links "
@@ -1060,6 +1088,17 @@ def find_prior_work(
             0, f"Showing the {MAX_PRIOR_WORK} most recent of {len(rows)} matches; narrow the years or place."
         )
         rows = rows[:MAX_PRIOR_WORK]
+    if incomplete:
+        gap = (
+            f"The CROI index is not complete for {'; '.join(incomplete)}, so a missing match there does not mean "
+            "nothing was presented; search CROI's own abstract site and PubMed for those years."
+        )
+        if not rows:
+            return message(
+                f"No match for '{condition}' among the abstracts indexed so far. {gap}", fmt,
+                refused="index_incomplete",
+            )  # fmt: skip
+        notes.insert(0, gap)
     if not rows:
         notes.insert(0, f"No indexed CROI abstract matches '{condition}'" + (f" in {geography}" if geography else "")
                      + (f" for {years}" if years else "") + ". Search PubMed too: the index covers CROI only.")  # fmt: skip

@@ -29,7 +29,7 @@ caveats:
   - "Kept in this source's private store only, until the maintainer confirms the metadata may be redistributed; never in a public release."
   - "Condition, design, data-source and geography tags come from fixed word rules over the title and text, not from a model; a missing tag doesn't mean the topic is absent."
   - "An abstract is not a peer-reviewed paper; many are never published in full."
-  - "Crawled at CROI's own pace (one request per robots.txt crawl delay, 120 s), so a year can be partly indexed; find_prior_work says how many abstracts each year holds."
+  - "Crawled at CROI's own pace (one request per robots.txt crawl delay, 120 s), at least the five most recent conference years. A year counts as indexed only when every abstract CROI's listing counts has been read; until then find_prior_work names the year as incomplete and never reports 'no match' for it."
 contract: contracts/croi_abstracts_index.odcs.yaml
 semantic_model: semantic/croi_abstracts_index.yaml
 status: draft
