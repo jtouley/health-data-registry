@@ -235,13 +235,13 @@ def build_server(registry: Registry | None = None, engine: Engine | None = None)
         (tables are named by source_id). Writes, file reads and undeclared joins are refused; results are capped."""
         return _safe(lambda: tools.query_sql(eng, sql, fmt=fmt), fmt)
 
-    for h in helpers.HELPERS:
+    for h in helpers.PROMPTS:
         _register_helper(mcp, h)
 
     return mcp
 
 
-def _register_helper(mcp: MCPServer, h: helpers.Helper) -> None:
+def _register_helper(mcp: MCPServer, h: helpers.Workflow) -> None:
     # Prompt arguments come from the function signature, so build one per helper with exactly its args.
     if not h.args:
 
@@ -260,9 +260,9 @@ def _register_helper(mcp: MCPServer, h: helpers.Helper) -> None:
         with_args.__signature__ = inspect.Signature(sig_params, return_annotation=str)  # type: ignore[attr-defined]
         with_args.__annotations__ = {**{a: str for a in h.args}, "return": str}
         fn = with_args
-    fn.__name__ = h.name
+    fn.__name__ = h.prompt_name
     fn.__doc__ = h.description
-    mcp.prompt(name=h.name, title=h.title, description=h.description)(fn)
+    mcp.prompt(name=h.prompt_name, title=h.title, description=h.description)(fn)
 
 
 def main() -> None:

@@ -36,8 +36,8 @@ test-network: ## Tests that hit live publishers (network marker)
 mutate: ## Mutation tests on the modules changed since BASE (default origin/main); fails under MUTATION_FLOOR
 	$(UV) run python scripts/mutate_changed.py --base $(BASE) --floor $(MUTATION_FLOOR)
 
-docs: ## Regenerate docs/helpers.md from the helpers in code
-	$(UV) run python scripts/write_helpers_doc.py
+docs: ## Regenerate docs/helpers.md and the template's Claude Code skills from the workflows in code
+	$(UV) run python scripts/write_template.py
 
 check: lint typecheck test mutate ## Everything CI runs: lint, typecheck, test, mutation tests on changed modules
 
