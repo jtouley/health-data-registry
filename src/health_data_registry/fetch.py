@@ -57,6 +57,7 @@ import zlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Final
 from urllib.parse import SplitResult, urljoin, urlsplit
 
@@ -75,6 +76,8 @@ PROXY_ENV: Final = "HDR_HTTPS_PROXY"
 USER_AGENT: Final = f"health-data-registry/{__version__} (+https://github.com/jtouley/health-data-registry)"
 
 REDIRECT_STATUSES: Final = frozenset({301, 302, 303, 307, 308})
+# Statuses whose Retry-After header is read (RFC 9110 10.2.3): too many requests, service unavailable.
+RETRY_AFTER_STATUSES: Final = frozenset({429, 503})
 # Headers the fetcher owns: a caller cannot override them.
 _RESERVED_HEADERS: Final = frozenset(
     {"host", "connection", "content-length", "transfer-encoding", "accept-encoding", "te", "upgrade",
@@ -96,11 +99,14 @@ _ALWAYS_BLOCKED: Final = (
 class FetchRefused(Exception):
     """Nothing was fetched (or the response was discarded). ``code`` is for programs."""
 
-    def __init__(self, code: str, message: str, *, status: int | None = None) -> None:
+    def __init__(
+        self, code: str, message: str, *, status: int | None = None, retry_after: float | None = None
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.status = status
+        self.retry_after = retry_after  # seconds the publisher asked us to wait (Retry-After on 429 or 503)
 
 
 @dataclass(frozen=True)
@@ -487,6 +493,22 @@ def _read_body(
     return body.finish()
 
 
+def retry_after_seconds(value: str | None, *, now: datetime | None = None) -> float | None:
+    """A Retry-After header in seconds: delay-seconds or an HTTP date (RFC 9110 10.2.3); None if unreadable."""
+    if value is None:
+        return None
+    text = value.strip()
+    if text.isdigit():
+        return float(text)
+    try:
+        when = parsedate_to_datetime(text)
+    except (TypeError, ValueError, IndexError):
+        return None
+    if when.tzinfo is None:
+        return None
+    return max(0.0, (when - (now or datetime.now(UTC))).total_seconds())
+
+
 # ---------------------------------------------------------------------------
 # Fetch
 # ---------------------------------------------------------------------------
@@ -560,7 +582,12 @@ def fetch(
                 continue
             if status != 200:
                 raise FetchRefused(
-                    "http_error", f"The publisher answered with status {status}.", status=status
+                    "http_error",
+                    f"The publisher answered with status {status}.",
+                    status=status,
+                    retry_after=retry_after_seconds(response.getheader("Retry-After"))
+                    if status in RETRY_AFTER_STATUSES
+                    else None,
                 )
             content_type = response.getheader("Content-Type")
             content = _read_body(response, connection.live_socket, deadline, max_bytes)
