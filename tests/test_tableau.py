@@ -119,9 +119,15 @@ def test_suppressed_value_field_is_emptied_with_its_alias() -> None:
     assert rec == {"SUM(Cases)": None, "SUM(Cases) (alias)": None, "SUM(Cases) flag": "<6", "SUM(Rate)": 3.5}
 
 
-def test_suppressed_alias_leaves_a_numeric_value_alone() -> None:
+def test_suppressed_alias_empties_a_numeric_value_too() -> None:
+    # The number behind a "<6" is the count the publisher hid: it is never kept (hard rule 4).
     rec = tb._flag_suppressed({"SUM(Cases)": 3, "SUM(Cases) (alias)": "<6"})
-    assert rec == {"SUM(Cases)": 3, "SUM(Cases) (alias)": None, "SUM(Cases) flag": "<6"}
+    assert rec == {"SUM(Cases)": None, "SUM(Cases) (alias)": None, "SUM(Cases) flag": "<6"}
+
+
+def test_a_suppressed_value_empties_its_alias_too() -> None:
+    rec = tb._flag_suppressed({"SUM(Cases)": "<6", "SUM(Cases) (alias)": "3"})
+    assert rec == {"SUM(Cases)": None, "SUM(Cases) (alias)": None, "SUM(Cases) flag": "<6"}
 
 
 def test_a_label_that_looks_like_a_marker_stays_a_label() -> None:
@@ -279,6 +285,48 @@ def test_pages_keep_only_the_fields_asked_for_and_stop_at_max_rows() -> None:
     assert [len(p.records) for p in got] == [3, 1]
     assert got[0].records[0] == {"worksheet": "TByear", "SUM(Rate)": 1500.5}
     assert list(tb.pages(e, serve(boot({"TByear": YEARLY})), max_rows=0))[0].records == []
+
+
+def test_max_rows_stops_opening_views_once_used_up() -> None:
+    seen: list[str] = []
+    e = entry({"TByear": YEARLY_HASH}, views=("TB", "TB2", "TB3"))
+    got = list(tb.pages(e, serve(boot({"TByear": YEARLY}), seen), max_rows=2))
+    assert [len(p.records) for p in got] == [2] and len(seen) == 1
+    seen.clear()
+    assert [len(p.records) for p in tb.pages(e, serve(boot({"TByear": YEARLY}), seen), max_rows=3)] == [3]
+    assert len(seen) == 1
+    seen.clear()
+    assert [len(p.records) for p in tb.pages(e, serve(boot({"TByear": YEARLY}), seen), max_rows=4)] == [3, 1]
+    assert len(seen) == 2
+
+
+SMALL = {  # a yearly chart whose count is shown as "<6" on one mark (alias), with the number behind it
+    "vizDataColumns": [col("YEAR(Year)", "integer", [0], [0]), col("SUM(Cases)", "integer", [0], [1])],
+    "paneColumnsList": [pane(([0, 1], []), ([4, 5], [-3, -4]))],
+}
+SMALL_DATA = {"integer": [2019, 2020, 120, 95, 40, 3], "cstring": ["Detroit", "Michigan", "<6", "12"]}
+SMALL_HASH = tb.read_worksheets(boot({"S": SMALL}, SMALL_DATA))["S"].layout_hash
+
+
+def test_a_flag_is_kept_whenever_its_field_is_read() -> None:
+    e = entry({"S": SMALL_HASH})
+    body = boot({"S": SMALL}, SMALL_DATA)
+    (page,) = tb.pages(e, serve(body), fields=["SUM(Cases) (alias)", "SUM(Cases) flag", "YEAR(Year)"])
+    assert page.records == [
+        {"YEAR(Year)": 2019, "SUM(Cases) (alias)": None, "SUM(Cases) flag": "<6"},
+        {"YEAR(Year)": 2020, "SUM(Cases) (alias)": "12"},
+    ]
+
+
+@pytest.mark.parametrize("field", ["SUM(Cases)", "SUM(Cases) (alias)"])
+def test_a_page_that_would_drop_a_flag_for_a_field_it_reads_is_refused(field: str) -> None:
+    with pytest.raises(tb.TableauLayoutError, match=r"no flag column for it \(SUM\(Cases\) flag\)"):
+        list(tb.pages(entry({"S": SMALL_HASH}), serve(boot({"S": SMALL}, SMALL_DATA)), fields=[field]))
+
+
+def test_a_flag_for_a_field_not_read_is_dropped_quietly() -> None:
+    (page,) = tb.pages(entry({"S": SMALL_HASH}), serve(boot({"S": SMALL}, SMALL_DATA)), fields=["YEAR(Year)"])
+    assert page.records == [{"YEAR(Year)": 2019}, {"YEAR(Year)": 2020}]
 
 
 def test_a_redesigned_worksheet_stops_the_load() -> None:

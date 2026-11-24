@@ -9,7 +9,9 @@ up each column (``paneColumnsData``). This module reads those structures and not
   the dashboard publishes it. A field that also has display text (an alias) is given twice: ``<caption>`` (the
   value) and ``<caption> (alias)`` (the text shown).
 - the dashboard's own suppression is kept as published: an aggregated count shown as "<6" (or "<11", ">=5"
-  ...) is never turned into a number. Its field is left empty and ``<caption> flag`` holds the marker exactly as shown.
+  ...) is never turned into a number. Its value and its display text are both left empty, whatever the value
+  field holds, and ``<caption> flag`` holds the marker exactly as shown. A contract that reads such a field must
+  also read its flag; a page that would drop the marker is refused.
 - a count the chart carries as a number while the dashboard shows it suppressed on the same mark (a tooltip
   reading "<16") is read as suppressed too, where the catalog entry declares which field carries its marker
   (``suppressed_by``).
@@ -248,9 +250,11 @@ def _flag_suppressed(record: dict[str, Any]) -> dict[str, Any]:
         if isinstance(v, str) and AGGREGATED.match(k) and SUPPRESSED.match(v):
             base = k.removesuffix(ALIAS_SUFFIX)
             out[base + FLAG_SUFFIX] = v.strip()
-            out[k] = None
-            if base != k and base in out and not isinstance(out[base], (int, float)):
-                out[base] = None
+            # Both the value and its display text are emptied, whatever the value field holds: a number behind a
+            # "<6" is the count the publisher chose to hide (hard rule 4).
+            for field in (base, base + ALIAS_SUFFIX):
+                if field in out:
+                    out[field] = None
     return out
 
 
@@ -272,6 +276,23 @@ def apply_suppressed_by(record: Mapping[str, Any], suppressed_by: Mapping[str, s
     return out
 
 
+def _check_flags_kept(dataset: str, where: str, record: Mapping[str, Any], wanted: set[str]) -> None:
+    """Refuse a record whose suppression marker the contract would drop while it reads the field it flags.
+
+    A count read without its flag would come back empty with no reason, or (if the contract read the other half
+    of a value/alias pair) as the number behind the marker; so the page is refused instead, in plain words.
+    """
+    for k, v in record.items():
+        if not k.endswith(FLAG_SUFFIX) or v is None or k in wanted:
+            continue
+        base = k.removesuffix(FLAG_SUFFIX)
+        if base in wanted or base + ALIAS_SUFFIX in wanted:
+            raise TableauLayoutError(
+                f"{dataset}: {where} now shows {base} as suppressed ({v}), and the contract has no flag column "
+                f"for it ({k}); the contract needs review before this dashboard is read"
+            )
+
+
 def view_url(entry: CatalogEntry, view: str) -> str:
     base = entry.source.api_url.rstrip("/")
     return f"{base}/{view}?:embed=y&:showVizHome=no"
@@ -285,6 +306,7 @@ def pages(
     if spec is None:  # pragma: no cover - the catalog model requires it for this portal
         raise TableauLayoutError(f"{entry.id}: no tableau views are catalogued")
     left = max_rows
+    wanted = set(fields) if fields else None
     for view in spec.views:
         raw = fetcher(view_url(entry, view.view))
         sheets = read_worksheets(raw.content)
@@ -310,10 +332,15 @@ def pages(
                     WORKSHEET_FIELD: ws_name,
                     **apply_suppressed_by(r, view.suppressed_by),
                 }
-                recs.append({k: v for k, v in rec.items() if k in set(fields)} if fields else rec)
+                if wanted is not None:
+                    _check_flags_kept(entry.id, f"{view.view}/{ws_name}", rec, wanted)
+                    rec = {k: v for k, v in rec.items() if k in wanted}
+                recs.append(rec)
         if left is not None:
             recs, left = recs[: max(0, left)], max(0, left - len(recs))
         yield Page(fetch=raw, records=recs, layout=layout)
+        if left == 0:
+            break  # the row limit is used up: no more views are opened
 
 
 def publisher_fields(entry: CatalogEntry, fetcher: Fetcher) -> set[str]:
