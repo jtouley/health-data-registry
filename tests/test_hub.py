@@ -675,3 +675,22 @@ def test_query_sql_across_sources_keeps_every_source(tmp_path: Path, reg: Regist
     assert all("raw file sha256 " in p for p in prov)  # live reads hash the bytes fetched, too
     assert all("licence " in p and "cite as: " in p and "contract_status: draft" in p for p in prov)
     assert any(n.startswith("toy_cases: this dataset's contract is a draft") for n in out["notes"])
+
+
+def test_latest_pointer_is_swapped_in_one_step(tmp_path: Path, reg: Registry, monkeypatch: Any) -> None:
+    """MotherDuck review 3: LATEST is replaced atomically, so a failed write leaves the old pointer whole."""
+    import os
+
+    from health_data_registry import store
+
+    lake = make_lake(tmp_path / "lake", reg, tmp_path)
+    latest = next((lake / "datasets").glob("*/LATEST"))
+    before = latest.read_text()
+
+    def boom(src: Any, dst: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", boom)
+    with pytest.raises(OSError):
+        store._point_latest(lake, latest.parent.name, "20990101T000000Z-000000000000")
+    assert latest.read_text() == before

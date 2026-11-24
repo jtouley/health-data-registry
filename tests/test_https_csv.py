@@ -43,7 +43,7 @@ def entry(**source: object) -> CatalogEntry:
             "id": "toy_pop", "title": "t", "agency": "a", "publisher": "p", "level": "federal",
             "research_areas": ["denominator"], "years": {"start": 2020}, "geography": ["state"],
             "shape": "estimate_table", "grain": "g", "refresh": "annual",
-            "licence": {"id": "pd", "redistribution": True, "terms_url": "https://x.gov"},
+            "licence": {"id": "public-domain-us-federal", "redistribution": True, "terms_url": "https://x.gov"},
             "citation": "c", "source": base, "codebook_url": "https://x.gov", "contract": "c", "semantic_model": "s",
             "status": "draft",
         }

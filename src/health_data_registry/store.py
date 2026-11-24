@@ -220,7 +220,7 @@ def build_snapshot(
     snapshot_id = f"{retrieved:%Y%m%dT%H%M%SZ}-{digest}"
     out = snapshot_dir(lake, ds.id, snapshot_id)
     if (out / "manifest.json").is_file():  # the same inputs were snapshotted already: never overwrite
-        (lake / "datasets" / ds.id / "LATEST").write_text(snapshot_id + "\n", encoding="utf-8")
+        _point_latest(lake, ds.id, snapshot_id)
         return Manifest.read(out / "manifest.json")
     tmp = Path(tempfile.mkdtemp(prefix=f".{ds.id}-", dir=lake))
     try:
@@ -259,9 +259,16 @@ def build_snapshot(
     finally:
         if tmp.exists():
             shutil.rmtree(tmp, ignore_errors=True)
-    latest = lake / "datasets" / ds.id / "LATEST"
-    latest.write_text(snapshot_id + "\n", encoding="utf-8")
+    _point_latest(lake, ds.id, snapshot_id)
     return manifest
+
+
+def _point_latest(lake: Path, dataset_id: str, snapshot_id: str) -> None:
+    """Swap LATEST in one step (write a temporary file, then os.replace), so a crash never leaves it empty."""
+    latest = lake / "datasets" / dataset_id / "LATEST"
+    tmp = latest.with_name(f".LATEST.{os.getpid()}.tmp")
+    tmp.write_text(snapshot_id + "\n", encoding="utf-8")
+    os.replace(tmp, latest)
 
 
 def _check_required(con: duckdb.DuckDBPyConnection, ds: Dataset) -> None:

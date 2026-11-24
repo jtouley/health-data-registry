@@ -46,10 +46,24 @@ class Years(_Strict):
     end: int | None = None
 
 
+# Licence ids a maintainer has reviewed as allowing a public mirror (ADR 0009). Any other id with
+# redistribution: true is refused, so one boolean can never put restricted data on the public hub.
+REDISTRIBUTABLE_LICENCES = frozenset({"public-domain-us-federal"})
+
+
 class Licence(_Strict):
     id: str
     redistribution: bool
     terms_url: str
+
+    @model_validator(mode="after")
+    def _reviewed(self) -> Licence:
+        if self.redistribution and self.id not in REDISTRIBUTABLE_LICENCES:
+            raise ValueError(
+                f"licence {self.id} is not on the reviewed list of licences that allow a public copy "
+                f"({', '.join(sorted(REDISTRIBUTABLE_LICENCES))}); set redistribution: false"
+            )
+        return self
 
 
 class WideToLong(_Strict):

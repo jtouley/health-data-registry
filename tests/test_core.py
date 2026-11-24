@@ -359,3 +359,15 @@ def test_compound_predicates_allowed(tmp_path: Path) -> None:
     pred = "(reporting_area = 'US RESIDENTS' OR upper(reporting_area) LIKE '%TOTAL%') AND NOT (year IS NULL)"
     contract = CONTRACT.replace("\"reporting_area = 'US RESIDENTS'\"", json.dumps(pred))
     assert load_registry(write_registry(tmp_path, contract=contract))
+
+
+def test_redistribution_needs_a_reviewed_licence() -> None:
+    """sharp-edges 6: redistribution: true is accepted only for a licence id on the reviewed list."""
+    from pydantic import ValidationError
+
+    from health_data_registry.registry import Licence
+
+    assert Licence(id="public-domain-us-federal", redistribution=True, terms_url="x").redistribution
+    assert not Licence(id="CC-BY-NC-SA-3.0-IGO", redistribution=False, terms_url="x").redistribution
+    with pytest.raises(ValidationError, match="reviewed list"):
+        Licence(id="CC-BY-NC-SA-3.0-IGO", redistribution=True, terms_url="x")
