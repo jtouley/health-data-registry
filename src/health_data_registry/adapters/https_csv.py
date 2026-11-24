@@ -95,9 +95,9 @@ def pages(
 
 def publisher_fields(entry: CatalogEntry, fetcher: Fetcher) -> set[str]:
     """The field names the file serves today (after the declared pivot), for the contract drift check."""
-    header, rows = read_rows(entry, fetcher(entry.source.api_url).content)
+    header, _rows = read_rows(entry, fetcher(entry.source.api_url).content)
     if entry.source.reshape is None:
         return set(header)
     spec = entry.source.reshape.wide_to_long
-    _keys(spec, header)
-    return {*spec.keep, spec.key_field, *spec.stubs} & ({*header, spec.key_field, *spec.stubs})
+    _keys(spec, header)  # refuses when the year columns are gone or ragged
+    return {c for c in spec.keep if c in header} | {spec.key_field, *spec.stubs}

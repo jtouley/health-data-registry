@@ -26,6 +26,19 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 | `uv run health-data-registry refresh <id> [--max-rows N]` | One dataset; `--max-rows` marks the snapshot partial |
 | `uv run health-data-registry validate` | Cross-check every catalog entry, contract and semantic model |
 
+## How changes land
+
+One review round, one fix round, merge, then follow-ups. We don't get stuck in review rounds.
+
+1. **Pull request.** Every change lands through a pull request; there are no direct pushes to main. Before opening
+   it, `make check` passes (mutation tests on changed modules included) and every commit carries the required
+   trailers. The PR body names the skills used and what each changed.
+2. **One review round.** A fresh subagent whose entire prompt is `/code-review <PR number>`: no extra instructions,
+   no context, no hypotheses to confirm. It posts its findings to the PR.
+3. **One fix round.** A fresh subagent works from those findings and the skills that match the files touched.
+   Findings it doesn't fix in that round become follow-up issues or the next PR, never a second review round.
+4. **Merge.** Then the PR is merged, and follow-ups get their own PRs on the same cycle.
+
 ## Architecture map
 
 ```text
@@ -108,8 +121,8 @@ Rules for every skill:
   scripts, installers or agent workflows, and skip any skill that needs an API key or a network install.
 - Builders apply the matching skills while writing, not only at review. Every PR names the skills it used and what
   each changed.
-- Review stays one round: an opus subagent whose prompt is only `/code-review PR #<n>`, posted to the PR, then one
-  fix round by a fresh subagent with the relevant skills.
+- Review is one round, then one fix round, as in [How changes land](#how-changes-land): the review prompt is only
+  `/code-review <PR number>`, and the fix round uses the skills below that match the files touched.
 - Skills live in each session's `~/.claude/skills`, not in the repo; a new session installs them from the sources
   below.
 
@@ -119,8 +132,8 @@ Rules for every skill:
 | README and docs | better-writing ([jakubkrehel/skills](https://github.com/jakubkrehel/skills)) | Wording of docs, tool descriptions and every user-facing answer template. Rated 4 |
 | README and docs | readme-roast ([hidai25/readme-roast](https://github.com/hidai25/readme-roast)) | README structure and install steps only; ignore its growth-hacking advice. Rated 3.5 |
 | Contracts and models | using-dbt-for-analytics-engineering ([dbt-labs/dbt-agent-skills](https://github.com/dbt-labs/dbt-agent-skills)) | Every dbt model and semantic-model change; run its column-level impact check. Rated 4.5 |
-| Contracts and models | adding-dbt-unit-test (dbt Labs, [dbt-labs/dbt-agent-skills](https://github.com/dbt-labs/dbt-agent-skills)) | Unit tests for metric logic: totals never summed, rates never summed, snapshot changes. Rated 4.5 |
-| Contracts and models | maintaining-dbt-documentation (dbt Labs, [dbt-labs/dbt-agent-skills](https://github.com/dbt-labs/dbt-agent-skills)) | Describe every column in clinical words, never restate its name. Rated 2.5; docs only |
+| Contracts and models | adding-dbt-unit-test (dbt Labs) | Unit tests for metric logic: totals never summed, rates never summed, snapshot changes. Rated 4.5 |
+| Contracts and models | maintaining-dbt-documentation (dbt Labs) | Describe every column in clinical words, never restate its name. Rated 2.5; docs only |
 | Contracts and models | dbt-transformation-patterns ([wshobson/agents](https://github.com/wshobson/agents)) | Layering: sources → staging → marts → metrics. Rated 3.5 |
 | Pipeline | build-data-pipeline, model-data, load-data ([motherduckdb/agent-skills](https://github.com/motherduckdb/agent-skills)) | Adapters, snapshot loading into Parquet, DuckDB modelling, constraints. Rated 4 |
 | Data quality | gx-configure-expectations (Great Expectations, shipped in the package) | Contract quality rules: only assert what the codebook states; an all-null column passes value checks, so add fill-rate checks; keep a metric error apart from a data failure. Rated 4 |
@@ -129,6 +142,8 @@ Rules for every skill:
 | Hosting | cloud-run-basics, google-cloud-waf-security, cloud-run-alert-configuration ([google/skills](https://github.com/google/skills)) | Only if the server moves to the Cloud Run fallback: pinned image digests, one service account per job, job-failure alerts. Rated 4.5 |
 | Hosting | terraform-skill ([antonbabenko/terraform-skill](https://github.com/antonbabenko/terraform-skill)) | Only if infrastructure moves to Terraform: reviewed plan files, drift, blast radius. Rated 4 |
 | Catalog site, later | Owl-Listener designer-skills, Krehel UI set, no-ai-design-slop | Only when a public catalog page is built. Rated 4–4.5 |
+| Review round | code-review (built into Claude Code) | The one review round only: a fresh subagent whose entire prompt is `/code-review <PR number>` |
+| Fix round | simplify (built into Claude Code) | Optional, inside the one fix round only; never a separate round |
 
 Left out: DuckDB's duckdb-skills (rated 1; DuckDB's own docs are more useful), wshobson data-quality-frameworks
 (rated 2; reverted on registry.coffee), and HashiCorp terraform-style-guide (rated 1.5).

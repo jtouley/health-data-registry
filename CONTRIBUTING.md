@@ -30,6 +30,13 @@ publishers and are left out of `make test`; run them with `make test-network`.
 - No patient data, anywhere: not in issues, tests, fixtures or examples.
 - The pull request template is filled in, including which skills were used and what each changed.
 
+## Review
+
+Every change, including the maintainer's, lands through a pull request; nothing is pushed straight to main. Each
+pull request gets one review round, then one round of fixes, and then it is merged. Anything the fix round doesn't
+cover becomes a follow-up issue or a later pull request, which goes through the same cycle. There is no second
+review round, so expect a short, predictable path to merge rather than repeated back-and-forth.
+
 ## Adding a dataset
 
 A dataset is added in one pull request with four parts:

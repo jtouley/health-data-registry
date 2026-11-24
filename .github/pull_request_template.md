@@ -20,6 +20,7 @@
 - [ ] No data, secrets or patient information committed
 - [ ] New dataset: catalog entry, ODCS contract, semantic model and sealed blind questions, licence recorded
 - [ ] CHANGELOG.md updated under Unreleased, if users would notice
+- [ ] One review round (`/code-review <PR number>`) and one fix round done; unfixed findings filed as follow-ups
 
 **Owner steps**
 <!-- Anything only the maintainer can do (settings, secrets, variables), or "none". -->

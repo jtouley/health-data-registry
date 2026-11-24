@@ -47,14 +47,13 @@ def export_public(registry: Registry, to: str, *, lake: Path, run_date: str | No
 
 def check_contracts(registry: Registry) -> int:
     """Does each publisher still serve every field its contract reads? (The nightly drift check.)"""
-    from health_data_registry.adapters import socrata, who_gho
+    from health_data_registry.adapters import publisher_fields
 
     get = _fetcher(registry)
     bad = 0
     for ds in registry:
-        mod = socrata if ds.entry.source.portal == "socrata" else who_gho
         try:
-            served = mod.publisher_fields(ds.entry, get)
+            served = publisher_fields(ds.entry, get)
         except Exception as e:
             bad += 1
             print(f"FAIL {ds.id}: could not read publisher metadata: {e}", file=sys.stderr)
