@@ -12,7 +12,7 @@ Match it to these known problems and give me the fix one step at a time, checkin
 (If my message doesn't say it, ask me for it in one short question first.)
 
 1. The tool isn't in my chat: tools added during a chat only appear in a new chat; start a new chat.
-2. It says a source has no data yet: whoever runs the server needs to fetch it once; tell me who to ask and what to say.
+2. It says the open data hub has no published release yet: the hub's first data release isn't out. Nothing is wrong on my side; try again later, or ask a WHO question, which is read live.
 3. It says a place or year isn't covered: run describe_dataset to see what is covered.
 4. It refused a query: the message says why; ask the same question in plain words instead.
 5. The app asks for a password or my login: stop; this tool never needs one.

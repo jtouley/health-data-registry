@@ -110,7 +110,7 @@ def test_get_rate_refusal_is_plain(pop: tuple[Registry, Engine], tmp_path: Path)
     reg, _ = pop
     out = _json(tools.get_rate(reg, Engine(registry=reg, lake=tmp_path / "none"), condition="legionellosis",
                                year=2023, fmt="json"))  # fmt: skip
-    assert out["refused"] == "no_snapshot" and "hasn't been downloaded" in out["message"]
+    assert out["refused"] == "no_snapshot" and "has reading data turned off" in out["message"]
 
 
 def test_list_sources_exact(registry: Registry, lake: Path) -> None:
@@ -267,10 +267,7 @@ def test_plain_and_refusal_shapes(registry: Registry, tmp_path: Path) -> None:
         eng.manifest("toy_cases")
     except Exception as e:  # noqa: BLE001 - checking the plain words of the refusal
         msg = tools.plain(e)
-        assert msg.endswith(
-            " If someone else set this up for you, ask them to run that step; or use the help_me_fix_it helper, "
-            "which walks you through it."
-        )
+        assert msg.endswith(" Run the Something's wrong helper, which walks you through turning it back on.")
         assert tools.refusal(e, "json") == {"message": msg, "refused": "no_snapshot"}
         assert tools.refusal(e) == msg
     assert tools.refusal(ValueError("x"), "json")["refused"] == "error"  # type: ignore[index]

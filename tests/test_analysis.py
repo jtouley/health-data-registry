@@ -659,7 +659,7 @@ def test_no_snapshot_is_a_plain_refusal(tmp_path: Path) -> None:
         analysis.check_signal(reg, empty, condition="legionellosis", location="Ohio", year=2023, week=20),
         analysis.age_adjust(reg, empty, condition="salmonellosis", location="Michigan", year=2023),
     ):
-        assert "hasn't been downloaded" in str(text)
+        assert "has reading data turned off" in str(text)
 
 
 def test_cli_and_mcp_give_identical_output(

@@ -62,7 +62,7 @@ def test_unexpected_failure_is_plain_words(
     s = build_server(registry, Engine(registry=registry, lake=lake))
     out = asyncio.run(s.call_tool("get_series", {"condition": "syphilis"}))
     text = out.content[0].text  # type: ignore[union-attr]
-    assert "Something went wrong" in text and "0x7f" not in text and "Traceback" not in text
+    assert "couldn't be read" in text and "0x7f" not in text and "Traceback" not in text
 
 
 def test_publication_outlook_over_mcp(registry: Registry, lake: Path) -> None:

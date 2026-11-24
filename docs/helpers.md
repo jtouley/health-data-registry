@@ -47,7 +47,7 @@ My area or research question, in my own words: [area]
 1. Use this public health data tool's suggest_datasets and search_datasets, then describe_dataset for the best two or three.
 2. For each, tell me in plain words: what one row is, the years and places it covers, what it can't answer and why, and how to cite it. Run list_caveats for anything that matters.
 3. Tell me which parts of my question need my hospital's own data, which stays in approved systems and never comes into this chat.
-4. [Placeholder: narrowing the area to two or three questions worth refining.]
+4. Suggest two or three questions in this area worth refining, each in one sentence, and ask me which to take to Refine my hypothesis. A worked method for choosing them isn't written yet, so say why you picked each one.
 
 Rules for this whole conversation: cite every number to the tool it came from, with its source and date; never fill a number from memory or the news; show uncertainty ranges where GBD gives them and say that observed counts have none; flag provisional, suppressed or partial-geography numbers; and never ask me for, or accept, patient information.
 ```
@@ -60,8 +60,8 @@ Rules for this whole conversation: cite every number to the tool it came from, w
 Help me find a research opportunity. Anything I'm drawn to (a pathogen, a place, a group): [interest]
 
 1. Run find_research_opportunities for my interest. It is coming and may not be in this server yet; if it isn't, say so plainly and use suggest_datasets and list_sources instead.
-2. [Placeholder: checking each candidate signal against GBD and the reported numbers.]
-3. [Placeholder: ranking the candidates and asking me which one to refine.]
+2. For each candidate, put the reported numbers (get_series) beside GBD's modelled trend (get_aligned_with_gbd and the IHME GBD connector) and say what differs, without judging which is right.
+3. List the candidates with one line each on why it might be worth a study, and ask me which one to refine. There is no agreed scoring method yet, so don't rank them by a score.
 
 What we end with: an opportunity brief. Three to five candidate questions, each with the signal behind it (with source and date), the data that could answer it, and what's already published.
 
@@ -86,7 +86,7 @@ What we end with: a hypothesis card. The hypothesis in one sentence, the data th
 Rules for this whole conversation: cite every number to the tool it came from, with its source and date; never fill a number from memory or the news; show uncertainty ranges where GBD gives them and say that observed counts have none; flag provisional, suppressed or partial-geography numbers; and never ask me for, or accept, patient information.
 ```
 
-## Build my story
+## Write my pitch or abstract
 
 *`/build-story` in Claude Code.* Turns a refined hypothesis into a one-page pitch, an IDWeek abstract or a poster outline; for a case report, writes only the population-context paragraph.
 
@@ -94,7 +94,7 @@ Rules for this whole conversation: cite every number to the tool it came from, w
 Help me build my story on: [topic]
 
 1. Ask me which piece I need: a one-page pitch, an IDWeek abstract, a poster outline or a case report.
-2. For a pitch, use these sections: the question; what the data shows (a small table); why it matters; what's already been published; the data I would use and its limits; next steps. Keep it to one page. [Placeholder: abstract and poster structures.]
+2. For a pitch, use these sections: the question; what the data shows (a small table); why it matters; what's already been published; the data I would use and its limits; next steps. Keep it to one page. Abstract and poster templates aren't written yet: for those, say so and draft the pitch only, which I can adapt.
 3. Every number must carry its source, the date it was fetched, and its case definition; use get_provenance from this public health data tool for that. Mark anything provisional.
 4. For a case report, write only the population-context paragraph and leave the case itself as "[your case, written outside this chat]". Never ask about the patient.
 5. End with a citation list.
@@ -113,7 +113,7 @@ Something isn't working. What I see: [what i see]
 Match it to these known problems and give me the fix one step at a time, checking with me after each:
 
 1. The tool isn't in my chat: tools added during a chat only appear in a new chat; start a new chat.
-2. It says a source has no data yet: whoever runs the server needs to fetch it once; tell me who to ask and what to say.
+2. It says the open data hub has no published release yet: the hub's first data release isn't out. Nothing is wrong on my side; try again later, or ask a WHO question, which is read live.
 3. It says a place or year isn't covered: run describe_dataset to see what is covered.
 4. It refused a query: the message says why; ask the same question in plain words instead.
 5. The app asks for a password or my login: stop; this tool never needs one.
@@ -124,7 +124,7 @@ Rules for this whole conversation: cite every number to the tool it came from, w
 
 ## Walk me through an install
 
-*Claude chat only.* Step-by-step help in the Claude Desktop app for the optional tools that need an install.
+*Claude chat only.* Step-by-step help installing a tool in the Claude Desktop app, including this one.
 
 ```text
 Walk me through installing [tool] for the Claude Desktop app. I'm a doctor, not a programmer.

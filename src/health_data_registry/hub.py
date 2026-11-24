@@ -184,8 +184,8 @@ class Hub:
                 raise HubError(
                     "not_reproducible",
                     f"The hub is set to '{rev}', which moves as new data arrive, so answers could not be "
-                    "reproduced. Set HDR_HUB to a release (…@release-<date>) or leave the @ part off to use the "
-                    "newest release.",
+                    "reproduced. Run the Something's wrong helper: it shows how to point the tool at a dated "
+                    "release, or at the newest one.",
                 )
             self._rev = rev
             return rev
@@ -288,8 +288,7 @@ class Hub:
                 "contract_mismatch",
                 f"The hub release {ref} was built with version {release_cv} of the {ds.id} contract, but this "
                 f"server reads version {ds.contract.version}, so the columns may not mean the same thing. No "
-                "numbers were read. Install the newer server, or point HDR_HUB at a release built with the "
-                "same contract version.",
+                "numbers were read. Update the tool (the Something's wrong helper shows how), then ask again.",
             )
         path = data_path(ds.id)
         meta = (rel.get("files") or {}).get(path)

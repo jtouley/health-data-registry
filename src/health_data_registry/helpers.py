@@ -192,7 +192,11 @@ WORKFLOWS: tuple[Workflow, ...] = (
                 "Tell me which parts of my question need my hospital's own data, which stays in approved systems "
                 "and never comes into this chat."
             ),
-            Step("[Placeholder: narrowing the area to two or three questions worth refining.]"),
+            Step(
+                "Suggest two or three questions in this area worth refining, each in one sentence, and ask me "
+                "which to take to Refine my hypothesis. A worked method for choosing them isn't written yet, so say "
+                "why you picked each one."
+            ),
         ),
     ),
     Workflow(
@@ -211,8 +215,16 @@ WORKFLOWS: tuple[Workflow, ...] = (
                 "yet; if it isn't, say so plainly and use suggest_datasets and list_sources instead.",
                 ("find_research_opportunities", "suggest_datasets", "list_sources"),
             ),
-            Step("[Placeholder: checking each candidate signal against GBD and the reported numbers.]"),
-            Step("[Placeholder: ranking the candidates and asking me which one to refine.]"),
+            Step(
+                "For each candidate, put the reported numbers (get_series) beside GBD's modelled trend "
+                "(get_aligned_with_gbd and the IHME GBD connector) and say what differs, without judging which is "
+                "right.",
+                ("get_series", "get_aligned_with_gbd"),
+            ),
+            Step(
+                "List the candidates with one line each on why it might be worth a study, and ask me which one to "
+                "refine. There is no agreed scoring method yet, so don't rank them by a score."
+            ),
         ),
         artifact="opportunity_brief",
     ),
@@ -257,7 +269,7 @@ WORKFLOWS: tuple[Workflow, ...] = (
     ),
     Workflow(
         name="build-story",
-        title="Build my story",
+        title="Write my pitch or abstract",
         description=(
             "Turns a refined hypothesis into a one-page pitch, an IDWeek abstract or a poster outline; for a case "
             "report, writes only the population-context paragraph."
@@ -272,7 +284,8 @@ WORKFLOWS: tuple[Workflow, ...] = (
             Step(
                 "For a pitch, use these sections: the question; what the data shows (a small table); why it "
                 "matters; what's already been published; the data I would use and its limits; next steps. Keep it "
-                "to one page. [Placeholder: abstract and poster structures.]"
+                "to one page. Abstract and poster templates aren't written yet: for those, say so and draft the "
+                "pitch only, which I can adapt."
             ),
             Step(
                 "Every number must carry its source, the date it was fetched, and its case definition; use "
@@ -302,8 +315,8 @@ WORKFLOWS: tuple[Workflow, ...] = (
                 "The tool isn't in my chat: tools added during a chat only appear in a new chat; start a new chat."
             ),
             Step(
-                "It says a source has no data yet: whoever runs the server needs to fetch it once; tell me who to "
-                "ask and what to say."
+                "It says the open data hub has no published release yet: the hub's first data release isn't out. "
+                "Nothing is wrong on my side; try again later, or ask a WHO question, which is read live."
             ),
             Step(
                 "It says a place or year isn't covered: run describe_dataset to see what is covered.",
@@ -319,7 +332,7 @@ WORKFLOWS: tuple[Workflow, ...] = (
     Workflow(
         name="walk-me-through-install",
         title="Walk me through an install",
-        description="Step-by-step help in the Claude Desktop app for the optional tools that need an install.",
+        description="Step-by-step help installing a tool in the Claude Desktop app, including this one.",
         argument_hint="[the tool to install]",
         args=("tool",),
         intro=(
@@ -407,15 +420,15 @@ PROJECT_INSTRUCTIONS_INTRO = (
 PUBLICATION_OUTLOOK = (
     "# Publication outlook: the method\n\n"
     "How to judge whether a question could become a publishable piece, and where.\n\n"
-    "[Placeholder: the method is not written yet. Until it is, say plainly that there is no agreed method, and "
-    "only list what is already published on the question (title, year, venue, link) from PubMed and "
-    "find_prior_work.]\n"
+    "There is no agreed method yet. Until there is, say so plainly, and only list what is already published on "
+    "the question (title, year, venue, link) from PubMed and find_prior_work. For how often presented abstracts "
+    "become papers, use get_publication_outlook.\n"
 )
 
 RUBRIC = (
     "# Rubric\n\n"
-    "[Placeholder until step 52C: the rubric for scoring a hypothesis or a pitch is not written yet. Until it "
-    "is, don't score anything; say that the rubric is coming.]\n"
+    "The rubric for scoring a hypothesis or a pitch isn't written yet. Until it is, don't score anything; say "
+    "that there is no rubric yet.\n"
 )
 
 CASE_STUDY_STANDARD = (
@@ -426,7 +439,8 @@ CASE_STUDY_STANDARD = (
     "- The case itself never comes into this Project: it is written in the hospital's approved systems. Leave "
     'it as "[your case, written outside this chat]".\n'
     "- Never ask about, accept or repeat anything about the patient.\n\n"
-    "[Placeholder: the full standard (structure, consent and journal requirements) is not written yet.]\n"
+    "The full standard (structure, consent and journal requirements) isn't written yet: follow the journal's "
+    "own case-report guidance for those parts.\n"
 )
 
 

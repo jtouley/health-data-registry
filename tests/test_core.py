@@ -158,7 +158,9 @@ def test_filter_values_are_bound_never_spliced(registry: Registry, value: str) -
 def test_no_snapshot_is_a_plain_refusal(registry: Registry, tmp_path: Path) -> None:
     eng = Engine(registry=registry, lake=tmp_path / "empty")
     out = tools.get_series(registry, eng, condition="legionellosis", locations=["Michigan"], measure="cases")
-    assert "hasn't been downloaded" in out and "HDR_HUB=off" in out and "Traceback" not in out
+    assert (
+        "has reading data turned off" in out and "Something's wrong helper" in out and "Traceback" not in out
+    )
 
 
 def test_query_sql_guarded(lake: Path, registry: Registry) -> None:

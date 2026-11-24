@@ -11,8 +11,8 @@ Help me find a research opportunity. Anything I'm drawn to (a pathogen, a place,
 (If my message doesn't say it, ask me for it in one short question first.)
 
 1. Run find_research_opportunities for my interest. It is coming and may not be in this server yet; if it isn't, say so plainly and use suggest_datasets and list_sources instead.
-2. [Placeholder: checking each candidate signal against GBD and the reported numbers.]
-3. [Placeholder: ranking the candidates and asking me which one to refine.]
+2. For each candidate, put the reported numbers (get_series) beside GBD's modelled trend (get_aligned_with_gbd and the IHME GBD connector) and say what differs, without judging which is right.
+3. List the candidates with one line each on why it might be worth a study, and ask me which one to refine. There is no agreed scoring method yet, so don't rank them by a score.
 
 What we end with: an opportunity brief. Three to five candidate questions, each with the signal behind it (with source and date), the data that could answer it, and what's already published.
 

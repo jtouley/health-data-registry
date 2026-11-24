@@ -178,7 +178,9 @@ def test_only_the_registry_unknown_dataset_message_is_echoed(registry: Registry)
         == "unknown dataset 'nope'; catalogued: toy_cases. Use search_datasets to see what is available."
     )
     leaked = tools.plain(KeyError("internal_column_name"))
-    assert "internal_column_name" not in leaked and leaked.startswith("Something went wrong")
+    assert "internal_column_name" not in leaked and leaked.startswith(
+        "The data for this question couldn't be read"
+    )
 
 
 # ---------------------------------------------------------------- source research b, c

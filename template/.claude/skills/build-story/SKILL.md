@@ -6,13 +6,13 @@ argument-hint: "[pitch, abstract, poster or case report: and the topic]"
 
 <!-- Generated from src/health_data_registry/helpers.py by `make docs`. Do not edit by hand. -->
 
-# Build my story
+# Write my pitch or abstract
 
 Help me build my story on: $ARGUMENTS
 (If nothing was typed after the command, ask me for it in one short question first.)
 
 1. Ask me which piece I need: a one-page pitch, an IDWeek abstract, a poster outline or a case report.
-2. For a pitch, use these sections: the question; what the data shows (a small table); why it matters; what's already been published; the data I would use and its limits; next steps. Keep it to one page. [Placeholder: abstract and poster structures.]
+2. For a pitch, use these sections: the question; what the data shows (a small table); why it matters; what's already been published; the data I would use and its limits; next steps. Keep it to one page. Abstract and poster templates aren't written yet: for those, say so and draft the pitch only, which I can adapt.
 3. Every number must carry its source, the date it was fetched, and its case definition; use get_provenance from this public health data tool for that. Mark anything provisional.
 4. For a case report, write only the population-context paragraph and leave the case itself as "[your case, written outside this chat]". Never ask about the patient.
 5. End with a citation list.

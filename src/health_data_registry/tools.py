@@ -130,18 +130,15 @@ def plain(e: Exception) -> str:
     """Any failure in plain words with a next step. Never a stack trace or a status code."""
     code = getattr(e, "code", None)
     if code == "no_snapshot":
-        return (
-            f"{e} If someone else set this up for you, ask them to run that step; or use the help_me_fix_it "
-            "helper, which walks you through it."
-        )
+        return f"{e} Run the Something's wrong helper, which walks you through turning it back on."
     if isinstance(e, UnknownDataset):
         # Only the registry's own message is echoed; any other KeyError would leak an internal name.
         return f"{e}. Use search_datasets to see what is available."
     if isinstance(e, QueryRefused):
         return str(e)
     return (
-        "Something went wrong while reading the data, so no numbers are shown. Try again; if it keeps "
-        "happening, use the help_me_fix_it helper and mention this question."
+        "The data for this question couldn't be read, so no numbers are shown. Try again; if it keeps "
+        "happening, run the Something's wrong helper and mention this question."
     )
 
 

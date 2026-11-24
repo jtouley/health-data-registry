@@ -146,7 +146,10 @@ def test_kit_has_the_expected_files(kit: dict[str, bytes]) -> None:
     assert set(kit) - {f"knowledge/{k}" for k in knowledge} - {k for k in kit if k.startswith("skills/")} == {
         "project-instructions.md"
     }
-    assert "Placeholder until step 52C" in kit["knowledge/rubric.md"].decode()
+    assert (
+        "The rubric for scoring a hypothesis or a pitch isn't written yet"
+        in kit["knowledge/rubric.md"].decode()
+    )
 
 
 def test_no_data_files_in_knowledge(kit: dict[str, bytes]) -> None:

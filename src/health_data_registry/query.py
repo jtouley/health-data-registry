@@ -518,10 +518,8 @@ class Engine:
         if m is None:
             raise QueryRefused(
                 "no_snapshot",
-                f"The data for {dataset_id} hasn't been downloaded on this computer yet, and this setup reads "
-                "neither the open data hub nor the publisher live, so there are no numbers to show. Remove "
-                "HDR_HUB=off or HDR_FETCH_AT_RUN_TIME=0 from the tool's settings; maintainers can run "
-                f"`health-data-registry refresh {dataset_id}`.",
+                f"This setup has reading data turned off for {dataset_id} (neither the open data hub nor the "
+                "publisher is read), so there are no numbers to show.",
             )
         return m
 
