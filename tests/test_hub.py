@@ -382,7 +382,7 @@ def test_fetch_log_has_one_row_per_attempt(tmp_path: Path, reg: Registry, monkey
 
     monkeypatch.setattr(fetch_mod, "fetch", fake_fetch)
     lake = tmp_path / "lake"
-    get = crawl.fetcher(reg, FetchLog(lake, "toy_cases"), sleep=lambda s: None)
+    get = crawl.fetcher(reg, FetchLog(lake, "toy_cases"), sleep=lambda s: None, robots=False)
     got = get("https://data.cdc.gov/x")
     assert got.sha256 == hashlib.sha256(body).hexdigest()
     with pytest.raises(fetch_mod.FetchRefused):
@@ -406,7 +406,7 @@ def test_fetch_log_records_http_errors(tmp_path: Path, reg: Registry, monkeypatc
         sha256 = "x"
 
     monkeypatch.setattr(fetch_mod, "fetch", lambda url, **kw: R())
-    get = crawl.fetcher(reg, FetchLog(tmp_path, "toy_cases"), sleep=lambda s: None)
+    get = crawl.fetcher(reg, FetchLog(tmp_path, "toy_cases"), sleep=lambda s: None, robots=False)
     with pytest.raises(RuntimeError, match="status 503"):
         get("https://data.cdc.gov/x")
     (row,) = read_fetch_log(tmp_path, "toy_cases")
@@ -458,7 +458,7 @@ def test_fetcher_arguments_and_retries(tmp_path: Path, reg: Registry, monkeypatc
         raise fetch_mod.FetchRefused("connect_failed", "the publisher could not be reached")
 
     monkeypatch.setattr(fetch_mod, "fetch", always_slow)
-    get = crawl.fetcher(reg, None, sleep=sleeps.append)
+    get = crawl.fetcher(reg, None, sleep=sleeps.append, robots=False)
     with pytest.raises(fetch_mod.FetchRefused):
         get("https://data.cdc.gov/x")
     assert len(seen) == crawl.RETRIES == 4 and sleeps == [2, 4, 8]
