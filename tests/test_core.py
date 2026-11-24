@@ -213,12 +213,15 @@ def test_get_series_csv(lake: Path, registry: Registry) -> None:
         "location,year,value,lower,upper,observation_type,period_status,flag,measure,condition,case_status"
     )
     assert lines[1].startswith(
-        "Michigan,2022,300,,,as_published,,,cases,Legionellosis,confirmed and probable"
+        "Michigan,2022,300,,,as_published,the publisher marks no provisional or final status for this row,,cases,"
+        "Legionellosis,confirmed and probable"
     )
     assert lines[3].startswith(
         "Michigan,2024,,,,as_published,no total: 1 value suppressed or missing in the source,,cases"
     )  # the publisher's 'N' stays empty, not 0
-    assert lines[4].startswith("Ohio,2023,400,,,as_published,,,cases")
+    assert lines[4].startswith(
+        "Ohio,2023,400,,,as_published,the publisher marks no provisional or final status for this row,,cases"
+    )
     assert "# toy_cases has no rows for: Atlantis." in out
     assert "never a zero" in out
 

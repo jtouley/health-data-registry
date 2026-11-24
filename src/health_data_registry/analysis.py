@@ -22,6 +22,7 @@ from health_data_registry.tools import (
     Result,
     _match_places,
     message,
+    provenance_note,
     refusal,
     series_for,
 )
@@ -266,7 +267,7 @@ def _source_notes(engine: Engine, datasets: Sequence[Dataset]) -> list[str]:
     notes: list[str] = []
     for ds in _unique(datasets):
         m = engine.manifest(ds.id)
-        notes.append(f"Source: {ds.id}, {ds.entry.source.landing_url}, fetched {m.retrieved_at[:19]}.")
+        notes.append(provenance_note(ds, m))
         if ds.entry.status != "reviewed":
             notes.append(
                 f"{ds.id}: this source's contract is still a draft; no maintainer has reviewed it yet."

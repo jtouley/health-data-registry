@@ -636,13 +636,21 @@ class Engine:
                 ds, self.manifests[ids[0]], cols, rows, sql=q.sql, params=[], method="Read-only SQL."
             )
             return out
+        caveats = list(notices)
+        for i in ids:  # each source's review state and licence travel with a joined answer too
+            ds = self.registry.get(i)
+            if self.manifests[i].catalog_status != "reviewed":
+                caveats.append(
+                    f"{i}: this dataset's contract is a draft that no maintainer has reviewed yet."
+                )
+            caveats += [f"{i}: {c}" for c in ds.entry.caveats]
         return {
             "columns": cols,
             "rows": [list(r) for r in rows],
             "sql": q.sql,
             "sources": [_source(self.registry.get(i), self.manifests[i]) for i in ids],
             "method": "Read-only SQL across datasets.",
-            "caveats": notices,
+            "caveats": caveats,
         }
 
     def _tables(self) -> dict[str, frozenset[str]]:
@@ -658,6 +666,7 @@ def _source(ds: Dataset, m: Manifest) -> dict[str, Any]:
         "source_urls": m.source_urls[:3] + (["..."] if len(m.source_urls) > 3 else []),
         "landing_url": ds.entry.source.landing_url,
         "retrieved_at": m.retrieved_at,
+        "raw_sha256": list(m.raw_sha256),
         "snapshot_id": m.snapshot_id,
         "contract_version": m.contract_version,
         "review_status": m.catalog_status,

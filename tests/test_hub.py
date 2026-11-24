@@ -661,3 +661,17 @@ def test_eviction_orders_by_last_use_not_access_time(tmp_path: Path) -> None:
     os.utime(old, (2_000_000_000, 1))  # read recently on a noatime mount: only atime moved
     os.utime(new, (1, 1_000_000))
     assert hub.evict(tmp_path, 10, set()) == [old]
+
+
+def test_query_sql_across_sources_keeps_every_source(tmp_path: Path, reg: Registry, released: Path) -> None:
+    """Outside review (c): a query over two tables carries both sources' provenance, licences and reviews."""
+    from health_data_registry import tools
+
+    eng = engine(reg, tmp_path, released, fetch_at_run_time=True, getter=lambda u: raw_fetch(u, RECORDS))
+    out = tools.query_sql(eng, "SELECT year FROM toy_cases UNION ALL SELECT year FROM toy_listed", fmt="json")
+    assert isinstance(out, dict) and "rows" in out, out
+    prov = [n for n in out["notes"] if n.startswith("Provenance for ")]
+    assert [p.split(":")[0] for p in prov] == ["Provenance for toy_cases", "Provenance for toy_listed"]
+    assert all("raw file sha256 " in p for p in prov)  # live reads hash the bytes fetched, too
+    assert all("licence " in p and "cite as: " in p and "contract_status: draft" in p for p in prov)
+    assert any(n.startswith("toy_cases: this dataset's contract is a draft") for n in out["notes"])

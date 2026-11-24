@@ -247,9 +247,9 @@ def test_query_sql_tool_exact(registry: Registry, lake: Path) -> None:
     assert out["columns"] == ["n"] and out["rows"] == [[6]]
     assert out["notes"][:2] == ["SQL run: " + out["notes"][0][9:], "Method: Read-only SQL."]
     assert out["notes"][0].startswith("SQL run: SELECT")
-    assert out["notes"][2].startswith(
-        "Source: Toy notifiable condition cases by state and year, fetched 2026-11-24T12:00:00 ("
-    )
+    assert out["notes"][2].startswith("Provenance for toy_cases: ")
+    assert "retrieved_at 2026-11-24T12:00:00; raw file sha256 " in out["notes"][2]
+    assert "contract_status: draft" in out["notes"][2] and "; cite as: " in out["notes"][2]
     bad = _json(tools.query_sql(eng, "DELETE FROM toy_cases", fmt="json"))
     assert bad["message"].startswith("That query can't run: ") and bad["message"].endswith(
         " The other tools (get_series, describe_dataset) can usually answer the same question."

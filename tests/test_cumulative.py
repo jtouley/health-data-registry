@@ -162,6 +162,14 @@ UNV = "unverified_restatement: as published in next year's table"
 NOT_FINAL = "; not a final disease count"
 
 
+def rev(year: int, status: str) -> str:
+    """The period_status of a subsequent_year_restatement row, as get_series labels it."""
+    return (
+        f"CDC's revised provisional figure, from the {year + 1} table ({status}); kept apart from the year-end "
+        "figure, never merged with it"
+    )
+
+
 def _obs(out: dict[str, Any]) -> list[list[Any]]:
     """location, year, value, observation_type, period_status, flag."""
     return [[r[0], r[1], r[2], r[5], r[6], r[7]] for r in out["rows"]]
@@ -175,14 +183,14 @@ def test_each_year_keeps_its_own_total_and_next_years_figure_as_separate_observa
     assert _obs(out) == [
         # Own total 10 (not the weekly sum 3); next year's figure 12 is a separate, unverified observation.
         ["Michigan", 2022, 10, OWN, "provisional: as published at year end (through week 3)", None],
-        ["Michigan", 2022, 12, NEXT, f"{UNV} (through week 4){NOT_FINAL}", None],
+        ["Michigan", 2022, 12, NEXT, rev(2022, f"{UNV} (through week 4){NOT_FINAL}"), None],
         # A 4-week (53-week-like) year: the 2024 table reaches week 3 only, so it doesn't cover the year.
         ["Michigan", 2023, 16, OWN, "provisional: as published at year end (through week 4)", None],
         ["Michigan", 2023, 14, NEXT,
-         f"{UNV} (through week 3); covers weeks 1-3 of 4 only, not the whole year{NOT_FINAL}", None],
+         rev(2023, f"{UNV} (through week 3); covers weeks 1-3 of 4 only, not the whole year{NOT_FINAL}"), None],
         ["Michigan", 2024, 3, OWN, "provisional: as published at year end (through week 3)", None],
         ["Michigan", 2024, 4, NEXT,
-         f"{UNV} (through week 2); covers weeks 1-2 of 3 only, not the whole year{NOT_FINAL}", None],
+         rev(2024, f"{UNV} (through week 2); covers weeks 1-2 of 3 only, not the whole year{NOT_FINAL}"), None],
         # The number comes from week 1; week 2 is flagged U, and the row says so in the codebook's words.
         ["Michigan", 2025, 1, OWN, "incomplete: running total last published at week 1 of 2; later weeks have no "
          "number (flag at week 2: 'U' = unavailable), so this is not the year total", "U"],
@@ -199,9 +207,9 @@ def test_empty_restatement_never_replaces_a_count(tmp_path: Path) -> None:
     no_number = "unverified_restatement: next year's table has no number for this year (flag: 'N' = not reportable in this jurisdiction)"
     assert [r[1:] for r in _obs(out)] == [
         [2023, 8, OWN, "provisional: as published at year end (through week 4)", None],
-        [2023, None, NEXT, no_number, "N"],
+        [2023, None, NEXT, rev(2023, no_number), "N"],
         [2024, None, OWN, "no number published through week 3 (flag: '-' = no reported cases)", "-"],
-        [2024, None, NEXT, no_number, "N"],
+        [2024, None, NEXT, rev(2024, no_number), "N"],
         [2025, 5, OWN, "provisional: running total so far (through week 2)", None],
     ]  # fmt: skip
 

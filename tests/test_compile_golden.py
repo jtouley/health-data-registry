@@ -242,6 +242,7 @@ def test_envelope_and_source_are_exact(est: tuple[Registry, Engine, Path]) -> No
             "source_urls": [*urls[:3], "..."],
             "landing_url": "https://data.cdc.gov/d/toy0-toy0",
             "retrieved_at": m.retrieved_at,
+            "raw_sha256": list(m.raw_sha256),
             "snapshot_id": m.snapshot_id,
             "contract_version": "0.2.0",
             "review_status": "draft",
