@@ -627,3 +627,26 @@ def test_live_tables_are_never_loaded_into_a_file(tmp_path: Path, reg: Registry)
         load_live(mem, reg.get("toy_listed"), [{**RECORDS[0], "year": "x"}])
     tables = mem.execute("SELECT table_name FROM duckdb_tables()").fetchall()
     assert tables == []  # nothing half-loaded is left behind
+
+
+def test_every_engine_connection_is_locked_down(tmp_path: Path, reg: Registry, released: Path) -> None:
+    def get(url: str) -> Any:
+        return raw_fetch(url, RECORDS)
+
+    eng = engine(reg, tmp_path, released, fetch_at_run_time=True, getter=get)
+
+    def locked() -> bool:
+        row = (
+            eng.connect()
+            .execute(
+                "SELECT current_setting('enable_external_access') = false AND current_setting('lock_configuration')"
+            )
+            .fetchone()
+        )
+        return bool(row and row[0])
+
+    assert locked()  # empty
+    eng.manifest("toy_cases")  # hub view: a reconnect
+    assert locked()
+    eng.manifest("toy_listed")  # live table: another reconnect
+    assert locked()

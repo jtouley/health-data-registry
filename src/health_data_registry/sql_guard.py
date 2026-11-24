@@ -582,6 +582,12 @@ def run_guarded(
     if not timeout_s > 0:
         raise ValueError(f"timeout_s must be positive, got {timeout_s!r}")
     _require_single_select(q.sql)  # a GuardedQuery is a plain value: re-check what it carries
+    # The connection must have gone through harden(): never run on one that can reach files or the network.
+    hardened = con.execute(
+        "SELECT current_setting('enable_external_access') = false AND current_setting('lock_configuration')"
+    ).fetchone()
+    if not (hardened and hardened[0]):
+        raise SqlRefused("not_hardened", "The query was not run: the data connection is not locked down.")
 
     lock = threading.Lock()
     finished = False

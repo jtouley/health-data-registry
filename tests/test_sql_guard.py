@@ -666,7 +666,7 @@ def test_property_tokenSoup_neverAcceptsForbidden(tokens: list[str]) -> None:
         assert "deaths" not in q.tables or "union" in lowered
 
 
-@pytest.mark.parametrize("sql", ["SELECT 1 COPY", "SELECT 1 AS drop", 'SELECT state AS "attach" FROM vax'])
+@pytest.mark.parametrize("sql", ["SELECT 1 COPY", "SELECT 1 AS drop", "SELECT state AS attach FROM vax"])
 def test_guard_statementWordAsName_refused(sql: str) -> None:
     """Regression (found by the token-soup property): a statement word as an alias is refused, never run."""
     assert refused(sql).code == "forbidden_construct"
@@ -678,3 +678,19 @@ def test_guard_quotedStatementWord_isAnOrdinaryName(word: str) -> None:
     q = guard(f'SELECT state AS "{word}" FROM deaths')
     assert f'AS "{word}"' in q.sql
     assert refused(f"SELECT state AS {word} FROM deaths").code in {"forbidden_construct", "parse_error"}
+
+
+@pytest.mark.parametrize("fn", ["totally_new_function", "made_up", "my_udf"])
+def test_guard_unknownFunction_refused(fn: str) -> None:
+    """Fail closed: a function nobody listed is refused, not only the known-dangerous ones."""
+    assert refused(f"SELECT {fn}(state) FROM deaths").code == "forbidden_function"
+
+
+def test_runGuarded_onAnUnhardenedConnection_refused() -> None:
+    import duckdb
+
+    con = duckdb.connect(":memory:")
+    con.execute("CREATE TABLE deaths AS SELECT 'S' AS state")
+    with pytest.raises(SqlRefused) as e:
+        sql_guard.run_guarded(con, guard("SELECT state FROM deaths"))
+    assert e.value.code == "not_hardened"
