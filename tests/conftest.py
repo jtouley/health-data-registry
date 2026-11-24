@@ -165,6 +165,15 @@ def raw_fetch(url: str, payload: object, when: datetime | None = None) -> RawFet
     )
 
 
+@pytest.fixture(autouse=True)
+def _isolated_read_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test reads the user's cache, a real hub, or a publisher at run time unless it asks to."""
+    monkeypatch.setenv("HDR_CACHE", str(tmp_path / "cache"))
+    monkeypatch.delenv("HDR_HUB", raising=False)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setenv("HDR_FETCH_AT_RUN_TIME", "0")
+
+
 @pytest.fixture
 def registry(tmp_path: Path) -> Registry:
     return load_registry(write_registry(tmp_path / "reg"))

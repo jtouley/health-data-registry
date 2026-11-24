@@ -119,7 +119,15 @@ Shape = Literal[
 
 # The hub's infectious-disease areas: one Hugging Face collection per area, and a tag on each dataset card.
 IdArea = Literal[
-    "hiv", "stis", "hepatitis", "tb", "hais_amr", "respiratory", "vaccine_preventable", "enteric", "vector_borne"
+    "hiv",
+    "stis",
+    "hepatitis",
+    "tb",
+    "hais_amr",
+    "respiratory",
+    "vaccine_preventable",
+    "enteric",
+    "vector_borne",
 ]
 
 

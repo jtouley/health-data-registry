@@ -347,7 +347,9 @@ class Engine:
             ) from e
         self._first_use[ds.id] = (
             f"First use: {ds.entry.title} was just downloaded from {ds.entry.publisher}, because its terms "
-            "(" + ds.entry.licence.id + ") don't allow us to host a copy. Later questions use the copy on this "
+            "("
+            + ds.entry.licence.id
+            + ") don't allow us to host a copy. Later questions use the copy on this "
             "computer."
         )
         return True
@@ -359,10 +361,9 @@ class Engine:
     def manifest(self, dataset_id: str) -> Manifest:
         self.connect()
         m = self.manifests.get(dataset_id)
-        if m is None and dataset_id in self.registry.datasets:
-            if self._obtain(self.registry.get(dataset_id)):
-                self._reconnect()
-                m = self.manifests.get(dataset_id)
+        if m is None and dataset_id in self.registry.datasets and self._obtain(self.registry.get(dataset_id)):
+            self._reconnect()
+            m = self.manifests.get(dataset_id)
         if m is None:
             raise QueryRefused(
                 "no_snapshot",
@@ -469,7 +470,9 @@ class Engine:
         notices = [n for i in ids if (n := self.first_use_notice(i))]
         if len(ids) == 1:
             ds = self.registry.get(ids[0])
-            out = envelope(ds, self.manifests[ids[0]], cols, rows, sql=q.sql, params=[], method="Read-only SQL.")
+            out = envelope(
+                ds, self.manifests[ids[0]], cols, rows, sql=q.sql, params=[], method="Read-only SQL."
+            )
             out["caveats"] = notices + out["caveats"]
             return out
         return {
@@ -478,6 +481,7 @@ class Engine:
             "sql": q.sql,
             "sources": [_source(self.registry.get(i), self.manifests[i]) for i in ids],
             "method": "Read-only SQL across datasets.",
+            "caveats": notices,
         }
 
     def _tables(self) -> dict[str, frozenset[str]]:

@@ -10,6 +10,7 @@ from pathlib import Path
 from health_data_registry.registry import Registry, RegistryError, load_registry
 from health_data_registry.store import FetchLog, lake_root
 
+
 def _fetcher(registry: Registry, log: FetchLog | None = None):  # type: ignore[no-untyped-def]
     from health_data_registry.crawl import fetcher
 
@@ -101,7 +102,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     fe = sub.add_parser("fetch", help="refresh one source from its publisher (same as refresh <source>)")
     fe.add_argument("source")
-    fe.add_argument("--max-rows", type=int, default=None, help="development sample; marks the snapshot partial")
+    fe.add_argument(
+        "--max-rows", type=int, default=None, help="development sample; marks the snapshot partial"
+    )
     ex = sub.add_parser(
         "export-public",
         help="publish redistributable sources to the open data hub (hf://datasets/<org>/<name>) or a directory",

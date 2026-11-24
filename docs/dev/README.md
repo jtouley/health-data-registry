@@ -1,7 +1,7 @@
 # Developer docs
 
-For people working on the code, contracts or evaluation. Clinicians start at the [README](../../README.md) and the
-[setup guide](../setup.md). Contribution rules are in [CONTRIBUTING.md](../../CONTRIBUTING.md); design decisions
+For people working on the code, contracts or evaluation. Clinicians start at the [README](../../README.md), the
+[setup guide](../setup.md), the [tools reference](../tools.md) and the [data conventions](../data-conventions.md). Contribution rules are in [CONTRIBUTING.md](../../CONTRIBUTING.md); design decisions
 are in [docs/adr/](../adr/README.md).
 
 ## Setup
@@ -65,6 +65,11 @@ The MCP surface (`server.py`):
   `helpers.py`; [docs/helpers.md](../helpers.md) is generated from it by `make docs`, and a test fails if the two
   differ. Never edit `docs/helpers.md` by hand.
 
+When a tool's name, parameters, columns or refusals change in `server.py` or `tools.py`, update
+[docs/tools.md](../tools.md) in the same PR; when a contract changes how a number is read (missing codes, total rows,
+provisional status, uncertainty, places), update [docs/data-conventions.md](../data-conventions.md). Both are written
+by hand, unlike `docs/helpers.md`.
+
 Everything a clinician reads (tool descriptions, helpers, refusals) follows the writing rules in
 [ADR 0012](../adr/0012-built-for-clinicians.md): plain words, a next step, never a stack trace or an HTTP code.
 
@@ -105,5 +110,6 @@ make check
 ```
 
 Add `tests/integration/test_live_<id>.py` for the live check. A contract merges only after a maintainer reviews it
-against the publisher's documentation. Sources whose terms forbid redistribution are fetched from the publisher and
-never published as snapshots ([ADR 0009](../adr/0009-licences-decide-mirroring.md)).
+against the publisher's documentation. Sources whose terms forbid redistribution are "listed, not hosted": they get a
+catalog entry and a contract, are fetched from the publisher at run time, and are never published as snapshots
+([ADR 0009](../adr/0009-licences-decide-mirroring.md)).

@@ -304,7 +304,7 @@ def test_cli_refresh_and_validate(
     root = write_registry(tmp_path / "reg")
     monkeypatch.setenv("HDR_REGISTRY", str(root))
     monkeypatch.setenv("HDR_LAKE", str(tmp_path / "lake"))
-    monkeypatch.setattr(cli, "_fetcher", lambda reg: lambda url: raw_fetch(url, RECORDS))
+    monkeypatch.setattr(cli, "_fetcher", lambda reg, log=None: lambda url: raw_fetch(url, RECORDS))
     assert cli.main(["validate"]) == 0
     assert cli.main(["refresh", "toy_cases", "--max-rows", "10"]) == 0
     assert "6 rows" in capsys.readouterr().out

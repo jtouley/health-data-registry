@@ -26,7 +26,9 @@ class Port:
 
 
 def _custom(items: Any) -> dict[str, Any]:
-    return {str(i["property"]): i.get("value") for i in items or [] if isinstance(i, dict) and "property" in i}
+    return {
+        str(i["property"]): i.get("value") for i in items or [] if isinstance(i, dict) and "property" in i
+    }
 
 
 def load_ports(root: Path) -> dict[str, Port]:

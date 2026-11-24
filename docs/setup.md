@@ -129,7 +129,7 @@ time. If any step is blocked on a work computer, ask your institution's IT team 
    On Windows, if it says "not recognized", install Git from [git-scm.com](https://git-scm.com/download/win),
    then open a new PowerShell window.
 
-4. **Load the data once.** This downloads the five starter datasets from CDC and WHO into a folder called
+4. **Load the data once.** This downloads the starter datasets from CDC, WHO and the Census Bureau into a folder called
    `health-data` in your home folder. Paste one line and press Return:
    - Mac:
      `HDR_LAKE="$HOME/health-data" uvx --from git+https://github.com/jtouley/health-data-registry health-data-registry refresh --all`

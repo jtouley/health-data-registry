@@ -101,7 +101,10 @@ class FetchLog:
 
     def path(self, when: datetime) -> Path:
         return (
-            self.lake / "fetch_log" / f"source={self.source}" / f"run_date={when.astimezone(UTC):%Y-%m-%d}.jsonl"
+            self.lake
+            / "fetch_log"
+            / f"source={self.source}"
+            / f"run_date={when.astimezone(UTC):%Y-%m-%d}.jsonl"
         )
 
     def record(

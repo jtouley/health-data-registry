@@ -70,8 +70,10 @@ Two open standards keep this honest:
   [Open Data Product Standard (ODPS)](https://github.com/bitol-io/open-data-product-standard): which datasets it
   offers, under which licences, and who maintains it.
 
-Coming: the hub, its ODPS file and the hosted server are being built now. Today the server runs on your own
-computer from data it loads once (see [the setup guide](docs/setup.md#one-time-install-on-your-computer-for-now)).
+The hub's product file is [`contracts/health-data-registry.odps.yaml`](contracts/health-data-registry.odps.yaml)
+(a draft). Coming: the hub is not published yet and the hosted server is not running. Today the server runs on your
+own computer from data it loads once (see [the setup guide](docs/setup.md#one-time-install-on-your-computer-for-now));
+it already fetches WHO data from WHO the first time you ask, and says so in that answer.
 
 ## Quick start
 
@@ -161,15 +163,15 @@ each tool's parameters, what comes back, an example prompt and what it says when
 | `query_sql` | A last resort for questions the others don't cover; it refuses anything but a careful, read-only lookup |
 
 Coming: analysis tools that return a number with its 95% interval and method: `compare_rates`, `get_trend`,
-`age_adjust` and `check_signal`, and an exact interval on `get_rate`. Census population for `get_rate` is not
-loaded yet either.
+`age_adjust` and `check_signal`, and an exact interval on `get_rate`.
 
 Results come back as CSV (a plain table you can paste into a spreadsheet), followed by lines on where the numbers
 came from.
 
 ## Data
 
-Infectious disease only, for now. The five starter datasets, each with an entry in [`catalog/`](catalog/):
+Infectious disease only, for now: five starter datasets, plus Census population as the denominator for rates.
+Each has an entry in [`catalog/`](catalog/):
 
 | Dataset | Publisher | What it covers | On the hub (coming) |
 |---|---|---|---|
@@ -178,6 +180,7 @@ Infectious disease only, for now. The five starter datasets, each with an entry 
 | `cdc_respnet` | CDC (RESP-NET) | Hospitalisation rates for COVID-19, flu and RSV, at surveillance sites, 2016 on | Hosted (US federal, public domain) |
 | `cdc_haicviz_cdi` | CDC (Emerging Infections Program) | C. difficile infection counts and rates in the program's surveillance areas (not by state), 2011–2022 | Hosted (US federal, public domain) |
 | `who_gho_tb_incidence` | WHO | Tuberculosis incidence per 100,000, by country, 2000 on | Listed, not hosted (non-commercial terms) |
+| `census_county_pop` | US Census Bureau | Resident population estimates (July 1), nation, state and county, 2020–2025; used for `get_rate` | Hosted (US federal, public domain) |
 
 [Data conventions](docs/data-conventions.md) explains how to read them: counts, rates, percents and estimates
 (never mixed); final and provisional years; why an empty cell is never a zero; uncertainty; places (states, FIPS
@@ -235,7 +238,7 @@ technical name for the program behind a connector.
 
 ## Limitations
 
-- **Infectious disease only,** five starter datasets. Counties, HIV, hepatitis, STI surveillance reports and
+- **Infectious disease only,** five starter datasets. County case counts, HIV, hepatitis, STI surveillance reports and
   others are on the roadmap, not loaded.
 - **Every contract is still a draft** that no maintainer has reviewed. Each answer says so, and `list_caveats`
   lists the facts not yet confirmed with the publisher.
@@ -243,8 +246,8 @@ technical name for the program behind a connector.
   answers why.
 - **Recent years are provisional,** and WHO re-estimates its whole series each year.
 - **No sex or age breakdowns** in the current series, and no age-standardised rates computed here.
-- **Not built yet:** the hosted server, the hub, the analysis tools and the prior-work index (all marked "coming"
-  above).
+- **Not built yet:** the hosted server, the published hub, the analysis tools and the prior-work index (all
+  marked "coming" above).
 
 ## How to cite
 
@@ -258,8 +261,8 @@ technical name for the program behind a connector.
 ## Terms and privacy
 
 - **Code:** [Apache-2.0](LICENSE).
-- **Data:** each dataset keeps its publisher's terms, shown with every result. CDC data are US federal works in the
-  public domain. WHO data are recorded as CC BY-NC-SA 3.0 IGO (non-commercial, share-alike; a maintainer is still
+- **Data:** each dataset keeps its publisher's terms, shown with every result. CDC and Census data are US federal
+  works in the public domain. WHO data are recorded as CC BY-NC-SA 3.0 IGO (non-commercial, share-alike; a maintainer is still
   confirming this), so they are fetched from WHO at run time and never republished. No data is stored in this
   repository.
 - **Privacy:** no patient data, ever. No upload or local-file tool exists. Requests go only to catalogued publisher

@@ -47,9 +47,7 @@ def fetcher(
             if r.status != 200:
                 msg = f"the publisher answered with status {r.status} instead of the data"
                 if log is not None:
-                    log.record(
-                        url, ok=False, when=when, http_status=r.status, size=len(r.content), error=msg
-                    )
+                    log.record(url, ok=False, when=when, http_status=r.status, size=len(r.content), error=msg)
                 raise RuntimeError(f"{url}: {msg}")
             if log is not None:
                 log.record(

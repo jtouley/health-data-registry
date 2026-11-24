@@ -35,6 +35,9 @@ Every tool only reads data. None of them can change anything, upload anything or
   files.
 - **Every number is labelled.** The `measure` column says whether it is a count, rate, percent or estimate, and
   `period_status` says whether a year is final or provisional. See [Data conventions](data-conventions.md).
+- **First use of a restricted source.** Sources whose terms don't allow anyone to host a copy (today, WHO) are
+  downloaded from the publisher the first time you ask. That answer starts with a one-line note saying so; later
+  questions use the copy already fetched.
 - **Structured output.** Every tool also takes `fmt="json"`, which returns the same columns, rows and notes as
   structured data. Claude uses this when it needs to; you don't need to ask.
 
@@ -62,7 +65,7 @@ last fetched, its licence, and whether its contract has been reviewed.
 | Parameter | Required | What it does |
 |---|---|---|
 | `topic` | no | Words such as "legionella" or "syphilis in states" |
-| `id_area` | no | Research area; today only `infectious_disease` |
+| `id_area` | no | Research area: `infectious_disease`, or `denominator` for population |
 | `geography` | no | Geography level, as for `list_sources` |
 | `year_start`, `year_end` | no | Only datasets that overlap these years |
 
@@ -112,7 +115,7 @@ fetch time and case definition.
 | `condition` | yes | The condition, in the source's words or a plain label, e.g. "legionellosis", "Candida auris, clinical" |
 | `locations` | no | Places, e.g. `["Michigan", "Ohio", "United States"]`. Names, postal codes and FIPS codes all work. Leave empty for every place. |
 | `year_start`, `year_end` | no | The years to return |
-| `measure` | no | Only one kind of number: `cases`, `rate`, `percent` or `estimate` |
+| `measure` | no | Only one kind of number: `cases`, `rate`, `percent`, `estimate` (or `population` for Census) |
 | `sex` | no | Today only both sexes; no loaded source splits these series by sex |
 | `source_id` | no | Only this source, when more than one reports the condition |
 
@@ -159,8 +162,8 @@ age-standardised.
 `case_source`, `population_source`, and a note that the rate is crude and must not be compared with
 age-standardised GBD or CDC rates.
 
-Coming: Census population is not loaded yet, so today `get_rate` explains that and points you to `get_series` or
-a published rate. The spec adds an exact Poisson 95% interval to the rate.
+The population is the Census Bureau's 1 July estimate (Vintage 2025) for states and the nation, 2020–2025.
+Coming: an exact Poisson 95% interval on the rate.
 
 **Try:** "What was the crude rate of reported legionellosis per 100,000 in Michigan in 2024?"
 
@@ -252,7 +255,9 @@ The common ones:
 | "None of the loaded sources split this by sex yet" | No sex breakdown in these series | Ask again without sex |
 | "Rates and estimates can't be added up …" | More than one published rate matches, and rates are never combined | Choose the breakdown it names |
 | "… is a running total, so it is read once per …" | A running total asked for the wrong way | Ask by year |
-| "Population counts (Census) aren't loaded yet …" | `get_rate` has no denominator yet | Use `get_series`, or a published rate |
+| "Population counts (Census) aren't loaded yet …" | `get_rate` has no denominator on this setup | Use `get_series`, or a published rate |
+| "… could not be reached to download …" | A restricted source (WHO) is fetched from the publisher, and the publisher's site didn't answer | Try again in a few minutes |
+| "The hub release … has no file …" or "… does not list …" | The hub release the server reads from is incomplete | Try again later, or [open an issue](https://github.com/jtouley/health-data-registry/issues) |
 | "The index … isn't built yet" | `find_prior_work` is coming | Search PubMed |
 | "The data for … hasn't been downloaded on this computer yet" | Local install only: the one-time load step hasn't run | Repeat step 4 of the [local install](setup.md#one-time-install-on-your-computer-for-now) |
 | "That query can't run: …" | `query_sql` refused the query | Use `get_series` or `describe_dataset` instead |

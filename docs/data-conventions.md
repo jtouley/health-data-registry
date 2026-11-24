@@ -29,8 +29,10 @@ Every row says which kind of number it is, in its `measure` column. There are fo
   one source and a rate from another), the answer opens with a warning and the `measure` column tells them apart.
   Never compare or add numbers across measures.
 - **A rate the tool works out is labelled as such.** `get_rate` divides cases by Census population and labels the
-  column `crude_rate_per_100k_computed`, so it can't be mistaken for a published rate. Coming: Census population
-  is not loaded yet, so `get_rate` says so instead of giving a rate.
+  column `crude_rate_per_100k_computed`, so it can't be mistaken for a published rate.
+- **Population is an estimate, too.** The denominator is the Census Bureau's estimate of the resident population on
+  1 July (Vintage 2025, years 2020–2025). Each new vintage revises every earlier year, so a rate's denominator can
+  change between releases. Census publishes no uncertainty for it.
 - **Different rate types are different series.** RESP-NET publishes observed, age-adjusted and estimated rates;
   they are kept apart and never combined.
 
@@ -115,7 +117,9 @@ Place traps the tool reports with each answer:
 - **WHO regions are not GBD regions.** Rows for regions, income groups and the globe are aggregates, not countries.
 - **Out-Wayne County reports exclude the City of Detroit,** which has its own health department.
 
-Counties: none of the five starter sources publishes county values yet.
+Population (Census): states, DC and counties, 2020–2025. The national figure is the 50 states plus DC; Puerto
+Rico and the other territories are not in the file, so no rate is worked out for them. Connecticut is shown by its
+nine planning regions, not its former counties. No case source publishes county values yet.
 
 ## Years and weeks
 
@@ -127,6 +131,8 @@ Counties: none of the five starter sources publishes county values yet.
   (`YYYY-MM-DD`); clinical outcome percents (ICU, ventilation, in-hospital death) are per season, not per week.
   A year asked of a date column means that whole calendar year.
 - **GBD 2023 ends in 2023.** Observed years after 2023 have no GBD match.
+- **Rates mix two calendars.** Case counts are by MMWR year; Census population is for 1 July of the calendar year.
+  The two line up closely but not exactly.
 - **Freshness.** Every row carries `retrieved_at`, the time the data was fetched from the publisher.
 
 ## Age standardisation
@@ -212,9 +218,11 @@ Every fact that changes a number comes from the source's **contract**, never fro
 - **A data product file** describes the open health data hub as a whole: which datasets it offers, under which
   licences, and who maintains it. It follows the
   [Open Data Product Standard (ODPS)](https://github.com/bitol-io/open-data-product-standard), from the same
-  project. Coming: the hub's ODPS file.
+  project: [`contracts/health-data-registry.odps.yaml`](../contracts/health-data-registry.odps.yaml), a draft.
+  Each dataset on the hub is one of its "output ports", marked hosted or not, and points to that dataset's
+  contract.
 - A fact in a contract comes only from the publisher's own documentation, an exact fact about the file's
   structure, or a maintainer's reviewed note. Anything else is written down as an open question, and
   `list_caveats` shows it to you.
 
-**All five starter contracts are still drafts** that no maintainer has reviewed. Every answer says so.
+**Every contract is still a draft** that no maintainer has reviewed. Every answer says so.

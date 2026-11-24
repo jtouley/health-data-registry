@@ -18,3 +18,8 @@ records are not rewritten.
 | [0010](0010-apache-2-licence.md) | Apache-2.0 licence for the code | Proposed |
 | [0011](0011-local-stdio-first.md) | Local stdio server first; hosted Hugging Face Space later | Proposed |
 | [0012](0012-built-for-clinicians.md) | Built for clinicians: helpers as MCP prompts, with copy-paste docs | Accepted |
+
+The spec's current positioning (three layers: crawler and lake, an open health data hub on Hugging Face, and the MCP
+server with analysis tools; datasets hosted on the hub wherever the licence allows; restricted sources "listed, not
+hosted" and fetched by the server at run time) changes where restricted sources are fetched in 0001 and how the
+server is reached in 0011. Those records still describe what ships today; a superseding record is pending.

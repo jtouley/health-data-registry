@@ -103,17 +103,20 @@ def gamma_quantile(p: float, shape: float) -> float:
     while gamma_cdf(hi, shape) < p:
         lo, hi = hi, hi * 2.0
     x = 0.5 * (lo + hi)
-    for _ in range(200):
+    for _ in range(400):
         f = gamma_cdf(x, shape) - p
+        if f == 0.0:
+            return x
         if f > 0:
             hi = x
         else:
             lo = x
-        dens = math.exp((shape - 1.0) * math.log(x) - x - math.lgamma(shape)) if x > 0 else 0.0
-        step = x - f / dens if dens > 0 else lo - 1.0
-        x = step if lo < step < hi else 0.5 * (lo + hi)
-        if hi - lo <= 1e-14 * max(1.0, x) or abs(f) < 1e-16:
-            break
+        dens = math.exp((shape - 1.0) * math.log(x) - x - math.lgamma(shape))
+        step = x - f / dens if dens > 0 else lo
+        nxt = step if lo < step < hi else 0.5 * (lo + hi)
+        if abs(nxt - x) <= 1e-15 * x:
+            return nxt
+        x = nxt
     return x
 
 
@@ -261,9 +264,7 @@ def poisson_trend(
     i01 = sum(m * ti for m, ti in zip(mu, t, strict=True))
     i11 = sum(m * ti * ti for m, ti in zip(mu, t, strict=True))
     var_b = i00 / (i00 * i11 - i01 * i01)
-    dispersion = (
-        sum((c - m) ** 2 / m for c, m in zip(counts, mu, strict=True)) / (n - 2) if n > 2 else 1.0
-    )
+    dispersion = sum((c - m) ** 2 / m for c, m in zip(counts, mu, strict=True)) / (n - 2) if n > 2 else 1.0
     se = math.sqrt(var_b * max(1.0, dispersion))
     half = normal_quantile(1.0 - _alpha(level) / 2.0) * se
     return TrendFit(

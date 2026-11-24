@@ -171,7 +171,9 @@ def _case_definitions(ds: Dataset) -> list[str]:
         definition = s.case_definition or "not yet recorded in the contract; see the publisher's codebook"
         out.append(f"- **{s.label}** ({s.measure}): {definition}{status}")
     if not out:
-        out.append(f"- Not recorded in the contract yet; see the publisher's codebook: {ds.entry.codebook_url}")
+        out.append(
+            f"- Not recorded in the contract yet; see the publisher's codebook: {ds.entry.codebook_url}"
+        )
     return out
 
 
@@ -191,7 +193,8 @@ def _suppression(ds: Dataset) -> list[str]:
     if flags:
         lines.append("")
         lines += [
-            f"- `{c.name}` keeps the publisher's flag for `{c.flag_for}` (why a value is missing)" for c in flags
+            f"- `{c.name}` keeps the publisher's flag for `{c.flag_for}` (why a value is missing)"
+            for c in flags
         ]
     return lines
 
@@ -199,7 +202,9 @@ def _suppression(ds: Dataset) -> list[str]:
 def _caveats(ds: Dataset) -> list[str]:
     out = [f"- {c}" for c in ds.entry.caveats]
     if ds.entry.status != "reviewed":
-        out.append("- This dataset's contract is a draft: no maintainer has reviewed it against the codebook yet.")
+        out.append(
+            "- This dataset's contract is a draft: no maintainer has reviewed it against the codebook yet."
+        )
     out += [f"- Not yet confirmed: {q}" for q in ds.contract.open_questions]
     return out
 
@@ -236,7 +241,8 @@ def hosted_card(
         "",
         "## Years and geography",
         "",
-        f"Years {_years(ds)}. Geography: {', '.join(e.geography)}" + (f" ({e.country})." if e.country else "."),
+        f"Years {_years(ds)}. Geography: {', '.join(e.geography)}"
+        + (f" ({e.country})." if e.country else "."),
         "",
         "## Suppression and missing values",
         "",
@@ -266,7 +272,7 @@ def hosted_card(
         "",
         "```sql",
         "-- DuckDB, no download step",
-        f"select * from '{where}' limit 10;",
+        f"select * from '{where}' limit 10;",  # noqa: S608 - documentation text, never run
         "```",
         "",
         f"Pin this release with `@{release_tag(run_date)}` after the dataset id. Contract `{ds.contract.id}` "
@@ -344,11 +350,14 @@ def hub_card(registry: Registry, release: dict[str, Any], repo: str | None) -> s
         "license_link": "https://github.com/jtouley/health-data-registry/blob/main/licenses/README.md",
         "tags": list(dict.fromkeys(all_tags)),
         "configs": [
-            {"config_name": ds.id, "data_files": [{"split": "train", "path": data_path(ds.id)}]} for ds in hosted
+            {"config_name": ds.id, "data_files": [{"split": "train", "path": data_path(ds.id)}]}
+            for ds in hosted
         ],
     }
     rows = ["| Source | Publisher | Years | Here |", "|---|---|---|---|"]
-    rows += [f"| [{d.entry.title}]({d.id}/README.md) | {d.entry.agency} | {_years(d)} | hosted |" for d in hosted]
+    rows += [
+        f"| [{d.entry.title}]({d.id}/README.md) | {d.entry.agency} | {_years(d)} | hosted |" for d in hosted
+    ]
     rows += [
         f"| [{d.entry.title}]({d.id}/README.md) | {d.entry.agency} | {_years(d)} | listed, not hosted |"
         for d in listed
@@ -504,8 +513,14 @@ def suppression_problems(snapshot_db: Path, table: str, exported: Path) -> list[
                 )
             elif nb > na:
                 out.append(f"{table}.{c}: {nb - na} published values were emptied")
-        diff = (con.execute("SELECT count(*) FROM (SELECT * FROM a EXCEPT ALL SELECT * FROM b)").fetchone() or (0,))[0]
-        extra = (con.execute("SELECT count(*) FROM (SELECT * FROM b EXCEPT ALL SELECT * FROM a)").fetchone() or (0,))[0]
+        diff = (
+            con.execute("SELECT count(*) FROM (SELECT * FROM a EXCEPT ALL SELECT * FROM b)").fetchone()
+            or (0,)
+        )[0]
+        extra = (
+            con.execute("SELECT count(*) FROM (SELECT * FROM b EXCEPT ALL SELECT * FROM a)").fetchone()
+            or (0,)
+        )[0]
         if not out and (diff or extra):
             out.append(f"{table}: {diff} snapshot rows are changed or missing in the published table")
         return out
@@ -538,7 +553,9 @@ def check_release(registry: Registry, lake: Path, out: Path) -> list[str]:
             tag = AREA_TAGS[area]
             if tag not in header.get("tags", []) or tag not in hub.get("tags", []):
                 problems.append(f"{ds.id}: the hub does not list it under its ID area tag {tag}")
-        data_files = sorted(p for p in folder.rglob("*") if p.is_file() and p.suffix in (".parquet", ".duckdb"))
+        data_files = sorted(
+            p for p in folder.rglob("*") if p.is_file() and p.suffix in (".parquet", ".duckdb")
+        )
         if not e.licence.redistribution:
             if data_files:
                 problems.append(f"{ds.id}: its terms forbid redistribution but data files were staged")
@@ -546,7 +563,9 @@ def check_release(registry: Registry, lake: Path, out: Path) -> list[str]:
         # Licence confirmed and recorded.
         snap_found = latest_snapshot(lake, ds.id)
         if _licence_text(registry, e.licence.id) is None or not (folder / LICENCE_FILE).is_file():
-            problems.append(f"{ds.id}: licence {e.licence.id} has no recorded text in licenses/{e.licence.id}.md")
+            problems.append(
+                f"{ds.id}: licence {e.licence.id} has no recorded text in licenses/{e.licence.id}.md"
+            )
         if not e.licence.terms_url.startswith("https://"):
             problems.append(f"{ds.id}: the licence's terms page is not recorded")
         if snap_found is None:
@@ -596,7 +615,9 @@ def write_checklist(registry: Registry, out: Path) -> Path:
             )
             names = [d[0] for d in rows.description or []]
             for r in rows.fetchall():
-                cells = ", ".join(f"{n}={'(empty)' if v is None else v}" for n, v in zip(names, r, strict=True))
+                cells = ", ".join(
+                    f"{n}={'(empty)' if v is None else v}" for n, v in zip(names, r, strict=True)
+                )
                 lines.append(f"- [ ] {cells}")
             lines.append("")
     finally:
@@ -627,7 +648,9 @@ def export_public(
     to_hub = dest.startswith(HF_PREFIX)
     repo = hf_repo_id(dest) if to_hub else None
     if to_hub and uploader is None and not os.environ.get("HF_TOKEN"):
-        raise PublishCheckFailed("publishing to Hugging Face needs a write token in the HF_TOKEN environment variable")
+        raise PublishCheckFailed(
+            "publishing to Hugging Face needs a write token in the HF_TOKEN environment variable"
+        )
     out = staging if to_hub else Path(dest)
     release = stage(registry, lake, out, run_date=run_date, repo=repo)
     problems = check_release(registry, lake, out)
