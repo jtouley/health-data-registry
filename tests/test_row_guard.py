@@ -8,6 +8,7 @@ from hypothesis import strategies as st
 
 from health_data_registry.adapters.row_guard import (
     RowLevelRefused,
+    _all_ones,
     check_grain,
     is_identifier,
     is_measure_field,
@@ -127,3 +128,19 @@ PERSON = st.sampled_from(["Age", "Sex", "Race", "Zip_Code", "City", "Onset_Date"
 def test_two_person_fields_without_a_count_are_always_refused(fields: list[str]) -> None:
     with pytest.raises(RowLevelRefused):
         check_grain("t", ["OBJECTID", *fields])
+
+
+def test_all_ones_skips_blank_cells_and_reads_thousands_separators() -> None:
+    assert _all_ones([None, "", " ", "1", 1.0]) is True
+    assert _all_ones(["", None]) is False  # nothing to read is not "every row is one"
+    assert _all_ones(["1,"]) is True  # a separator is dropped before the value is read
+    assert _all_ones(["1", "2"]) is False
+
+
+def test_refusals_list_every_field_that_gave_the_table_away() -> None:
+    with pytest.raises(RowLevelRefused, match=r"\(Patient_Name, Street_Address\)"):
+        check_grain("t", ["Patient_Name", "Street_Address", "Cases"])
+    with pytest.raises(RowLevelRefused, match=r"\(Age, Sex for each row"):
+        check_grain("t", ["Age", "Sex"])
+    with pytest.raises(RowLevelRefused, match=r"next to Age, Sex, so each row"):
+        check_grain("t", ["Age", "Sex", "Count"], [{"Count": 1}, {"Count": "1"}])

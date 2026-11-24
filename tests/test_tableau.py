@@ -379,6 +379,44 @@ def test_suppressed_by_must_name_two_fields(bad: dict[str, str]) -> None:
         TableauView(view="V", worksheets={"S": "a" * 64}, suppressed_by=bad)
 
 
+def test_data_in_the_first_chunk_world_update_is_read_too() -> None:
+    # Some views carry their data in the first chunk (worldUpdate) rather than in secondaryInfo.
+    pm = {
+        "dataDictionary": {"presModelHolder": {"genDataDictionaryPresModel": {"dataSegments": {
+            "0": {"dataColumns": [{"dataType": k, "dataValues": v} for k, v in DATA.items()]}
+        }}}},
+        "vizData": {"presModelHolder": {"genPresModelMapPresModel": {"presModelMap": {
+            "TByear": {"presModelHolder": {"genVizDataPresModel": {"paneColumnsData": YEARLY}}}
+        }}}},
+    }  # fmt: skip
+    text = json.dumps({"worldUpdate": {"applicationPresModel": {"presModelMap": pm}}})
+    ws = tb.read_worksheets(f"{len(text)};{text}")
+    assert ws["TByear"].records == tb.read_worksheets(boot({"TByear": YEARLY}))["TByear"].records
+
+
+def test_a_type_missing_from_the_dictionary_is_a_layout_error() -> None:
+    sheet = {"vizDataColumns": [col("SUM(N)", "real", [0], [0])], "paneColumnsList": [pane(([0], []))]}
+    with pytest.raises(tb.TableauLayoutError, match="outside the data dictionary"):
+        tb.read_worksheets(boot({"S": sheet}, {"integer": [1]}))
+    alias = {"vizDataColumns": [col("Place", "cstring", [0], [0])], "paneColumnsList": [pane(([], [-1]))]}
+    with pytest.raises(tb.TableauLayoutError, match="outside the data dictionary"):
+        tb.read_worksheets(boot({"S": alias}, {"integer": [1]}))
+
+
+def test_a_column_with_unpaired_pane_indices_is_refused() -> None:
+    sheet = {"vizDataColumns": [col("SUM(N)", "integer", [0, 1], [0])], "paneColumnsList": [pane(([0], []))]}
+    with pytest.raises(ValueError):
+        tb.read_worksheets(boot({"S": sheet}))
+
+
+def test_view_url_joins_a_base_with_a_trailing_slash() -> None:
+    e = entry({"TByear": YEARLY_HASH})
+    e = e.model_copy(
+        update={"source": e.source.model_copy(update={"api_url": "https://dash.example.gov/views/Toy/"})}
+    )
+    assert tb.view_url(e, "TB") == "https://dash.example.gov/views/Toy/TB?:embed=y&:showVizHome=no"
+
+
 def test_suppressed_by_accepts_two_different_fields() -> None:
     v = TableauView(view="V", worksheets={"S": "a" * 64}, suppressed_by={"AGG(N)": "AGG(T)"})
     assert v.suppressed_by == {"AGG(N)": "AGG(T)"}
