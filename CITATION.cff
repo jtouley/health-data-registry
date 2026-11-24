@@ -1,0 +1,22 @@
+# Citation metadata (Citation File Format 1.2.0, https://citation-file-format.github.io/).
+# This cites the software. Cite each dataset you use from its publisher; every result names the source,
+# version and citation.
+cff-version: 1.2.0
+message: If you use this software, please cite it as below, with the version you used.
+type: software
+title: health-data-registry
+abstract: >-
+  A read-only MCP server over public health datasets: ask about public health data in plain English and get the
+  number back with its source, dataset version, SQL and method.
+authors:
+  - family-names: Touleyrou
+    given-names: Jason
+    alias: jtouley
+repository-code: https://github.com/jtouley/health-data-registry
+license: Apache-2.0
+keywords:
+  - public-health
+  - epidemiology
+  - mcp
+  - open-data
+  - data-contract

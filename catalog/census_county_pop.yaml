@@ -1,0 +1,43 @@
+id: census_county_pop
+title: "County and state resident population estimates, July 1, 2020-2025 (Census Vintage 2025, CO-EST2025-ALLDATA)"
+agency: US Census Bureau
+publisher: US Census Bureau, Population Division (Population Estimates Program)
+level: federal
+country: US
+research_areas: [denominator]
+years: {start: 2020, end: 2025}
+geography: [nation, state, county]
+shape: estimate_table
+grain: "One row is one state or county in one year, with the Census Bureau's estimate of the resident population on July 1 of that year (Vintage 2025). Used as the denominator for rates computed here."
+refresh: annual
+licence:
+  id: public-domain-us-federal
+  redistribution: true
+  terms_url: https://www.census.gov/data/developers/about/terms-of-service.html
+citation: "U.S. Census Bureau, Population Division. Annual Resident Population Estimates for States and Counties: April 1, 2020 to July 1, 2025 (CO-EST2025-ALLDATA). Vintage 2025, released March 2026. https://www2.census.gov/programs-surveys/popest/datasets/2020-2025/counties/totals/co-est2025-alldata.csv (accessed <retrieved_at>)."
+source:
+  portal: https_csv
+  host: www2.census.gov
+  dataset: co-est2025-alldata
+  landing_url: https://www.census.gov/data/datasets/time-series/demo/popest/2020s-counties-total.html
+  api_url: https://www2.census.gov/programs-surveys/popest/datasets/2020-2025/counties/totals/co-est2025-alldata.csv
+  encoding: latin-1
+  reshape:
+    wide_to_long:
+      keep: [SUMLEV, REGION, DIVISION, STATE, COUNTY, STNAME, CTYNAME]
+      stubs: [POPESTIMATE]
+      key_field: YEAR
+      key_pattern: "\\d{4}"
+      # Vintage 2025 file layout (codebook_url): POPESTIMATE2020 through POPESTIMATE2025, nothing else.
+      expected_keys: ["2020", "2021", "2022", "2023", "2024", "2025"]
+codebook_url: https://www2.census.gov/programs-surveys/popest/technical-documentation/file-layouts/2020-2025/CO-EST2025-ALLDATA.pdf
+caveats:
+  - "These are Census Bureau estimates of the resident population on July 1 of each year, not counts; each new vintage revises every earlier year, so a rate's denominator can change between releases."
+  - "The estimates carry no published uncertainty; rate intervals computed here treat the population as exact and cover only the randomness in the case count."
+  - "Puerto Rico and the other territories are not in this file; the national figure is the 50 states plus the District of Columbia."
+  - "The national figure is the sum of the 51 state rows (checked 2026-11-24 to equal the Census national estimate in NST-EST2025-ALLDATA for 2020-2025)."
+  - "Connecticut is shown by its nine planning regions, not its eight former counties, for every year 2020-2025."
+  - "Surveillance counts are by MMWR year and these estimates are for July 1 of the calendar year; the two years align closely but not exactly."
+contract: contracts/census_county_pop.odcs.yaml
+semantic_model: semantic/census_county_pop.yaml
+status: draft

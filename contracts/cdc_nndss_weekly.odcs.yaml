@@ -1,0 +1,218 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: cdc_nndss_weekly
+name: NNDSS Weekly Data
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Weekly provisional case counts of selected nationally notifiable infectious diseases reported by US states, New York City, the District of Columbia and territories to CDC's National Notifiable Diseases Surveillance System, 2022 onward."
+  usage: "Read the latest MMWR week of a year for year-to-date counts by state and condition; sum weekly counts across weeks or reporting areas only after excluding total rows."
+  limitations: "Provisional counts that are revised in later weeks; counts by jurisdiction of residence; no rates, no age or sex breakdown, no county."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://data.cdc.gov/d/x9gk-5huc", description: "Publisher dataset page"}
+    - {type: businessDefinition, url: "https://data.cdc.gov/api/views/x9gk-5huc.json", description: "Socrata metadata: column names, notes and flag definitions (dataset description)"}
+    - {type: businessDefinition, url: "https://www.cdc.gov/nndss/docs/Readers-Guide-WONDER-Tables-20210421-508.pdf", description: "Reader's guide to NNDSS tables, cited by the publisher"}
+    - {type: businessDefinition, url: "https://www.cdc.gov/nndss/infectious-disease/notice-to-data-users.html", description: "Notices and errata, cited by the publisher"}
+    - {type: businessDefinition, url: "https://ndc.services.cdc.gov/", description: "National surveillance case definitions, cited by the publisher"}
+servers:
+  - id: data_cdc_gov
+    server: data.cdc.gov
+    type: api
+    location: https://data.cdc.gov/resource/x9gk-5huc.json
+    description: "Socrata SODA API; the adapter keeps only the columns listed in the schema (geocode and the :@computed_region_* columns are dropped)."
+schema:
+  - name: cdc_nndss_weekly
+    physicalName: cdc_nndss_weekly
+    physicalType: table
+    logicalType: object
+    description: "One row per reporting area, MMWR year, MMWR week and condition."
+    dataGranularityDescription: "reporting area x MMWR year x MMWR week x condition"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://data.cdc.gov/api/views/x9gk-5huc.json"}
+    customProperties:
+      - property: totalRows
+        value: "location2 IS NOT NULL AND upper(location2) NOT IN ('NON-US RESIDENTS', 'NON-U.S. RESIDENTS')"
+        description: "Summary areas (TOTAL, US RESIDENTS, US TERRITORIES and the nine census divisions) carry location2; single jurisdictions carry location1. Non-U.S. Residents also carries location2 but is its own bucket, not a sum. Structural fact checked live 2026-11-24: for Legionellosis 2024 week 52 the 51 state/DC rows plus New York City (7012 + 249) equal US RESIDENTS (7261), and US RESIDENTS + US TERRITORIES + NON-US RESIDENTS (7261 + 3 + 1) equal TOTAL (7265)."
+      - {property: tableShape, value: surveillance_series}
+      - property: idDimensions
+        value:
+          condition: label
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: null
+          period: [year, week]
+          provisionalFlag: null
+        description: "Condition is the publisher label (no NNDSS event code or ICD-10 code is published in this dataset). Case definitions are not in the data (see openQuestions; https://ndc.services.cdc.gov/). Case status is not a column: counts are published per condition without a confirmed/probable split. Organism is part of the label for Candida auris only; no resistance field. Period is MMWR year and week. Provisional status is by reporting year per the dataset footnote, not a column."
+    properties:
+      - name: states
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Reporting area: the US total, a census division, a state, New York City, a territory, US territories combined, or non-US residents. Cases are counted where the patient usually lives. New York excludes New York City (structural check against US RESIDENTS, 2024). Upper case through 2024, title case from 2025 (source: live data, https://data.cdc.gov/resource/x9gk-5huc.json)."
+        examples: ["MICHIGAN", "Michigan", "US RESIDENTS", "U.S. Residents", "TOTAL"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: states}
+          - property: partialPlaces
+            value: {"New York": "New York State excluding New York City, which NNDSS reports as its own area; not the whole state GBD models"}
+            description: "The one declaration of areas that cover only part of the place of the same name: get_rate and get_trend refuse a rate against the whole place's population, and answers carry the note. From the dataset footnote that New York City is reported separately, and the structural check under totalRows (the 51 state/DC rows plus New York City add up to US RESIDENTS), so New York excludes New York City. Matched ignoring case and dots, so it covers 'NEW YORK' through 2024 and 'New York' from 2025."
+          - property: renamedLabels
+            value: {"Commonwealth of Northern Mariana Islands": "Northern Mariana Islands"}
+            description: "The 2025 tables name the territory by its official title, Commonwealth of the Northern Mariana Islands; 2022-2024 tables call it Northern Mariana Islands. Same jurisdiction, one row per table each year (live data, 2026-11-24)."
+      - name: year
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "MMWR (epidemiological) year of the report. Published as text; cast to integer."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: year}
+      - name: week
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "MMWR week of the report (1-52, or 53 in 53-week years such as 2025)."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: week}
+      - name: label
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Notifiable condition as named in the NNDSS tables (for example Legionellosis, Candida auris, clinical; Syphilis, Primary and secondary). Case definitions: https://ndc.services.cdc.gov/."
+        examples: ["Legionellosis", "Candida auris, clinical", "Candida auris, screening", "Syphilis, Primary and secondary", "Tuberculosis"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: label}
+      - name: m1
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Cases reported for this condition and area in this MMWR week (publisher column 'Current week'). Empty when the flag column m1_flag holds a code; '-' means no reported cases. Published as text such as '31.0' from 2025; cast to integer."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: m1}
+          - {property: unit, value: "1"}
+      - name: m1_flag
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "Why the current-week count is empty. Codes from the dataset notes: '-' no reported cases; U unavailable; N not reportable in the jurisdiction; NN not nationally notifiable; NP nationally notifiable but not published; NC not calculated. From 2025 the flag is empty when a count is present; through 2024 rows with a count also carry '-', so a flag explains only an empty count. Kept as published, never turned into an empty value."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: m1_flag}
+          - {property: flagFor, value: m1}
+          - {property: flagCodes, value: {"-": "no reported cases", "U": "unavailable", "N": "not reportable in this jurisdiction", "NN": "not nationally notifiable", "NP": "nationally notifiable but not published", "NC": "not calculated"}}
+          - {property: noCasesCode, value: "-", description: "Dataset notes (the publisher's codebook, quoted in flagCodes): '-' means no reported cases. An empty count with this flag is read as 0 and labelled no reported cases; it is stored as published (empty, with the flag)."}
+        quality:
+          - id: m1_flag_codes
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["-", "U", "N", "NN", "NP", "NC"]}
+            mustBe: 0
+            description: "Flag values are the codes listed in the publisher's dataset notes."
+      - name: m2
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Highest weekly count in the previous 52 weeks for this condition and area, counting only weeks when the condition was reportable there (publisher footnote). A maximum: never add it up."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: m2}
+          - {property: unit, value: "1"}
+      - name: m2_flag
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "Flag for the previous 52-week maximum; same codes as m1_flag."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: m2_flag}
+          - {property: flagFor, value: m2}
+          - {property: flagCodes, value: {"-": "no reported cases", "U": "unavailable", "N": "not reportable in this jurisdiction", "NN": "not nationally notifiable", "NP": "nationally notifiable but not published", "NC": "not calculated"}}
+      - name: m3
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Cumulative cases so far in this MMWR year up to and including this week (year to date). Cumulative: take the latest week, never sum across weeks. Can be incomplete if the condition was reportable for only part of the year (publisher footnote)."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: m3}
+          - {property: unit, value: "1"}
+      - name: m3_flag
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "Flag for the current-year year-to-date count; same codes as m1_flag."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: m3_flag}
+          - {property: flagFor, value: m3}
+          - {property: flagCodes, value: {"-": "no reported cases", "U": "unavailable", "N": "not reportable in this jurisdiction", "NN": "not nationally notifiable", "NP": "nationally notifiable but not published", "NC": "not calculated"}}
+          - {property: noCasesCode, value: "-", description: "Dataset notes (the publisher's codebook, quoted in flagCodes): '-' means no reported cases. An empty count with this flag is read as 0 and labelled no reported cases; it is stored as published (empty, with the flag)."}
+      - name: m4
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Cumulative cases in the previous MMWR year up to the same week, as published in this week's table. The codebook doesn't say whether it counts the same thing as that year's own year-to-date (m3); for some conditions the two differ widely (see openQuestions), so it is shown beside m3, never in its place."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: m4}
+          - {property: unit, value: "1"}
+      - name: m4_flag
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "Flag for the previous-year year-to-date count; same codes as m1_flag."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: m4_flag}
+          - {property: flagFor, value: m4}
+          - {property: flagCodes, value: {"-": "no reported cases", "U": "unavailable", "N": "not reportable in this jurisdiction", "NN": "not nationally notifiable", "NP": "nationally notifiable but not published", "NC": "not calculated"}}
+          - {property: noCasesCode, value: "-", description: "Dataset notes (the publisher's codebook, quoted in flagCodes): '-' means no reported cases. An empty count with this flag is read as 0 and labelled no reported cases; it is stored as published (empty, with the flag)."}
+      - name: location1
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "Name of a single jurisdiction (state, DC, New York City or territory); empty on summary rows."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: location1}
+      - name: location2
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "Name of a summary area (TOTAL, US RESIDENTS, US TERRITORIES, NON-US RESIDENTS or a census division); empty on single-jurisdiction rows."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: location2}
+      - name: sort_order
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "Publisher's row order key (year, week and area position); used only to keep the published table order."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: sort_order}
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: citation, value: "Centers for Disease Control and Prevention. National Notifiable Diseases Surveillance System (NNDSS). NNDSS Weekly Data. https://data.cdc.gov/d/x9gk-5huc"}
+  - {property: refresh, value: weekly}
+  - {property: geographyBasis, value: "patient residence: cases are assigned to the jurisdiction where the patient usually lives (dataset notes)"}
+  - {property: unreliableRule, value: {kind: none, description: "None: the publisher marks no counts as unreliable and publishes no rates. Empty counts carry a flag ('-' no reported cases; U, N, NN, NP, NC)."}}
+  - property: openQuestions
+    value:
+      - "Is next year's prior-year year-to-date (m4) a like-for-like restatement of a year's own year-to-date (m3)? Nothing in the codebook says so, and for Candida auris, clinical they differ widely (m3 at the year's last week vs next year's m4 at its last week, live data 2026-11-24: California 2023 1275 vs 551; Georgia 2023 390 vs 191; Georgia 2024 651 vs 365; Michigan 2023 103 vs 110). Until a domain reviewer answers (semantic resolution_policy: require_domain_review), both are returned as separate observations (year_end_ytd, provisional; subsequent_year_restatement, unverified_restatement) and neither is called final."
+      - "Supporting evidence for the reviewer on the m3/m4 question, not a verification: for Michigan 2024, CDC's C. auris tracking page shows 184 clinical cases; NNDSS clinical is 174 at year end (m3) and 184 in the next year's table (m4); NNDSS screening is 643 at year end and 689 restated (spec research, branch claude/cauris-source-contracts, commit 1e4740c, docs/sources/c-auris/; not in this branch, not re-checked here). One matching state-year does not show the two count the same thing, and the California 2023 gap (1275 vs 551) is unexplained, so resolution_policy stays require_domain_review."
+      - "Case definition for Candida auris: the same research reports CSTE position statement 22-ID-05. Add it as an authoritativeDefinitions link once a maintainer confirms the URL from that research file."
+      - "A year-to-date that had a number and later weeks show only '-' (e.g. Minnesota, Candida auris, clinical, 2025: 1 through week 38, '-' for weeks 39-53): withdrawn, reset or missing? Reported as incomplete until answered."
+      - "Licence: the Socrata metadata has no licence field for this dataset; public-domain-us-federal is assumed from its being a CDC work. Maintainer to confirm."
+      - "An empty m1, m3 or m4 with flag '-' stays stored as published (empty, with the flag). At query time it is read as 0 and labelled no reported cases, from the codebook's definition of '-' (noCasesCode); a year whose running total is empty in every week reads as 0 only when every one of those weeks is flagged '-'. Maintainer to confirm on review."
+      - "The provisional footnote names reporting years 2024 and 2025; the provisional status of 2026 and the finalization date of earlier years are not stated in the dataset metadata."
+      - "Should the adapter normalize the 2025+ title-case reporting-area names to the 2022-2024 upper-case form, or the reverse? Filters on states are case-sensitive today."
+      - "Mapping Candida auris screening (colonization) to GBD Candida spp. / Other infectious diseases is a coarse pairing; colonization is not disease. Keep, or map screening to no GBD cause?"
+      - "Earlier NNDSS weekly years (before 2022) sit in separate per-table Socrata datasets; not covered by this contract."
+      - "Case definitions: which CSTE position statement and effective year applies to each condition and MMWR year (e.g. Candida auris clinical vs screening, Legionellosis, syphilis stages, TB)? Not in the data; list them as a caseDefinitions customProperty from https://ndc.services.cdc.gov/ after a maintainer reads it."
+      - "Case status: do these weekly counts include confirmed and probable cases together (per each condition's case definition)? The dataset does not say; until answered, counts must be described as 'reported cases' with status unspecified."
+      - "Is a provisional/final indicator published anywhere for this dataset (e.g. a finalized annual table)? Not a column here."

@@ -1,0 +1,118 @@
+dataset: cdc_nhsn_ar_hai
+version: 0.1.0
+dimensions:
+  - {name: geography, column: geography, type: categorical, description: "United States, census division, or state (incl. DC and Puerto Rico)."}
+  - {name: geographic_level, column: source, type: categorical, description: "national, region or state."}
+  - {name: year, column: year, type: time, description: "Calendar year of the reported HAI isolates."}
+  - {name: phenotype, column: phenotype, type: categorical, description: "Organism and resistance pattern, e.g. MRSA, carbapenem-resistant Enterobacterales."}
+  - {name: hai_type, column: event_type, type: categorical, description: "CLABSI, CAUTI, SSI or all combined."}
+  - {name: age_group, column: age_category, type: categorical, description: "Adults, pediatric or all ages."}
+  - {name: sex, column: sex, type: categorical, description: "Male, female or all."}
+  - {name: teaching_status, column: teaching_hospital, type: categorical, description: "Teaching hospital status (general acute care hospitals only) or all."}
+  - {name: hospital_size, column: hospital_size, type: categorical, description: "200 or more beds vs fewer, or all."}
+  - {name: facility_type, column: facility, type: categorical, description: "Acute care, inpatient rehabilitation, long-term acute care, or all."}
+  - {name: surgical_procedure, column: procedure, type: categorical, description: "NHSN procedure type for SSI, or all."}
+  - {name: unit_type, column: location, type: categorical, description: "ICU, NICU, oncology, other unit, or all."}
+measures:
+  - {name: percent_resistant, column: percent_resistant, kind: percent, unit: "%", description: "Percent of tested isolates resistant."}
+  - {name: percent_resistant_lower, column: lower_confidence_interval, kind: lower_bound, unit: "%", description: "Lower 95% confidence bound of percent resistant."}
+  - {name: percent_resistant_upper, column: upper_confidence_interval, kind: upper_bound, unit: "%", description: "Upper 95% confidence bound of percent resistant."}
+  - {name: isolates_tested, column: isolates_tested, kind: count, unit: "isolates", description: "Isolates tested for susceptibility."}
+  - {name: resistant_isolates, column: resistant_isolates, kind: count, unit: "isolates", description: "Isolates resistant (or non-susceptible)."}
+metrics:
+  - name: percent_resistant_overall
+    description: "Percent of isolates from all reported healthcare-associated infections (CLABSI, CAUTI, SSI) that were resistant, all patients and facilities combined, with its 95% confidence interval."
+    measure: percent_resistant
+    aggregation: none
+    exclude_total_rows: false
+    filters:
+      - "event_type = 'All Infectious Event Type Data'"
+      - "age_category = 'All Ages Data'"
+      - "sex = 'All Sexes (total)'"
+      - "teaching_hospital = 'All Teaching Hospitals Data'"
+      - "hospital_size = 'All Hospital Size Data'"
+      - "facility = 'All Facility Data'"
+      - "procedure = 'All Procedure Data'"
+      - "location = 'All Location within Hospital Data'"
+      - "NOT (geography = 'United States' AND source = 'state')"
+    uncertainty: {lower: percent_resistant_lower, upper: percent_resistant_upper}
+  - name: percent_resistant
+    description: "Percent of tested HAI isolates that were resistant for one fully specified stratum; the user must choose a value (or the 'All' margin) for every stratifier."
+    measure: percent_resistant
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["NOT (geography = 'United States' AND source = 'state')"]
+    uncertainty: {lower: percent_resistant_lower, upper: percent_resistant_upper}
+  - name: isolates_tested_overall
+    description: "Number of isolates from all reported HAIs tested against the phenotype's antimicrobial, all patients and facilities combined (published cell, not re-added)."
+    measure: isolates_tested
+    aggregation: none
+    exclude_total_rows: false
+    filters:
+      - "event_type = 'All Infectious Event Type Data'"
+      - "age_category = 'All Ages Data'"
+      - "sex = 'All Sexes (total)'"
+      - "teaching_hospital = 'All Teaching Hospitals Data'"
+      - "hospital_size = 'All Hospital Size Data'"
+      - "facility = 'All Facility Data'"
+      - "procedure = 'All Procedure Data'"
+      - "location = 'All Location within Hospital Data'"
+      - "NOT (geography = 'United States' AND source = 'state')"
+  - name: resistant_isolates_overall
+    description: "Number of resistant isolates from all reported HAIs, all patients and facilities combined (published cell, not re-added)."
+    measure: resistant_isolates
+    aggregation: none
+    exclude_total_rows: false
+    filters:
+      - "event_type = 'All Infectious Event Type Data'"
+      - "age_category = 'All Ages Data'"
+      - "sex = 'All Sexes (total)'"
+      - "teaching_hospital = 'All Teaching Hospitals Data'"
+      - "hospital_size = 'All Hospital Size Data'"
+      - "facility = 'All Facility Data'"
+      - "procedure = 'All Procedure Data'"
+      - "location = 'All Location within Hospital Data'"
+      - "NOT (geography = 'United States' AND source = 'state')"
+series:
+  - condition: "Methicillin-resistant Staphylococcus aureus"
+    label: "MRSA (percent of S. aureus HAI isolates resistant)"
+    metric: percent_resistant_overall
+    measure: percent
+    filters: {phenotype: "Methicillin-resistant Staphylococcus aureus"}
+    location_dimension: geography
+    time_dimension: year
+  - condition: "Carbapenem-resistant Klebsiella"
+    label: "Carbapenem-resistant Klebsiella (percent of HAI isolates resistant)"
+    metric: percent_resistant_overall
+    measure: percent
+    filters: {phenotype: "Carbapenem-resistant Klebsiella"}
+    location_dimension: geography
+    time_dimension: year
+  - condition: "Carbapenem-resistant E.coli"
+    label: "Carbapenem-resistant E.coli (percent of HAI isolates resistant)"
+    metric: percent_resistant_overall
+    measure: percent
+    filters: {phenotype: "Carbapenem-resistant E.coli"}
+    location_dimension: geography
+    time_dimension: year
+  - condition: "Carbapenem-resistant Enterobacter"
+    label: "Carbapenem-resistant Enterobacter (percent of HAI isolates resistant)"
+    metric: percent_resistant_overall
+    measure: percent
+    filters: {phenotype: "Carbapenem-resistant Enterobacter"}
+    location_dimension: geography
+    time_dimension: year
+  - condition: "Carbapenem-resistant Acinetobacter"
+    label: "Carbapenem-resistant Acinetobacter (percent of HAI isolates resistant)"
+    metric: percent_resistant_overall
+    measure: percent
+    filters: {phenotype: "Carbapenem-resistant Acinetobacter"}
+    location_dimension: geography
+    time_dimension: year
+  - condition: "Carbapenem-resistant Pseudomonas aeruginosa"
+    label: "Carbapenem-resistant Pseudomonas aeruginosa (percent of HAI isolates resistant)"
+    metric: percent_resistant_overall
+    measure: percent
+    filters: {phenotype: "Carbapenem-resistant Pseudomonas aeruginosa"}
+    location_dimension: geography
+    time_dimension: year

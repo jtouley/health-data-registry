@@ -1,0 +1,43 @@
+# Install once: `make hooks` (uv run pre-commit install). Run on everything: `uv run pre-commit run --all-files`.
+# Every commit goes through these hooks; `--no-verify` is never used.
+# No Black: ruff-format is Black-compatible, and running both would make them fight over formatting.
+# Sealed blind-question sets stay byte-for-byte as sealed (their hash is checked).
+exclude: ^eval/sealed/
+# Plain `pre-commit install` then sets up both hook types, the same as `make hooks`.
+default_install_hook_types: [pre-commit, pre-push]
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files # data belongs in the Hugging Face dataset, not git
+        args: [--maxkb=500]
+      - id: detect-private-key
+
+  # Same version as uv.lock, so the hook, `make lint` and CI agree.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.6
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      # Runs in the project's locked environment (uv.lock) with the strict settings in pyproject.toml.
+      - id: mypy
+        name: mypy (strict, uv run)
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+      # Data belongs in the lake or the Hugging Face dataset, never in git.
+      - id: forbid-data-files
+        name: forbid lake/, mutants/, *.parquet, *.duckdb
+        entry: data files and generated output must not be committed (lake/, mutants/, *.parquet, *.duckdb)
+        language: fail
+        files: (^|/)(lake|mutants)/|\.(parquet|duckdb)$

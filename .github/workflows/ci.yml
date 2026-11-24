@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Read-only token for every job; no job here writes to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+      - name: Lint and format check
+        run: make lint
+
+  pre-commit:
+    name: Pre-commit hooks (all files)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+      # Same hooks as every local commit, so a commit that skipped them still fails here.
+      - name: Run every hook on every file
+        run: uv run pre-commit run --all-files --show-diff-on-failure
+      - name: Lint workflows
+        run: uvx --from actionlint-py actionlint
+
+  types:
+    name: Types (mypy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+      - name: Type check
+        run: make typecheck
+
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+      # Offline tests only (-m "not network"), with the coverage floor; see the Makefile.
+      - name: Tests with coverage
+        run: make test
+
+  kit:
+    name: Claude Projects kit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+      # Project instructions, knowledge files and skill zips, built from helpers.py (never committed).
+      - name: Build the kit
+        run: make kit
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: projects-kit
+          path: dist/projects-kit/
+          if-no-files-found: error
+          retention-days: 30
+
+  mutation:
+    name: Mutation tests (changed modules)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    # A pull request that adds or touches most modules (the first one adds about 13,800 mutants) needs about
+    # 70 minutes at a GitHub runner's pace; 45 cancelled it part way. The floor (70%) is unchanged.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+      # Only the modules this pull request changes (spec: mutation tests on changed functions).
+      - name: Mutation tests
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: make mutate BASE="origin/${BASE_REF}"

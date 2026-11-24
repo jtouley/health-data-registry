@@ -1,0 +1,25 @@
+dataset: who_gho_tb_incidence
+version: 0.1.0
+dimensions:
+  - {name: place, column: spatial_dim, type: categorical, description: "Country (ISO3), WHO region, income group or GLOBAL."}
+  - {name: place_type, column: spatial_dim_type, type: categorical, description: "COUNTRY, REGION, WORLDBANKINCOMEGROUP or GLOBAL."}
+  - {name: year, column: time_dim, type: time, description: "Calendar year."}
+measures:
+  - {name: tb_incidence, column: numeric_value, kind: estimate, unit: "per 100,000 population per year", description: "WHO estimated tuberculosis incidence."}
+  - {name: tb_incidence_low, column: low, kind: lower_bound, unit: "per 100,000 population per year", description: "Lower uncertainty bound."}
+  - {name: tb_incidence_high, column: high, kind: upper_bound, unit: "per 100,000 population per year", description: "Upper uncertainty bound."}
+metrics:
+  - name: tb_incidence_rate
+    description: "WHO's estimated rate of new and relapse tuberculosis per 100,000 people per year, with its uncertainty range."
+    measure: tb_incidence
+    aggregation: none
+    exclude_total_rows: false
+    filters: []
+    uncertainty: {lower: tb_incidence_low, upper: tb_incidence_high}
+series:
+  - condition: "MDG_0000000020"
+    label: "Tuberculosis incidence (WHO estimate)"
+    metric: tb_incidence_rate
+    measure: estimate
+    location_dimension: place
+    time_dimension: year

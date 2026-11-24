@@ -1,0 +1,237 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: cdc_nhsn_ar_hai
+name: National Healthcare Safety Network - Antimicrobial Resistance (2011-2025)
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Pooled antimicrobial resistance among pathogens from healthcare-associated infections (CLABSI, CAUTI, SSI) reported to CDC's NHSN, by year, geography, resistance phenotype and facility or patient strata."
+  usage: "Read percent resistant with its 95% confidence interval for one year, geography and phenotype, pinning every other stratifier to its 'All ...' margin or to one value."
+  limitations: "HAI isolates only; cells with fewer than 20 isolates tested are empty; percentages are never added."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://data.cdc.gov/d/7wz3-n6um", description: "Publisher dataset page"}
+    - {type: businessDefinition, url: "https://data.cdc.gov/api/views/7wz3-n6um.json", description: "Socrata metadata with column descriptions"}
+    - {type: businessDefinition, url: "https://arpsp.cdc.gov/resources/AR_DataMethodology_2026.pdf", description: "Glossary/Methodology named in the dataset metadata (listed there with http://)"}
+    - {type: businessDefinition, url: "https://arpsp.cdc.gov/resources/AR_PhenotypeDefinitions_NOV2026.pdf", description: "Phenotype definitions named in the phenotype column description"}
+servers:
+  - id: data_cdc_gov
+    server: data.cdc.gov
+    type: api
+    location: https://data.cdc.gov/resource/7wz3-n6um.json
+schema:
+  - name: cdc_nhsn_ar_hai
+    physicalName: cdc_nhsn_ar_hai
+    physicalType: table
+    logicalType: object
+    description: "One row per year x geography x phenotype x HAI type x age x sex x teaching status x hospital size x facility type x procedure x unit type. Each stratifier includes an 'All ...' margin value."
+    dataGranularityDescription: "year x geography x phenotype x 8 stratifiers (each with an 'All' margin)"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://data.cdc.gov/api/views/7wz3-n6um.json"}
+    customProperties:
+      - property: totalRows
+        value: "source IN ('national', 'region') OR event_type = 'All Infectious Event Type Data' OR age_category = 'All Ages Data' OR sex = 'All Sexes (total)' OR teaching_hospital = 'All Teaching Hospitals Data' OR hospital_size = 'All Hospital Size Data' OR facility = 'All Facility Data' OR procedure = 'All Procedure Data' OR location = 'All Location within Hospital Data'"
+        description: "Margin values observed in the live data (SoQL group-by, 2026-11-24). Every state row carries at least one margin, so state numbers are read from margin rows with all stratifiers pinned, never summed."
+      - {property: tableShape, value: rate_table}
+      - property: idDimensions
+        value:
+          condition: event_type
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: phenotype
+          period: year
+          provisionalFlag: null
+        description: "Condition is the HAI type (CLABSI, CAUTI, SSI). Organism and resistance are combined in the phenotype label (e.g. Methicillin-resistant Staphylococcus aureus); no separate antibiotic or mechanism column. NHSN HAI surveillance definitions are not in the data (see openQuestions). No case-status or provisional column. Period is calendar year."
+    properties:
+      - name: source
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Geographic level of the row: national, region (census division) or state."
+        enum: [{value: national}, {value: region}, {value: state}]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: source}
+      - name: year
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "Calendar year for which number resistant, number tested and pooled percent resistant are calculated (column description, https://data.cdc.gov/api/views/7wz3-n6um.json)."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: year}
+      - name: geography
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "United States, one of the nine census divisions, or a state (50 states, DC and Puerto Rico). Small territories are not shown as states but are in national figures; Puerto Rico is excluded from regions (column description)."
+        examples: ["Michigan", "United States", "East North Central"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: geography}
+      - name: event_type
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Type of healthcare-associated infection the isolate came from: central line-associated bloodstream infection (CLABSI), catheter-associated urinary tract infection (CAUTI), surgical site infection (SSI), or all three combined."
+        enum: [{value: "All Infectious Event Type Data"}, {value: CLABSI}, {value: CAUTI}, {value: SSI}]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: event_type}
+      - name: phenotype
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Organism and resistance pattern, e.g. methicillin-resistant Staphylococcus aureus or carbapenem-resistant Enterobacterales. Definitions: https://arpsp.cdc.gov/resources/AR_PhenotypeDefinitions_NOV2026.pdf."
+        examples: ["Methicillin-resistant Staphylococcus aureus", "Carbapenem-resistant Enterobacterales", "Vancomycin-resistant Enterococcus faecium"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: phenotype}
+      - name: age_category
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Adults (18 and over) or pediatrics (under 18), by age at the infection date (CLABSI, CAUTI) or the procedure date (SSI); or all ages."
+        enum: [{value: "All Ages Data"}, {value: Adults}, {value: Pediatric}]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: age_category}
+      - name: sex
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Patient sex (male or female) or both sexes combined."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: sex}
+      - name: teaching_hospital
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Whether the hospital trains medical students and residents; only available for general acute care hospitals; or all."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: teaching_hospital}
+      - name: hospital_size
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Large (200 or more beds) or small (under 200 beds) facility; only for general acute care hospitals; or all."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: hospital_size}
+      - name: facility
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Facility type: acute care hospital, inpatient rehabilitation facility or long-term acute care hospital; or all."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: facility}
+      - name: procedure
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "NHSN inpatient surgical procedure type (SSI only), or all procedures."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: procedure}
+      - name: location
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Hospital unit type: ICU, neonatal ICU, oncology unit or other unit (ward, step-down, mixed acuity); or all units."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: location}
+      - name: isolates_tested
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Number of isolates tested for susceptibility to the antimicrobial, as reported to NHSN (column description)."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: isolates_tested}
+          - {property: unit, value: "1"}
+      - name: resistant_isolates
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Number of tested isolates that were resistant (for some phenotypes, non-susceptible); shown only when at least 20 isolates were tested (column description)."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: resistant_isolates}
+          - {property: unit, value: "1"}
+      - name: percent_resistant
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Percent of tested isolates that were resistant: resistant / tested x 100; calculated only when at least 20 isolates were tested (column description)."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: percent_resistant}
+          - {property: unit, value: "%"}
+        quality:
+          - id: percent_only_when_20_tested
+            type: sql
+            description: "Publisher: percent resistant is only calculated when the number tested is at least 20."
+            query: "SELECT COUNT(*) FROM {object} WHERE percent_resistant IS NOT NULL AND isolates_tested < 20"
+            mustBe: 0
+          - id: percent_matches_counts
+            type: sql
+            description: "Publisher formula (resistant / tested) x 100; tolerance 0.06 allows rounding to one decimal place."
+            query: "SELECT COUNT(*) FROM {object} WHERE percent_resistant IS NOT NULL AND abs(percent_resistant - 100.0 * resistant_isolates / isolates_tested) > 0.06"
+            mustBe: 0
+      - name: suppressed
+        physicalType: BOOLEAN
+        logicalType: boolean
+        required: false
+        description: "Publisher's suppression indicator ('If data should be suppressed or not'). Observed values are false or empty; rows where it is empty carry no counts."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: suppressed}
+          - {property: flagFor, value: percent_resistant}
+      - name: display_tested
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "Publisher's indicator of whether data are sufficient to display; empty in every row observed."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: display_tested}
+      - name: lower_confidence_interval
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Lower bound of the 95% mid-P exact confidence interval around percent resistant; only when percent resistant is calculated (column descriptions for geography and this field)."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: lower_confidence_interval}
+          - {property: unit, value: "%"}
+      - name: upper_confidence_interval
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Upper bound of the 95% mid-P exact confidence interval around percent resistant."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: upper_confidence_interval}
+          - {property: unit, value: "%"}
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: citation, value: "Centers for Disease Control and Prevention, National Healthcare Safety Network. National Healthcare Safety Network - Antimicrobial Resistance (2011-2025). https://data.cdc.gov/d/7wz3-n6um"}
+  - {property: refresh, value: annual}
+  - {property: geographyBasis, value: "unresolved: the dataset doesn't say whether places are by facility location or patient residence (see openQuestions), so comparisons with residence-based figures are blocked"}
+  - {property: unreliableRule, value: {kind: publisher_suppressed, threshold: 20, description: "Publisher: resistant counts and percent resistant are shown only when at least 20 isolates were tested; smaller cells are empty (column descriptions of isolates_resistant and percent_resistant)."}}
+  - property: openQuestions
+    value:
+      - "Licence: no licence field in the Socrata metadata; public-domain-us-federal assumed from its being a CDC work."
+      - "Dataset id stability: the title carries the year range (2011-2025) and the Socrata asset was created in November 2026. Does CDC publish a new 4x4 id each year? If so the adapter needs a lookup step."
+      - "Rows with suppressed empty (NULL) have no counts at all. Does NULL mean suppressed for fewer than 20 tested, not reported, or no isolates? The methodology PDF (arpsp.cdc.gov) was not fetched; maintainer to read it and decide missingCodes."
+      - "Are geographies assigned by facility location or patient residence? Not stated in the dataset metadata."
+      - "For 2021 and 2022 there are extra rows with source = 'state' and geography = 'United States' next to the national rows, with much smaller counts (e.g. CRE 2021: 1053 tested vs 25693 national). What are they? Metric filters pin source = 'national' for the US until answered."
+      - "Some confidence bounds carry float noise (e.g. 2.90000009536743); round to one decimal on ingest?"
+      - "Codebook URL is published as http://; https form assumed to resolve."
+      - "GBD 2023 has no bloodstream or urinary tract infection cause; HAI phenotypes are paired with 'Other infectious diseases' plus the pathogen, which is coarse. Enterococcus and coagulase-negative staphylococci have no GBD 2023 pathogen. Maintainer to confirm the crosswalk."
+      - "Case definitions: which NHSN Patient Safety Component manual year (CLABSI, CAUTI, SSI definitions) applies to each data year, and which phenotype definition version? Not in the data; add as caseDefinitions after a maintainer reads the arpsp.cdc.gov PDFs."
+      - "Are any years provisional (e.g. the latest year)? No flag is published."

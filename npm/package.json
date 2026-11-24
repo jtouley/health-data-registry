@@ -1,0 +1,45 @@
+{
+  "name": "health-data-registry",
+  "version": "0.0.1",
+  "description": "Ask Claude about public infectious-disease data from CDC, WHO and other publishers: starts the health-data-registry MCP server (Python, via uv).",
+  "mcpName": "io.github.jtouley/health-data-registry",
+  "license": "Apache-2.0",
+  "author": "jtouley",
+  "homepage": "https://github.com/jtouley/health-data-registry#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jtouley/health-data-registry.git",
+    "directory": "npm"
+  },
+  "bugs": {
+    "url": "https://github.com/jtouley/health-data-registry/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "public-health",
+    "infectious-disease",
+    "epidemiology"
+  ],
+  "bin": {
+    "health-data-registry": "bin/health-data-registry.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test test/launcher.test.js"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

@@ -1,0 +1,146 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: census_county_pop
+name: County and state resident population estimates, July 1, 2020-2025 (Vintage 2025)
+version: 0.1.0
+status: draft
+domain: denominator
+description:
+  purpose: "US Census Bureau estimates of the resident population of each state and county on July 1 of 2020 through 2025 (Vintage 2025, file CO-EST2025-ALLDATA), used as the denominator for rates computed by the analysis tools."
+  usage: "Read one state's or county's population for one year. State rows are the sum of their county rows, so never add a state row to its counties. The national population is the sum of the 51 state rows (50 states and DC)."
+  limitations: "Estimates without published uncertainty, revised in full by each new vintage; no Puerto Rico or other territories; total population only (no age, sex or race in this file)."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://www2.census.gov/programs-surveys/popest/datasets/2020-2025/counties/totals/co-est2025-alldata.csv", description: "The file (fetched 2026-11-24; 3,195 data rows, Last-Modified 2026-03-26)"}
+    - {type: businessDefinition, url: "https://www2.census.gov/programs-surveys/popest/technical-documentation/file-layouts/2020-2025/CO-EST2025-ALLDATA.pdf", description: "Publisher's file layout: every column, the SUMLEV key (040 state, 050 county) and the release date (March 2026)"}
+    - {type: businessDefinition, url: "https://www.census.gov/programs-surveys/popest/technical-documentation/methodology.html", description: "Population estimates methodology, cited by the file layout"}
+servers:
+  - id: www2_census_gov
+    server: www2.census.gov
+    type: https
+    location: https://www2.census.gov/programs-surveys/popest/datasets/2020-2025/counties/totals/co-est2025-alldata.csv
+    description: "One comma-separated file, Latin-1 encoded (for example the n with tilde in Dona Ana County is byte F1), one header row, no paging, no key. The raw bytes are kept unchanged. The https_csv adapter then pivots the file from wide to long as a purely structural step: each row becomes six records, one per year, carrying the seven identifying columns (SUMLEV, REGION, DIVISION, STATE, COUNTY, STNAME, CTYNAME) unchanged, YEAR = the four digits at the end of the column name, and POPESTIMATE = the text of that row's POPESTIMATE<YEAR> column exactly as published. No value is changed, computed, rounded or dropped by the pivot; the other columns (births, deaths, migration, rates) are kept in the raw bytes and not read."
+schema:
+  - name: census_county_pop
+    physicalName: census_county_pop
+    physicalType: table
+    logicalType: object
+    description: "One row per state or county and year (after the structural wide-to-long pivot described under servers)."
+    dataGranularityDescription: "geographic unit (state or county) x year"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://www2.census.gov/programs-surveys/popest/technical-documentation/file-layouts/2020-2025/CO-EST2025-ALLDATA.pdf"}
+    customProperties:
+      - property: totalRows
+        value: "sumlev = '040'"
+        description: "State rows (SUMLEV 040) are totals of their counties (SUMLEV 050). Structural fact checked live 2026-11-24: for all 51 states and every year 2020-2025 the state POPESTIMATE equals the sum of its county rows (0 mismatches of 306), and the 51 state rows sum to the United States row of NST-EST2025-ALLDATA for every year (e.g. 341,784,857 for 2025)."
+      - {property: tableShape, value: estimate_table}
+      - property: idDimensions
+        value:
+          condition: null
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: null
+          period: year
+          provisionalFlag: null
+        description: "A population denominator: no condition, case definition, case status or organism. Period is the July 1 reference year. The file has no provisional flag; every year is revised by the next vintage."
+    properties:
+      - name: sumlev
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Geographic level of the row: 040 a state (or DC), 050 a county or county equivalent (publisher's SUMLEV key). Kept as text so the leading zero stays."
+        examples: ["040", "050"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: SUMLEV}
+        quality:
+          - id: sumlev_codes
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["040", "050"]}
+            mustBe: 0
+            description: "The file layout lists only these two summary levels."
+      - name: region
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Census region code: 1 Northeast, 2 Midwest, 3 South, 4 West (publisher key)."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: REGION}
+      - name: division
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Census division code, 1 New England to 9 Pacific (publisher key)."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: DIVISION}
+      - name: state_fips
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Two-digit state FIPS code, as text (for example 26 for Michigan)."
+        examples: ["26", "01"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: STATE}
+      - name: county_fips
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Three-digit county FIPS code within the state, as text; 000 on state rows."
+        examples: ["163", "000"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: COUNTY}
+      - name: state_name
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "State name as the Census Bureau writes it (for example Michigan, District of Columbia)."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: STNAME}
+      - name: county_name
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "County name with its type (for example Wayne County, Orleans Parish, Capitol Planning Region); on state rows it repeats the state name. County names repeat across states, so use it only together with the state."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: CTYNAME}
+      - name: year
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "Reference year of the estimate (population on July 1 of this year). Taken from the column name POPESTIMATE<year> by the structural pivot; 2020 to 2025."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: YEAR}
+        quality:
+          - id: year_range
+            type: library
+            metric: invalidValues
+            arguments: {validValues: [2020, 2021, 2022, 2023, 2024, 2025]}
+            mustBe: 0
+            description: "The file layout lists POPESTIMATE2020 to POPESTIMATE2025."
+      - name: population
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "Estimated resident population on July 1 of the year (publisher column POPESTIMATE<year>), in persons. A count: add counties within a state or states within the nation, but never a state row to its own counties."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: POPESTIMATE}
+          - {property: unit, value: "persons"}
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: citation, value: "U.S. Census Bureau, Population Division. Annual Resident Population Estimates for States and Counties: April 1, 2020 to July 1, 2025 (CO-EST2025-ALLDATA). Vintage 2025."}
+  - {property: refresh, value: annual}
+  - {property: unreliableRule, value: {kind: none, description: "None stated: the file layout for CO-EST2025-ALLDATA gives no suppression or reliability rule; every value is a point estimate."}}
+  - property: openQuestions
+    value:
+      - "Licence: the file and its layout state no licence; public-domain-us-federal is assumed from its being a Census Bureau work (17 U.S.C. 105). Maintainer to confirm."
+      - "The ESTIMATESBASE2020 (April 1, 2020) column is not read; should a rate for 2020 use the July 1 estimate (as now) or the April 1 base?"
+      - "Counties: geo.py resolves states and the nation only, so no county series is mapped yet; county rows are readable through query_sql. Add a county series once county names can be matched by FIPS."
+      - "Should the pivot drop the July 1, 2020 estimate, since Vintage 2025 also publishes the April 1, 2020 base? Kept for now: it is the publisher's own July 1 figure."

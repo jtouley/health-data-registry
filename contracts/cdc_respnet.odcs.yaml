@@ -1,0 +1,167 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: cdc_respnet
+name: RESP-NET Rates and Clinical Data
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Hospitalization rates and selected clinical characteristics for laboratory-confirmed RSV, COVID-19 and influenza-associated hospitalizations from CDC's RESP-NET surveillance sites (dataset description, https://data.cdc.gov/api/views/kvib-3txy.json)."
+  usage: "Read weekly or cumulative hospitalization rates per 100,000 for one network, site, week and stratum; compare seasons at the same week; never add rates."
+  limitations: "Site catchment populations, not whole states; rates only (no counts); stratum labels differ between rate rows and clinical rows."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://data.cdc.gov/d/kvib-3txy", description: "Publisher dataset page"}
+    - {type: businessDefinition, url: "https://data.cdc.gov/api/views/kvib-3txy.json", description: "Socrata metadata (description, column labels, licence, update frequency, suggested citation)"}
+    - {type: businessDefinition, url: "https://www.cdc.gov/resp-net/dashboard/index.html", description: "RESP-NET dashboard named as homepage in the metadata"}
+servers:
+  - id: data_cdc_gov
+    server: data.cdc.gov
+    type: api
+    location: https://data.cdc.gov/resource/kvib-3txy.json
+schema:
+  - name: cdc_respnet
+    physicalName: cdc_respnet
+    physicalType: table
+    logicalType: object
+    description: "Long table: one estimate per network x season x date x site x age x race x sex x data type x rate type."
+    dataGranularityDescription: "surveillance network x season x week-ending date (or season) x site x age x race x sex x data type x rate type"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://data.cdc.gov/api/views/kvib-3txy.json"}
+    customProperties:
+      - property: totalRows
+        value: "state IN ('Overall', 'COVID-NET', 'FluSurv-NET', 'RSV-NET')"
+        description: "Rows for all sites of a network combined. Values observed in the live data 2026-11-24. Age 'Overall'/'All', race 'All' and sex 'All' are also margins but every site-level row carries them, so they are not listed here; rates are never summed in any case."
+      - {property: tableShape, value: rate_table}
+      - property: idDimensions
+        value:
+          condition: surveillance_network
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: null
+          period: [season, date]
+          provisionalFlag: null
+        description: "Condition is the virus network (COVID-NET, FluSurv-NET, RSV-NET, Combined). The dataset description says all counted hospitalizations are laboratory-confirmed, so there is one case status and no status column. No organism subtype or resistance field. Period is season plus week-ending date. No provisional column."
+    properties:
+      - name: surveillance_network
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Which virus surveillance network the estimate comes from: COVID-NET (COVID-19), FluSurv-NET (influenza), RSV-NET (RSV), or Combined (the three together)."
+        enum: [{value: COVID-NET}, {value: FluSurv-NET}, {value: RSV-NET}, {value: Combined}]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: surveillance_network}
+      - name: season
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Respiratory surveillance season, written like 2025-26."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: season}
+      - name: date_type
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Whether the row is for one week (Week Ending Date) or a whole season (Season). The column label also names Year and Month, not observed in the data on 2026-11-24."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: date_type}
+      - name: date
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Week-ending date as YYYY-MM-DD for weekly rows, or the season (e.g. 2025-26) for season rows. Kept as text because it mixes the two."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: date}
+      - name: age_category
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Age group of hospitalized patients; Overall (rates) or All (clinical rows) for all ages. Labels differ between rate rows (e.g. '65+ yr') and clinical rows (e.g. '≥65 years')."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: age_category}
+      - name: race
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Race and ethnicity group, or All. Labels differ between rate rows (e.g. 'Black, NH') and clinical rows (e.g. 'Non-Hispanic Black')."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: race}
+      - name: sex
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Sex of patients: Female, Male or All."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: sex}
+      - name: state
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "RESP-NET surveillance site, named by state (the site's catchment area, not necessarily the whole state), or Overall / a network name for all sites combined."
+        examples: ["Michigan", "Overall", "FluSurv-NET"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: state}
+          - property: partialPlaces
+            value: {"*": "a RESP-NET site's catchment counties, not necessarily the whole state; the dataset doesn't list the counties"}
+            description: "Dataset geographic coverage is 'RESP-NET Sites'; no site is stated to cover a whole state, so none is keyed to a whole-state GBD location."
+      - name: data_type
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "What the estimate is: Weekly Rate or Cumulative Rate of hospitalization, or the percent of hospitalized patients admitted to ICU, given invasive mechanical ventilation, dying in hospital, or having at least one underlying condition."
+        enum: [{value: "Weekly Rate"}, {value: "Cumulative Rate"}, {value: "Admitted to Intensive Care Unit"}, {value: "Invasive Mechanical Ventilation"}, {value: "In-Hospital Death"}, {value: "≥1 Underlying Condition"}]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: data_type}
+      - name: estimate_type
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Unit of the estimate: Rate per 100,000 or Percent."
+        enum: [{value: "Rate per 100,000"}, {value: Percent}]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: estimate_type}
+      - name: rate_type
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "For rates: Observed (crude), Age-Adjusted, or Estimated; empty for percent rows (column label: 'Observed, estimated, or age-adjusted')."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: rate_type}
+      - name: estimate
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Point estimate: hospitalizations per 100,000 site catchment population (rates) or percent of hospitalized patients (clinical rows); unit given by estimate_type. Published as text; cast to number."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: estimate}
+          - {property: unit, value: "see estimate_type: /100000 or %"}
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: licenceSource, value: "Socrata metadata licence 'Public Domain U.S. Government', https://www.usa.gov/government-works"}
+  - {property: citation, value: "RESP-NET: Respiratory Virus Hospitalization Surveillance Network, Centers for Disease Control and Prevention. https://data.cdc.gov/d/kvib-3txy. Accessed on <date>."}
+  - {property: refresh, value: weekly}
+  - {property: geographyBasis, value: "RESP-NET site catchment areas (dataset geographic coverage: RESP-NET Sites); the counties in each site are not listed in the dataset"}
+  - {property: rateDenominator, value: "the catchment-area population of each site per 100,000; which census estimates and vintage are not stated (see openQuestions)"}
+  - {property: unreliableRule, value: {kind: none, description: "None stated in the dataset metadata: no rate is marked unreliable or suppressed for small numbers."}}
+  - property: openQuestions
+    value:
+      - "Which counties make up each state's catchment area, and how have they changed by season? The RESP-NET methods pages (www.cdc.gov) were not fetched."
+      - "What populations are the denominators (which census estimates, which vintage)?"
+      - "Age-adjusted rates: which standard population? Needed before any comparison with GBD (GBD world standard)."
+      - "Are recent weeks provisional and how far back are they revised? Not stated in the dataset metadata."
+      - "Is a COVID-NET/FluSurv-NET/RSV-NET row with state equal to the network name the same as state = Overall, or a different (e.g. clinical-sample) aggregate?"
+      - "Should the adapter split date into a DATE week_ending column plus season rows, or keep text?"
+      - "Some rows have an empty estimate (27 on 2026-11-24, Estimated cumulative rates for the current season). Missing or not yet estimated? No missing code is published."
+      - "Is a Combined rate an unduplicated count of patients with any of the three viruses? Not stated."
+      - "Case definition: what laboratory tests and admission window define a RESP-NET case, by network and season? Not in the data; add as caseDefinitions after a maintainer reads the RESP-NET methods page."

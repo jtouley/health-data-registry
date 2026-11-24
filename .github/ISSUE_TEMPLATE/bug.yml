@@ -1,0 +1,33 @@
+name: Bug
+description: The server, a tool, the CLI or a workflow does something wrong (for a wrong number, use Wrong number).
+title: "Bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Don't describe a vulnerability here: follow [SECURITY.md](https://github.com/jtouley/health-data-registry/blob/main/SECURITY.md).
+        Don't paste patient information.
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened
+      description: What you saw, and where (tool name, CLI command, MCP client). Include the error text.
+    validations: {required: true}
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations: {required: true}
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Commands or the question asked, and the tool call if your client shows it.
+    validations: {required: true}
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The release or commit, and the MCP client and its version.
+    validations: {required: true}

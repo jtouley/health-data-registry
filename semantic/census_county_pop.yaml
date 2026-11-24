@@ -1,0 +1,42 @@
+dataset: census_county_pop
+version: 0.1.0
+dimensions:
+  - {name: geo_level, column: sumlev, type: categorical, description: "040 a state or DC; 050 a county or county equivalent."}
+  - {name: state, column: state_name, type: categorical, description: "State (or DC) the row belongs to."}
+  - {name: state_fips, column: state_fips, type: categorical, description: "Two-digit state FIPS code."}
+  - {name: county, column: county_name, type: categorical, description: "County name; repeats across states, so pair it with the state."}
+  - {name: county_fips, column: county_fips, type: categorical, description: "Three-digit county FIPS code within the state; 000 on state rows."}
+  - {name: year, column: year, type: time, description: "Year of the July 1 estimate."}
+measures:
+  - {name: population, column: population, kind: count, unit: "persons", description: "Estimated resident population on July 1."}
+metrics:
+  - name: state_population
+    description: "Resident population of a state (or DC) on July 1, read from the state row."
+    measure: population
+    aggregation: sum
+    exclude_total_rows: false
+    filters: ["sumlev = '040'"]
+  - name: national_population
+    description: "Resident population of the 50 states and DC on July 1: the sum of the 51 state rows (excludes Puerto Rico and the territories)."
+    measure: population
+    aggregation: sum
+    exclude_total_rows: false
+    filters: ["sumlev = '040'"]
+  - name: county_population
+    description: "Resident population of a county on July 1; added across counties only within the chosen places."
+    measure: population
+    aggregation: sum
+    exclude_total_rows: true
+    filters: ["sumlev = '050'"]
+series:
+  - condition: population
+    label: "Resident population (Census July 1 estimate)"
+    metric: state_population
+    measure: population
+    location_dimension: state
+    time_dimension: year
+  - condition: population
+    label: "Resident population (Census July 1 estimate)"
+    metric: national_population
+    measure: population
+    time_dimension: year
