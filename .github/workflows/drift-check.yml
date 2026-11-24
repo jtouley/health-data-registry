@@ -46,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      issues: write
+      issues: write # open or comment on the failure issue
     steps:
       - name: Open or comment on the drift issue
         env:
@@ -73,16 +73,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      actions: write
+      actions: write # re-enable the scheduled workflows
     steps:
       - name: Re-enable each scheduled workflow
         env:
           GH_TOKEN: ${{ github.token }}
+        # A workflow the maintainer disabled by hand (state disabled_manually) is left alone.
         run: |
           for wf in refresh.yml crawl-croi.yml drift-check.yml scorecard.yml; do
-            if gh api --method PUT "repos/$GITHUB_REPOSITORY/actions/workflows/$wf/enable" --silent; then
-              echo "enabled $wf"
-            else
-              echo "::warning::could not re-enable $wf"
-            fi
+            state=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$wf" --jq .state || echo unknown)
+            case "$state" in
+              active|disabled_inactivity)
+                if gh api --method PUT "repos/$GITHUB_REPOSITORY/actions/workflows/$wf/enable" --silent; then
+                  echo "enabled $wf (was $state)"
+                else
+                  echo "::warning::could not re-enable $wf (state $state)"
+                fi
+                ;;
+              *) echo "left $wf alone (state $state)" ;;
+            esac
           done

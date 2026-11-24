@@ -215,7 +215,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      issues: write
+      issues: write # open or comment on the failure issue
     steps:
       - name: Open or comment on the refresh-failure issue
         env:
