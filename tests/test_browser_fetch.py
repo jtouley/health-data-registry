@@ -68,26 +68,38 @@ class Script:
     goto_error: Exception | None = None
     returns_none: bool = False
     late: list[Resp] = field(default_factory=list)  # responses that arrive after goto returns
+    sockets: int = 0  # WebSockets the page opens
+    popups: int = 0  # popup windows the page opens
+
+
+class FakeSocket:
+    def __init__(self, record: dict[str, Any]) -> None:
+        self.record = record
+
+    def close(self) -> None:
+        self.record["sockets_closed"] = self.record.get("sockets_closed", 0) + 1
 
 
 class FakePage:
-    def __init__(self, script: Script, record: dict[str, Any]) -> None:
-        self.script, self.record = script, record
+    def __init__(self, script: Script, record: dict[str, Any], context: Any) -> None:
+        self.script, self.record, self.context = script, record, context
         self.handler: Callable[[Any], None] = lambda r: None
-        self.router: Callable[[Any], None] = lambda r: None
-
-    def route(self, pattern: str, handler: Callable[[Any], None]) -> None:
-        self.record["route_pattern"] = pattern
-        self.router = handler
 
     def on(self, event: str, handler: Callable[[Any], None]) -> None:
         assert event == "response"
         self.handler = handler
 
+    def close(self) -> None:
+        self.record["popups_closed"] = self.record.get("popups_closed", 0) + 1
+
     def goto(self, url: str, *, wait_until: str, timeout: float) -> Any:
         self.record["goto"] = (url, wait_until, timeout)
         for req in self.script.requests:
-            self.router(Route(req, self.record.setdefault("routes", [])))
+            self.context.router(Route(req, self.record.setdefault("routes", [])))
+        for _ in range(self.script.sockets):
+            self.context.socket_router(FakeSocket(self.record))
+        for _ in range(self.script.popups):
+            self.context.page_handler(FakePage(self.script, self.record, self.context))
         if self.script.goto_error is not None:
             raise self.script.goto_error
         for r in self.script.responses:
@@ -102,8 +114,27 @@ class FakePage:
 
 def fake_playwright(script: Script, record: dict[str, Any]) -> Callable[[], Any]:
     class Context:
+        def __init__(self) -> None:
+            self.router: Callable[[Any], None] = lambda r: None
+            self.socket_router: Callable[[Any], None] = lambda ws: None
+            self.page_handler: Callable[[Any], None] = lambda p: None
+
+        def route(self, pattern: str, handler: Callable[[Any], None]) -> None:
+            record["route_pattern"] = pattern
+            self.router = handler
+
+        def route_web_socket(self, pattern: str, handler: Callable[[Any], None]) -> None:
+            record["socket_pattern"] = pattern
+            self.socket_router = handler
+
+        def on(self, event: str, handler: Callable[[Any], None]) -> None:
+            assert event == "page"
+            self.page_handler = handler
+
         def new_page(self) -> FakePage:
-            return FakePage(script, record)
+            page = FakePage(script, record, self)
+            self.page_handler(page)  # Playwright announces every new page, the first one too
+            return page
 
     class Browser:
         def new_context(self, **kw: Any) -> Context:
@@ -128,7 +159,28 @@ def fake_playwright(script: Script, record: dict[str, Any]) -> Callable[[], Any]
 def run(script: Script, record: dict[str, Any] | None = None, **kw: Any) -> bf.BrowserResult:
     rec = {} if record is None else record
     kw.setdefault("capture_wait", 0.3)  # the fake's waits are instant: never spin for the real 30 s
+    kw.setdefault("resolve", resolver())
     return bf.browser_fetch(VIEW, allowed_hosts=HOSTS, playwright=fake_playwright(script, rec), **kw)
+
+
+PUBLIC = "93.184.216.34"
+
+
+def resolver(
+    answers: dict[str, list[str]] | None = None, seen: list[str] | None = None
+) -> Callable[[str], Any]:
+    """fetch.public_addresses with a fake DNS: a private answer is refused exactly as fetch.py refuses it."""
+    import ipaddress
+
+    def resolve(host: str) -> list[str]:
+        if seen is not None:
+            seen.append(host)
+        got = (answers or {}).get(host, [PUBLIC])
+        if not all(bf._fetch.is_public_address(ipaddress.ip_address(a)) for a in got):
+            raise FetchRefused("blocked_address", f"{host} resolves to a private or reserved address")
+        return got
+
+    return resolve
 
 
 DATA = Resp(
@@ -310,7 +362,8 @@ def test_the_operators_egress_proxy_is_used_when_set(monkeypatch: pytest.MonkeyP
     monkeypatch.delenv("HDR_HTTPS_PROXY")
     rec2: dict[str, Any] = {}
     run(Script(responses=[Resp(VIEW)]), rec2)
-    assert rec2["launch"] == {}
+    # without a proxy, Chromium connects to the page's host only at the address checked here
+    assert rec2["launch"] == {"args": [f"--host-resolver-rules=MAP dash.example.gov {PUBLIC}"]}
 
 
 @pytest.mark.parametrize(
@@ -397,3 +450,113 @@ def test_the_wait_stops_as_soon_as_the_data_arrive() -> None:
     rec: dict[str, Any] = {}
     run(Script(responses=[Resp(VIEW)], late=[DATA]), rec, capture=["/bootstrapSession/"], capture_wait=60.0)
     assert rec["waits"] == 1
+
+
+# ----------------------------------------------------------- addresses, redirects, sockets, popups (PR 19 review)
+
+
+def test_the_page_host_must_resolve_to_a_public_address_before_a_browser_starts() -> None:
+    rec: dict[str, Any] = {}
+    for bad in (["169.254.169.254"], ["127.0.0.1"], ["10.0.0.5"], [PUBLIC, "192.168.1.1"]):
+        with pytest.raises(FetchRefused) as e:
+            run(Script(responses=[Resp(VIEW)]), rec, resolve=resolver({"dash.example.gov": bad}))
+        assert e.value.code == "blocked_address"
+    assert "launch" not in rec
+
+
+def test_each_request_host_is_resolved_and_a_private_one_is_aborted() -> None:
+    rec: dict[str, Any] = {}
+    seen: list[str] = []
+    hosts = frozenset({"dash.example.gov", "cdn.example.gov"})
+    reqs = [
+        Req("https://cdn.example.gov/a.js", "script", False),
+        Req("https://cdn.example.gov/b.js", "script", False),
+        Req("https://dash.example.gov/c.js", "script", False),
+    ]
+    script = Script(requests=reqs, responses=[Resp(VIEW)])
+    bf.browser_fetch(VIEW, allowed_hosts=hosts, playwright=fake_playwright(script, rec), capture_wait=0.3,
+                     resolve=resolver({"cdn.example.gov": ["10.1.2.3"]}, seen))  # fmt: skip
+    assert rec["routes"] == [
+        ("abort", "https://cdn.example.gov/a.js"),
+        ("abort", "https://cdn.example.gov/b.js"),
+        ("continue", "https://dash.example.gov/c.js"),
+    ]
+    assert seen == ["dash.example.gov", "cdn.example.gov"]  # each host resolved once per fetch
+
+
+def test_robots_policy_can_refuse_same_host_requests() -> None:
+    rec: dict[str, Any] = {}
+    reqs = [Req("https://dash.example.gov/vizql/x", "xhr", False),
+            Req("https://dash.example.gov/ok.js", "script", False)]  # fmt: skip
+    run(Script(requests=reqs, responses=[Resp(VIEW)]), rec, allow=lambda u: "/vizql/" not in u)
+    assert rec["routes"] == [
+        ("abort", "https://dash.example.gov/vizql/x"),
+        ("continue", "https://dash.example.gov/ok.js"),
+    ]
+
+
+class Hop:
+    def __init__(self, url: str, before: Any = None) -> None:
+        self.url, self.redirected_from = url, before
+
+
+@pytest.mark.parametrize("first", ["https://evil.example.com/landing", "http://dash.example.gov/insecure"])
+def test_a_redirect_chain_through_a_disallowed_address_refuses_the_load(first: str) -> None:
+    # The document's request was redirected: route() never saw the first hop, so it is checked after the load.
+    req = Req(VIEW)
+    req.redirected_from = Hop("https://dash.example.gov/start", Hop(first))  # type: ignore[attr-defined]
+    with pytest.raises(FetchRefused) as e:
+        run(Script(responses=[Resp(VIEW, request=req)]))
+    assert e.value.code == "redirect_refused" and "outside the catalogued publisher hosts" in e.value.message
+
+
+def test_a_captured_answer_from_another_host_refuses_the_load() -> None:
+    elsewhere = "https://evil.example.com/vizql/bootstrapSession/sessions/1"
+    stray = Resp(elsewhere, content=b"2;{}", request=Req(elsewhere, "xhr", False))
+    with pytest.raises(FetchRefused) as e:
+        run(Script(responses=[stray, Resp(VIEW)]), capture=["/bootstrapSession/"])
+    assert e.value.code == "redirect_refused"
+
+
+def test_a_final_page_on_a_private_address_refuses_the_load() -> None:
+    hosts = frozenset({"dash.example.gov", "inner.example.gov"})
+    inner = "https://inner.example.gov/x"
+    script = Script(responses=[Resp(inner, request=Req(inner))])
+    with pytest.raises(FetchRefused) as e:
+        bf.browser_fetch(VIEW, allowed_hosts=hosts, capture_wait=0.3, playwright=fake_playwright(script, {}),
+                         resolve=resolver({"inner.example.gov": ["127.0.0.1"]}))  # fmt: skip
+    assert e.value.code == "redirect_refused"
+
+
+def test_a_same_host_redirect_chain_is_fine() -> None:
+    req = Req(VIEW)
+    req.redirected_from = Hop("https://dash.example.gov/views/Toy/TB")  # type: ignore[attr-defined]
+    assert run(Script(responses=[Resp(VIEW, request=req)])).page.status == 200
+
+
+def test_websockets_are_closed_and_popups_are_closed(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("INFO", logger="health_data_registry.browser_fetch")
+    rec: dict[str, Any] = {}
+    run(Script(responses=[Resp(VIEW)], sockets=2, popups=1), rec)
+    assert rec["socket_pattern"] == "**/*" and rec["sockets_closed"] == 2
+    assert rec["popups_closed"] == 1  # the page itself is never closed as a popup
+    assert "browser fetch: 1 popup windows were closed (host=dash.example.gov)" in caplog.messages
+
+
+def test_requests_robots_refused_are_logged(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("INFO", logger="health_data_registry.browser_fetch")
+    reqs = [Req("https://dash.example.gov/vizql/x", "xhr", False)]
+    run(Script(requests=reqs, responses=[Resp(VIEW)]), allow=lambda u: False)
+    assert (
+        "browser fetch: 1 requests robots.txt disallows were not made (host=dash.example.gov)"
+        in caplog.messages
+    )
+
+
+def test_ipv6_addresses_are_pinned_in_brackets() -> None:
+    assert bf._pin_rule("h.example.gov", "2606:2800:220:1::1") == "MAP h.example.gov [2606:2800:220:1::1]"
+    assert bf._pin_rule("h.example.gov", "93.184.216.34") == "MAP h.example.gov 93.184.216.34"
+
+
+def test_host_of_a_malformed_url_is_empty() -> None:
+    assert bf._host("https://[::1") == "" and bf._host("https://Dash.Example.gov/x") == "dash.example.gov"
