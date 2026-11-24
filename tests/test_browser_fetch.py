@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -126,6 +127,7 @@ def fake_playwright(script: Script, record: dict[str, Any]) -> Callable[[], Any]
 
 def run(script: Script, record: dict[str, Any] | None = None, **kw: Any) -> bf.BrowserResult:
     rec = {} if record is None else record
+    kw.setdefault("capture_wait", 0.3)  # the fake's waits are instant: never spin for the real 30 s
     return bf.browser_fetch(VIEW, allowed_hosts=HOSTS, playwright=fake_playwright(script, rec), **kw)
 
 
@@ -267,6 +269,15 @@ def test_data_that_arrives_after_the_page_is_waited_for() -> None:
     assert len(got.captured) == 1 and rec["waits"] >= 1
 
 
+@pytest.mark.parametrize(("timeout", "capture_wait"), [(0.3, 60.0), (60.0, 0.3)])
+def test_the_wait_for_data_ends_at_the_shorter_of_the_two_limits(timeout: float, capture_wait: float) -> None:
+    rec: dict[str, Any] = {}
+    start = time.monotonic()
+    got = run(Script(responses=[Resp(VIEW)]), rec, capture=["/bootstrapSession/"], timeout=timeout,
+              capture_wait=capture_wait)  # fmt: skip
+    assert got.captured == () and rec["waits"] >= 1 and time.monotonic() - start < 10
+
+
 def test_no_wait_when_nothing_is_captured() -> None:
     rec: dict[str, Any] = {}
     run(Script(responses=[Resp(VIEW)]), rec)
@@ -312,3 +323,77 @@ def test_the_operators_egress_proxy_is_used_when_set(monkeypatch: pytest.MonkeyP
 )
 def test_is_blocked(status: int, body: bytes, blocked: bool) -> None:
     assert bf.is_blocked(status, body) is blocked
+
+
+def test_the_challenge_scan_reads_exactly_the_first_200000_bytes() -> None:
+    title = b"<title>Access Denied</title>"
+    assert bf.is_blocked(200, b"x" * (200_000 - len(title)) + title) is True
+    assert bf.is_blocked(200, b"x" * (200_001 - len(title)) + title) is False
+
+
+def test_the_browser_context_and_navigation_are_exactly_as_documented() -> None:
+    rec: dict[str, Any] = {}
+    run(Script(responses=[Resp(VIEW)]), rec, timeout=12.5)
+    assert rec["context"] == {
+        "user_agent": USER_AGENT, "accept_downloads": False, "service_workers": "block", "locale": "en-US"
+    }  # fmt: skip
+    assert rec["goto"] == (VIEW, "networkidle", 12_500)
+
+
+def test_each_kept_answer_carries_its_own_address_and_type() -> None:
+    got = run(
+        Script(responses=[DATA, Resp(VIEW + "&x=1", request=Req(VIEW))]), capture=["/bootstrapSession/"]
+    )
+    assert got.page.url == VIEW and got.page.final_url == VIEW + "&x=1"
+    assert got.page.content_type == "text/html"
+    (data,) = got.captured
+    assert data.url == data.final_url == DATA.url and data.content_type == "text/plain"
+
+
+def test_a_body_of_exactly_the_limit_is_kept_and_a_limit_of_one_is_allowed() -> None:
+    got = run(Script(responses=[Resp(VIEW, content=b"0123456789")]), max_bytes=10)
+    assert got.page.content == b"0123456789"
+    assert run(Script(responses=[Resp(VIEW, content=b"x")]), max_bytes=1).page.content == b"x"
+    with pytest.raises(ValueError, match="max_bytes and timeout must be positive"):
+        run(Script(), max_bytes=0)
+
+
+def test_refusals_name_the_host_in_plain_words() -> None:
+    with pytest.raises(FetchRefused, match="dash.example.gov took too long"):
+        run(Script(goto_error=TimeoutError_("slow")))
+    with pytest.raises(FetchRefused, match="could not load the page from dash.example.gov"):
+        run(Script(goto_error=RuntimeError("net::ERR")))
+    with pytest.raises(FetchRefused, match="A response from dash.example.gov is larger"):
+        run(Script(responses=[Resp(VIEW, content=b"x" * 20)]), max_bytes=10)
+    with pytest.raises(FetchRefused, match="no answer from dash.example.gov"):
+        run(Script(returns_none=True))
+    with pytest.raises(FetchRefused, match="answered with status 502"):
+        run(Script(responses=[Resp(VIEW, status=502)]))
+    with pytest.raises(FetchRefused, match="dash.example.gov refused .* not worked around"):
+        run(Script(responses=[Resp(VIEW, status=403)]))
+
+
+def test_a_blocking_status_on_the_final_page_is_a_block_whatever_its_body() -> None:
+    with pytest.raises(FetchRefused) as e:
+        run(Script(responses=[Resp(VIEW, status=429, content=b"<html>ok</html>")]))
+    assert e.value.code == "blocked" and e.value.status == 429
+
+
+def test_what_was_fetched_and_what_was_not_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("INFO", logger="health_data_registry.browser_fetch")
+    reqs = [
+        Req("https://cdn.elsewhere.com/x.js", "script", False),
+        Req("https://dash.example.gov/a.png", "image"),
+    ]
+    gone = Resp(DATA.url, request=DATA.request, gone=True)
+    run(Script(requests=reqs, responses=[gone, Resp(VIEW)]), capture=["/bootstrapSession/"])
+    msgs = [r.getMessage() for r in caplog.records]
+    assert "browser fetch: a response from dash.example.gov had no readable body" in msgs
+    assert "browser fetch: 1 requests to other hosts were not made (host=dash.example.gov)" in msgs
+    assert "browser fetched: host=dash.example.gov bytes=15 captured=1" in msgs
+
+
+def test_the_wait_stops_as_soon_as_the_data_arrive() -> None:
+    rec: dict[str, Any] = {}
+    run(Script(responses=[Resp(VIEW)], late=[DATA]), rec, capture=["/bootstrapSession/"], capture_wait=60.0)
+    assert rec["waits"] == 1
