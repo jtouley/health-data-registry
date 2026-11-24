@@ -13,7 +13,7 @@ id_areas:
 - respiratory
 - vaccine_preventable
 years:
-  start: 2020
+  start: 2026
   end: null
 geography:
 - world
@@ -34,84 +34,13 @@ source:
   dataset: journals/2732-494X
   landing_url: https://www.cambridge.org/core/journals/antimicrobial-stewardship-and-healthcare-epidemiology
   api_url: https://api.crossref.org/journals/2732-494X/works
-  conference: shea
-  conference_name: SHEA Spring Conference
   supplements:
-  - year: 2020
-    issn: 0899-823X
-    volume: '41'
-    issue: S1
-    from_pub_date: '2020-09-01'
-    until_pub_date: '2020-11-30'
-    verified: true
-    evidence: 'OpenAlex and Crossref, read 24 Nov 2026: a different venue this year. Before ASHE existed, SHEA''s
-      abstracts went to Infection Control & Hospital Epidemiology (ICHE, ISSN 0899-823X): volume 41, issue S1
-      (October 2020) holds about 740 works (DOIs 10.1017/ice.2020.*, supplement pages s1 on) under Cambridge''s own
-      terms (cambridge.org/core/terms), so the year is link only. ICHE has no other
-      abstract supplement from 2015 to 2021. That this supplement holds the SHEA meeting of 2020 (the Decennial,
-      which took the place of SHEA Spring that year) is inferred and is an open question until the maintainer
-      confirms it.'
-  - year: 2021
-    issn: 2732-494X
-    volume: '1'
-    issue: S1
-    from_pub_date: '2021-06-01'
-    until_pub_date: '2021-08-31'
-    verified: true
-    evidence: 'OpenAlex and Crossref, read 24 Nov 2026: ASHE volume 1, issue S1 (July 2021) holds about 158 works
-      (DOIs 10.1017/ash.2021.*), CC BY 4.0 with abstracts (one front-matter item has no licence). That this is
-      SHEA Spring 2021 (virtual) is inferred and is an open question until the maintainer confirms it.'
-  - year: 2022
-    issn: 2732-494X
-    volume: '2'
-    issue: S1
-    from_pub_date: '2022-05-01'
-    until_pub_date: '2022-06-30'
-    verified: true
-    evidence: 'OpenAlex and Crossref, read 24 Nov 2026: ASHE volume 2, issue S1 (16 May 2022) holds about 165 works
-      (DOIs 10.1017/ash.2022.*), CC BY 4.0 with abstracts. That this is SHEA Spring 2022 is inferred and is an
-      open question until the maintainer confirms it.'
-  - year: 2023
-    issn: 2732-494X
-    volume: '3'
-    issue: S2
-    from_pub_date: '2023-05-01'
-    until_pub_date: '2023-07-31'
-    verified: true
-    evidence: 'OpenAlex and Crossref, read 24 Nov 2026: ASHE volume 3, issue S2 (June 2023) holds about 200 works
-      (DOIs 10.1017/ash.2023.*), CC BY 4.0 with abstracts. Issue S1 (February 2023, about 110 works titled
-      SG-APSIC...) is another society''s meeting and fails the issue filter. That S2 is SHEA Spring 2023 is
-      inferred and is an open question until the maintainer confirms it.'
-  - year: 2024
-    issn: 2732-494X
-    volume: '4'
-    issue: S1
-    from_pub_date: '2024-06-01'
-    until_pub_date: '2024-08-31'
-    verified: true
-    evidence: 'OpenAlex and Crossref, read 24 Nov 2026: ASHE volume 4, issue S1 (July 2024) holds about 245 works
-      (DOIs 10.1017/ash.2024.*), CC BY 4.0 with abstracts. That this is SHEA Spring 2024 is inferred and is an
-      open question until the maintainer confirms it.'
-  - year: 2025
-    issn: 2732-494X
-    volume: '5'
-    issue: S2
-    from_pub_date: '2025-06-01'
-    until_pub_date: '2025-08-31'
-    verified: true
-    evidence: 'Crossref, read 24 Nov 2026: ASHE volume 5, issue S2 (July 2025) holds at least 230 works (DOIs
-      10.1017/ash.2025.*), CC BY 4.0 with abstracts, on US-style topics (facility-onset C. difficile, CAUTI,
-      daptomycin dosing); OpenAlex lists only 5 of them under S2. Issue S1 (May 2025) is titled after Asian
-      infection-control programmes (e.g. a Singapore hospital''s staff health records, the Gyssens method), so it is
-      read as another society''s meeting and fails the issue filter. That S2 is SHEA Spring 2025 is inferred and is
-      an open question until the maintainer confirms it.'
   - year: 2026
     issn: 2732-494X
     volume: '6'
     issue: S1
     from_pub_date: '2026-06-01'
     until_pub_date: '2026-07-31'
-    verified: true
     evidence: 'Crossref, read 24 Nov 2026: ASHE volume 6, issue S1 (published 23 June 2026) holds 310 works (DOIs
       10.1017/ash.2026.*), all CC BY 4.0 with abstracts. That this supplement is SHEA Spring 2026 is inferred from
       its timing and topics and is an open question until the maintainer confirms it on the journal''s issue page.'
@@ -126,8 +55,8 @@ caveats:
 - Abstract text is kept only where its licence is Creative Commons; otherwise read the abstract at its DOI link.
 - Condition, design, data-source and geography tags come from fixed word rules over the title and text, not from
   a model; a missing tag doesn't mean the topic is absent.
-- Kept in this source's private store only for now. CC BY and CC0 abstracts may be shared publicly, always with
-  their authors, title, journal, DOI link and licence; other licences never are.
+- Kept in this source's private store only, until the maintainer confirms which parts may be redistributed; never
+  in a public release.
 contract: contracts/shea_abstracts.odcs.yaml
 semantic_model: semantic/shea_abstracts.yaml
 status: draft

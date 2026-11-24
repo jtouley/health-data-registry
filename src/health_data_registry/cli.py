@@ -238,7 +238,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "harvest-doi",
         help="harvest one conference year's abstracts by DOI (Crossref, OpenAlex, Europe PMC) into its private store",
     )
-    hd.add_argument("conference", help="the catalog's conference key: idweek, shea, apic, icid, ...")
+    hd.add_argument("conference", choices=["idweek", "shea", "apic", "icid"])
     hd.add_argument("--year", type=int, default=None, help="conference year; default the latest catalogued")
     hd.add_argument("--max-records", type=int, default=None, help="stop after this many DOIs (a sample)")
     hd.add_argument("--no-enrich", action="store_true", help="Crossref only; skip OpenAlex and Europe PMC")

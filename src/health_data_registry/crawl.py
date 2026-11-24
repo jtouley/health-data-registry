@@ -73,19 +73,14 @@ class Robots:
         rp = RobotFileParser()
         try:
             r = fetch(f"https://{host}/robots.txt", allowed_hosts=self.hosts, timeout=ROBOTS_TIMEOUT_S)
-            status = r.status
-        except FetchRefused as e:  # the fetcher raises for every status but 200
-            if e.status is None:
-                return None  # can't be read now (timeout, refused connection): asked again on the next fetch
-            status = e.status
-        if status == 200:
             rp.parse(r.content.decode("utf-8", "replace").splitlines())
-        elif status in (401, 403):
-            rp.parse(["User-agent: *", "Disallow: /"])
-        elif 400 <= status < 500 and status != 429:
-            rp.parse([])  # no robots.txt (404, 410, ...): no rules
-        else:
-            return None  # busy or failing (429, 5xx): asked again on the next fetch
+        except FetchRefused as e:  # the fetcher raises for every status but 200
+            if e.status in (401, 403):
+                rp.parse(["User-agent: *", "Disallow: /"])
+            elif e.status is not None and 400 <= e.status < 500 and e.status != 429:
+                rp.parse([])  # no robots.txt (404, 410, ...): no rules
+            else:
+                return None  # can't be read now (timeout, 429, 5xx): asked again on the next fetch
         self.rules[host] = rp
         return rp
 
@@ -95,15 +90,15 @@ class Robots:
 
         host = (urlsplit(url).hostname or "").lower()
         rp = self._rules(host)
-        if rp is not None and not rp.can_fetch(ROBOTS_AGENT, url):
+        if rp is None:
+            return
+        if not rp.can_fetch(ROBOTS_AGENT, url):
             raise FetchRefused(
                 "robots_disallowed",
                 f"The publisher's robots.txt at {host} asks automated tools not to read this address, so it was "
                 "not fetched.",
             )
-        # An API's own rate limit applies even while its robots.txt can't be read.
-        crawl_delay = float(rp.crawl_delay(ROBOTS_AGENT) or 0) if rp is not None else 0.0
-        delay = max(crawl_delay, self.min_interval.get(host, 0.0))
+        delay = max(float(rp.crawl_delay(ROBOTS_AGENT) or 0), self.min_interval.get(host, 0.0))
         if host in self.last and delay > 0:
             due = self.last[host] + delay - self.clock()
             if due > 0:
@@ -137,15 +132,14 @@ def fetcher(
     policy = Robots(hosts, sleep=sleep) if robots is True else robots or None
 
     def get(url: str) -> RawFetch:
+        if policy is not None:
+            try:
+                policy.wait_turn(url)
+            except FetchRefused as e:
+                if log is not None:
+                    log.record(url, ok=False, when=datetime.now(UTC), error=str(e))
+                raise
         for attempt in range(RETRIES):
-            # Every attempt, retries included, waits its turn: a retry never comes sooner than the crawl delay.
-            if policy is not None:
-                try:
-                    policy.wait_turn(url)
-                except FetchRefused as e:
-                    if log is not None:
-                        log.record(url, ok=False, when=datetime.now(UTC), error=str(e))
-                    raise
             when = datetime.now(UTC)
             try:
                 r = fetch(
@@ -153,7 +147,7 @@ def fetcher(
                 )
             except FetchRefused as e:
                 if log is not None:
-                    log.record(url, ok=False, when=when, http_status=e.status, error=str(e))
+                    log.record(url, ok=False, when=when, error=str(e))
                 # A slow, busy or briefly unreachable publisher is retried; a refused URL or host never is.
                 rate_limited = e.code == "http_error" and e.status in (429, 503)
                 if (

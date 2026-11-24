@@ -115,9 +115,7 @@ jobs:
     name: Mutation tests (changed modules)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    # A pull request that adds or touches most modules (the first one adds about 13,800 mutants) needs about
-    # 70 minutes at a GitHub runner's pace; 45 cancelled it part way. The floor (70%) is unchanged.
-    timeout-minutes: 120
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

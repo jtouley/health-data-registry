@@ -2,11 +2,8 @@
 
     health-data-registry harvest-doi <conference> [--year YYYY] [--max-records N] [--no-enrich]
 
-A conference is one catalog entry (portal ``doi``, hosting: private): ``source.conference`` is its key and
-``source.supplements`` say, per year, where its abstracts are in Crossref (ISSN, volume, issue, page and DOI
-patterns), whether there is one DOI per abstract or one per congress, the text policy (by licence, or link only
-for a subscriber-only supplement) and whether the route is verified (an unverified year harvests one record).
-Adding a conference is adding a catalog entry, its contract and semantic model; no code. One run:
+Conferences: idweek, shea, apic, icid; each is the catalog source ``<conference>_abstracts`` (hosting: private),
+whose ``source.supplements`` say where each year's abstracts are in Crossref. One run:
 
 1. lists the supplement from Crossref (``/journals/<ISSN>/works``, paged by cursor, kept by the supplement's
    structural filters), stopping early at ``--max-records``;
@@ -32,54 +29,28 @@ from typing import Any
 
 from health_data_registry import private, research_tags
 from health_data_registry.adapters import doi_abstracts as doi
-from health_data_registry.fetch import FetchRefused
-from health_data_registry.registry import (
-    Attribution,
-    AttributionMissing,
-    Dataset,
-    Registry,
-    Supplement,
-    require_attribution,
-)
+from health_data_registry.registry import Dataset, Registry, Supplement
 from health_data_registry.store import FetchLog, RawFetch, write_raw
 
+CONFERENCES: dict[str, str] = {
+    "idweek": "IDWeek",
+    "shea": "SHEA Spring Conference",
+    "apic": "APIC Annual Conference",
+    "icid": "International Congress on Infectious Diseases (ICID)",
+}
 Getter = Callable[[str], RawFetch]
-# The columns every research-index row shares with the CROI index (croi_index.records on the CROI branch), so
-# all conferences land in one index: the abstract's id, year, title, authors as published, session, links and
-# our rule-based tags.
-RESEARCH_INDEX_COLUMNS: tuple[str, ...] = (
-    "abstract_number", "year", "title", "authors", "session_type", "session_title", "category", "page_url",
-    "poster_url", "condition_tags", "design_tags", "data_source_tags", "geography_tags", "pubmed_pmid",
-    "retrieved_at",
-)  # fmt: skip
-
-
-# The row columns that carry each attribution field a CC BY or CC0 abstract must keep to be shared publicly.
-ROW_ATTRIBUTION = Attribution(
-    authors="authors", title="title", journal="journal", doi_url="doi_url", licence="abstract_licence"
-)
 
 
 class HarvestRefused(ValueError):
     """The harvest can't start (unknown conference or year); the message is plain words."""
 
 
-def conferences(registry: Registry) -> dict[str, Dataset]:
-    """Every DOI-harvested conference in the catalog, by its key: a conference is one catalog entry."""
-    return {
-        ds.entry.source.conference: ds
-        for ds in registry
-        if ds.entry.source.portal == "doi" and ds.entry.source.conference
-    }
-
-
-def conference_dataset(registry: Registry, conference: str) -> Dataset:
-    known = conferences(registry)
-    if conference not in known:
+def source_id(conference: str) -> str:
+    if conference not in CONFERENCES:
         raise HarvestRefused(
-            f"{conference!r} is not a DOI-harvested conference; choose one of {', '.join(sorted(known))}"
+            f"{conference!r} is not a DOI-harvested conference; choose one of {', '.join(CONFERENCES)}"
         )
-    return known[conference]
+    return f"{conference}_abstracts"
 
 
 def supplement(ds: Dataset, year: int | None) -> Supplement:
@@ -115,7 +86,7 @@ class HarvestSummary:
     licences: dict[str, int] = field(default_factory=dict)
     crossref_total: int | None = None  # works in the publication-date window, before the supplement filters
     complete: bool = False  # every page of the window was read (no --max-records stop)
-    skipped: list[str] = field(default_factory=list)  # an enriching API that couldn't be read, in plain words
+    stopped: str | None = None
 
     def lines(self) -> list[str]:
         reqs = ", ".join(f"{k} {v}" for k, v in sorted(self.requests.items())) or "none"
@@ -128,7 +99,8 @@ class HarvestSummary:
             if self.complete
             else "a sample: the supplement was not read in full",
         ]
-        out += [f"note: {s}" for s in self.skipped]
+        if self.stopped:
+            out.append(f"stopped: {self.stopped}")
         return out
 
 
@@ -151,34 +123,24 @@ def _batches(items: Sequence[str], size: int) -> Iterable[list[str]]:
         yield list(items[i : i + size])
 
 
-def row(a: doi.Abstract, *, sup: Supplement, prov: Provenance, conference_name: str) -> dict[str, Any]:
-    """The research-index row for one merged abstract (the contract's columns, nothing else).
-
-    A CC BY or CC0 abstract is public only with full attribution (registry.require_attribution); one that lacks
-    any attribution field is refused the public tier and its text stays private.
-    """
-    tier: doi.Tier = "link_only" if sup.text_policy == "link_only" else a.tier
-    link = f"https://doi.org/{a.doi}"
-    out = {
+def row(a: doi.Abstract, *, year: int, prov: Provenance, conference: str) -> dict[str, Any]:
+    """The research-index row for one merged abstract (the contract's columns, nothing else)."""
+    tier = a.tier
+    return {
         "doi": a.doi,
-        "conference": conference_name,
-        "year": sup.year,
-        "granularity": sup.granularity,
-        # A congress-level record is the whole abstract book: it has no abstract number.
-        "abstract_number": a.abstract_number if sup.granularity == "abstract" else None,
+        "conference": CONFERENCES[conference],
+        "year": year,
+        "abstract_number": a.abstract_number,
         "title": a.title,
         "authors": a.authors,
         "session_type": None,
         "session_title": None,
-        "category": None,
-        "page_url": link,
-        "poster_url": None,
         "journal": a.journal,
         "volume": a.volume,
         "issue": a.issue,
         "pages": a.pages,
         "published": a.published,
-        "doi_url": link,
+        "doi_url": f"https://doi.org/{a.doi}",
         **research_tags.tag_record(a.title, a.abstract),
         "abstract_text": a.abstract if tier != "link_only" else None,
         "abstract_tier": tier,
@@ -191,12 +153,6 @@ def row(a: doi.Abstract, *, sup: Supplement, prov: Provenance, conference_name: 
         "raw_sha256": prov.sha256,
         "retrieved_at": prov.retrieved_at,
     }
-    if tier == "public":
-        try:
-            require_attribution(out, ROW_ATTRIBUTION)
-        except AttributionMissing:
-            out["abstract_tier"] = "private"
-    return out
 
 
 def harvest(
@@ -212,13 +168,11 @@ def harvest(
     """Harvest one conference year into its private store. See the module doc."""
     from health_data_registry.crawl import Robots, fetcher
 
-    ds = conference_dataset(registry, conference)
+    ds = registry.get(source_id(conference))
     private.require_private(ds)
     sup = supplement(ds, year)
     if max_records is not None and max_records < 1:
         raise HarvestRefused("--max-records must be at least 1")
-    if not sup.verified:
-        max_records = 1  # an unverified route is checked with one record, never harvested in full
     summary = HarvestSummary(source=ds.id, year=sup.year)
     if get is None:
         robots = Robots(registry.hosts, budget_s=float("inf"), min_interval_s=doi.MIN_INTERVAL_S)
@@ -251,24 +205,16 @@ def harvest(
     # 2. OpenAlex and Europe PMC for the same DOIs.
     found: list[doi.ApiRecord] = list(listed)
     if enrich and dois:
-        # Crossref alone makes a row; an API that adds to it and can't be read now is noted, not fatal.
-        enrichers = (
-            ("openalex", "OpenAlex", doi.OPENALEX_BATCH, doi.openalex_url, doi.parse_openalex),
-            ("europepmc", "Europe PMC", doi.EUROPEPMC_BATCH, doi.europepmc_url, doi.parse_europepmc),
-        )
-        for api, label, size, url_of, parse in enrichers:
-            try:
-                for batch in _batches(dois, size):
-                    content, _ = client(api, url_of(batch))
-                    found += [r for r in parse(content) if r.doi in origin]
-            except (FetchRefused, RuntimeError) as e:
-                why = e.message if isinstance(e, FetchRefused) else str(e)
-                summary.skipped.append(f"{label} could not be read ({why}); its fields are missing this run")
+        for batch in _batches(dois, doi.OPENALEX_BATCH):
+            content, _ = client("openalex", doi.openalex_url(batch))
+            found += [r for r in doi.parse_openalex(content) if r.doi in origin]
+        for batch in _batches(dois, doi.EUROPEPMC_BATCH):
+            content, _ = client("europepmc", doi.europepmc_url(batch))
+            found += [r for r in doi.parse_europepmc(content) if r.doi in origin]
 
     # 3. One row per DOI, into the private store.
     merged = doi.merge(found)
-    name = ds.entry.source.conference_name or ds.entry.title
-    out = [row(a, sup=sup, prov=origin[d], conference_name=name) for d, a in merged.items()]
+    out = [row(a, year=sup.year, prov=origin[d], conference=conference) for d, a in merged.items()]
     for r in out:
         summary.tiers[r["abstract_tier"]] = summary.tiers.get(r["abstract_tier"], 0) + 1
         lic = r["abstract_licence"] or "none given"
