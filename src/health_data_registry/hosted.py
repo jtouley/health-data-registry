@@ -447,6 +447,15 @@ def build_hosted(
     return HostedMiddleware(app, limiter, metrics, names), state
 
 
+def uvicorn_config(app: Any, host: str, port: int) -> Any:
+    """uvicorn with no access log and no logging setup of its own (so the privacy filter sees everything)."""
+    import uvicorn
+
+    return uvicorn.Config(
+        app, host=host, port=port, access_log=False, log_config=None, server_header=False, proxy_headers=False
+    )
+
+
 def main(host: str = "0.0.0.0", port: int = 7860) -> None:  # noqa: S104 - the Space routes its public port here
     import uvicorn
 
@@ -454,7 +463,5 @@ def main(host: str = "0.0.0.0", port: int = 7860) -> None:  # noqa: S104 - the S
     app, state = build_hosted()
     configure_logging()  # the SDK set up its own handler while the server was built; take it back
     threading.Thread(target=state.warm_up, daemon=True, name="warm-up").start()
-    log.info("serving %s on port %d (release resolved at warm start)", MCP_PATH, port)
-    uvicorn.run(
-        app, host=host, port=port, access_log=False, log_config=None, server_header=False, proxy_headers=False
-    )
+    log.info("serving %s on port %d", MCP_PATH, port)
+    uvicorn.Server(uvicorn_config(app, host, port)).run()
