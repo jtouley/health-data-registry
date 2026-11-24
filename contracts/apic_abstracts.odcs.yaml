@@ -351,6 +351,11 @@ customProperties:
   - Confirm that the S-paginated works of AJIC volume 54 issue 6 (June 2026, 223 works) are the APIC 2026 Annual
     Conference abstracts, and whether any of them (an introduction, an author index) is not an abstract and belongs
     in exclude_dois.
+  - 'Earlier years, 2017 to 2025, are catalogued the same way (AJIC volumes 45 to 53, S pages), each checked with a
+    three-record sample harvest; which APIC conference each holds is inferred. The issue moves: June (issue 6) in
+    most years, August (issue 8) in 2020 and July (issue 7) in 2022 and 2023. Every sampled year is under Elsevier''s
+    text-mining licence, so link only. The 2017 sample included a work titled Withdrawn: confirm whether withdrawn
+    abstracts belong in exclude_dois.'
   - Crossref and OpenAlex give no abstract text for these works and Elsevier's licence does not allow a copy, so
     rows are link-only unless an abstract is CC licensed and an API gives its text.
   - 'Redistribution: CC BY (any version) and CC0 text may now be shared publicly with full attribution on every
