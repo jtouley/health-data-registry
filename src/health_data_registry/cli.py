@@ -1,4 +1,4 @@
-"""Command line: serve, refresh, fetch, export-public, check-contracts, validate, eval, and the analysis tools."""
+"""Command line: serve [--http], refresh, fetch, export-public, check-contracts, validate, eval, and the analysis tools."""
 
 from __future__ import annotations
 
@@ -156,7 +156,14 @@ def run_analysis(registry: Registry, a: argparse.Namespace) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="health-data-registry", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("serve", help="run the MCP server on stdio")
+    sv = sub.add_parser(
+        "serve", help="run the MCP server on stdio, or with --http the hosted read-only server"
+    )
+    sv.add_argument(
+        "--http", action="store_true", help="Streamable HTTP for the hosted connector (hub releases only)"
+    )
+    sv.add_argument("--host", default="0.0.0.0", help="with --http: address to listen on")  # noqa: S104
+    sv.add_argument("--port", type=int, default=7860, help="with --http: port (a Space's app_port)")
     r = sub.add_parser("refresh", help="fetch datasets from their publishers into the local lake")
     r.add_argument("datasets", nargs="*")
     r.add_argument("--all", action="store_true")
@@ -188,6 +195,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     except RegistryError as e:
         print(f"registry error: {e}", file=sys.stderr)
         return 2
+    if a.cmd == "serve" and a.http:
+        from health_data_registry.hosted import main as serve_http
+
+        serve_http(host=a.host, port=a.port)
+        return 0
     if a.cmd == "serve":
         from health_data_registry.server import main as serve
 

@@ -29,7 +29,13 @@ class LiveOnly(ValueError):
 def fetcher(
     registry: Registry, log: FetchLog | None = None, *, sleep: Callable[[float], None] = time.sleep
 ) -> Getter:
-    """A getter for catalogued publisher URLs that retries slow publishers and logs every attempt."""
+    """A getter for catalogued publisher URLs that retries slow publishers and logs every attempt.
+
+    Inside a call deadline (deadline.call_deadline, the hosted server), every attempt is capped by what is left of
+    the budget and no retry starts once the budget can't cover its back-off: the call stops with
+    deadline.DeadlineExceeded instead of retrying past it.
+    """
+    from health_data_registry import deadline
     from health_data_registry.fetch import FetchRefused, fetch
 
     hosts = registry.hosts
@@ -37,17 +43,23 @@ def fetcher(
     def get(url: str) -> RawFetch:
         for attempt in range(RETRIES):
             when = datetime.now(UTC)
+            budget = deadline.cap(FETCH_TIMEOUT_S)  # raises DeadlineExceeded when nothing is left
             try:
-                r = fetch(
-                    url, allowed_hosts=hosts, headers={"Accept": "application/json"}, timeout=FETCH_TIMEOUT_S
-                )
+                r = fetch(url, allowed_hosts=hosts, headers={"Accept": "application/json"}, timeout=budget)
             except FetchRefused as e:
                 if log is not None:
                     log.record(url, ok=False, when=when, error=str(e))
                 # A slow or briefly unreachable publisher is retried; a refused URL or host never is.
                 if e.code not in ("timeout", "connect_failed") or attempt == RETRIES - 1:
+                    left = deadline.remaining()
+                    if e.code == "timeout" and left is not None and left <= 0:
+                        raise deadline.DeadlineExceeded() from e
                     raise
-                sleep(2 ** (attempt + 1))
+                pause = 2 ** (attempt + 1)
+                left = deadline.remaining()
+                if left is not None and left <= pause:
+                    raise deadline.DeadlineExceeded() from e
+                sleep(pause)
                 continue
             if r.status != 200:
                 msg = f"the publisher answered with status {r.status} instead of the data"

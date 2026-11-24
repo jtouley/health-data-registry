@@ -393,6 +393,7 @@ class Engine:
 
     def _obtain(self, ds: Dataset) -> bool:
         """Bring one source in: from the hub release, or live from the publisher (memory only)."""
+        from health_data_registry.deadline import DeadlineExceeded
         from health_data_registry.hub import HubError
 
         if ds.entry.licence.redistribution:
@@ -411,6 +412,8 @@ class Engine:
         get = self.getter or fetcher(self.registry, None)
         try:
             self._live[ds.id] = fetch_live(ds, get)
+        except DeadlineExceeded:
+            raise  # the hosted call's budget ran out: its own plain message, not "unreachable"
         except Exception as e:  # noqa: BLE001 - any publisher failure becomes one plain refusal
             raise QueryRefused(
                 "publisher_unreachable",

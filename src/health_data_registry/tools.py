@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, NamedTuple
 
 from health_data_registry import geo
+from health_data_registry.deadline import DeadlineExceeded
 from health_data_registry.query import Engine, QueryRefused
 from health_data_registry.registry import Dataset, Registry, Series, UnknownDataset
 
@@ -137,7 +138,7 @@ def plain(e: Exception) -> str:
     if isinstance(e, UnknownDataset):
         # Only the registry's own message is echoed; any other KeyError would leak an internal name.
         return f"{e}. Use search_datasets to see what is available."
-    if isinstance(e, QueryRefused):
+    if isinstance(e, QueryRefused | DeadlineExceeded):
         return str(e)
     return (
         "Something went wrong while reading the data, so no numbers are shown. Try again; if it keeps "
