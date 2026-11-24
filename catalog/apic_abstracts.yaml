@@ -60,8 +60,8 @@ caveats:
 - Abstract text is kept only where its licence is Creative Commons; otherwise read the abstract at its DOI link.
 - Condition, design, data-source and geography tags come from fixed word rules over the title and text, not from
   a model; a missing tag doesn't mean the topic is absent.
-- Kept in this source's private store only, until the maintainer confirms which parts may be redistributed; never
-  in a public release.
+- Kept in this source's private store only for now. CC BY and CC0 abstracts may be shared publicly, always with
+  their authors, title, journal, DOI link and licence; other licences never are.
 contract: contracts/apic_abstracts.odcs.yaml
 semantic_model: semantic/apic_abstracts.yaml
 status: draft

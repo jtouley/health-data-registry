@@ -46,15 +46,47 @@ class Years(_Strict):
     end: int | None = None
 
 
+# Creative Commons Attribution (any version) and CC0 text may be shared publicly (owner decision, 24 Nov 2026),
+# but only with full attribution on every record and every result: who wrote it, what it is called, where it was
+# published, the DOI link and the licence. ATTRIBUTION_FIELDS names those five, in that order.
+ATTRIBUTION_LICENCES = frozenset({"cc-by", "cc0"})
+ATTRIBUTION_FIELDS: tuple[str, ...] = ("authors", "title", "journal", "doi_url", "licence")
 # Licence ids a maintainer has reviewed as allowing a public mirror (ADR 0009). Any other id with
 # redistribution: true is refused, so one boolean can never put restricted data on the public hub.
-REDISTRIBUTABLE_LICENCES = frozenset({"public-domain-us-federal"})
+REDISTRIBUTABLE_LICENCES = frozenset({"public-domain-us-federal"}) | ATTRIBUTION_LICENCES
+
+
+class AttributionMissing(ValueError):
+    """A CC BY or CC0 record lacks a field its attribution needs, so it may not be shared publicly."""
+
+
+class Attribution(_Strict):
+    """Which column holds each attribution field, for a source whose licence requires attribution."""
+
+    authors: str
+    title: str
+    journal: str
+    doi_url: str
+    licence: str
+
+
+def require_attribution(record: Mapping[str, Any], columns: Attribution) -> None:
+    """Refuse (AttributionMissing) a record that lacks any attribution field; a blank value is missing."""
+    missing = [f for f in ATTRIBUTION_FIELDS if not str(record.get(getattr(columns, f)) or "").strip()]
+    if missing:
+        raise AttributionMissing(
+            "this record can't be shared publicly: its licence requires attribution and it has no "
+            + ", ".join(m.replace("_", " ") for m in missing)
+        )
 
 
 class Licence(_Strict):
     id: str
     redistribution: bool
     terms_url: str
+    # Required when redistribution is true under an attribution licence (cc-by, cc0): the columns that carry
+    # each attribution field on every record.
+    attribution: Attribution | None = None
 
     @model_validator(mode="after")
     def _reviewed(self) -> Licence:
@@ -62,6 +94,11 @@ class Licence(_Strict):
             raise ValueError(
                 f"licence {self.id} is not on the reviewed list of licences that allow a public copy "
                 f"({', '.join(sorted(REDISTRIBUTABLE_LICENCES))}); set redistribution: false"
+            )
+        if self.redistribution and self.id in ATTRIBUTION_LICENCES and self.attribution is None:
+            raise ValueError(
+                f"licence {self.id} allows a public copy only with attribution on every record: name the "
+                f"columns for {', '.join(ATTRIBUTION_FIELDS)} under licence.attribution"
             )
         return self
 
@@ -105,6 +142,9 @@ class Supplement(_Strict):
     issue: str | None = None  # Crossref's issue value, e.g. Supplement_1 or S1; None when Crossref gives none
     page_prefix: str | None = None  # e.g. "S": supplement pages, when the issue is shared with regular papers
     doi_prefix: str | None = None  # e.g. 10.1093/ofid/ofaf695.
+    # A regular expression the whole lower-case DOI must match, when one prefix can't say it: e.g. a year whose
+    # abstracts sit under several article DOIs, beside the section DOIs ("Oral abstracts") that aren't abstracts.
+    doi_pattern: str | None = None
     exclude_dois: list[str] = Field(
         default_factory=list
     )  # items of the same supplement that are not abstracts
@@ -133,6 +173,18 @@ class Supplement(_Strict):
     def _date(cls, v: str) -> str:
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
             raise ValueError("publication dates are YYYY-MM-DD")
+        return v
+
+    @field_validator("doi_pattern")
+    @classmethod
+    def _pattern(cls, v: str | None) -> str | None:
+        if v is not None:
+            try:
+                re.compile(v)
+            except re.error as e:
+                raise ValueError(f"doi_pattern is not a regular expression: {e}") from e
+            if v != v.lower():
+                raise ValueError("doi_pattern matches lower-case DOIs, so write it in lower case")
         return v
 
     @field_validator("exclude_dois")

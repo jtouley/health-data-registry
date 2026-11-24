@@ -33,7 +33,14 @@ from typing import Any
 from health_data_registry import private, research_tags
 from health_data_registry.adapters import doi_abstracts as doi
 from health_data_registry.fetch import FetchRefused
-from health_data_registry.registry import Dataset, Registry, Supplement
+from health_data_registry.registry import (
+    Attribution,
+    AttributionMissing,
+    Dataset,
+    Registry,
+    Supplement,
+    require_attribution,
+)
 from health_data_registry.store import FetchLog, RawFetch, write_raw
 
 Getter = Callable[[str], RawFetch]
@@ -45,6 +52,12 @@ RESEARCH_INDEX_COLUMNS: tuple[str, ...] = (
     "poster_url", "condition_tags", "design_tags", "data_source_tags", "geography_tags", "pubmed_pmid",
     "retrieved_at",
 )  # fmt: skip
+
+
+# The row columns that carry each attribution field a CC BY or CC0 abstract must keep to be shared publicly.
+ROW_ATTRIBUTION = Attribution(
+    authors="authors", title="title", journal="journal", doi_url="doi_url", licence="abstract_licence"
+)
 
 
 class HarvestRefused(ValueError):
@@ -139,10 +152,14 @@ def _batches(items: Sequence[str], size: int) -> Iterable[list[str]]:
 
 
 def row(a: doi.Abstract, *, sup: Supplement, prov: Provenance, conference_name: str) -> dict[str, Any]:
-    """The research-index row for one merged abstract (the contract's columns, nothing else)."""
+    """The research-index row for one merged abstract (the contract's columns, nothing else).
+
+    A CC BY or CC0 abstract is public only with full attribution (registry.require_attribution); one that lacks
+    any attribution field is refused the public tier and its text stays private.
+    """
     tier: doi.Tier = "link_only" if sup.text_policy == "link_only" else a.tier
     link = f"https://doi.org/{a.doi}"
-    return {
+    out = {
         "doi": a.doi,
         "conference": conference_name,
         "year": sup.year,
@@ -174,6 +191,12 @@ def row(a: doi.Abstract, *, sup: Supplement, prov: Provenance, conference_name: 
         "raw_sha256": prov.sha256,
         "retrieved_at": prov.retrieved_at,
     }
+    if tier == "public":
+        try:
+            require_attribution(out, ROW_ATTRIBUTION)
+        except AttributionMissing:
+            out["abstract_tier"] = "private"
+    return out
 
 
 def harvest(
