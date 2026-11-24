@@ -23,6 +23,9 @@ dependencies = [
     "sqlglot>=26,<31",
 ]
 
+[project.urls]
+Repository = "https://github.com/jtouley/health-data-registry"
+
 [project.scripts]
 health-data-registry = "health_data_registry.cli:main"
 
@@ -49,6 +52,11 @@ packages = ["src/health_data_registry"]
 "catalog" = "health_data_registry/_registry/catalog"
 "contracts" = "health_data_registry/_registry/contracts"
 "semantic" = "health_data_registry/_registry/semantic"
+
+[tool.health-data-registry]
+# The hosted server's public MCP endpoint, the one URL in plugin/.mcp.json (`make docs` writes it there).
+# A placeholder until a domain exists: .invalid never resolves, so nothing connects to it by accident.
+HDR_PUBLIC_URL = "https://hosted-url-not-set.invalid/mcp"
 
 [tool.ruff]
 line-length = 110
@@ -81,6 +89,6 @@ branch = true
 [tool.mutmut]
 # Mutation tests run on the modules a change touches (scripts/mutate_changed.py, `make mutate`), not the whole tree.
 source_paths = ["src/health_data_registry/"]
-also_copy = ["catalog/", "contracts/", "semantic/", "docs/", "template/"]
+also_copy = ["catalog/", "contracts/", "semantic/", "docs/", "template/", "plugin/", ".claude-plugin/", "pyproject.toml"]
 pytest_add_cli_args = ["-m", "not network", "-x", "-q", "-p", "no:cacheprovider"]
 pytest_add_cli_args_test_selection = ["tests/", "--ignore=tests/integration", "--ignore=tests/test_metamorphic.py"]

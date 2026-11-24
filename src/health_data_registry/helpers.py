@@ -4,9 +4,11 @@ One record per workflow is the single source of truth for three outputs:
 
 - the MCP prompts that server.py serves (each shows in Claude's prompt menu once the connector is added);
 - docs/helpers.md, the copy-paste versions for apps that don't show prompts;
-- the Claude Code skills in the fellow's project template, template/.claude/skills/<name>/SKILL.md.
+- the Claude Code skills in the fellow's project template, template/.claude/skills/<name>/SKILL.md;
+- the plugin (plugin/) and the Claude Projects kit (dist/projects-kit/), packaged by distribution.py.
 
-`make docs` (scripts/write_template.py) writes the last two; tests fail if any of them drift from these records.
+`make docs` (scripts/write_template.py) writes the files kept in git and `make kit` builds the kit; tests fail if
+any of them drift from these records.
 The text is written for doctors: plain words, one step at a time, and never asks for patient information or
 passwords.
 """
@@ -363,6 +365,71 @@ PROMPTS: tuple[Workflow, ...] = tuple(w for w in WORKFLOWS if "prompt" in w.surf
 SKILLS: tuple[Workflow, ...] = tuple(w for w in WORKFLOWS if "skill" in w.surfaces)
 
 
+# The Claude Projects kit: the instructions a fellow pastes into a Project and the knowledge files they upload.
+# distribution.py assembles them; the words live here so there is one source.
+
+LANE_RULES = (
+    "Which tool answers what:\n"
+    "- Modelled burden (deaths, DALYs, prevalence and incidence estimates with uncertainty ranges, up to 2023): the "
+    "IHME GBD connector.\n"
+    "- Observed and reported data (surveillance counts, published rates, resistance percentages, years after 2023 "
+    "where published): this public health data tool, health-data-registry. It never gives a GBD number and never "
+    "says whether GBD is right; it lines its observed numbers up beside GBD's names.\n"
+    "- Papers and prior work: PubMed, then this tool's find_prior_work for reports PubMed misses.\n"
+    "If a tool isn't connected, say so plainly and tell me how to add it; never answer its lane from memory."
+)
+
+NO_PATIENT_DATA_RULE = (
+    "No patient data, ever. Don't ask for, accept or repeat anything about a patient (names, dates, record numbers, "
+    "images, notes). If I start to share it, stop me and tell me it belongs in my hospital's approved systems. "
+    "Case details stay outside this Project."
+)
+
+CITATION_RULE = (
+    "Citations: every number carries the tool it came from, its source, the dataset version or date, and its case "
+    'definition; use get_provenance for this tool\'s numbers. Say "provisional" when a row says so. End every '
+    "piece of writing with a citation list. Never fill a gap with a number from memory or the news."
+)
+
+ARTIFACT_RULE = (
+    "When to write an artifact: write the finished hypothesis card, opportunity brief, pitch, abstract or poster "
+    "outline as an artifact, so I can edit and download it; also any table of more than about ten rows. Keep "
+    "questions, checks and short answers in the chat."
+)
+
+PROJECT_INSTRUCTIONS_INTRO = (
+    "You are helping a clinician-researcher (an infectious disease fellow) build a research story from public, "
+    "population-level data. Use plain clinical words, one step at a time. The knowledge files in this Project "
+    "explain how to read the numbers (data-conventions.md), the datasets (dataset-*.md), the publication-outlook "
+    "method, the standard for case reports and the rubric; read the one that applies before you answer."
+)
+
+PUBLICATION_OUTLOOK = (
+    "# Publication outlook: the method\n\n"
+    "How to judge whether a question could become a publishable piece, and where.\n\n"
+    "[Placeholder: the method is not written yet. Until it is, say plainly that there is no agreed method, and "
+    "only list what is already published on the question (title, year, venue, link) from PubMed and "
+    "find_prior_work.]\n"
+)
+
+RUBRIC = (
+    "# Rubric\n\n"
+    "[Placeholder until step 52C: the rubric for scoring a hypothesis or a pitch is not written yet. Until it "
+    "is, don't score anything; say that the rubric is coming.]\n"
+)
+
+CASE_STUDY_STANDARD = (
+    "# Case-study standard\n\n"
+    "What a case report written with this Project may contain.\n\n"
+    "- This Project writes only the population-context paragraph: how common the condition is, where and when, "
+    "with every number cited to its tool, source and date.\n"
+    "- The case itself never comes into this Project: it is written in the hospital's approved systems. Leave "
+    'it as "[your case, written outside this chat]".\n'
+    "- Never ask about, accept or repeat anything about the patient.\n\n"
+    "[Placeholder: the full standard (structure, consent and journal requirements) is not written yet.]\n"
+)
+
+
 def get(name: str) -> Workflow:
     """A workflow by its skill name or its MCP prompt name."""
     for w in WORKFLOWS:
@@ -387,6 +454,29 @@ def skill_md(w: Workflow) -> str:
             f"# {w.title}",
             "",
             w.skill_body(),
+            "",
+        ]
+    )
+
+
+def portable_skill_md(w: Workflow) -> str:
+    """SKILL.md for the plugin and the Projects kit: only the Agent Skills fields (name, description), and the
+    argument read from the message instead of Claude Code's $ARGUMENTS, which chat doesn't fill in."""
+    intro = w.intro.format(**{a: f"[{a.replace('_', ' ')}, from my message]" for a in w.args})
+    if w.args:
+        intro += "\n(If my message doesn't say it, ask me for it in one short question first.)"
+    return "\n".join(
+        [
+            "---",
+            f"name: {w.name}",
+            f"description: {json.dumps(w.description)}",
+            "---",
+            "",
+            "<!-- Generated from src/health_data_registry/helpers.py by `make docs`. Do not edit by hand. -->",
+            "",
+            f"# {w.title}",
+            "",
+            w._body(intro),
             "",
         ]
     )

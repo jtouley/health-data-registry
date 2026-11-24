@@ -1,0 +1,15 @@
+{
+  "name": "health-data-registry",
+  "description": "The health-data-registry plugin for Claude.",
+  "owner": {
+    "name": "Jason Touleyrou",
+    "url": "https://github.com/jtouley/health-data-registry"
+  },
+  "plugins": [
+    {
+      "name": "health-data-registry",
+      "source": "./plugin",
+      "description": "Observed public health data for infectious disease research (CDC, WHO), with source, version and method on every number, plus step-by-step research workflows for clinician-researchers."
+    }
+  ]
+}

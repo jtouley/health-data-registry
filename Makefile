@@ -1,11 +1,12 @@
 # Developer and CI entry points. `make help` lists the targets.
 .DEFAULT_GOAL := help
-.PHONY: help install lint fmt typecheck test test-network mutate docs check refresh serve check-contracts eval hooks
+.PHONY: help install lint fmt typecheck test test-network mutate docs kit check refresh serve check-contracts eval hooks
 
 UV ?= uv
 COV_FLOOR ?= 85
 MUTATION_FLOOR ?= 70
 BASE ?= origin/main
+KIT_DIR ?= dist/projects-kit
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -36,8 +37,11 @@ test-network: ## Tests that hit live publishers (network marker)
 mutate: ## Mutation tests on the modules changed since BASE (default origin/main); fails under MUTATION_FLOOR
 	$(UV) run python scripts/mutate_changed.py --base $(BASE) --floor $(MUTATION_FLOOR)
 
-docs: ## Regenerate docs/helpers.md and the template's Claude Code skills from the workflows in code
+docs: ## Regenerate docs/helpers.md, the template's skills and the plugin from the workflows in code
 	$(UV) run python scripts/write_template.py
+
+kit: ## Build the Claude Projects kit into KIT_DIR (default dist/projects-kit, not committed)
+	$(UV) run python scripts/write_template.py --kit $(KIT_DIR)
 
 check: lint typecheck test mutate ## Everything CI runs: lint, typecheck, test, mutation tests on changed modules
 
