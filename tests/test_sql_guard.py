@@ -664,3 +664,9 @@ def test_property_tokenSoup_neverAcceptsForbidden(tokens: list[str]) -> None:
     assert not any(w in lowered.split() for w in ("drop", "copy"))
     if "vax" in q.tables:
         assert "deaths" not in q.tables or "union" in lowered
+
+
+@pytest.mark.parametrize("sql", ["SELECT 1 COPY", "SELECT 1 AS drop", 'SELECT state AS "attach" FROM vax'])
+def test_guard_statementWordAsName_refused(sql: str) -> None:
+    """Regression (found by the token-soup property): a statement word as an alias is refused, never run."""
+    assert refused(sql).code == "forbidden_construct"

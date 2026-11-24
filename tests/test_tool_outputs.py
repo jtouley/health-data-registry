@@ -61,29 +61,34 @@ def test_get_rate_is_crude_and_says_so(pop: tuple[Registry, Engine]) -> None:
     reg, eng = pop
     out = _json(tools.get_rate(reg, eng, condition="legionellosis", locations=["Michigan", "Ohio"], year=2023,
                                fmt="json"))  # fmt: skip
-    assert out == {
-        "columns": ["location", "year", "condition", "cases", "population", "crude_rate_per_100k_computed",
-                    "case_source", "population_source"],
-        "rows": [
-            ["Michigan", 2023, "Legionellosis", 310, 10000000, 3.1, "toy_cases", "toy_cases"],
-            ["Ohio", 2023, "Legionellosis", 400, 0, None, "toy_cases", "toy_cases"],  # no denominator, no rate
-        ],
-        "notes": [
-            "Crude rate per 100,000 computed here (cases ÷ Census population × 100,000). It is not published and "
-            "not age-standardised, so don't compare it with age-standardised GBD or CDC rates."
-        ],
-    }  # fmt: skip
+    assert out["columns"] == ["location", "year", "condition", "cases", "population", "rate_per_100k", "lower_95",
+                              "upper_95", "period_status", "flags", "case_source", "population_source"]  # fmt: skip
+    assert out["rows"] == [
+        ["Michigan", 2023, "Legionellosis", 310, 10000000, 3.1, 2.764, 3.465, "", "", "toy_cases", "toy_cases"],
+        # A zero population is no denominator: no rate, and it says why.
+        ["Ohio", 2023, "Legionellosis", 400, 0, None, None, None, "",
+         "the Census population for Ohio in 2023 is 0, so no rate", "toy_cases", "toy_cases"],
+    ]  # fmt: skip
+    assert out["notes"][0] == (
+        "Method: crude rate = cases / Census July 1 population x 100,000, with the exact Poisson (Garwood) 95% "
+        "interval for the count divided by the population."
+    )
+    assert "not age-standardised" in out["notes"][1]
     empty = _json(
         tools.get_rate(reg, eng, condition="legionellosis", locations=["Michigan"], year=2024, fmt="json")
     )
-    assert empty["rows"] == [
-        ["Michigan", 2024, "Legionellosis", None, 10000000, None, "toy_cases", "toy_cases"]
-    ]
+    assert [r[:6] + r[9:] for r in empty["rows"]] == [
+        ["Michigan", 2024, "Legionellosis", None, 10000000, None,
+         "1 value in this count suppressed or missing in the source, so no total and no rate (it is not zero)",
+         "toy_cases", "toy_cases"]
+    ]  # fmt: skip
     csv = tools.get_rate(reg, eng, condition="legionellosis", locations=["Michigan"], year=2023)
     assert isinstance(csv, str) and csv.startswith("location,year,condition,cases,population,")
     assert tools.get_rate(reg, eng, condition="mumps", year=2023, fmt="json") == {
-        "message": "No loaded source reports 'mumps' as case counts.", "refused": "unknown_condition"
-    }  # fmt: skip
+        "message": "No loaded source reports 'mumps' as case counts. Use list_sources or suggest_datasets to see "
+        "what is available.",
+        "refused": "unknown_condition",
+    }
 
 
 def test_get_rate_without_population(registry: Registry, lake: Path) -> None:
@@ -109,10 +114,10 @@ def test_list_sources_exact(registry: Registry, lake: Path) -> None:
     out = _json(tools.list_sources(registry, eng, fmt="json"))
     assert out == {
         "columns": ["source_id", "title", "publisher", "years", "geography", "updated", "last_fetched", "licence",
-                    "review"],
+                    "review", "contract_version", "data_from"],
         "rows": [["toy_cases", "Toy notifiable condition cases by state and year",
                   "Centers for Disease Control and Prevention", "2022-2024", "nation state", "weekly", "2026-11-24",
-                  "public-domain-us-federal", "draft"]],
+                  "public-domain-us-federal", "draft", "0.1.0", "the local lake (a maintainer's copy)"]],
         "notes": ["review = draft means no maintainer has checked this source's contract yet."],
     }  # fmt: skip
     assert _json(tools.list_sources(registry, None, fmt="json"))["rows"][0][6] == ""
@@ -211,13 +216,15 @@ def test_provenance_and_caveats_exact(registry: Registry, lake: Path) -> None:
     ]
     assert out["rows"] == [["toy_cases", "https://data.cdc.gov/resource/toy0-toy0.json", m.retrieved_at,
                             m.raw_sha256[0], m.snapshot_id, "0.1.0"]]  # fmt: skip
-    assert out["notes"] == [
+    assert out["notes"][:-1] == [
         "Every row for 2023 in this source comes from the fetches listed.",
         "Case definitions: Legionellosis: CSTE 2005 (09-ID-04)",
         "Cite as: CDC. Toy table. https://data.cdc.gov/d/toy0-toy0",
         "Each content hash identifies the exact bytes fetched; the same hash means the same data.",
+        "Data from: the local lake (a maintainer's copy). Contract toy_cases version 0.1.0.",
     ]
-    assert len(_json(tools.get_provenance(registry, eng, source_id="toy_cases", fmt="json"))["notes"]) == 3
+    assert out["notes"][-1].startswith("Add it to a Claude project: ")
+    assert len(_json(tools.get_provenance(registry, eng, source_id="toy_cases", fmt="json"))["notes"]) == 5
     cav = _json(tools.list_caveats(registry, source_id="toy_cases", fmt="json"))
     assert cav["columns"] == ["source_id", "kind", "caveat"]
     assert cav["rows"][:4] == [

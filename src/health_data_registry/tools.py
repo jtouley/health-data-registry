@@ -576,8 +576,14 @@ def series_rows(
             label = places.get(r[0]) or by_key.get(loc_col.canonical_label(raw)) or raw
             partial = loc_col.partial_note(raw) if geo.place(label) else None
         year = r[n_keys - 1]
+        status = str(get(r, "period_status") or "")
+        if get(r, "suppressed_rows"):
+            n_empty = int(get(r, "suppressed_rows"))
+            status = (
+                f"no total: {n_empty} value{'s' if n_empty != 1 else ''} suppressed or missing in the source"
+            )
         rows.append(
-            SeriesRow(label, year, r[n_keys], str(get(r, "period_status") or ""), get(r, "lower"), get(r, "upper"),
+            SeriesRow(label, year, r[n_keys], status, get(r, "lower"), get(r, "upper"),
                       get(r, "flag"), "year_end_ytd" if running else "as_published", partial)
         )  # fmt: skip
         r_status = str(get(r, "restated_status") or "")

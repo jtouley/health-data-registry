@@ -228,7 +228,7 @@ def test_weekly_counts_are_never_the_annual_figure(tmp_path: Path) -> None:
     cm = compile_metric(reg.get("toy_cases"), "annual", group_by=["state", "year"])
     assert '"wk"' not in cm.sql and "sum(" not in cm.sql
     weekly = eng.query_metric("toy_cases", "weekly", filters={"state": ["MICHIGAN"]}, group_by=["year"])
-    assert weekly["rows"] == [[2022, 3]]  # the trap the running total avoids
+    assert [r[:2] for r in weekly["rows"]] == [[2022, 3]]  # the trap the running total avoids
 
 
 def test_without_a_restatement_no_year_is_said_to_be_over(tmp_path: Path) -> None:

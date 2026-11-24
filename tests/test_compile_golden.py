@@ -102,17 +102,24 @@ def test_sum_sql_and_method_are_exact(est: tuple[Registry, Engine, Path]) -> Non
     cm = compile_metric(reg.get("toy_cases"), "total", filters={"where": ["A", "B"]}, group_by=["where"],
                         period={"start": 2025, "end": 2026})  # fmt: skip
     assert cm.sql == (
-        'SELECT "place" AS "where", sum("n") AS "total", string_agg(DISTINCT "n_flag", \', \' ORDER BY "n_flag") '
-        'FILTER (WHERE "n" IS NULL) AS flag FROM "toy_cases" WHERE NOT coalesce((place = \'ALL\'), false) AND '
+        'SELECT "place" AS "where", CASE WHEN count(*) FILTER (WHERE "n" IS NULL) = 0 THEN sum("n") END AS "total", '
+        'count(*) FILTER (WHERE "n" IS NULL) AS suppressed_rows, string_agg(DISTINCT "n_flag", \', \' ORDER BY '
+        '"n_flag") FILTER (WHERE "n" IS NULL) AS flag FROM "toy_cases" WHERE NOT coalesce((place = \'ALL\'), false) '
+        "AND "
         '"place" IN (?, ?) AND "day" >= CAST(? AS DATE) AND "day" <= CAST(? AS DATE) GROUP BY ALL ORDER BY ALL'
     )
     assert cm.params == ["A", "B", "2025-01-01", "2026-12-31"]
-    assert cm.columns == ["where", "total", "flag"]
-    assert cm.method == "Sum of cases (cases reported) by where, publisher total rows excluded."
+    assert cm.columns == ["where", "total", "suppressed_rows", "flag"]
+    assert cm.method == (
+        "Sum of cases (cases reported) by where, publisher total rows excluded. A group with any suppressed or "
+        "missing value has no total (never a partial sum); suppressed_rows gives how many of its values were empty."
+    )
     out = eng.query_metric("toy_cases", "total", group_by=["where"], period={"start": 2025, "end": 2025})
-    assert out["rows"] == [["A", 3, "S"]]  # the suppressed week is named, never silently left out
+    # Regression: A has 3 cases one week and a suppressed week. Its total is unknown, never 3; the suppressed
+    # week is counted and its flag named.
+    assert out["rows"] == [["A", None, 1, "S"]]
     whole = eng.query_metric("toy_cases", "total", filters={"where": "B"})
-    assert whole["rows"] == [[4, None]]
+    assert whole["rows"] == [[4, 0, None]]
     assert whole["sql"].endswith("WHERE NOT coalesce((place = 'ALL'), false) AND \"place\" = ?")
 
 
@@ -120,11 +127,15 @@ def test_sum_with_total_rows_kept_and_metric_filter(est: tuple[Registry, Engine,
     reg, eng, _ = est
     cm = compile_metric(reg.get("toy_cases"), "total_all_rows")
     assert cm.sql == (
-        'SELECT sum("n") AS "total_all_rows", string_agg(DISTINCT "n_flag", \', \' ORDER BY "n_flag") FILTER '
-        '(WHERE "n" IS NULL) AS flag FROM "toy_cases" WHERE (place <> \'X\')'
+        'SELECT CASE WHEN count(*) FILTER (WHERE "n" IS NULL) = 0 THEN sum("n") END AS "total_all_rows", '
+        'count(*) FILTER (WHERE "n" IS NULL) AS suppressed_rows, string_agg(DISTINCT "n_flag", \', \' ORDER BY '
+        '"n_flag") FILTER (WHERE "n" IS NULL) AS flag FROM "toy_cases" WHERE (place <> \'X\')'
     )
-    assert cm.method == "Sum of cases (cases reported)."
-    assert eng.query_metric("toy_cases", "total_all_rows")["rows"] == [[77, "S"]]
+    assert cm.method == (
+        "Sum of cases (cases reported). A group with any suppressed or missing value has no total (never a partial "
+        "sum); suppressed_rows gives how many of its values were empty."
+    )
+    assert eng.query_metric("toy_cases", "total_all_rows")["rows"] == [[None, 1, "S"]]
 
 
 def test_estimates_are_read_with_their_bounds_and_flag(est: tuple[Registry, Engine, Path]) -> None:
@@ -159,7 +170,7 @@ def test_text_periods_compare_as_text(est: tuple[Registry, Engine, Path]) -> Non
     out = eng.query_metric(
         "toy_cases", "total", group_by=["season"], period={"dimension": "season", "end": 2024}
     )
-    assert out["rows"] == [["2024-25", 3, "S"]]
+    assert out["rows"] == [["2024-25", None, 1, "S"]]  # a suppressed week: no season total
     assert compile_metric(reg.get("toy_cases"), "total", period={"dimension": "season"}).params == []
 
 
@@ -238,6 +249,11 @@ def test_envelope_and_source_are_exact(est: tuple[Registry, Engine, Path]) -> No
             "licence": "public-domain-us-federal",
             "terms_url": "https://www.cdc.gov/other/agencymaterials.html",
             "citation": ds.entry.citation,
+            "data_from": "lake",
+            "release_id": None,
+            "release_ref": None,
+            "release_contract_version": None,
+            "release_files": {},
         },
         "caveats": [
             "This snapshot is a partial sample, not the full dataset.",
@@ -285,8 +301,9 @@ def test_build_snapshot_manifest_and_pointer(est: tuple[Registry, Engine, Path],
     )
     late = raw_fetch("https://data.cdc.gov/resource/p2.json", RECS[1:], when=WHEN)
     m = build_snapshot(lake, reg.get("toy_cases"), [early, late], [f], partial=True)
-    digest = hashlib.sha256((early.sha256 + late.sha256).encode()).hexdigest()[:12]
-    assert m.snapshot_id == f"20261124T120000Z-{digest}"  # the latest fetch time, then the content hash
+    # The latest fetch time, then a hash of the raw bytes, the contract and semantic versions and partial.
+    digest = hashlib.sha256(f"{early.sha256}{late.sha256}|0.2.0|0.2.0|True".encode()).hexdigest()[:12]
+    assert m.snapshot_id == f"20261124T120000Z-{digest}"
     found = latest_snapshot(lake, "toy_cases")
     assert found is not None
     path, read = found
@@ -304,15 +321,30 @@ def test_build_snapshot_manifest_and_pointer(est: tuple[Registry, Engine, Path],
         "licence": "public-domain-us-federal",
         "redistribution": True,
         "partial": True,
+        "origin": "lake",
+        "release_id": None,
+        "release_ref": None,
+        "run_date": None,
+        "release_contract_version": None,
+        "release_files": {},
+        "notes": [],
+        "quality": {},
     }
     assert (lake / "datasets" / "toy_cases" / "LATEST").read_text() == m.snapshot_id + "\n"
     assert sorted(p.name for p in lake.iterdir()) == ["datasets", "raw"]  # no temporary folder left behind
     assert (path / "data.parquet").stat().st_size > 0
+    # The same bytes loaded in full are different inputs, so a new snapshot, never the partial one relabelled.
     again = build_snapshot(lake, reg.get("toy_cases"), [early, late], [f])
-    assert again.snapshot_id == m.snapshot_id and again.partial is False
-    assert sorted(p.name for p in (lake / "datasets" / "toy_cases").iterdir()) == sorted(
-        ["LATEST", m.snapshot_id]
-    )
+    assert again.snapshot_id != m.snapshot_id and again.partial is False
+    assert sorted(p.name for p in (lake / "datasets" / "toy_cases").iterdir()) == [
+        "LATEST",
+        "run_date=2026-11-24",
+    ]
+    assert sorted(
+        p.name for p in (lake / "datasets" / "toy_cases" / "run_date=2026-11-24").iterdir()
+    ) == sorted([m.snapshot_id, again.snapshot_id])
+    same = build_snapshot(lake, reg.get("toy_cases"), [early, late], [f], partial=True)
+    assert same == m  # the same inputs: the existing snapshot, never overwritten
 
 
 def test_build_snapshot_refusals(est: tuple[Registry, Engine, Path], tmp_path: Path) -> None:

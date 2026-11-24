@@ -133,7 +133,15 @@ def compile_metric(
     params = params + period_params
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
     if metric.aggregation == "sum":
-        sel = [*select_dims, f"sum({m_col}) AS {_q(metric.name)}"]
+        # A group with any empty (suppressed or missing) value has no total: sum() would skip the empty rows and
+        # return a smaller number as if it were the whole count. suppressed_rows says how many were empty.
+        empty = f"count(*) FILTER (WHERE {m_col} IS NULL)"
+        sel = [
+            *select_dims,
+            f"CASE WHEN {empty} = 0 THEN sum({m_col}) END AS {_q(metric.name)}",
+            f"{empty} AS suppressed_rows",
+        ]
+        out_cols = [*group_by, metric.name, "suppressed_rows", *(["flag"] if flag else [])]
         if flag:
             # The publisher's flags on the empty cells the sum had to leave out, so a gap is never silent.
             f_col = _q(flag.name)
@@ -151,7 +159,8 @@ def compile_metric(
                 if metric.exclude_total_rows and ds.contract.total_rows
                 else ""
             )
-            + "."
+            + ". A group with any suppressed or missing value has no total (never a partial sum); "
+            "suppressed_rows gives how many of its values were empty."
         )
     else:
         # Rates, percents and estimates are read as published, never added up. One row per group or refuse.

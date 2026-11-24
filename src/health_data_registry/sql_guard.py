@@ -270,9 +270,22 @@ def _function_name(node: exp.Expr) -> str:
     return node.key
 
 
+# Statement words never used as a name (SELECT 1 COPY parses as an alias named copy): refused so the query that
+# runs never even reads like a write, attach or install.
+_STATEMENT_WORDS = frozenset(
+    {"copy", "drop", "attach", "detach", "install", "load", "pragma", "export", "import", "call", "insert",
+     "update", "delete", "create", "alter"}
+)  # fmt: skip
+
+
 def _check_nodes(tree: exp.Expr) -> None:
     """Fail closed: every node is known structure or an allowlisted function."""
     for node in tree.walk():
+        if isinstance(node, exp.Identifier) and str(node.name).casefold() in _STATEMENT_WORDS:
+            raise SqlRefused(
+                "forbidden_construct",
+                f"{node.name} can't be used as a name here: choose another name for the column or table.",
+            )
         if isinstance(node, exp.Table) and not isinstance(node.this, exp.Identifier):
             raise SqlRefused(
                 "table_function",

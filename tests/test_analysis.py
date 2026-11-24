@@ -7,6 +7,7 @@ numbers are worked out here from the generated records, independently of the too
 
 from __future__ import annotations
 
+import sys
 import textwrap
 from pathlib import Path
 from typing import Any
@@ -321,7 +322,10 @@ def test_rate_matches_hand_computation_and_garwood(env: tuple[Registry, Engine])
     assert mi["rate_per_100k"] == pytest.approx(cases / pop * 1e5, rel=1e-3)
     assert mi["lower_95"] == pytest.approx(lo / pop * 1e5, rel=1e-3)
     assert mi["upper_95"] == pytest.approx(hi / pop * 1e5, rel=1e-3)
-    assert mi["period_status"].startswith("final") and mi["flags"] == ""
+    # The year's own running total at year end: provisional, never swapped for next year's restatement.
+    assert mi["period_status"].startswith("provisional: as published at year end")
+    assert mi["flags"] == "provisional: may change"
+    assert any("year_end_ytd" in n and "never used as a count" in n for n in out["notes"])
     # The national rate uses the US RESIDENTS row and the sum of the state populations.
     us = rows["United States"]
     assert us["cases"] == annual("US RESIDENTS", 2023)
@@ -620,7 +624,13 @@ def test_weekly_series_never_reach_get_series(env: tuple[Registry, Engine]) -> N
     reg, eng = env
     out = tools.get_series(reg, eng, condition="legionellosis", locations=["Michigan"], year_start=2023,
                            year_end=2023, fmt="json")  # fmt: skip
-    assert [r[2] for r in out["rows"]] == [annual("MICHIGAN", 2023)]  # one annual value, not weekly sums
+    # One annual value per observation type, not weekly sums: the year's own total and next year's restatement.
+    cols = out["columns"]
+    by_type = {r[cols.index("observation_type")]: r[cols.index("value")] for r in out["rows"]}
+    assert by_type == {
+        "year_end_ytd": annual("MICHIGAN", 2023),
+        "subsequent_year_restatement": annual("MICHIGAN", 2023),
+    }
     assert len(tools.series_for(reg, "legionellosis", kind="weekly")) == 1
 
 
@@ -733,3 +743,49 @@ def test_refusal_without_population_in_json(tmp_path: Path) -> None:
     out2 = analysis.compare_rates(reg, eng, condition="legionellosis", location="Ohio", year=2023, other_year=2022,
                                   fmt="json")  # fmt: skip
     assert out2["refused"] == "no_denominator"
+
+
+def test_rate_for_the_nation_reads_a_population_without_places(env: tuple[Registry, Engine]) -> None:
+    """Regression: the national population series has no place breakdown, and must not be place-matched."""
+    reg, eng = env
+    out = analysis.get_rate(
+        reg, eng, condition="legionellosis", year=2023, locations=["United States"], fmt="json"
+    )
+    rows = rows_by(out, "location")
+    us = rows["United States"]
+    assert us["cases"] == annual("US RESIDENTS", 2023)
+    assert us["population"] == sum(POP.values()) + len(POP) * 80_000
+    pop = next(
+        s for d in reg for s in d.semantic.series if s.measure == "population" and not s.location_dimension
+    )
+    got, unmatched = analysis.read_series(eng, reg.get("toy_pop"), pop, ["Michigan"], 2023, 2023)
+    assert (got, unmatched) == ([], ["Michigan"])  # a combined figure is never one place's
+
+
+def test_a_running_total_that_stops_early_is_never_a_year_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Michigan 2022's running total has no number after week 40: not the year's total, so never counted."""
+    original = case_records()
+
+    def stopped() -> list[dict[str, Any]]:
+        return [
+            {**r, "ytd": None} if (r["area"], r["year"]) == ("MICHIGAN", 2022) and r["week"] > 40 else r
+            for r in original
+        ]
+
+    monkeypatch.setattr(sys.modules[__name__], "case_records", stopped)
+    reg, eng = build(tmp_path)
+    out = analysis.get_rate(
+        reg, eng, condition="legionellosis", year=2022, locations=["Michigan"], fmt="json"
+    )
+    mi = rows_by(out, "location")["Michigan"]
+    assert mi["rate_per_100k"] is None and mi["lower_95"] is None
+    assert mi["period_status"].startswith("incomplete: running total last published at week 40 of 52")
+    assert mi["flags"].endswith("; no rate")
+    trend = analysis.get_trend(
+        reg, eng, condition="legionellosis", location="Michigan", fit_on="counts", fmt="json"
+    )
+    after = rows_by(trend, "case_definition_from")[2020]
+    assert after["years"] == "2020-2023" and after["points_used"] == 3
+    assert "2022 not the year's total (incomplete" in after["left_out"]

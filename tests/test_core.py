@@ -96,7 +96,7 @@ def test_select_list_quotes_source_fields(registry: Registry) -> None:
 def test_counts_sum_and_exclude_total_rows(lake: Path, registry: Registry) -> None:
     eng = Engine(registry=registry, lake=lake)
     out = eng.query_metric("toy_cases", "case_count", filters={"condition": "Legionellosis", "year": 2023})
-    assert out["rows"] == [[710]]  # Michigan 310 + Ohio 400; the US RESIDENTS total row (9000) is excluded
+    assert out["rows"] == [[710, 0]]  # Michigan 310 + Ohio 400; the US RESIDENTS total row (9000) is excluded
     assert "total rows excluded" in out["method"]
     assert out["source"]["retrieved_at"].startswith("2026-11-24")
     assert any("draft" in c for c in out["caveats"])
@@ -111,8 +111,8 @@ def test_group_by_and_period(lake: Path, registry: Registry) -> None:
         group_by=["year"],
         period={"start": 2022, "end": 2023},
     )
-    assert out["columns"] == ["year", "case_count"]
-    assert out["rows"] == [[2022, 300], [2023, 310]]
+    assert out["columns"] == ["year", "case_count", "suppressed_rows"]
+    assert out["rows"] == [[2022, 300, 0], [2023, 310, 0]]
 
 
 def test_rates_are_never_added_up(lake: Path, registry: Registry) -> None:
@@ -216,7 +216,7 @@ def test_get_series_csv(lake: Path, registry: Registry) -> None:
         "Michigan,2022,300,,,as_published,,,cases,Legionellosis,confirmed and probable"
     )
     assert lines[3].startswith(
-        "Michigan,2024,,,,as_published,,,cases"
+        "Michigan,2024,,,,as_published,no total: 1 value suppressed or missing in the source,,cases"
     )  # the publisher's 'N' stays empty, not 0
     assert lines[4].startswith("Ohio,2023,400,,,as_published,,,cases")
     assert "# toy_cases has no rows for: Atlantis." in out

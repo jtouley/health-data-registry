@@ -53,6 +53,11 @@ class Obs:
     value: float | None  # None: suppressed or missing in the source, never zero
     status: str  # the source's period status ('' when it has none)
     extra: tuple[Any, ...] = ()  # the week or age group, for weekly and age-specific series
+    flag: Any = None  # the publisher's flag carried through (a suppression or missing-data code)
+    # For a running total: why this figure is not the period's own total ('' when it is), e.g. later weeks
+    # have no number. Such a figure is never used as a year's count.
+    not_total: str = ""
+    suppressed: int = 0  # how many source values in this group were empty (suppressed or missing)
 
 
 def _place_name(text: str) -> str:
@@ -80,15 +85,24 @@ def read_series(
     year_end: int | None,
     extra: Sequence[str] = (),
 ) -> tuple[list[Obs], list[str]]:
-    """One series' rows for the places and years asked, grouped also by `extra` dimensions (week, age group)."""
-    places, unmatched = _match_places(engine, ds, s, locations)
-    if s.location_dimension and not places:
-        return [], unmatched
+    """One series' rows for the places and years asked, grouped also by `extra` dimensions (week, age group).
+
+    For a running total (NNDSS) only the year's own figure is read (observation_type year_end_ytd): next year's
+    table's figure for the same year is an unverified restatement and is never used as a count.
+    """
+    places: dict[Any, str] = {}
+    unmatched: list[str] = []
     filters: dict[str, Any] = dict(s.filters)
     group_by: list[str] = [s.time_dimension]
     if s.location_dimension:
+        places, unmatched = _match_places(engine, ds, s, locations)
+        if not places:
+            return [], unmatched
         filters[s.location_dimension] = list(places)
         group_by = [s.location_dimension, s.time_dimension]
+    elif locations:
+        # One figure for the publisher's whole area: it is not the figure for any place asked about.
+        return [], list(locations)
     group_by += list(extra)
     out = engine.query_metric(
         ds.id,
@@ -97,22 +111,48 @@ def read_series(
         group_by=group_by,
         period={"dimension": s.time_dimension, "start": year_start, "end": year_end},
     )
+    if out.get("truncated"):
+        raise QueryRefused(
+            "too_many_rows",
+            f"{s.label} has more than {len(out['rows'])} rows for this question, so nothing is worked out rather "
+            "than from a table cut off part way. Ask again for fewer places or a shorter span of years.",
+        )
     at = {c: i for i, c in enumerate(out["columns"])}
     n = len(group_by)
-    by_key = {_key(str(k)): v for k, v in places.items()}
+    loc_col = (
+        ds.contract.column(ds.semantic.dimension(s.location_dimension).column)
+        if s.location_dimension
+        else None
+    )
+    by_key = {loc_col.canonical_label(str(k)): v for k, v in places.items()} if loc_col else {}
     rows: list[Obs] = []
     for r in out["rows"]:
-        status = str(r[at["period_status"]]) if "period_status" in at else ""
-        if s.location_dimension:
+        status = str(r[at["period_status"]] or "") if "period_status" in at else ""
+        flag = r[at["flag"]] if "flag" in at else None
+        if loc_col is not None:
             raw = str(r[0])
             p = geo.place(raw)
-            place = by_key.get(_key(raw)) or (p.name if p else raw)
+            place = places.get(r[0]) or by_key.get(loc_col.canonical_label(raw)) or (p.name if p else raw)
             year, rest = r[1], tuple(r[2:n])
         else:
             raw = place = _unlocated_place(ds, s)
             year, rest = r[0], tuple(r[1:n])
         value = r[n]
-        rows.append(Obs(place, raw, int(year), None if value is None else float(value), status, rest))
+        not_total = status if status.startswith(("incomplete", "no number")) else ""
+        suppressed = int(r[at["suppressed_rows"]] or 0) if "suppressed_rows" in at else 0
+        rows.append(
+            Obs(
+                place,
+                raw,
+                int(year),
+                None if value is None else float(value),
+                status,
+                rest,
+                flag,
+                not_total,
+                suppressed,
+            )
+        )
     return rows, unmatched
 
 
@@ -191,6 +231,22 @@ def partial_area(ds: Dataset, raw_place: str) -> str | None:
 
 def _provisional(status: str) -> bool:
     return status.lower().startswith("provisional")
+
+
+def _in_progress(status: str) -> bool:
+    """A running total for a period that hasn't ended: the total so far, not the period's count."""
+    return status.lower().startswith("provisional: running total so far")
+
+
+def _own_count(datasets: Sequence[Dataset]) -> str:
+    """The method line's words on which figure is the year's count, for sources that publish running totals."""
+    if not any(m.aggregation == "cumulative_latest" for ds in datasets for m in ds.semantic.metrics):
+        return ""
+    return (
+        " Each year's count is that year's own running total at its last week with a number (observation_type "
+        "year_end_ytd); next year's table's figure for it (subsequent_year_restatement) is unverified and is never "
+        "used as a count, and a running total that stops before the year's last week is not used at all."
+    )
 
 
 def _sig(x: float | None, digits: int = 4) -> float | None:
@@ -318,7 +374,14 @@ def _rate_rows(
             denom, pds = pop.get((o.place, o.year), (None, None))
             est = None
             part = partial_area(ds, o.raw_place)
-            if o.value is None:
+            if o.not_total:
+                flags.append(f"{o.not_total}; no rate")
+            elif o.value is None and o.suppressed:
+                flags.append(
+                    f"{o.suppressed} value{'s' if o.suppressed != 1 else ''} in this count suppressed or missing "
+                    "in the source, so no total and no rate (it is not zero)"
+                )
+            elif o.value is None:
                 flags.append("count suppressed or missing in the source, so no rate (it is not zero)")
             elif part:
                 flags.append(
@@ -328,10 +391,14 @@ def _rate_rows(
                 flags.append(f"no Census population estimate for {o.year}, so no rate")
             elif denom is None:
                 flags.append(f"no Census population for {o.place}, so no rate")
+            elif denom <= 0:
+                flags.append(f"the Census population for {o.place} in {o.year} is {denom:g}, so no rate")
             else:
                 est = stats.crude_rate(int(o.value), denom, PER)
                 if rule and rule.applies(o.value, est):
                     flags.append(f"unreliable by the source's own rule: {rule.text}")
+            if o.flag:
+                flags.append(f"source flag: {o.flag}")
             if _provisional(o.status):
                 flags.append("provisional: may change")
             rows.append(RateRow(o.place, o.year, s.label, o.value, denom, est, o.status, flags, ds, pds))
@@ -383,7 +450,7 @@ def get_rate(
     ]  # fmt: skip
     out_notes = [
         "Method: crude rate = cases / Census July 1 population x 100,000, with the exact Poisson (Garwood) 95% "
-        "interval for the count divided by the population.",
+        "interval for the count divided by the population." + _own_count([r.case_ds for r in rows]),
         "What this can't say: the interval covers chance variation in the count only, not error in the population "
         "estimate. " + _CANT_SAY_SURVEILLANCE + " " + CRUDE_WARNING,
         *_rule_notes([r.case_ds for r in rows]),
@@ -468,7 +535,7 @@ def compare_rates(
         "Method: the rate ratio's 95% interval uses the log method on the two Poisson case counts (standard error "
         "sqrt(1/a + 1/b)), or the exact conditional (Clopper-Pearson) interval when either group has fewer than 5 "
         "cases; the rate difference's uses a normal approximation to the Poisson variances and is not given "
-        "below 5 cases in a group.",
+        "below 5 cases in a group." + _own_count([a.case_ds]),
         "What this can't say: an interval that excludes 1 (ratio) or 0 (difference) means chance alone is an "
         "unlikely explanation, not that risk differs. " + _CANT_SAY_SURVEILLANCE + " " + CRUDE_WARNING,
         *_rule_notes([a.case_ds]),
@@ -541,15 +608,22 @@ def get_trend(
             changes = case_definition_years(ds, s.condition)
             for eff, years in _segments([o.year for o in got], changes):
                 seg = [o for o in got if o.year in years]
-                left_out = [f"{o.year} suppressed or missing" for o in seg if o.value is None]
+                left_out = [f"{o.year} not the year's total ({o.not_total})" for o in seg if o.not_total]
+                left_out += [
+                    f"{o.year} suppressed or missing" for o in seg if o.value is None and not o.not_total
+                ]
                 if not include_provisional:
                     left_out += [
-                        f"{o.year} provisional" for o in seg if o.value is not None and _provisional(o.status)
+                        f"{o.year} provisional"
+                        for o in seg
+                        if o.value is not None and not o.not_total and _in_progress(o.status)
                     ]
                 pts = [
                     o
                     for o in seg
-                    if o.value is not None and (include_provisional or not _provisional(o.status))
+                    if o.value is not None
+                    and not o.not_total
+                    and (include_provisional or not _in_progress(o.status))
                 ]
                 part = partial_area(ds, seg[0].raw_place)
                 if part and fit_on == "rates":
@@ -620,7 +694,7 @@ def get_trend(
     out_notes = [
         "Method: annual percent change from a log-linear Poisson regression of yearly case counts on year (with "
         "the Census population as an offset for a trend in rates), its 95% interval widened when the counts "
-        "vary more than chance allows (dispersion above 1).",
+        "vary more than chance allows (dispersion above 1)." + _own_count(used),
         "What this can't say: it assumes a steady percent change each year, it is fragile over few years, and it "
         "can't separate a real change from changes in testing, reporting or awareness. "
         + _CANT_SAY_SURVEILLANCE
@@ -629,7 +703,8 @@ def get_trend(
     ]
     if not include_provisional:
         out_notes.append(
-            "Provisional years are left out of the fit by default (include_provisional=true adds them)."
+            "Years still in progress (running total so far) are left out of the fit by default "
+            "(include_provisional=true adds them); year-end running totals are used and stay provisional."
         )
     if too_few:
         out_notes.append("Not fitted (fewer than 3 usable years): " + "; ".join(too_few) + ".")

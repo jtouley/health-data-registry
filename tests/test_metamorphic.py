@@ -54,15 +54,17 @@ def _series(records: list[dict[str, Any]], contract: str = CONTRACT) -> list[lis
 
 
 def _oracle(records: list[dict[str, Any]]) -> list[list[Any]]:
-    acc: dict[tuple[str, int], int | None] = {}
+    """A group's total is the sum of its values, or unknown (None) if any value is suppressed or missing."""
+    acc: dict[tuple[str, int], list[int | None]] = {}
     for r in records:
         if r["label"] != "Legionellosis" or r["states"] == "US RESIDENTS":
             continue
         key = (r["states"].title(), int(r["year"]))
-        v = None if r["m1"] in ("N", "-") else int(r["m1"])
-        prev = acc.get(key)
-        acc[key] = v if prev is None else (prev if v is None else prev + v)
-    return [[k[0], k[1], v] for k, v in sorted(acc.items())]
+        acc.setdefault(key, []).append(None if r["m1"] in ("N", "-") else int(r["m1"]))
+    return [
+        [k[0], k[1], None if any(v is None for v in vs) else sum(v for v in vs if v is not None)]
+        for k, vs in sorted(acc.items())
+    ]
 
 
 SETTINGS = settings(max_examples=25, deadline=None, suppress_health_check=[HealthCheck.too_slow])
