@@ -50,6 +50,11 @@ class Obs:
     extra: tuple[Any, ...] = ()  # the week or age group, for weekly and age-specific series
 
 
+def _place_name(text: str) -> str:
+    p = geo.place(text)
+    return p.name if p else str(text)
+
+
 def _key(text: str) -> str:
     return re.sub(r"[.]", "", " ".join(str(text).upper().split()))
 
@@ -216,13 +221,13 @@ def populations(
     year_end: int | None,
 ) -> tuple[dict[tuple[str, int], tuple[float | None, Dataset]], set[int]]:
     """Population by (place, year) from every population series, and the years any source covers."""
-    want_nation = not places or any((geo.place(p) or geo.Place(p, "", "", "")).name == NATION for p in places)
+    want_nation = not places or any(_place_name(p) == NATION for p in places)
     found: dict[tuple[str, int], tuple[float | None, Dataset]] = {}
     years: set[int] = set()
     for ds, s in pops:
         if s.location_dimension is None and not want_nation:
             continue
-        locs = [p for p in places if (geo.place(p) or geo.Place(p, "", "", "")).name != NATION]
+        locs = [p for p in places if _place_name(p) != NATION]
         if s.location_dimension is not None and places and not locs:
             continue
         rows, _ = read_series(engine, ds, s, locs if s.location_dimension else [], year_start, year_end)
@@ -377,9 +382,7 @@ def compare_rates(
 ) -> Out:
     loc_b = other_location or location
     year_b = other_year if other_year is not None else year
-    if (geo.place(loc_b) or geo.Place(loc_b, "", "", "")).name == (
-        geo.place(location) or geo.Place(location, "", "", "")
-    ).name and year_b == year:
+    if _place_name(loc_b) == _place_name(location) and year_b == year:
         return message(
             "Say what to compare with: another place (other_location) or another year (other_year).",
             fmt,
@@ -407,16 +410,17 @@ def compare_rates(
             refused="no_rate",
         )
     name_a, name_b = f"{a.place} {a.year}", f"{b.place} {b.year}"
-    assert a.cases is not None and b.cases is not None and a.population and b.population
-    rd = stats.rate_difference(int(a.cases), a.population, int(b.cases), b.population, PER)
+    ca, cb, pa, pb = int(a.cases or 0), int(b.cases or 0), float(a.population or 0), float(b.population or 0)
+    rd = stats.rate_difference(ca, pa, cb, pb, PER)
     cols = ["what", "estimate", "lower_95", "upper_95", "cases", "population", "period_status", "flags"]
     table: list[list[Any]] = []
-    for r, nm in ((a, name_a), (b, name_b)):
-        assert r.est is not None
-        table.append([f"rate per 100,000: {nm}", _sig(r.est.value), _sig(r.est.lower), _sig(r.est.upper),
+    for r, est, nm in ((a, a.est, name_a), (b, b.est, name_b)):
+        if est is None:  # pragma: no cover - a and b were chosen for having a rate
+            continue
+        table.append([f"rate per 100,000: {nm}", _sig(est.value), _sig(est.lower), _sig(est.upper),
                       r.cases, r.population, r.status, "; ".join(r.flags)])  # fmt: skip
-    if a.cases > 0 and b.cases > 0:
-        rr = stats.rate_ratio(int(a.cases), a.population, int(b.cases), b.population)
+    if ca > 0 and cb > 0:
+        rr = stats.rate_ratio(ca, pa, cb, pb)
         table.append([f"rate ratio ({name_a} / {name_b})", _sig(rr.value), _sig(rr.lower), _sig(rr.upper),
                       "", "", "", ""])  # fmt: skip
     else:
@@ -609,11 +613,10 @@ def age_adjust(
             fmt,
             refused="no_age_groups",
         )
+    (cds, cs), (pds, ps) = case_series[0], pop_series[0]
     try:
-        (cds, cs), (pds, ps) = case_series[0], pop_series[0]
-        assert cs.age_dimension and ps.age_dimension
-        c_rows, _ = read_series(engine, cds, cs, [location], year, year, [cs.age_dimension])
-        p_rows, _ = read_series(engine, pds, ps, [location], year, year, [ps.age_dimension])
+        c_rows, _ = read_series(engine, cds, cs, [location], year, year, [str(cs.age_dimension)])
+        p_rows, _ = read_series(engine, pds, ps, [location], year, year, [str(ps.age_dimension)])
         notes = _source_notes(engine, [cds, pds])
     except QueryRefused as e:
         return refusal(e, fmt)
@@ -701,9 +704,8 @@ def check_signal(
             refused="week_out_of_range",
         )
     ds, s = matches[0]
-    assert s.week_dimension
     try:
-        rows, _ = read_series(engine, ds, s, [location], year - HISTORY_YEARS, year, [s.week_dimension])
+        rows, _ = read_series(engine, ds, s, [location], year - HISTORY_YEARS, year, [str(s.week_dimension)])
         notes = _source_notes(engine, [ds])
     except QueryRefused as e:
         return refusal(e, fmt)
@@ -734,10 +736,9 @@ def check_signal(
             fmt,
             refused="incomplete_history",
         )
-    assert isinstance(current, float)
     hist = [h for h in history if isinstance(h, float)]
     try:
-        sig = stats.historical_limits(current, hist)
+        sig = stats.historical_limits(float(current), hist)
     except stats.StatsError as e:
         return message(f"The check can't be made: {e}. Use get_series to see the counts.", fmt, refused="no_signal")
     words = {"above": "above historical limits", "below": "below historical limits", "within": "within limits"}

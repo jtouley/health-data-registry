@@ -45,5 +45,8 @@ def publisher_fields(entry: CatalogEntry, fetcher: Fetcher) -> set[str]:
     """The field names the publisher serves today, for the contract drift check (any portal)."""
     from health_data_registry.adapters import https_csv, socrata, who_gho
 
-    mods = {"socrata": socrata, "who_gho": who_gho, "https_csv": https_csv}
-    return mods[entry.source.portal].publisher_fields(entry, fetcher)
+    if entry.source.portal == "socrata":
+        return socrata.publisher_fields(entry, fetcher)
+    if entry.source.portal == "who_gho":
+        return who_gho.publisher_fields(entry, fetcher)
+    return https_csv.publisher_fields(entry, fetcher)

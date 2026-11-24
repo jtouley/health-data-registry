@@ -630,39 +630,10 @@ def get_rate(
     year: int,
     fmt: Fmt = "csv",
 ) -> Out:
-    pops = [(d, s) for d in registry for s in d.semantic.series if s.measure == "population"]
-    if not pops:
-        return message(
-            "Population counts (Census) aren't loaded yet, so a rate can't be worked out here. Use get_series "
-            "for the counts, or a published rate if the source has one (describe_dataset says).",
-            fmt,
-            refused="no_denominator",
-        )
-    cases = series_for(registry, condition, "cases")
-    if not cases:
-        return message(
-            f"No loaded source reports '{condition}' as case counts.", fmt, refused="unknown_condition"
-        )
-    pd, ps = pops[0]
-    try:
-        pop_rows, _, _ = series_rows(engine, pd, ps, locations, year, year)
-        pop = {p: v for p, _, v, *_ in pop_rows}
-        rows: list[list[Any]] = []
-        for ds, s in cases:
-            got, _, _ = series_rows(engine, ds, s, locations, year, year)
-            for place, y, value, *_ in got:
-                denom = pop.get(place)
-                rate = None if value is None or not denom else round(value / denom * 100_000, 2)
-                rows.append([place, y, s.label, value, denom, rate, ds.id, pd.id])
-    except QueryRefused as e:
-        return refusal(e, fmt)
-    notes = [
-        "Crude rate per 100,000 computed here (cases ÷ Census population × 100,000). It is not published and not "
-        "age-standardised, so don't compare it with age-standardised GBD or CDC rates.",
-    ]
-    cols = ["location", "year", "condition", "cases", "population", "crude_rate_per_100k_computed",
-            "case_source", "population_source"]  # fmt: skip
-    return Result(cols, rows, notes).render(fmt)
+    """Crude rate per 100,000 with an exact Poisson interval: see analysis.get_rate."""
+    from health_data_registry import analysis
+
+    return analysis.get_rate(registry, engine, condition=condition, locations=locations, year=year, fmt=fmt)
 
 
 # ------------------------------------------------------------------------------------------ provenance
