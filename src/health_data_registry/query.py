@@ -7,7 +7,7 @@ so a clinician (or a grader) can check the number without trusting the model tha
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -240,36 +240,129 @@ def _compile_cumulative(
     )
 
 
+def _runtime_fetch_enabled() -> bool:
+    import os
+
+    return os.environ.get("HDR_FETCH_AT_RUN_TIME", "1") != "0"
+
+
+def _default_hub() -> Any:
+    from health_data_registry.hub import Hub, cache_root, hub_from_env
+
+    url = hub_from_env()
+    return Hub(url=url, cache=cache_root()) if url else None
+
+
+def _default_cache() -> Path:
+    from health_data_registry.hub import cache_root
+
+    return cache_root()
+
+
 @dataclass
 class Engine:
-    """One DuckDB connection with every available snapshot attached read-only, then locked down."""
+    """One DuckDB connection with every available snapshot attached read-only, then locked down.
+
+    Each source comes from the local lake when it holds a snapshot (maintainers, CI); otherwise a redistributable
+    source comes from the published hub release (downloaded on first use and checked against its sha256), and a
+    restricted one is fetched from its publisher at run time into the local cache (see hub.py).
+    """
 
     registry: Registry
     lake: Path
     manifests: dict[str, Manifest] = field(default_factory=dict)
+    hub: Any = field(default_factory=_default_hub)  # hub.Hub | None
+    cache: Path = field(default_factory=_default_cache)
+    fetch_at_run_time: bool = field(default_factory=_runtime_fetch_enabled)
+    getter: Any = None  # a crawl.Getter for run-time fetches; None builds the guarded HTTPS fetcher
     _con: duckdb.DuckDBPyConnection | None = None
+    _hub_files: dict[str, tuple[Path, Manifest]] = field(default_factory=dict)
+    _first_use: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def runtime_lake(self) -> Path:
+        return self.cache / "publisher"
 
     def connect(self) -> duckdb.DuckDBPyConnection:
         if self._con is not None:
             return self._con
         con = duckdb.connect(":memory:")
+        parquet: list[str] = []
         for ds in self.registry:
             found = latest_snapshot(self.lake, ds.id)
-            if found is None:
+            if found is None and not ds.entry.licence.redistribution:
+                found = latest_snapshot(self.runtime_lake, ds.id)
+                if found is not None:
+                    found = (found[0], replace(found[1], origin="publisher"))
+            if found is not None:
+                path, manifest = found
+                alias = f"snap_{ds.id}"
+                db = str(path / "data.duckdb").replace("'", "''")
+                con.execute(f"ATTACH '{db}' AS {_q(alias)} (READ_ONLY)")
+                con.execute(f"CREATE VIEW {_q(ds.id)} AS SELECT * FROM {_q(alias)}.{_q(ds.id)}")  # noqa: S608 - quoted contract identifiers, bound values
+            elif ds.id in self._hub_files:
+                file, manifest = self._hub_files[ds.id]
+                lit = str(file).replace("'", "''")
+                con.execute(f"CREATE VIEW {_q(ds.id)} AS SELECT * FROM read_parquet('{lit}')")  # noqa: S608 - quoted identifier, verified cache path
+                parquet.append(str(file))
+            else:
                 continue
-            path, manifest = found
-            alias = f"snap_{ds.id}"
-            db = str(path / "data.duckdb").replace("'", "''")
-            con.execute(f"ATTACH '{db}' AS {_q(alias)} (READ_ONLY)")
-            con.execute(f"CREATE VIEW {_q(ds.id)} AS SELECT * FROM {_q(alias)}.{_q(ds.id)}")  # noqa: S608 - quoted contract identifiers, bound values
             self.manifests[ds.id] = manifest
-        harden(con)
+        harden(con, allowed_paths=parquet)
         self._con = con
         return con
+
+    def _reconnect(self) -> None:
+        if self._con is not None:
+            self._con.close()
+        self._con = None
+        self.manifests.clear()
+        self.connect()
+
+    def _obtain(self, ds: Dataset) -> bool:
+        """Bring one source onto this computer: from the hub release, or from the publisher at run time."""
+        from health_data_registry.hub import HubError
+
+        if ds.entry.licence.redistribution:
+            if self.hub is None:
+                return False
+            try:
+                self._hub_files[ds.id] = self.hub.snapshot(ds)
+            except HubError as e:
+                raise QueryRefused(e.code, str(e)) from e
+            return True
+        if not self.fetch_at_run_time:
+            return False
+        from health_data_registry.crawl import fetcher, refresh_dataset
+        from health_data_registry.store import FetchLog
+
+        get = self.getter or fetcher(self.registry, FetchLog(self.runtime_lake, ds.id))
+        try:
+            refresh_dataset(ds, self.runtime_lake, get)
+        except Exception as e:  # noqa: BLE001 - any publisher failure becomes one plain refusal
+            raise QueryRefused(
+                "publisher_unreachable",
+                f"{ds.entry.publisher} could not be reached to download {ds.entry.title}, which is fetched from "
+                "the publisher because its terms don't allow us to host a copy. Try again in a few minutes.",
+            ) from e
+        self._first_use[ds.id] = (
+            f"First use: {ds.entry.title} was just downloaded from {ds.entry.publisher}, because its terms "
+            "(" + ds.entry.licence.id + ") don't allow us to host a copy. Later questions use the copy on this "
+            "computer."
+        )
+        return True
+
+    def first_use_notice(self, dataset_id: str) -> str | None:
+        """The one-time note that a source was just downloaded from its publisher (returned once, then cleared)."""
+        return self._first_use.pop(dataset_id, None)
 
     def manifest(self, dataset_id: str) -> Manifest:
         self.connect()
         m = self.manifests.get(dataset_id)
+        if m is None and dataset_id in self.registry.datasets:
+            if self._obtain(self.registry.get(dataset_id)):
+                self._reconnect()
+                m = self.manifests.get(dataset_id)
         if m is None:
             raise QueryRefused(
                 "no_snapshot",
@@ -277,6 +370,44 @@ class Engine:
                 "to show. The one-time 'load the data' step in the setup guide (docs/setup.md) fixes this.",
             )
         return m
+
+    def provenance(self, dataset_id: str) -> dict[str, Any]:
+        """Where a source's numbers come from, without downloading anything: origin, contract, product, release."""
+        from health_data_registry.product import load_ports
+
+        ds = self.registry.get(dataset_id)
+        self.connect()
+        m = self.manifests.get(dataset_id)
+        port = load_ports(self.registry.root).get(ds.contract.id)
+        if m is not None:
+            origin = {
+                "lake": "the local lake (a maintainer's copy)",
+                "hub": f"the open data hub, release {m.release_id}",
+                "publisher": f"{ds.entry.publisher}, fetched at run time on {m.retrieved_at[:10]}",
+            }.get(m.origin, m.origin)
+        elif ds.entry.licence.redistribution:
+            origin = (
+                f"not loaded yet: the open data hub ({self.hub.url}) on first use"
+                if self.hub is not None
+                else "not loaded yet: no open data hub is configured (HDR_HUB)"
+            )
+        else:
+            origin = (
+                f"not loaded yet: {ds.entry.publisher}, fetched at run time on first use"
+                if self.fetch_at_run_time
+                else "not loaded yet: fetching from the publisher at run time is turned off"
+            )
+        return {
+            "data_from": origin,
+            "contract_id": ds.contract.id,
+            "contract_version": ds.contract.version,
+            "release_contract_version": m.release_contract_version if m else None,
+            "data_product": port.product_id if port else None,
+            "output_port": port.name if port else None,
+            "release_id": m.release_id if m else None,
+            "run_date": m.run_date if m else None,
+            "release_files": dict(m.release_files) if m else {},
+        }
 
     def query_metric(
         self,
@@ -308,7 +439,9 @@ class Engine:
                 "would_combine_rates",
                 f"{metric} is published per group and can't be added up; choose group_by from: {dims}.",
             )
-        return envelope(ds, manifest, cm.columns, rows, sql=cm.sql, params=cm.params, method=cm.method)
+        notice = self.first_use_notice(dataset_id)
+        method = f"{notice} {cm.method}" if notice else cm.method
+        return envelope(ds, manifest, cm.columns, rows, sql=cm.sql, params=cm.params, method=method)
 
     def distinct_values(self, dataset_id: str, column: str) -> list[Any]:
         """Every value a dimension column takes in the snapshot (for matching place names)."""
@@ -324,16 +457,21 @@ class Engine:
         return [r[0] for r in rows if r[0] is not None]
 
     def query_sql(self, sql: str) -> dict[str, Any]:
-        con = self.connect()
-        available = {k: v for k, v in self._tables().items()}
+        self.connect()
+        available = {ds.id: ds.contract.column_names for ds in self.registry}
         q: GuardedQuery = guard_sql(sql, allowed_tables=available, max_rows=MAX_ROWS)
+        for t in sorted(q.tables):
+            if t in self.registry.datasets:
+                self.manifest(t)  # brings a hub or run-time source onto this computer on first use
+        con = self.connect()
         cols, rows = run_guarded(con, q)
         ids = sorted(t for t in q.tables if t in self.manifests)
+        notices = [n for i in ids if (n := self.first_use_notice(i))]
         if len(ids) == 1:
             ds = self.registry.get(ids[0])
-            return envelope(
-                ds, self.manifests[ids[0]], cols, rows, sql=q.sql, params=[], method="Read-only SQL."
-            )
+            out = envelope(ds, self.manifests[ids[0]], cols, rows, sql=q.sql, params=[], method="Read-only SQL.")
+            out["caveats"] = notices + out["caveats"]
+            return out
         return {
             "columns": cols,
             "rows": [list(r) for r in rows],
@@ -362,6 +500,10 @@ def _source(ds: Dataset, m: Manifest) -> dict[str, Any]:
         "licence": ds.entry.licence.id,
         "terms_url": ds.entry.licence.terms_url,
         "citation": ds.entry.citation,
+        "data_from": m.origin,
+        "release_id": m.release_id,
+        "release_contract_version": m.release_contract_version,
+        "release_files": dict(m.release_files),
     }
 
 
@@ -377,7 +519,7 @@ def envelope(
 ) -> dict[str, Any]:
     truncated = len(rows) > MAX_ROWS
     out = [list(r) for r in rows[:MAX_ROWS]]
-    notes = list(ds.entry.caveats)
+    notes = list(m.notes) + list(ds.entry.caveats)
     if m.catalog_status != "reviewed":
         notes.insert(0, "This dataset's contract is a draft that no maintainer has reviewed yet.")
     if m.partial:
