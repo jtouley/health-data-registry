@@ -323,10 +323,27 @@ def add_arguments(p: argparse.ArgumentParser) -> None:
     )  # fmt: skip
 
 
+def checked_repo(repo_id: str) -> str:
+    """`repo_id` if it is `<owner>/health-data-registry-ops-sitemaps` (naming.py); ValueError otherwise."""
+    who, _, _ = repo_id.partition("/")
+    try:
+        want = naming.ops_dataset(OPS_JOB, who)
+    except naming.BadName as e:
+        raise ValueError(f"{repo_id!r}: {e}") from e
+    if repo_id != want:
+        raise ValueError(f"{repo_id!r} is not the sitemap dataset; use {want} (docs/dev/naming.md)")
+    return repo_id
+
+
 def snapshot(
     args: argparse.Namespace, *, api: Any = None, get: Getter | None = None, error: Callable[[str], Any]
 ) -> int:
     """Take every chosen seed, upload what was taken in one commit. 0: all taken; 1: one or more not taken."""
+    try:
+        repo = checked_repo(args.repo)
+    except ValueError as e:
+        error(str(e))
+        return 2
     seeds = {s.name: s for s in SEEDS}
     unknown = set(args.seed or []) - set(seeds)
     files: dict[str, Path] = {}
@@ -359,7 +376,7 @@ def snapshot(
             from huggingface_hub import HfApi
 
             api = HfApi(token=os.environ.get("HF_TOKEN"))
-        for r in upload(api, args.repo, snaps):
+        for r in upload(api, repo, snaps):
             print(
                 f"{r['seed']} {r['taken_on']}: {r['pages']} pages; "
                 f"{r['new']} new, {r['changed']} changed, {r['removed']} removed"

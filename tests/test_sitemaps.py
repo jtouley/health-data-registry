@@ -198,7 +198,9 @@ def test_main_fromFile_usesMaintainerCopyWithoutFetching(
         raise AssertionError("must not fetch when a file is given")
 
     # Act
-    code = sm.main(["--repo", "me/x", "--from-file", f"demo={f}"], api=api, get=no_fetch)
+    code = sm.main(
+        ["--repo", "me/health-data-registry-ops-sitemaps", "--from-file", f"demo={f}"], api=api, get=no_fetch
+    )
 
     # Assert
     assert code == 0
@@ -217,7 +219,7 @@ def test_main_publisherRefuses_reportsAndExitsNonZero(
         )
 
     # Act
-    code = sm.main(["--repo", "me/x"], api=api, get=refused)
+    code = sm.main(["--repo", "me/health-data-registry-ops-sitemaps"], api=api, get=refused)
 
     # Assert
     assert code == 1
@@ -349,7 +351,7 @@ def test_main_browserMissing_exits2WithoutUpload(
 ) -> None:
     monkeypatch.setattr(sm, "SEEDS", (SEED,))
     monkeypatch.setattr(sm, "BROWSER_MODULE", "health_data_registry.no_such_module")
-    assert sm.main(["--repo", "me/x"], api=api) == 2
+    assert sm.main(["--repo", "me/health-data-registry-ops-sitemaps"], api=api) == 2
     assert "--fetcher http" in capsys.readouterr().err
     assert api.created == []
 
@@ -373,11 +375,11 @@ def test_main_fetcherFlag_picksTheGetter(
     monkeypatch.setattr(sm, "publisher_getter", make("http"))
 
     # Act
-    code = sm.main(["--repo", "me/x", "--fetcher", fetcher], api=api)
+    code = sm.main(["--repo", "me/health-data-registry-ops-sitemaps", "--fetcher", fetcher], api=api)
 
     # Assert
     assert code == 0 and used == [chosen]
-    assert api.created == [("me/x", True)]
+    assert api.created == [("me/health-data-registry-ops-sitemaps", True)]
 
 
 def test_main_partialRefusal_uploadsTheRestAndExits1(
@@ -391,7 +393,7 @@ def test_main_partialRefusal_uploadsTheRestAndExits1(
             raise FetchRefused("blocked", "www.example.gov refused this program's request")
         return urlset(("https://www.example.gov/a", "1")), WHEN
 
-    assert sm.main(["--repo", "me/x"], api=api, get=get) == 1
+    assert sm.main(["--repo", "me/health-data-registry-ops-sitemaps"], api=api, get=get) == 1
     assert len(api.commits) == 1 and "demo 20" in api.commits[0]
     captured = capsys.readouterr()
     assert "other: not taken: www.example.gov refused" in captured.err
@@ -410,11 +412,27 @@ def test_cli_sitemapsSnapshot_runsWithoutTheRegistry(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(sm, "snapshot", fake_snapshot)
 
     # Act
-    code = cli.main(["sitemaps", "snapshot", "--repo", "me/x", "--fetcher", "http", "--seed", "mdhhs"])
+    code = cli.main(
+        [
+            "sitemaps",
+            "snapshot",
+            "--repo",
+            "me/health-data-registry-ops-sitemaps",
+            "--fetcher",
+            "http",
+            "--seed",
+            "mdhhs",
+        ]
+    )
 
     # Assert
     assert code == 7
-    assert (seen["repo"], seen["fetcher"], seen["seed"], seen["from_file"]) == ("me/x", "http", ["mdhhs"], [])
+    assert (seen["repo"], seen["fetcher"], seen["seed"], seen["from_file"]) == (
+        "me/health-data-registry-ops-sitemaps",
+        "http",
+        ["mdhhs"],
+        [],
+    )
 
 
 def test_addArguments_defaultsAndBadFetcher() -> None:
@@ -432,3 +450,22 @@ def snapshot_args(argv: list[str]) -> dict[str, Any]:
     p = argparse.ArgumentParser()
     sm.add_arguments(p)
     return vars(p.parse_args(argv))
+
+
+@pytest.mark.parametrize(
+    "repo",
+    ["me/x", "me/health-data-registry", "me/health-data-registry-ops-croi-crawl", "noslash", "bad owner/x"],
+)
+def test_main_repoOutsideTheConvention_isAUsageError(api: FakeApi, repo: str) -> None:
+    with pytest.raises(SystemExit):
+        sm.main(["--repo", repo], api=api, get=lambda url: (urlset(("https://www.example.gov/a", "1")), WHEN))
+    assert api.created == []
+
+
+def test_checkedRepo_acceptsOnlyTheOpsSitemapsName() -> None:
+    name = "org-2/health-data-registry-ops-sitemaps"
+    assert sm.checked_repo(name) == name
+    with pytest.raises(ValueError, match="use org-2/health-data-registry-ops-sitemaps"):
+        sm.checked_repo(name + "-public")
+    with pytest.raises(ValueError, match="not a Hugging Face user"):
+        sm.checked_repo("bad owner/health-data-registry-ops-sitemaps")

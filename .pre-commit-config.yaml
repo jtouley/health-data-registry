@@ -37,7 +37,7 @@ repos:
         pass_filenames: false
       # Data belongs in the lake or the Hugging Face dataset, never in git.
       - id: forbid-data-files
-        name: forbid lake/, mutants/, *.parquet, *.duckdb
-        entry: data files and generated output must not be committed (lake/, mutants/, *.parquet, *.duckdb)
+        name: forbid lake/, mutants/, sitemaps/, *.parquet, *.duckdb, *.xml.gz
+        entry: data files and generated output must not be committed (lake/, mutants/, sitemaps/, *.parquet, *.duckdb, *.xml.gz)
         language: fail
-        files: (^|/)(lake|mutants)/|\.(parquet|duckdb)$
+        files: (^|/)(lake|mutants|sitemaps)/|\.(parquet|duckdb|xml\.gz)$
