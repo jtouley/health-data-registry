@@ -1,0 +1,89 @@
+# Weekly refresh: fetch every catalogued source, then check each against its contract.
+# On failure, opens an issue (or comments on the open one) so a changed source is seen.
+name: Weekly refresh
+
+on:
+  schedule:
+    - cron: "17 6 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Refresh and check contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies (locked)
+        run: uv sync --locked --no-dev
+
+      - name: Refresh every source
+        run: uv run --no-sync health-data-registry refresh --all
+
+      - name: Check every source against its contract
+        run: uv run --no-sync health-data-registry check-contracts
+
+      # -----------------------------------------------------------------------------------------
+      # PUBLISHING SNAPSHOTS TO HUGGING FACE IS DISABLED until the maintainer:
+      #   1. adds the repository secret HF_TOKEN (a fine-grained write token for the dataset only), and
+      #   2. sets the repository variable HDR_LAKE to the dataset id, e.g. <owner>/<dataset-name>.
+      # Until HDR_LAKE is set this step is skipped. Only sources whose licence allows redistribution
+      # are written to lake/ by `refresh` (licenses/README.md); WHO and other restricted sources are
+      # never uploaded. It runs only on main, after the contract check passed.
+      # -----------------------------------------------------------------------------------------
+      - name: Publish snapshots to Hugging Face
+        if: vars.HDR_LAKE != '' && github.ref == 'refs/heads/main'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HDR_LAKE: ${{ vars.HDR_LAKE }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::error::HDR_LAKE is set but the HF_TOKEN secret is missing"
+            exit 1
+          fi
+          uvx --from huggingface_hub==2.4.0 hf upload "$HDR_LAKE" lake/ . \
+            --repo-type dataset --commit-message "Weekly refresh, run $GITHUB_RUN_ID"
+
+  report-failure:
+    name: Open or update the failure issue
+    needs: refresh
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or comment on the refresh-failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TITLE: "Weekly refresh failed"
+        run: |
+          body="The weekly refresh or contract check failed: $RUN_URL
+
+          A source may have changed shape, moved, or be down. Check the run log, then update the
+          adapter or contract in a pull request."
+          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "\"$TITLE\" in:title" --json number,title \
+            --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body "Failed again: $RUN_URL"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$body"
+          fi

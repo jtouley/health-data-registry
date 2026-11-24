@@ -1,0 +1,44 @@
+name: PR size
+
+# Warns above 1,500 and fails above 3,000 added lines outside tests/, eval/sealed/ and uv.lock,
+# unless the PR has the large-pr-approved label. Its own workflow so that adding or removing the
+# label re-runs this check alone, not the whole CI.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-size:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Count added lines
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'large-pr-approved') }}
+          WARN_AT: "1500"
+          FAIL_AT: "3000"
+        run: |
+          added=$(git diff --numstat "origin/$BASE_REF...HEAD" -- . \
+            ':(exclude)tests/**' ':(exclude)eval/sealed/**' ':(exclude)uv.lock' \
+            | awk '$1 != "-" { n += $1 } END { print n + 0 }')
+          echo "Added lines (excluding tests, sealed eval sets and uv.lock): $added"
+          if [ "$added" -gt "$FAIL_AT" ]; then
+            if [ "$APPROVED" = "true" ]; then
+              echo "::warning::$added added lines; allowed by the large-pr-approved label."
+            else
+              echo "::error::$added added lines (limit $FAIL_AT). Split the PR, or ask the maintainer for the large-pr-approved label."
+              exit 1
+            fi
+          elif [ "$added" -gt "$WARN_AT" ]; then
+            echo "::warning::$added added lines (over $WARN_AT). Consider splitting the PR."
+          fi

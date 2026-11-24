@@ -1,0 +1,6 @@
+{
+  "url": "https://data.cdc.gov/resource/kvib-3txy.json?%24query=SELECT%20%2A%20WHERE%20state%20IN%20%28%27Michigan%27%2C%27Overall%27%29%20AND%20surveillance_network%20IN%20%28%27COVID-NET%27%2C%27FluSurv-NET%27%2C%27RSV-NET%27%29%20AND%20date_type%20%3D%20%27Week%20Ending%20Date%27%20AND%20data_type%20IN%20%28%27Weekly%20Rate%27%2C%27Cumulative%20Rate%27%29%20AND%20rate_type%20%3D%20%27Observed%27%20AND%20age_category%20%3D%20%27Overall%27%20AND%20race%20%3D%20%27All%27%20AND%20sex%20%3D%20%27All%27%20AND%20date%20%3E%3D%20%272025-12-06%27%20AND%20date%20%3C%3D%20%272026-02-28%27%20ORDER%20BY%20state%2C%20surveillance_network%2C%20data_type%2C%20date%20LIMIT%20300",
+  "retrieved_at": "2026-11-24T15:51:56Z",
+  "sha256": "ffb5b032634240d001a5dfb214f3e6d8d96b4b40d3f4622e0567e3daad7ad499",
+  "licence": "public-domain-us-federal"
+}

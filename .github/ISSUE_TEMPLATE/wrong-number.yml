@@ -1,0 +1,34 @@
+name: Wrong number
+description: A result does not match what the publisher published.
+title: "Wrong number: "
+labels: [wrong-number]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you: wrong numbers are the bugs that matter most here. If the same mistake can be triggered on purpose
+        or affects many answers, report it privately instead ([SECURITY.md](https://github.com/jtouley/health-data-registry/blob/main/SECURITY.md)).
+        Don't paste patient information.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question asked
+    validations: {required: true}
+  - type: textarea
+    id: returned
+    attributes:
+      label: What the connector returned
+      description: The number with its source, dataset version, SQL and method line, as returned.
+      render: text
+    validations: {required: true}
+  - type: textarea
+    id: correct
+    attributes:
+      label: The correct number and where it comes from
+      description: The publisher's figure, with a link to the table, report or query and the year.
+    validations: {required: true}
+  - type: input
+    id: version
+    attributes:
+      label: Version and MCP client
+    validations: {required: true}

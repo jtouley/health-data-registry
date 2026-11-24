@@ -1,0 +1,32 @@
+name: Dataset request
+description: Ask for a public, population-level dataset to be added to the catalog.
+title: "Dataset: "
+labels: [dataset-request]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Only public, population-level data. Never patient data. To add the dataset yourself, see
+        [CONTRIBUTING.md](https://github.com/jtouley/health-data-registry/blob/main/CONTRIBUTING.md#adding-a-dataset).
+  - type: input
+    id: name
+    attributes:
+      label: Dataset and publisher
+      description: e.g. "NNDSS weekly tables, CDC".
+    validations: {required: true}
+  - type: input
+    id: url
+    attributes:
+      label: Link to the dataset or its documentation
+    validations: {required: true}
+  - type: textarea
+    id: questions
+    attributes:
+      label: Questions it would answer
+      description: Two or three questions you or your colleagues would ask of it.
+    validations: {required: true}
+  - type: input
+    id: terms
+    attributes:
+      label: Licence or terms of use
+      description: Optional. Link to the publisher's terms if you know them.

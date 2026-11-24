@@ -1,0 +1,132 @@
+[{"yearname":"2011","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"All cases","series":"Total","value":"140.92"}
+,{"yearname":"2011","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"48.16"}
+,{"yearname":"2011","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"92.76"}
+,{"yearname":"2011","topic":"Number of Cases","viewby":"Total","grouping":"All cases","series":"Total","value":"15461"}
+,{"yearname":"2011","topic":"Number of Cases","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"5284"}
+,{"yearname":"2011","topic":"Number of Cases","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"10177"}
+,{"yearname":"2012","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"All cases","series":"Total","value":"145.78"}
+,{"yearname":"2012","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"52.88"}
+,{"yearname":"2012","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"92.9"}
+,{"yearname":"2012","topic":"Number of Cases","viewby":"Total","grouping":"All cases","series":"Total","value":"16449"}
+,{"yearname":"2012","topic":"Number of Cases","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"5967"}
+,{"yearname":"2012","topic":"Number of Cases","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"10482"}
+,{"yearname":"2013","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"All cases","series":"Total","value":"141.77"}
+,{"yearname":"2013","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"55.75"}
+,{"yearname":"2013","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"86.02"}
+,{"yearname":"2013","topic":"Number of Cases","viewby":"Total","grouping":"All cases","series":"Total","value":"16379"}
+,{"yearname":"2013","topic":"Number of Cases","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"6441"}
+,{"yearname":"2013","topic":"Number of Cases","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"9938"}
+,{"yearname":"2014","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"All cases","series":"Total","value":"141.61"}
+,{"yearname":"2014","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"57.83"}
+,{"yearname":"2014","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"83.78"}
+,{"yearname":"2014","topic":"Number of Cases","viewby":"Total","grouping":"All cases","series":"Total","value":"16333"}
+,{"yearname":"2014","topic":"Number of Cases","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"6670"}
+,{"yearname":"2014","topic":"Number of Cases","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"9663"}
+,{"yearname":"2015","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"All cases","series":"Total","value":"148.55"}
+,{"yearname":"2015","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"65.81"}
+,{"yearname":"2015","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"82.74"}
+,{"yearname":"2015","topic":"Number of Cases","viewby":"Total","grouping":"All cases","series":"Total","value":"17354"}
+,{"yearname":"2015","topic":"Number of Cases","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"7688"}
+,{"yearname":"2015","topic":"Number of Cases","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"9666"}
+,{"yearname":"2016","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"All cases","series":"Total","value":"142.61"}
+,{"yearname":"2016","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"67.2"}
+,{"yearname":"2016","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"75.41"}
+,{"yearname":"2016","topic":"Number of Cases","viewby":"Total","grouping":"All cases","series":"Total","value":"16796"}
+,{"yearname":"2016","topic":"Number of Cases","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"7915"}
+,{"yearname":"2016","topic":"Number of Cases","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"8881"}
+,{"yearname":"2017","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"All cases","series":"Total","value":"130.28"}
+,{"yearname":"2017","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"63.32"}
+,{"yearname":"2017","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"66.96"}
+,{"yearname":"2017","topic":"Number of Cases","viewby":"Total","grouping":"All cases","series":"Total","value":"15512"}
+,{"yearname":"2017","topic":"Number of Cases","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"7539"}
+,{"yearname":"2017","topic":"Number of Cases","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"7973"}
+,{"yearname":"2018","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"All cases","series":"All cases - Female","value":"147.9"}
+,{"yearname":"2018","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"All cases","series":"All cases - Male","value":"111.6"}
+,{"yearname":"2018","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"Epi Class","series":"CA - Female","value":"81.7"}
+,{"yearname":"2018","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"Epi Class","series":"CA - Male","value":"49.5"}
+,{"yearname":"2018","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"Epi Class","series":"HA - Female","value":"66.2"}
+,{"yearname":"2018","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"Epi Class","series":"HA - Male","value":"62.0"}
+,{"yearname":"2018","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"All cases","series":"Total","value":"130.1"}
+,{"yearname":"2018","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"65.9"}
+,{"yearname":"2018","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"64.2"}
+,{"yearname":"2018","topic":"Number of Cases","viewby":"Sex","grouping":"All cases","series":"All cases - Female","value":"9046"}
+,{"yearname":"2018","topic":"Number of Cases","viewby":"Sex","grouping":"All cases","series":"All cases - Male","value":"6545"}
+,{"yearname":"2018","topic":"Number of Cases","viewby":"Sex","grouping":"Epi Class","series":"CA - Female","value":"4995"}
+,{"yearname":"2018","topic":"Number of Cases","viewby":"Sex","grouping":"Epi Class","series":"CA - Male","value":"2905"}
+,{"yearname":"2018","topic":"Number of Cases","viewby":"Sex","grouping":"Epi Class","series":"HA - Female","value":"4051"}
+,{"yearname":"2018","topic":"Number of Cases","viewby":"Sex","grouping":"Epi Class","series":"HA - Male","value":"3640"}
+,{"yearname":"2018","topic":"Number of Cases","viewby":"Total","grouping":"All cases","series":"Total","value":"15591"}
+,{"yearname":"2018","topic":"Number of Cases","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"7901"}
+,{"yearname":"2018","topic":"Number of Cases","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"7690"}
+,{"yearname":"2019","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"All cases","series":"All cases - Female","value":"136.2"}
+,{"yearname":"2019","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"All cases","series":"All cases - Male","value":"105.5"}
+,{"yearname":"2019","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"Epi Class","series":"CA - Female","value":"76.0"}
+,{"yearname":"2019","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"Epi Class","series":"CA - Male","value":"49.9"}
+,{"yearname":"2019","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"Epi Class","series":"HA - Female","value":"60.2"}
+,{"yearname":"2019","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"Epi Class","series":"HA - Male","value":"55.6"}
+,{"yearname":"2019","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"All cases","series":"Total","value":"121.2"}
+,{"yearname":"2019","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"63.3"}
+,{"yearname":"2019","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"57.9"}
+,{"yearname":"2019","topic":"Number of Cases","viewby":"Sex","grouping":"All cases","series":"All cases - Female","value":"8389"}
+,{"yearname":"2019","topic":"Number of Cases","viewby":"Sex","grouping":"All cases","series":"All cases - Male","value":"6223"}
+,{"yearname":"2019","topic":"Number of Cases","viewby":"Sex","grouping":"Epi Class","series":"CA - Female","value":"4683"}
+,{"yearname":"2019","topic":"Number of Cases","viewby":"Sex","grouping":"Epi Class","series":"CA - Male","value":"2945"}
+,{"yearname":"2019","topic":"Number of Cases","viewby":"Sex","grouping":"Epi Class","series":"HA - Female","value":"3706"}
+,{"yearname":"2019","topic":"Number of Cases","viewby":"Sex","grouping":"Epi Class","series":"HA - Male","value":"3278"}
+,{"yearname":"2019","topic":"Number of Cases","viewby":"Total","grouping":"All cases","series":"Total","value":"14612"}
+,{"yearname":"2019","topic":"Number of Cases","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"7627"}
+,{"yearname":"2019","topic":"Number of Cases","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"6985"}
+,{"yearname":"2020","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"All cases","series":"All cases - Female","value":"115.2"}
+,{"yearname":"2020","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"All cases","series":"All cases - Male","value":"86.8"}
+,{"yearname":"2020","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"Epi Class","series":"CA - Female","value":"62.8"}
+,{"yearname":"2020","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"Epi Class","series":"CA - Male","value":"39.1"}
+,{"yearname":"2020","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"Epi Class","series":"HA - Female","value":"52.4"}
+,{"yearname":"2020","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"Epi Class","series":"HA - Male","value":"47.7"}
+,{"yearname":"2020","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"All cases","series":"Total","value":"101.3"}
+,{"yearname":"2020","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"51.2"}
+,{"yearname":"2020","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"50.1"}
+,{"yearname":"2020","topic":"Number of Cases","viewby":"Sex","grouping":"All cases","series":"All cases - Female","value":"7121"}
+,{"yearname":"2020","topic":"Number of Cases","viewby":"Sex","grouping":"All cases","series":"All cases - Male","value":"5139"}
+,{"yearname":"2020","topic":"Number of Cases","viewby":"Sex","grouping":"Epi Class","series":"CA - Female","value":"3882"}
+,{"yearname":"2020","topic":"Number of Cases","viewby":"Sex","grouping":"Epi Class","series":"CA - Male","value":"2316"}
+,{"yearname":"2020","topic":"Number of Cases","viewby":"Sex","grouping":"Epi Class","series":"HA - Female","value":"3239"}
+,{"yearname":"2020","topic":"Number of Cases","viewby":"Sex","grouping":"Epi Class","series":"HA - Male","value":"2823"}
+,{"yearname":"2020","topic":"Number of Cases","viewby":"Total","grouping":"All cases","series":"Total","value":"12260"}
+,{"yearname":"2020","topic":"Number of Cases","viewby":"Total","grouping":"Epi class","series":"Community-associated","value":"6198"}
+,{"yearname":"2020","topic":"Number of Cases","viewby":"Total","grouping":"Epi class","series":"Healthcare-associated","value":"6062"}
+,{"yearname":"2021","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"All cases","series":"All cases - Female","value":"126.2"}
+,{"yearname":"2021","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"All cases","series":"All cases - Male","value":"93.7"}
+,{"yearname":"2021","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"Epi Class","series":"CA - Female","value":"69.7"}
+,{"yearname":"2021","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"Epi Class","series":"CA - Male","value":"41.6"}
+,{"yearname":"2021","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"Epi Class","series":"HA - Female","value":"56.5"}
+,{"yearname":"2021","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"Epi Class","series":"HA - Male","value":"52.1"}
+,{"yearname":"2021","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"All cases","series":"Total","value":"110.2"}
+,{"yearname":"2021","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"55.9"}
+,{"yearname":"2021","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"54.3"}
+,{"yearname":"2021","topic":"Number of Cases","viewby":"Sex","grouping":"All cases","series":"All cases - Female","value":"7771"}
+,{"yearname":"2021","topic":"Number of Cases","viewby":"Sex","grouping":"All cases","series":"All cases - Male","value":"5577"}
+,{"yearname":"2021","topic":"Number of Cases","viewby":"Sex","grouping":"Epi Class","series":"CA - Female","value":"4291"}
+,{"yearname":"2021","topic":"Number of Cases","viewby":"Sex","grouping":"Epi Class","series":"CA - Male","value":"2478"}
+,{"yearname":"2021","topic":"Number of Cases","viewby":"Sex","grouping":"Epi Class","series":"HA - Female","value":"3480"}
+,{"yearname":"2021","topic":"Number of Cases","viewby":"Sex","grouping":"Epi Class","series":"HA - Male","value":"3099"}
+,{"yearname":"2021","topic":"Number of Cases","viewby":"Total","grouping":"All cases","series":"Total","value":"13348"}
+,{"yearname":"2021","topic":"Number of Cases","viewby":"Total","grouping":"Epi class","series":"Community-associated","value":"6769"}
+,{"yearname":"2021","topic":"Number of Cases","viewby":"Total","grouping":"Epi class","series":"Healthcare-associated","value":"6579"}
+,{"yearname":"2022","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"All cases","series":"All cases - Female","value":"134"}
+,{"yearname":"2022","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"All cases","series":"All cases - Male","value":"98"}
+,{"yearname":"2022","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"Epi Class","series":"CA - Female","value":"77"}
+,{"yearname":"2022","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"Epi Class","series":"CA - Male","value":"47"}
+,{"yearname":"2022","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"Epi Class","series":"HA - Female","value":"57"}
+,{"yearname":"2022","topic":"Case rates (cases per 100,000)","viewby":"Sex","grouping":"Epi Class","series":"HA - Male","value":"51"}
+,{"yearname":"2022","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"All cases","series":"Total","value":"116"}
+,{"yearname":"2022","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"62"}
+,{"yearname":"2022","topic":"Case rates (cases per 100,000)","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"54"}
+,{"yearname":"2022","topic":"Number of cases","viewby":"Sex","grouping":"All cases","series":"All cases - Female","value":"8280"}
+,{"yearname":"2022","topic":"Number of cases","viewby":"Sex","grouping":"All cases","series":"All cases - Male","value":"5839"}
+,{"yearname":"2022","topic":"Number of cases","viewby":"Sex","grouping":"Epi Class","series":"CA - Female","value":"4748"}
+,{"yearname":"2022","topic":"Number of cases","viewby":"Sex","grouping":"Epi Class","series":"CA - Male","value":"2803"}
+,{"yearname":"2022","topic":"Number of cases","viewby":"Sex","grouping":"Epi Class","series":"HA - Female","value":"3532"}
+,{"yearname":"2022","topic":"Number of cases","viewby":"Sex","grouping":"Epi Class","series":"HA - Male","value":"3036"}
+,{"yearname":"2022","topic":"Number of cases","viewby":"Total","grouping":"All cases","series":"Total","value":"14119"}
+,{"yearname":"2022","topic":"Number of cases","viewby":"Total","grouping":"Epi Class","series":"Community-associated","value":"7552"}
+,{"yearname":"2022","topic":"Number of cases","viewby":"Total","grouping":"Epi Class","series":"Healthcare-associated","value":"6567"}]

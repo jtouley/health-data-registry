@@ -1,0 +1,6 @@
+# Blank issues stay enabled for questions and for SECURITY.md's "Security contact request".
+blank_issues_enabled: true
+contact_links:
+  - name: Report a vulnerability
+    url: https://github.com/jtouley/health-data-registry/security/advisories/new
+    about: Report security issues privately. Don't describe them in a public issue.

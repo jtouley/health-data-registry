@@ -1,0 +1,6 @@
+{
+  "url": "https://data.cdc.gov/resource/x9gk-5huc.json?%24query=SELECT%20states%2C%20year%2C%20week%2C%20label%2C%20m1%2C%20m1_flag%2C%20m2%2C%20m2_flag%2C%20m3%2C%20m3_flag%2C%20m4%2C%20m4_flag%2C%20location1%2C%20location2%2C%20sort_order%20WHERE%20upper%28states%29%20IN%20%28%27MICHIGAN%27%2C%27US%20RESIDENTS%27%2C%27U.S.%20RESIDENTS%27%2C%27TOTAL%27%29%20AND%20label%20IN%20%28%27Candida%20auris%2C%20clinical%27%2C%27Candida%20auris%2C%20screening%27%2C%27Legionellosis%27%2C%27Syphilis%2C%20Primary%20and%20secondary%27%2C%27Syphilis%2C%20Congenital%27%2C%27Tuberculosis%27%29%20AND%20%28%28year%20IN%20%28%272022%27%2C%272023%27%2C%272024%27%2C%272025%27%29%20AND%20week%20%3E%3D%2051%29%20OR%20%28year%20%3D%20%272026%27%20AND%20week%20%3E%3D%2044%29%29%20ORDER%20BY%20sort_order%2C%20label%20LIMIT%20300",
+  "retrieved_at": "2026-11-24T15:51:54Z",
+  "sha256": "5dfea4d23f6e25b3bfa74fc470ed9340fff9100585d9787a0ac6a0349cd49653",
+  "licence": "public-domain-us-federal"
+}

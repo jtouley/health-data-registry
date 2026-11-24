@@ -1,0 +1,183 @@
+# Tagged release: vX.Y.Z on a commit of main, with a "## [X.Y.Z]" section in CHANGELOG.md.
+#
+#   build       sdist + wheel (uv build) and a CycloneDX SBOM of the locked runtime environment
+#   provenance  SLSA v1.0 build provenance (*.intoto.jsonl) for every built file
+#   sign        Sigstore signatures (*.sigstore.json) for every built file
+#   release     GitHub release: notes from CHANGELOG.md; dists, SBOM, signatures and provenance attached
+#   pypi        PyPI upload by trusted publishing (no stored token), in the `pypi` environment
+#
+# Write permissions and id-token: write are granted per job, only where that job needs them.
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build dists and SBOM
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+          # No cache on release builds: nothing restored from another run reaches the artifacts.
+          enable-cache: false
+
+      - name: Check the tag matches the package version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(uv version --short)
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::Tag $TAG does not match pyproject.toml version $version"
+            exit 1
+          fi
+
+      - name: Build sdist and wheel
+        run: uv build --sdist --wheel --out-dir dist
+
+      # The SBOM describes the locked runtime dependencies (no dev group) plus the package itself.
+      - name: CycloneDX SBOM of the locked environment
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          uv sync --locked --no-dev
+          mkdir -p sbom
+          uvx --from cyclonedx-bom==8.0.1 cyclonedx-py environment \
+            --pyproject pyproject.toml --of JSON --output-reproducible \
+            -o "sbom/health-data-registry-${TAG#v}.cdx.json" .venv/bin/python
+
+      - name: Hash the dists for provenance
+        id: hash
+        working-directory: dist
+        run: echo "hashes=$(sha256sum -- * | base64 -w0)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom
+          path: sbom/
+          if-no-files-found: error
+          retention-days: 7
+
+  provenance:
+    name: SLSA provenance
+    needs: build
+    permissions:
+      actions: read # read the workflow run
+      id-token: write # sign the provenance
+      contents: write # requested by the generator's (unused) asset-upload job; must be granted for it to start
+    # SLSA's reusable workflow must be referenced by tag, not SHA: the generator verifies its own ref.
+    # Scorecard's Pinned-Dependencies check exempts slsa-github-generator for this reason.
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0 # zizmor: ignore[unpinned-uses] (tag v2.1.0 = f7dd8c54c2067bafc12ca7a55595d5ee9b75204a)
+    with:
+      base64-subjects: ${{ needs.build.outputs.hashes }}
+      provenance-name: health-data-registry.intoto.jsonl
+      upload-assets: false
+
+  sign:
+    name: Sigstore signatures
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write # keyless signing certificate from Sigstore
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - uses: sigstore/gh-action-sigstore-python@790bc6befb9d733738f18d8f895854b453640ec9 # v3.5.0
+        with:
+          inputs: ./dist/*.tar.gz ./dist/*.whl
+          upload-signing-artifacts: false
+          release-signing-artifacts: false
+      # Signatures go in their own artifact so the dist artifact stays exactly what PyPI accepts.
+      - name: Collect signatures
+        run: mkdir -p signatures && mv dist/*.sigstore.json signatures/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signatures
+          path: signatures/
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: GitHub release
+    needs: [build, provenance, sign]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # create the release and upload its assets
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: assets/
+          merge-multiple: true
+
+      # Human-written notes are required: the job fails if CHANGELOG.md has no section for this version.
+      - name: Release notes from CHANGELOG.md
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { on = 1; next }
+            on && /^## \[/ { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md has no '## [$version]' section with notes"
+            exit 1
+          fi
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          ls -l assets/
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$TAG" --notes-file notes.md assets/*
+
+  pypi:
+    name: Publish to PyPI
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/health-data-registry/
+    permissions:
+      id-token: write # PyPI trusted publishing (OIDC token exchanged for a short-lived upload token)
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3

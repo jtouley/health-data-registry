@@ -1,0 +1,23 @@
+# Install once: `uvx pre-commit install`. Run on everything: `uvx pre-commit run --all-files`.
+# Sealed blind-question sets stay byte-for-byte as sealed (their hash is checked).
+exclude: ^eval/sealed/
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files # data belongs in the Hugging Face dataset, not git
+        args: [--maxkb=1024]
+      - id: detect-private-key
+
+  # Same version as uv.lock, so the hook, `make lint` and CI agree.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.6
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format

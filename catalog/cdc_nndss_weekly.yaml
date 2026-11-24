@@ -1,0 +1,47 @@
+id: cdc_nndss_weekly
+title: NNDSS Weekly Data
+agency: CDC
+publisher: Centers for Disease Control and Prevention, Office of Public Health Data, Surveillance, and Technology (National Notifiable Diseases Surveillance System)
+level: federal
+country: US
+research_areas: [infectious_disease]
+years: {start: 2022, end: null}
+geography: [nation, region, state, city]
+shape: surveillance_series
+grain: "One row is one reporting area (US total, census division, state, New York City or territory) by MMWR year, MMWR week and notifiable condition, with that week's count, the previous 52-week maximum and the year-to-date counts for this and last year."
+refresh: weekly
+licence:
+  id: public-domain-us-federal
+  redistribution: true
+  terms_url: https://www.usa.gov/government-works
+citation: "Centers for Disease Control and Prevention. National Notifiable Diseases Surveillance System (NNDSS). NNDSS Weekly Data. https://data.cdc.gov/d/x9gk-5huc (accessed <retrieved_at>)."
+source:
+  portal: socrata
+  host: data.cdc.gov
+  dataset: x9gk-5huc
+  landing_url: https://data.cdc.gov/d/x9gk-5huc
+  api_url: https://data.cdc.gov/resource/x9gk-5huc.json
+codebook_url: https://www.cdc.gov/nndss/docs/Readers-Guide-WONDER-Tables-20210421-508.pdf
+caveats:
+  - "Counts for the most recent reporting years are provisional and can change in later weeks as jurisdictions send late or corrected reports; each week's table is published as it stood that week."
+  - "Cases are assigned to the reporting jurisdiction (state of residence); cases whose usual residence is outside the US are counted under Non-U.S. Residents."
+  - "Flag U means the jurisdiction could not send data; N means the condition was not reportable there; NN not nationally notifiable; NP notifiable but not published; NC not calculated."
+  - "A flag of '-' with an empty count means no reported cases that week."
+  - "The previous 52-week maximum and year-to-date counts cover only the period when the condition was reportable in that jurisdiction, so they can be incomplete."
+  - "Year-to-date counts are cumulative: read the latest week of a year, never sum year-to-date values across weeks."
+  - "Candida auris clinical cases and screening (colonization) cases are separate series and are not added together."
+  - "New York (state) excludes New York City, which is reported as its own area."
+  - "Reporting-area names are upper case for 2022-2024 and title case from 2025 (for example MICHIGAN versus Michigan)."
+  - "Total rows include US residents, US territories and non-US residents; US RESIDENTS excludes territories."
+gbd:
+  location_column: states
+  causes:
+    - {condition: "Candida auris, clinical", cause: "Other infectious diseases", pathogen: "Candida spp."}
+    - {condition: "Candida auris, screening", cause: "Other infectious diseases", pathogen: "Candida spp."}
+    - {condition: "Legionellosis", cause: "Lower respiratory infections", pathogen: "Legionella spp"}
+    - {condition: "Syphilis, Primary and secondary", cause: "Syphilis", pathogen: null}
+    - {condition: "Syphilis, Congenital", cause: "Syphilis", pathogen: null}
+    - {condition: "Tuberculosis", cause: "Tuberculosis", pathogen: null}
+contract: contracts/cdc_nndss_weekly.odcs.yaml
+semantic_model: semantic/cdc_nndss_weekly.yaml
+status: draft
