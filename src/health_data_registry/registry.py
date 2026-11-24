@@ -89,6 +89,12 @@ Shape = Literal[
 ]
 
 
+# The hub's infectious-disease areas: one Hugging Face collection per area, and a tag on each dataset card.
+IdArea = Literal[
+    "hiv", "stis", "hepatitis", "tb", "hais_amr", "respiratory", "vaccine_preventable", "enteric", "vector_borne"
+]
+
+
 class CatalogEntry(_Strict):
     id: str
     title: str
@@ -97,6 +103,7 @@ class CatalogEntry(_Strict):
     level: Literal["federal", "state", "county", "city", "international"]
     country: str | None = None
     research_areas: list[str]
+    id_areas: list[IdArea] = Field(default_factory=list)
     years: Years
     geography: list[str]
     shape: Shape

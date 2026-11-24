@@ -5,6 +5,7 @@ publisher: Centers for Disease Control and Prevention, Office of Public Health D
 level: federal
 country: US
 research_areas: [infectious_disease]
+id_areas: [stis, tb, hais_amr, respiratory]
 years: {start: 2022, end: null}
 geography: [nation, region, state, city]
 shape: surveillance_series

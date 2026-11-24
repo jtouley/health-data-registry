@@ -5,6 +5,7 @@ publisher: Centers for Disease Control and Prevention, National Center for Emerg
 level: federal
 country: US
 research_areas: [infectious_disease]
+id_areas: [hais_amr]
 years: {start: 2011, end: null}
 geography: [nation, region, state]
 shape: rate_table

@@ -1,13 +1,20 @@
 """The snapshot lake: raw bytes kept hash-addressed, one normalised snapshot per dataset version.
 
-Layout under the lake root ($HDR_LAKE, default ./lake):
+Layout under the lake root ($HDR_LAKE, default ./lake), partitioned by source and run date:
 
     raw/<sha256>                         every byte fetched from a publisher, never rewritten (ADR 0005)
-    datasets/<id>/<snapshot_id>/
+    datasets/<id>/run_date=<YYYY-MM-DD>/<snapshot_id>/
         data.parquet                     the normalised table, for publishing
         data.duckdb                      the same table, attached read-only by the server
         manifest.json                    provenance: URLs, retrieved_at, sha256s, contract version
     datasets/<id>/LATEST                 the snapshot_id the server reads
+    fetch_log/source=<id>/run_date=<YYYY-MM-DD>.jsonl
+                                         one row per fetch attempt, ok or error: URL, time, status, bytes,
+                                         sha256 and the error in plain words
+
+A snapshot directory is never overwritten: its id is the fetch time plus a hash of the raw bytes and the
+contract and semantic versions, so the same id always means the same inputs. Snapshots written before the
+run-date partition (datasets/<id>/<snapshot_id>/) are still read.
 
 Normalisation is driven only by the contract: rename each publisher field to its column, turn the
 codebook's missing codes into NULL, cast to the declared type. Nothing else changes a value.
@@ -22,7 +29,7 @@ import re
 import shutil
 import tempfile
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -58,10 +65,79 @@ class Manifest:
     licence: str
     redistribution: bool
     partial: bool
+    # Where the server read this snapshot from: "lake" (a maintainer's local lake), "hub" (a published release
+    # on the open data hub) or "publisher" (fetched from the publisher at run time into the local cache).
+    origin: str = "lake"
+    release_id: str | None = None
+    run_date: str | None = None
+    release_contract_version: str | None = None
+    release_files: dict[str, str] = field(default_factory=dict)  # path in the release -> sha256
+    notes: list[str] = field(default_factory=list)  # plain-words notes shown with every answer
 
     @staticmethod
     def read(path: Path) -> Manifest:
         return Manifest(**json.loads(path.read_text(encoding="utf-8")))
+
+
+def run_date_of(snapshot_id: str) -> str:
+    """The run date partition of a snapshot id (20261124T120000Z-... -> 2026-11-24)."""
+    return f"{snapshot_id[0:4]}-{snapshot_id[4:6]}-{snapshot_id[6:8]}"
+
+
+def snapshot_dir(lake: Path, dataset_id: str, snapshot_id: str) -> Path:
+    """Where a snapshot lives: datasets/<id>/run_date=<date>/<snapshot_id>, or the older unpartitioned path."""
+    base = lake / "datasets" / dataset_id
+    new = base / f"run_date={run_date_of(snapshot_id)}" / snapshot_id
+    old = base / snapshot_id
+    return old if old.is_dir() and not new.is_dir() else new
+
+
+class FetchLog:
+    """Append-only log of fetch attempts: fetch_log/source=<id>/run_date=<YYYY-MM-DD>.jsonl, one row each."""
+
+    def __init__(self, lake: Path, source: str) -> None:
+        self.lake = lake
+        self.source = source
+
+    def path(self, when: datetime) -> Path:
+        return (
+            self.lake / "fetch_log" / f"source={self.source}" / f"run_date={when.astimezone(UTC):%Y-%m-%d}.jsonl"
+        )
+
+    def record(
+        self,
+        url: str,
+        *,
+        ok: bool,
+        when: datetime,
+        http_status: int | None = None,
+        size: int | None = None,
+        sha256: str | None = None,
+        error: str | None = None,
+    ) -> dict[str, Any]:
+        row = {
+            "source": self.source,
+            "url": url,
+            "attempted_at": when.astimezone(UTC).isoformat(),
+            "status": "ok" if ok else "error",
+            "http_status": http_status,
+            "bytes": size,
+            "sha256": sha256,
+            "error": None if ok else (error or "the fetch failed for an unknown reason"),
+        }
+        target = self.path(when)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row) + "\n")
+        return row
+
+
+def read_fetch_log(lake: Path, source: str) -> list[dict[str, Any]]:
+    """Every logged fetch attempt for one source, oldest run date first."""
+    rows: list[dict[str, Any]] = []
+    for p in sorted((lake / "fetch_log" / f"source={source}").glob("run_date=*.jsonl")):
+        rows += [json.loads(line) for line in p.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return rows
 
 
 def lake_root() -> Path:
@@ -125,9 +201,13 @@ def build_snapshot(
         raise ValueError("a snapshot needs at least one fetch")
     write_raw(lake, fetches)
     retrieved = max(f.retrieved_at for f in fetches).astimezone(UTC)
-    digest = hashlib.sha256("".join(f.sha256 for f in fetches).encode()).hexdigest()[:12]
+    inputs = "".join(f.sha256 for f in fetches) + f"|{ds.contract.version}|{ds.semantic.version}|{partial}"
+    digest = hashlib.sha256(inputs.encode()).hexdigest()[:12]
     snapshot_id = f"{retrieved:%Y%m%dT%H%M%SZ}-{digest}"
-    out = lake / "datasets" / ds.id / snapshot_id
+    out = snapshot_dir(lake, ds.id, snapshot_id)
+    if (out / "manifest.json").is_file():  # the same inputs were snapshotted already: never overwrite
+        (lake / "datasets" / ds.id / "LATEST").write_text(snapshot_id + "\n", encoding="utf-8")
+        return Manifest.read(out / "manifest.json")
     tmp = Path(tempfile.mkdtemp(prefix=f".{ds.id}-", dir=lake))
     try:
         sources = sorted({c.source_field for c in ds.contract.columns})
@@ -161,13 +241,11 @@ def build_snapshot(
         )
         (tmp / "manifest.json").write_text(json.dumps(asdict(manifest), indent=2) + "\n", encoding="utf-8")
         out.parent.mkdir(parents=True, exist_ok=True)
-        if out.exists():
-            shutil.rmtree(out)
         tmp.replace(out)
     finally:
         if tmp.exists():
             shutil.rmtree(tmp, ignore_errors=True)
-    latest = out.parent / "LATEST"
+    latest = lake / "datasets" / ds.id / "LATEST"
     latest.write_text(snapshot_id + "\n", encoding="utf-8")
     return manifest
 
@@ -191,7 +269,7 @@ def latest_snapshot(lake: Path, dataset_id: str) -> tuple[Path, Manifest] | None
     sid = pointer.read_text(encoding="utf-8").strip()
     if not _SNAPSHOT_ID.fullmatch(sid):
         raise ValueError(f"{pointer}: not a snapshot id")
-    path = base / sid
+    path = snapshot_dir(lake, dataset_id, sid)
     return path, Manifest.read(path / "manifest.json")
 
 

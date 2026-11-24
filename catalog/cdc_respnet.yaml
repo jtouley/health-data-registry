@@ -5,6 +5,7 @@ publisher: "Centers for Disease Control and Prevention, Respiratory Virus Hospit
 level: federal
 country: US
 research_areas: [infectious_disease]
+id_areas: [respiratory]
 years: {start: 2016, end: null}
 geography: [nation, state]
 shape: rate_table

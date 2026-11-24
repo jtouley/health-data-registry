@@ -1,75 +1,48 @@
-"""Command line: serve, refresh, check-contracts, validate."""
+"""Command line: serve, refresh, fetch, export-public, check-contracts, validate, eval."""
 
 from __future__ import annotations
 
 import argparse
 import sys
-import tempfile
-import time
 from collections.abc import Sequence
 from pathlib import Path
 
 from health_data_registry.registry import Registry, RegistryError, load_registry
-from health_data_registry.store import RawFetch, build_snapshot, lake_root, write_ndjson, write_raw
+from health_data_registry.store import FetchLog, lake_root
 
-RETRIES = 4
-FETCH_TIMEOUT_S = 180.0
+def _fetcher(registry: Registry, log: FetchLog | None = None):  # type: ignore[no-untyped-def]
+    from health_data_registry.crawl import fetcher
 
-
-def _fetcher(registry: Registry):  # type: ignore[no-untyped-def]
-    from health_data_registry.fetch import FetchRefused, fetch
-
-    hosts = registry.hosts
-
-    def get(url: str) -> RawFetch:
-        r = None
-        for attempt in range(RETRIES):
-            try:
-                r = fetch(
-                    url, allowed_hosts=hosts, headers={"Accept": "application/json"}, timeout=FETCH_TIMEOUT_S
-                )
-                break
-            except FetchRefused as e:
-                # A slow or briefly unreachable publisher is retried; a refused URL or host never is.
-                if e.code not in ("timeout", "connect_failed") or attempt == RETRIES - 1:
-                    raise
-                time.sleep(2 ** (attempt + 1))
-        if r is None:  # pragma: no cover - the loop either breaks with a result or raises
-            raise RuntimeError(f"{url}: no response")
-        if r.status != 200:
-            raise RuntimeError(f"{url}: HTTP {r.status}")
-        return RawFetch(url=r.final_url, content=r.content, sha256=r.sha256, retrieved_at=r.retrieved_at)
-
-    return get
+    return fetcher(registry, log)
 
 
 def refresh(registry: Registry, ids: Sequence[str], *, max_rows: int | None, lake: Path) -> int:
-    from health_data_registry.adapters import pages
+    from health_data_registry.crawl import refresh_dataset
 
-    get = _fetcher(registry)
     failed = 0
     for dataset_id in ids:
-        ds = registry.get(dataset_id)
-        with tempfile.TemporaryDirectory() as tmp:
-            fetches, files = [], []
-            try:
-                fields = sorted({c.source_field for c in ds.contract.columns})
-                for i, page in enumerate(pages(ds.entry, get, max_rows=max_rows, fields=fields)):
-                    write_raw(lake, [page.fetch])  # keep the bytes on disk now, not in memory
-                    f = page.fetch
-                    fetches.append(
-                        RawFetch(url=f.url, content=b"", sha256=f.sha256, retrieved_at=f.retrieved_at)
-                    )
-                    nd = Path(tmp) / f"page-{i:05d}.ndjson"
-                    write_ndjson(nd, page.records)
-                    files.append(nd)
-                m = build_snapshot(lake, ds, fetches, files, partial=max_rows is not None)
-            except Exception as e:  # report and carry on with the next dataset
-                failed += 1
-                print(f"FAIL {dataset_id}: {e}", file=sys.stderr)
-                continue
+        try:
+            ds = registry.get(dataset_id)
+            m = refresh_dataset(ds, lake, _fetcher(registry, FetchLog(lake, ds.id)), max_rows=max_rows)
+        except Exception as e:  # report and carry on with the next dataset
+            failed += 1
+            print(f"FAIL {dataset_id}: {e}", file=sys.stderr)
+            continue
         print(f"ok   {dataset_id}: {m.row_count} rows, snapshot {m.snapshot_id}")
     return 1 if failed else 0
+
+
+def export_public(registry: Registry, to: str, *, lake: Path, run_date: str | None) -> int:
+    from health_data_registry.publish import PublishCheckFailed, export_public
+
+    try:
+        result = export_public(registry, lake, to, run_date=run_date)
+    except PublishCheckFailed as e:
+        print(f"export stopped: {e}", file=sys.stderr)
+        return 1
+    for line in result.summary():
+        print(line)
+    return 0
 
 
 def check_contracts(registry: Registry) -> int:
@@ -127,6 +100,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     r.add_argument(
         "--max-rows", type=int, default=None, help="development sample; marks the snapshot partial"
     )
+    fe = sub.add_parser("fetch", help="refresh one source from its publisher (same as refresh <source>)")
+    fe.add_argument("source")
+    fe.add_argument("--max-rows", type=int, default=None, help="development sample; marks the snapshot partial")
+    ex = sub.add_parser(
+        "export-public",
+        help="publish redistributable sources to the open data hub (hf://datasets/<org>/<name>) or a directory",
+    )
+    ex.add_argument("--to", required=True, help="hf://datasets/<org>/<name>, or a local directory")
+    ex.add_argument("--run-date", default=None, help="YYYY-MM-DD; defaults to today (UTC)")
     sub.add_parser("check-contracts", help="check each publisher still serves the fields its contract reads")
     sub.add_parser("validate", help="load and cross-check every catalog entry, contract and semantic model")
     ev = sub.add_parser(
@@ -155,6 +137,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_eval(a.sealed, a.run)
     if a.cmd == "check-contracts":
         return check_contracts(registry)
+    if a.cmd == "export-public":
+        return export_public(registry, a.to, lake=lake_root(), run_date=a.run_date)
+    if a.cmd == "fetch":
+        return refresh(registry, [a.source], max_rows=a.max_rows, lake=lake_root())
     ids = sorted(registry.datasets) if a.all else list(a.datasets)
     if not ids:
         p.error("name datasets to refresh, or --all")

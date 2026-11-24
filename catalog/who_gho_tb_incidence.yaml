@@ -5,6 +5,7 @@ publisher: World Health Organization, Global Health Observatory
 level: international
 country: null
 research_areas: [infectious_disease]
+id_areas: [tb]
 years: {start: 2000, end: null}
 geography: [country, who_region, nation]
 shape: estimate_table
