@@ -51,16 +51,16 @@ One review round, one fix round, merge, then follow-ups. We don't get stuck in r
    - READMEs and user docs: good-readme, better-writing, readme-roast (structure and install steps only).
    - Security-sensitive changes (fetchers, the SQL sandbox, workflows, tokens, the hosted server): sharp-edges.
 3. **One fix round.** A fresh subagent addresses all posted findings, from `/code-review` and the skill reviews,
-   using the skills that match the files touched. Its scope is frozen at the findings posted in its review round:
-   anything raised later goes to an issue or the next PR. Findings it doesn't fix in that round become follow-up
-   issues or the next PR, never a second review round.
+   using the skills that match the files touched. Its scope is frozen at the findings posted in its review round;
+   anything it doesn't fix, and anything raised later, becomes a follow-up issue or the next PR, never a second
+   review round.
 4. **Approve and merge.** Claude may approve PRs for now (the maintainer's decision, 24 Nov 2026), but only after
    the review round and the fix round are done and every posted finding is addressed or filed as a follow-up.
    GitHub doesn't let a PR's author approve their own PR, and Scorecard's Code-Review check counts only approvals
-   from people with write access. Then the PR is squash-merged into main and its branch is deleted, and follow-ups
-   get their own PRs on the same cycle.
-5. **Branch cleanup.** `wip/*` and `claude/*` branches are deleted once their work is in main or is recorded as
-   abandoned (in an issue or PR comment).
+   from people with write access. Then the PR is squash-merged into main and its branch deleted. Follow-ups get
+   their own PRs on the same cycle.
+5. **Branch cleanup.** `wip/*` and `claude/*` branches are deleted once their work is in main, or once an issue
+   or PR comment records them as abandoned.
 
 ## Architecture map
 
@@ -164,6 +164,7 @@ These come from the spec and [docs/adr/](docs/adr/README.md). A PR that breaks o
     restricted terms (e.g. WHO, non-commercial) are never published and their terms show with every result
     ([ADR 0009](docs/adr/0009-licences-decide-mirroring.md)).
 11. **Infectious disease only** for now. Don't add datasets from other fields until ID passes its evaluation bar.
+    Population denominators (Census) are allowed: they serve only as the denominators of infectious-disease rates.
 12. **Built for clinicians** ([ADR 0012](docs/adr/0012-built-for-clinicians.md)). Tool descriptions, helpers and
     every refusal are in plain clinical words with a next step: never a stack trace, an HTTP code or a bare
     exception. Every step a clinician takes has a helper; change helper text only in `helpers.py`, then
@@ -210,7 +211,7 @@ Rules for every skill:
 | Fix round | simplify (built into Claude Code) | Optional, inside the one fix round only; never a separate round |
 
 Left out: DuckDB's duckdb-skills (rated 1; DuckDB's own docs are more useful), wshobson data-quality-frameworks
-(rated 2; its changes were reverted), and HashiCorp terraform-style-guide (rated 1.5).
+(rated 2; the changes made with it were reverted), and HashiCorp terraform-style-guide (rated 1.5).
 
 Semantic models here are dbt-style YAML (MetricFlow concepts) without a dbt project, so the dbt skills apply to
 `semantic/`, to `registry.py`, which loads and cross-checks the models, and to `query.py`, which compiles their
