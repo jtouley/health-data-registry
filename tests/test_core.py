@@ -309,7 +309,7 @@ def test_cli_refresh_and_validate(
     assert cli.main(["refresh", "toy_cases", "--max-rows", "10"]) == 0
     assert "6 rows" in capsys.readouterr().out
     manifest = json.loads(
-        next((tmp_path / "lake" / "datasets" / "toy_cases").glob("*/manifest.json")).read_text()
+        next((tmp_path / "lake" / "datasets" / "toy_cases").glob("run_date=*/*/manifest.json")).read_text()
     )
     assert manifest["partial"] is True
 

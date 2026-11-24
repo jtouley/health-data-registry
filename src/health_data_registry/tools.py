@@ -189,15 +189,27 @@ def _norm(text: str) -> str:
 
 
 def series_for(
-    registry: Registry, condition: str, measure: str | None = None, source_id: str | None = None
+    registry: Registry,
+    condition: str,
+    measure: str | None = None,
+    source_id: str | None = None,
+    *,
+    kind: Literal["plain", "weekly", "age"] = "plain",
 ) -> list[tuple[Dataset, Series]]:
-    """Series whose condition code or clinical label matches the words asked for."""
+    """Series whose condition code or clinical label matches the words asked for.
+
+    kind "plain" (the default, used by get_series) leaves out weekly and age-specific series, so a year is never
+    built by adding up provisional weeks; "weekly" and "age" return only those (check_signal, age_adjust).
+    """
     want = _norm(condition)
     found = []
     for ds in registry:
         if source_id and ds.id != source_id:
             continue
         for s in ds.semantic.series:
+            s_kind = "weekly" if s.week_dimension else "age" if s.age_dimension else "plain"
+            if s_kind != kind:
+                continue
             names = {_norm(s.condition), _norm(s.label)}
             hit = want and (want in names or any(re.search(rf"\b{re.escape(want)}\b", n) for n in names))
             if hit and (measure is None or s.measure == measure):
