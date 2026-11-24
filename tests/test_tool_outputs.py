@@ -62,12 +62,16 @@ def test_get_rate_is_crude_and_says_so(pop: tuple[Registry, Engine]) -> None:
     out = _json(tools.get_rate(reg, eng, condition="legionellosis", locations=["Michigan", "Ohio"], year=2023,
                                fmt="json"))  # fmt: skip
     assert out["columns"] == ["location", "year", "condition", "cases", "population", "rate_per_100k", "lower_95",
-                              "upper_95", "period_status", "flags", "case_source", "population_source"]  # fmt: skip
+                              "upper_95", "period_status", "flags", "case_source", "population_source",
+                              "computed"]  # fmt: skip
+    label = ("computed here: crude rate per 100,000 with an exact Poisson (Garwood) 95% interval; cases and "
+             "population as published")  # fmt: skip
     assert out["rows"] == [
-        ["Michigan", 2023, "Legionellosis", 310, 10000000, 3.1, 2.764, 3.465, "", "", "toy_cases", "toy_cases"],
+        ["Michigan", 2023, "Legionellosis", 310, 10000000, 3.1, 2.764, 3.465, "", "", "toy_cases", "toy_cases",
+         label],
         # A zero population is no denominator: no rate, and it says why.
         ["Ohio", 2023, "Legionellosis", 400, 0, None, None, None, "",
-         "the Census population for Ohio in 2023 is 0, so no rate", "toy_cases", "toy_cases"],
+         "the Census population for Ohio in 2023 is 0, so no rate", "toy_cases", "toy_cases", label],
     ]  # fmt: skip
     assert out["notes"][0] == (
         "Method: crude rate = cases / Census July 1 population x 100,000, with the exact Poisson (Garwood) 95% "
@@ -77,7 +81,7 @@ def test_get_rate_is_crude_and_says_so(pop: tuple[Registry, Engine]) -> None:
     empty = _json(
         tools.get_rate(reg, eng, condition="legionellosis", locations=["Michigan"], year=2024, fmt="json")
     )
-    assert [r[:6] + r[9:] for r in empty["rows"]] == [
+    assert [r[:6] + r[9:12] for r in empty["rows"]] == [
         ["Michigan", 2024, "Legionellosis", None, 10000000, None,
          "1 value in this count suppressed or missing in the source, so no total and no rate (it is not zero)",
          "toy_cases", "toy_cases"]

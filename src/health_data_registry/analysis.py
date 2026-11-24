@@ -260,6 +260,11 @@ def _own_count(datasets: Sequence[Dataset]) -> str:
     )
 
 
+def _computed(cols: list[str], table: list[list[Any]], notes: list[str], label: str) -> Result:
+    """Every row of an analysis answer says its numbers were computed here, and how (never a published figure)."""
+    return Result([*cols, "computed"], [[*r, label] for r in table], notes)
+
+
 def _sig(x: float | None, digits: int = 4) -> float | None:
     """Round to `digits` significant figures, so a small rate never rounds to zero."""
     if x is None:
@@ -476,7 +481,12 @@ def get_rate(
         out_notes.append(f"No rows for: {', '.join(dict.fromkeys(unmatched))}.")
     if not rows:
         out_notes.append(f"No case counts for '{condition}' in {year} for the places asked.")
-    return Result(cols, table, out_notes + notes).render(fmt)
+    return _computed(
+        cols,
+        table,
+        out_notes + notes,
+        "computed here: crude rate per 100,000 with an exact Poisson (Garwood) 95% interval; cases and population as published",
+    ).render(fmt)
 
 
 # ---------------------------------------------------------------------------------- compare_rates
@@ -583,7 +593,12 @@ def compare_rates(
                              "years compared: part of any difference may be the definition, not the disease.")  # fmt: skip
     if _provisional(a.status) or _provisional(b.status):
         out_notes.append("At least one count is provisional and may change.")
-    return Result(cols, table, out_notes + notes).render(fmt)
+    return _computed(
+        cols,
+        table,
+        out_notes + notes,
+        "computed here: rates, rate ratio and rate difference with 95% intervals (method in the notes)",
+    ).render(fmt)
 
 
 def _series_condition(ds: Dataset, label: str) -> str:
@@ -750,7 +765,12 @@ def get_trend(
             "This is a trend in case counts: population growth or decline is not taken into account, so part of "
             "any change can be the population, not the disease."
         )
-    return Result(cols, table, out_notes + notes).render(fmt)
+    return _computed(
+        cols,
+        table,
+        out_notes + notes,
+        "computed here: annual percent change from a log-linear Poisson fit, with its 95% interval",
+    ).render(fmt)
 
 
 # ---------------------------------------------------------------------------------- age_adjust
@@ -873,7 +893,12 @@ def age_adjust(
         + " "
         + GBD_WARNING,
     ]
-    return Result(cols, table, out_notes + notes).render(fmt)
+    return _computed(
+        cols,
+        table,
+        out_notes + notes,
+        "computed here: direct age adjustment to the 2000 US standard, gamma (Fay-Feuer) 95% interval",
+    ).render(fmt)
 
 
 # ---------------------------------------------------------------------------------- check_signal
@@ -967,4 +992,9 @@ def check_signal(
         "with the health department before acting on it.",
         "Weekly counts are provisional and can change as late reports arrive.",
     ]
-    return Result(cols, table, out_notes + notes).render(fmt)
+    return _computed(
+        cols,
+        table,
+        out_notes + notes,
+        "computed here: CDC historical limits from the published weekly counts",
+    ).render(fmt)
