@@ -100,7 +100,7 @@ customProperties:
   - {property: refresh, value: annual}
   - {property: geographyBasis, value: "the Emerging Infections Program catchment areas combined; no state values"}
   - {property: rateDenominator, value: "the EIP catchment population per 100,000; which estimates, and whether rates are crude, are not confirmed (see openQuestions)"}
-  - {property: unreliableRule, value: "None stated: data.cdc.gov publishes no codebook or small-number rule for these EIP figures (see openQuestions)."}
+  - {property: unreliableRule, value: {kind: none, description: "None stated: data.cdc.gov publishes no codebook or small-number rule for these EIP figures (see openQuestions)."}}
   - property: openQuestions
     value:
       - "Licence: no licence field in the Socrata metadata; public-domain-us-federal assumed from its being a CDC work."

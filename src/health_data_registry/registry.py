@@ -222,6 +222,52 @@ def label_key(text: str) -> str:
     return str(text).strip().upper().replace(".", "")
 
 
+UNRELIABLE_KINDS = ("none", "min_count", "max_relative_ci_width", "publisher_suppressed")
+
+
+@dataclass(frozen=True)
+class UnreliableSpec:
+    """The publisher's own rule for unreliable or suppressed values (contract property unreliableRule).
+
+    kind none: the publisher states no rule. min_count: a rate from fewer than `threshold` cases is unreliable.
+    max_relative_ci_width: a rate whose 95% interval is wider than `threshold` times the rate is unreliable.
+    publisher_suppressed: the publisher itself blanks cells below `threshold` (e.g. NHSN: fewer than 20 isolates
+    tested), so an empty cell there is suppressed, never zero. The threshold comes only from the codebook.
+    """
+
+    kind: str
+    description: str
+    threshold: float | None = None
+
+
+def _unreliable(value: Any, where: str) -> UnreliableSpec:
+    if not isinstance(value, Mapping):
+        raise RegistryError(
+            f"{where}: customProperties must declare unreliableRule as {{kind, description[, threshold]}}; kind is "
+            f"one of {', '.join(UNRELIABLE_KINDS)} (none when the publisher states no rule)"
+        )
+    kind, desc = str(value.get("kind", "")), str(value.get("description") or "").strip()
+    if kind not in UNRELIABLE_KINDS or not desc:
+        raise RegistryError(
+            f"{where}: unreliableRule needs a kind ({', '.join(UNRELIABLE_KINDS)}) and a description quoting the "
+            "publisher"
+        )
+    threshold = value.get("threshold")
+    if kind == "none":
+        if threshold is not None:
+            raise RegistryError(f"{where}: unreliableRule kind none takes no threshold")
+        return UnreliableSpec(kind, desc)
+    try:
+        t = float(str(threshold))
+    except (TypeError, ValueError):
+        t = 0.0
+    if not t > 0:
+        raise RegistryError(
+            f"{where}: unreliableRule kind {kind} needs a positive threshold from the codebook"
+        )
+    return UnreliableSpec(kind, desc, t)
+
+
 @dataclass(frozen=True)
 class Contract:
     """The subset of an ODCS v3 contract the server relies on. `raw` keeps the whole document."""
@@ -235,11 +281,16 @@ class Contract:
     open_questions: tuple[str, ...]
     raw: Mapping[str, Any] = field(repr=False, compare=False)
     # The rule, if any, by which the publisher suppresses or marks unreliable values (from its own codebook).
-    unreliable_rule: str | None = None
+    unreliable: UnreliableSpec = field(default_factory=lambda: UnreliableSpec("none", "Not stated."))
     # What a place means here (e.g. "patient residence"); "unresolved: ..." blocks GBD comparisons by place.
     geography_basis: str | None = None
     # The population a published rate divides by, in plain words.
     rate_denominator: str | None = None
+
+    @property
+    def unreliable_rule(self) -> str:
+        """The rule in the contract's words, for display."""
+        return self.unreliable.description
 
     @property
     def geography_basis_unresolved(self) -> bool:
@@ -372,7 +423,7 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
         table_shape=str(obj_custom.get("tableShape", "")),
         open_questions=tuple(str(q) for q in oq),
         raw=doc,
-        unreliable_rule=_text(top_custom.get("unreliableRule")),
+        unreliable=_unreliable(top_custom.get("unreliableRule"), expected_id),
         geography_basis=_text(top_custom.get("geographyBasis")),
         rate_denominator=_text(top_custom.get("rateDenominator")),
     )

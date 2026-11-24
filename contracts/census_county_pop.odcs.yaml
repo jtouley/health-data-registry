@@ -137,6 +137,7 @@ customProperties:
   - {property: licence, value: public-domain-us-federal}
   - {property: citation, value: "U.S. Census Bureau, Population Division. Annual Resident Population Estimates for States and Counties: April 1, 2020 to July 1, 2025 (CO-EST2025-ALLDATA). Vintage 2025."}
   - {property: refresh, value: annual}
+  - {property: unreliableRule, value: {kind: none, description: "None stated: the file layout for CO-EST2025-ALLDATA gives no suppression or reliability rule; every value is a point estimate."}}
   - property: openQuestions
     value:
       - "Licence: the file and its layout state no licence; public-domain-us-federal is assumed from its being a Census Bureau work (17 U.S.C. 105). Maintainer to confirm."

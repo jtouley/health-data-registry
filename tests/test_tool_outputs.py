@@ -230,7 +230,7 @@ def test_provenance_and_caveats_exact(registry: Registry, lake: Path) -> None:
     assert cav["rows"][:4] == [
         ["toy_cases", "caveat", "Counts for the latest year are provisional."],
         ["toy_cases", "not yet confirmed", "Is 'N' a true zero or not notifiable?"],
-        ["toy_cases", "unreliable values", "Not stated in the contract."],
+        ["toy_cases", "unreliable values", "None stated (toy)."],
         ["toy_cases", "review", "Contract is a draft; no maintainer has reviewed it yet."],
     ]
     assert [r[:2] for r in cav["rows"][4:]] == [["all", "geography"]] * len(tools.GEOGRAPHY_TRAPS)

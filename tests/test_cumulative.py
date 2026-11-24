@@ -40,6 +40,8 @@ kind: DataContract
 id: toy_cases
 version: 0.1.0
 status: draft
+customProperties:
+  - {{property: unreliableRule, value: {{kind: none, description: "None stated (toy)."}}}}
 schema:
   - name: toy_cases
     physicalName: toy_cases

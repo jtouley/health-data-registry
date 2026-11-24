@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from health_data_registry import analysis, stats, tools
-from health_data_registry.query import Engine
+from health_data_registry.query import Engine, QueryRefused
 from health_data_registry.registry import Registry, load_registry
 from health_data_registry.store import build_snapshot, write_ndjson
 from tests.conftest import raw_fetch
@@ -71,9 +71,11 @@ def prop(name: str, typ: str, role: str, desc: str = "toy column", required: boo
     )
 
 
+NONE_RULE = '  - {property: unreliableRule, value: {kind: none, description: "None stated (toy)."}}\n'
+
 CASES_RULES = """\
 customProperties:
-  - property: unreliableRateRule
+  - property: unreliableRule
     value: {kind: min_count, threshold: 20, description: "rates from fewer than 20 cases are unreliable (toy rule)"}
   - property: caseDefinitions
     value:
@@ -138,6 +140,8 @@ kind: DataContract
 id: toy_pop
 version: 0.1.0
 status: draft
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None stated (toy)."}}
 schema:
   - name: toy_pop
     customProperties: [{property: totalRows, value: none}]
@@ -171,6 +175,8 @@ kind: DataContract
 id: toy_age
 version: 0.1.0
 status: draft
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None stated (toy)."}}
 schema:
   - name: toy_age
     customProperties: [{property: totalRows, value: none}]
@@ -359,7 +365,7 @@ def test_rate_for_a_suppressed_count_is_empty_not_zero(tmp_path: Path) -> None:
 
 
 def test_rate_without_a_rule_says_so_and_never_hard_codes_one(tmp_path: Path) -> None:
-    reg, eng = build(tmp_path, rules="")
+    reg, eng = build(tmp_path, rules="customProperties:\n" + NONE_RULE)
     out = analysis.get_rate(reg, eng, condition="legionellosis", year=2023, fmt="json")
     assert "unreliable" not in rows_by(out, "location")["Wyoming"]["flags"]
     assert any("records no unreliable-rate rule" in n for n in out["notes"])
@@ -378,10 +384,17 @@ def test_relative_width_rule_and_bad_rule(tmp_path: Path) -> None:
         analysis.get_rate(reg2, eng2, condition="legionellosis", year=2023, fmt="json"), "location"
     )
     assert "unreliable" in rows2["Wyoming"]["flags"] and "unreliable" not in rows2["Michigan"]["flags"]
-    bad = CASES_RULES.replace("kind: min_count", "kind: guess")
-    reg3, eng3 = build(tmp_path / "c", rules=bad)
-    text = analysis.get_rate(reg3, eng3, condition="legionellosis", year=2023)
-    assert isinstance(text, str) and "can't read" in text and "Traceback" not in text
+    from health_data_registry.registry import RegistryError
+
+    for bad in (
+        CASES_RULES.replace("kind: min_count", "kind: guess"),
+        CASES_RULES.replace("threshold: 20,", "threshold: -1,"),
+        CASES_RULES.replace("kind: min_count, threshold: 20,", "kind: none, threshold: 20,"),
+        'customProperties:\n  - {property: unreliableRule, value: "fewer than 20 cases"}\n',
+        "",
+    ):
+        with pytest.raises(RegistryError, match="unreliableRule"):
+            build(tmp_path / str(abs(hash(bad))), rules=bad)
 
 
 def test_rate_refusals_are_plain(tmp_path: Path, env: tuple[Registry, Engine]) -> None:
@@ -518,7 +531,7 @@ def test_trend_never_falls_back_from_rates_to_counts(env: tuple[Registry, Engine
 
 
 def test_trend_without_definition_changes_says_it_assumes_none(tmp_path: Path) -> None:
-    reg, eng = build(tmp_path, rules="")
+    reg, eng = build(tmp_path, rules="customProperties:\n" + NONE_RULE)
     out = analysis.get_trend(reg, eng, condition="legionellosis", location="Ohio", fmt="json")
     assert len(out["rows"]) == 1 and out["rows"][0][2] == "2015-2023"
     assert any("assumes the definition stayed the same" in n for n in out["notes"])
@@ -852,3 +865,38 @@ def test_a_schema_level_partial_areas_is_refused() -> None:
     assert bad != CASES_CONTRACT
     with pytest.raises(RegistryError, match="once, as partialPlaces"):
         parse_contract(yaml.safe_load(bad.replace("RULES_HERE\n", "")), expected_id="toy_weekly")
+
+
+def test_a_negative_count_is_never_turned_into_a_rate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = case_records()
+    bad = [{**r, "ytd": -5} if (r["area"], r["year"]) == ("OHIO", 2023) else r for r in original]
+    monkeypatch.setattr(sys.modules[__name__], "case_records", lambda: bad)
+    reg, eng = build(tmp_path)
+    oh = rows_by(analysis.get_rate(reg, eng, condition="legionellosis", year=2023, fmt="json"), "location")[
+        "Ohio"
+    ]
+    assert oh["rate_per_100k"] is None and "not a whole, non-negative number of cases" in oh["flags"]
+    with pytest.raises(QueryRefused, match="not a whole, non-negative"):
+        analysis._count(2.5, "a case count")
+    assert analysis._count(3.0, "a case count") == 3 and not analysis.is_count(None)
+
+
+def test_a_malformed_case_definition_is_a_plain_refusal(tmp_path: Path) -> None:
+    rules = CASES_RULES.replace("effectiveYear: 2020", "effectiveYear: soon")
+    reg, eng = build(tmp_path, rules=rules)
+    out = analysis.compare_rates(reg, eng, condition="legionellosis", location="Michigan", year=2021,
+                                 other_year=2018, fmt="json")  # fmt: skip
+    assert out["refused"] == "bad_contract_rule" and "effectiveYear" in out["message"]
+
+
+def test_nhsn_declares_the_publishers_suppression_rule() -> None:
+    reg = load_registry(Path(__file__).resolve().parents[1])
+    spec = reg.get("cdc_nhsn_ar_hai").contract.unreliable
+    assert (spec.kind, spec.threshold) == ("publisher_suppressed", 20.0)
+    assert "at least 20 isolates" in spec.description
+    assert (
+        analysis.unreliable_rule(reg.get("cdc_nhsn_ar_hai")) is None
+    )  # the publisher blanks the cells itself
+    assert all(ds.contract.unreliable.kind in ("none", "publisher_suppressed") for ds in reg)

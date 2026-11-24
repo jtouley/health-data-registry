@@ -200,7 +200,7 @@ customProperties:
   - {property: citation, value: "Centers for Disease Control and Prevention. National Notifiable Diseases Surveillance System (NNDSS). NNDSS Weekly Data. https://data.cdc.gov/d/x9gk-5huc"}
   - {property: refresh, value: weekly}
   - {property: geographyBasis, value: "patient residence: cases are assigned to the jurisdiction where the patient usually lives (dataset notes)"}
-  - {property: unreliableRule, value: "None: the publisher marks no counts as unreliable and publishes no rates. Empty counts carry a flag ('-' no reported cases; U, N, NN, NP, NC)."}
+  - {property: unreliableRule, value: {kind: none, description: "None: the publisher marks no counts as unreliable and publishes no rates. Empty counts carry a flag ('-' no reported cases; U, N, NN, NP, NC)."}}
   - property: openQuestions
     value:
       - "Is next year's prior-year year-to-date (m4) a like-for-like restatement of a year's own year-to-date (m3)? Nothing in the codebook says so, and for Candida auris, clinical they differ widely (m3 at the year's last week vs next year's m4 at its last week, live data 2026-11-24: California 2023 1275 vs 551; Georgia 2023 390 vs 191; Georgia 2024 651 vs 365; Michigan 2023 103 vs 110). Until a domain reviewer answers (semantic resolution_policy: require_domain_review), both are returned as separate observations (year_end_ytd, provisional; subsequent_year_restatement, unverified_restatement) and neither is called final."

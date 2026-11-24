@@ -365,7 +365,7 @@ def describe_dataset(
         "total_rows": c.total_rows or "none: every row is one group",
         "counts_and_rates": counts,
         "running_totals": running,
-        "unreliable_values": c.unreliable_rule or "not stated in the contract",
+        "unreliable_values": c.unreliable_rule,
         "geography_basis": c.geography_basis,
         "rate_denominator": c.rate_denominator,
         "caveats": e.caveats,
@@ -897,9 +897,7 @@ def list_caveats(
             continue
         rows += [[ds.id, "caveat", c] for c in ds.entry.caveats]
         rows += [[ds.id, "not yet confirmed", q] for q in ds.contract.open_questions]
-        rows.append(
-            [ds.id, "unreliable values", ds.contract.unreliable_rule or "Not stated in the contract."]
-        )
+        rows.append([ds.id, "unreliable values", ds.contract.unreliable_rule])
         if ds.entry.status != "reviewed":
             rows.append([ds.id, "review", "Contract is a draft; no maintainer has reviewed it yet."])
     rows += [["all", "geography", t] for t in GEOGRAPHY_TRAPS]

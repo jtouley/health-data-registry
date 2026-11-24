@@ -20,6 +20,7 @@ never called a probability that an idea will be published.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from fractions import Fraction
@@ -129,7 +130,57 @@ def _flat(text: Any) -> str:
     return " ".join(str(text).split())
 
 
+class BaseRateError(ValueError):
+    """The shipped base-rate list contradicts itself; the message says where in plain words."""
+
+
+_PERCENT = re.compile(r"^\s*(\d+(?:\.\d+)?)%")
+
+
+def _check_reported(where: str, k: int, n: int, reported: Any) -> None:
+    """A stated percentage agrees with k / n to within its own rounding (one decimal: 26.6% for 236/887)."""
+    m = _PERCENT.match(str(reported or ""))
+    if m is None:
+        return
+    stated = float(m.group(1))
+    decimals = len(m.group(1).partition(".")[2])
+    if abs(100 * k / n - stated) > 0.5 * 10**-decimals + 1e-9:
+        raise BaseRateError(
+            f"{where}: {k} of {n} is {100 * k / n:.2f}%, but the list says {stated}%; the base-rate list must be "
+            "corrected before it is used"
+        )
+
+
+def validate_base_rate(raw: dict[str, Any]) -> None:
+    """Refuse a base rate whose numbers disagree: proportions and bounds in [0, 1], low <= estimate <= high,
+    k within n, and every stated proportion or percentage equal to k / n within rounding."""
+    rid = str(raw.get("id", "?"))
+    n, k = int(raw["n"]), raw["k"]
+    p = float(raw["estimate"]["proportion"])
+    low, high = float(raw["interval"]["low"]), float(raw["interval"]["high"])
+    if not all(0.0 <= x <= 1.0 for x in (p, low, high)) or not low <= p <= high:
+        raise BaseRateError(
+            f"{rid}: the proportion and its interval must lie between 0 and 1 with low <= estimate <= high "
+            f"(got {p}, {low}-{high})"
+        )
+    if n <= 0:
+        raise BaseRateError(f"{rid}: n must be a positive number of abstracts (got {n})")
+    if k != UNKNOWN:
+        k = int(k)
+        if not 0 <= k <= n:
+            raise BaseRateError(f"{rid}: k = {k} must be between 0 and n = {n}")
+        if abs(k / n - p) > 0.00005 + 1e-12:  # the proportion is kept to 4 decimals
+            raise BaseRateError(f"{rid}: {k} / {n} = {k / n:.4f}, but the list gives the proportion as {p}")
+        _check_reported(rid, k, n, raw["estimate"].get("reported"))
+    for s in raw.get("subgroups", []):
+        sn, sk = int(s["n"]), int(s["k"])
+        if not 0 <= sk <= sn:
+            raise BaseRateError(f"{rid} ({s['label']}): k = {sk} must be between 0 and n = {sn}")
+        _check_reported(f"{rid} ({s['label']})", sk, sn, s.get("reported"))
+
+
 def _base_rate(raw: dict[str, Any]) -> BaseRate:
+    validate_base_rate(raw)
     k = raw["k"]
     return BaseRate(
         id=raw["id"],

@@ -265,3 +265,35 @@ def test_cli_csv_json_and_refusal(capsys: pytest.CaptureFixture[str]) -> None:
     assert "isn't a study design" in capsys.readouterr().out
     assert cli.main(["publication-outlook", "--json", "--conference", "nope"]) == 1
     assert json.loads(capsys.readouterr().out)["refused"] == "unknown_input"
+
+
+def _johnson() -> dict:  # type: ignore[type-arg]
+    import copy
+    from importlib import resources
+
+    import yaml
+
+    text = resources.files("health_data_registry").joinpath("publication_base_rates.yaml").read_text("utf-8")
+    return copy.deepcopy(yaml.safe_load(text)["base_rates"][0])
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        (lambda r: r["estimate"].update(proportion=1.2), "between 0 and 1"),
+        (lambda r: r["interval"].update(low=0.5), "low <= estimate <= high"),
+        (lambda r: r.update(k=900), "must be between 0 and n"),
+        (lambda r: r["estimate"].update(proportion=0.2700), "236 / 887 = 0.2661"),
+        (lambda r: r["estimate"].update(reported="27.6%"), "236 of 887 is 26.61%"),
+        (lambda r: r["subgroups"][0].update(reported="36.6%"), "oral/platform presentation"),
+        (lambda r: r.update(n=0), "positive number"),
+    ],
+)
+def test_base_rates_that_disagree_are_refused(change: Any, message: str) -> None:
+    from health_data_registry.publication import BaseRateError, validate_base_rate
+
+    good = _johnson()
+    validate_base_rate(good)  # Johnson 2022: 236 / 887 = 26.6%
+    change(good)
+    with pytest.raises(BaseRateError, match=message):
+        validate_base_rate(good)

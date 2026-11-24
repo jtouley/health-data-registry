@@ -153,7 +153,7 @@ customProperties:
   - {property: refresh, value: weekly}
   - {property: geographyBasis, value: "RESP-NET site catchment areas (dataset geographic coverage: RESP-NET Sites); the counties in each site are not listed in the dataset"}
   - {property: rateDenominator, value: "the catchment-area population of each site per 100,000; which census estimates and vintage are not stated (see openQuestions)"}
-  - {property: unreliableRule, value: "None stated in the dataset metadata: no rate is marked unreliable or suppressed for small numbers."}
+  - {property: unreliableRule, value: {kind: none, description: "None stated in the dataset metadata: no rate is marked unreliable or suppressed for small numbers."}}
   - property: openQuestions
     value:
       - "Which counties make up each state's catchment area, and how have they changed by season? The RESP-NET methods pages (www.cdc.gov) were not fetched."

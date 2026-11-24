@@ -53,6 +53,7 @@ id: toy_cases
 version: 0.1.0
 status: draft
 customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None stated (toy)."}}
   - {property: openQuestions, value: ["Is 'N' a true zero or not notifiable?"]}
 schema:
   - name: toy_cases

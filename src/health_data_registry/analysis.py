@@ -160,13 +160,13 @@ def _custom(items: Any) -> dict[str, Any]:
 
 
 def contract_property(ds: Dataset, name: str) -> Any:
-    """A top-level customProperty of the source's contract (unreliableRateRule, caseDefinitions)."""
+    """A top-level customProperty of the source's contract (caseDefinitions)."""
     return _custom(ds.contract.raw.get("customProperties")).get(name)
 
 
 @dataclass(frozen=True)
 class UnreliableRule:
-    """When a source calls its own rates unreliable, read from its contract (property unreliableRateRule).
+    """When a source calls its own rates unreliable, read from its contract (property unreliableRule).
 
     kind min_count: unreliable when the count is below `threshold`.
     kind max_relative_ci_width: unreliable when the 95% interval is wider than `threshold` times the rate.
@@ -185,22 +185,15 @@ class UnreliableRule:
 
 
 def unreliable_rule(ds: Dataset) -> UnreliableRule | None:
-    raw = contract_property(ds, "unreliableRateRule")
-    if raw is None:
+    """The source's own rule for flagging a computed rate, from the contract's unreliableRule (registry-checked).
+
+    Only min_count and max_relative_ci_width apply to a rate worked out here; none and publisher_suppressed
+    (the publisher blanks the cells itself) flag nothing, and the answer's notes say which it is.
+    """
+    spec = ds.contract.unreliable
+    if spec.kind not in ("min_count", "max_relative_ci_width") or spec.threshold is None:
         return None
-    try:
-        kind = str(raw["kind"])
-        threshold = float(raw["threshold"])
-        text = str(raw["description"])
-    except (KeyError, TypeError, ValueError):
-        kind = ""
-    if kind not in ("min_count", "max_relative_ci_width") or threshold <= 0:
-        raise QueryRefused(
-            "bad_contract_rule",
-            f"The contract for {ds.id} records an unreliable-rate rule this server can't read, so no rate is shown "
-            "rather than one that might be wrongly flagged. Use the help_me_fix_it helper to report it.",
-        )
-    return UnreliableRule(kind, threshold, text)
+    return UnreliableRule(spec.kind, spec.threshold, spec.description)
 
 
 def case_definition_years(ds: Dataset, condition: str) -> list[tuple[int, str]]:
@@ -208,8 +201,31 @@ def case_definition_years(ds: Dataset, condition: str) -> list[tuple[int, str]]:
     out: list[tuple[int, str]] = []
     for item in contract_property(ds, "caseDefinitions") or []:
         if isinstance(item, Mapping) and str(item.get("condition")) == condition:
-            out.append((int(item["effectiveYear"]), str(item.get("definition") or "")))
+            try:
+                out.append((int(item["effectiveYear"]), str(item.get("definition") or "")))
+            except (KeyError, TypeError, ValueError):
+                raise QueryRefused(
+                    "bad_contract_rule",
+                    f"The contract for {ds.id} lists a case-definition change this server can't read (it needs a "
+                    "whole effectiveYear), so no answer that depends on it is shown. Run the Something's wrong "
+                    "helper to report it.",
+                ) from None
     return sorted(out)
+
+
+def is_count(value: float | None) -> bool:
+    """A whole, non-negative number of cases; anything else is never truncated into one."""
+    return value is not None and value >= 0 and float(value).is_integer()
+
+
+def _count(value: float | None, what: str) -> int:
+    if not is_count(value):
+        raise QueryRefused(
+            "bad_count",
+            f"The source gives {value!r} as {what}, which is not a whole, non-negative number of cases, so nothing is worked "
+            "out from it rather than rounding it.",
+        )
+    return int(value or 0)
 
 
 def partial_area(ds: Dataset, s: Series, raw_place: str) -> str | None:
@@ -379,6 +395,10 @@ def _rate_rows(
                 )
             elif o.value is None:
                 flags.append("count suppressed or missing in the source, so no rate (it is not zero)")
+            elif not is_count(o.value):
+                flags.append(
+                    f"the source's count {o.value:g} is not a whole, non-negative number of cases, so no rate"
+                )
             elif part:
                 flags.append(
                     f"the count covers only part of {o.place} ({part}), so no rate against its population"
@@ -390,7 +410,7 @@ def _rate_rows(
             elif denom <= 0:
                 flags.append(f"the Census population for {o.place} in {o.year} is {denom:g}, so no rate")
             else:
-                est = stats.crude_rate(int(o.value), denom, PER)
+                est = stats.crude_rate(_count(o.value, "a case count"), denom, PER)
                 if rule and rule.applies(o.value, est):
                     flags.append(f"unreliable by the source's own rule: {rule.text}")
             if o.flag:
@@ -412,8 +432,9 @@ def _rule_notes(datasets: Sequence[Dataset]) -> list[str]:
         notes.append(
             f"{ds.id}: unreliable rates are flagged by the source's own rule: {rule.text}"
             if rule
-            else f"{ds.id}: the source's contract records no unreliable-rate rule, so none is flagged; with small "
-            "counts read the interval, which is wide."
+            else f"{ds.id}: the source's contract records no unreliable-rate rule for a computed rate "
+            f"({ds.contract.unreliable.description}), so none is flagged; with small counts read the interval, "
+            "which is wide."
         )
     return notes
 
@@ -513,7 +534,11 @@ def compare_rates(
             refused="no_rate",
         )
     name_a, name_b = f"{a.place} {a.year}", f"{b.place} {b.year}"
-    ca, cb, pa, pb = int(a.cases or 0), int(b.cases or 0), float(a.population or 0), float(b.population or 0)
+    # a and b were chosen for having a rate, so both have a whole count and a positive population.
+    ca, cb = _count(a.cases, "a case count"), _count(b.cases, "a case count")
+    pa, pb = float(a.population or 0), float(b.population or 0)
+    if pa <= 0 or pb <= 0:  # pragma: no cover - a rate needs a positive population
+        raise QueryRefused("no_denominator", "A population is missing, so the comparison can't be made.")
     rd = stats.rate_difference(ca, pa, cb, pb, PER)
     cols = ["what", "estimate", "lower_95", "upper_95", "cases", "population", "period_status", "flags"]
     table: list[list[Any]] = []
@@ -548,8 +573,11 @@ def compare_rates(
         *_rule_notes([a.case_ds]),
     ]
     if a.year != b.year:
-        changes = [y for y, _ in case_definition_years(a.case_ds, _series_condition(a.case_ds, a.label))
-                   if min(a.year, b.year) < y <= max(a.year, b.year)]  # fmt: skip
+        try:
+            defs = case_definition_years(a.case_ds, _series_condition(a.case_ds, a.label))
+        except QueryRefused as e:
+            return refusal(e, fmt)
+        changes = [y for y, _ in defs if min(a.year, b.year) < y <= max(a.year, b.year)]
         if changes:
             out_notes.insert(0, f"The case definition changed in {', '.join(map(str, changes))}, between the two "
                              "years compared: part of any difference may be the definition, not the disease.")  # fmt: skip
@@ -652,7 +680,7 @@ def get_trend(
                     continue
                 fit = stats.poisson_trend(
                     [o.year for o in pts],
-                    [o.value or 0.0 for o in pts],
+                    [float(_count(o.value, f"the {o.year} count")) for o in pts],
                     [float(d or 0) for d in denoms] if on_rates else None,
                 )
                 if on_rates:
@@ -824,7 +852,10 @@ def age_adjust(
             fmt,
             refused="suppressed_age_group",
         )
-    d = [int(counts[g] or 0) for g in groups]
+    try:
+        d = [_count(counts[g], "an age group's count") for g in groups]
+    except QueryRefused as e:
+        return refusal(e, fmt)
     n = [float(pops[g] or 0) for g in groups]
     est = stats.direct_standardize(d, n, [weights[g] for g in groups], PER)
     crude = stats.crude_rate(sum(d), sum(n), PER)

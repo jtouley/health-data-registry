@@ -21,9 +21,9 @@ PARTIAL_CONTRACT = CONTRACT.replace(
     "          - {property: sourceField, value: states}\n"
     '          - {property: partialPlaces, value: {"OHIO": "the Ohio sites only, not the whole state"}}',
 ).replace(
-    "customProperties:\n  - {property: openQuestions",
-    'customProperties:\n  - {property: unreliableRule, value: "Rates from fewer than 20 cases are flagged."}\n'
-    "  - {property: openQuestions",
+    '  - {property: unreliableRule, value: {kind: none, description: "None stated (toy)."}}\n',
+    "  - {property: unreliableRule, value: {kind: min_count, threshold: 20, description: "
+    '"Rates from fewer than 20 cases are flagged."}}\n',
 )
 POOLED_SEMANTIC = (
     SEMANTIC
@@ -194,10 +194,10 @@ def test_caveats_name_the_c_auris_source_and_the_unreliable_rule(setup: tuple[Re
     info = _json(tools.describe_dataset(reg, "toy_cases", eng, fmt="json"))
     assert info["unreliable_values"] == "Rates from fewer than 20 cases are flagged."
     plain = load_registry(write_registry(Path(str(reg.root) + "-plain")))
-    assert ["toy_cases", "unreliable values", "Not stated in the contract."] in _json(
+    assert ["toy_cases", "unreliable values", "None stated (toy)."] in _json(
         tools.list_caveats(plain, fmt="json")
     )["rows"]
-    assert "Values marked unreliable or suppressed: not stated in the contract" in str(
+    assert "Values marked unreliable or suppressed: None stated (toy)." in str(
         tools.describe_dataset(plain, "toy_cases")
     )
 
@@ -207,8 +207,7 @@ def test_caveats_name_the_c_auris_source_and_the_unreliable_rule(setup: tuple[Re
 
 def test_unresolved_geography_basis_blocks_gbd_keys(tmp_path: Path) -> None:
     blocked = CONTRACT.replace(
-        "customProperties:\n  - {property: openQuestions",
-        "customProperties:\n"
+        "  - {property: openQuestions",
         '  - {property: geographyBasis, value: "unresolved: facility location or patient residence"}\n'
         '  - {property: rateDenominator, value: "residents per 100,000"}\n'
         "  - {property: openQuestions",
