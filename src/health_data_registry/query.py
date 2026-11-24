@@ -13,7 +13,7 @@ from typing import Any
 
 import duckdb
 
-from health_data_registry.registry import Dataset, Metric, Registry
+from health_data_registry.registry import Column, Dataset, Metric, Registry, label_key
 from health_data_registry.sql_guard import GuardedQuery, guard_sql, harden, run_guarded
 from health_data_registry.store import Manifest, latest_snapshot
 
@@ -123,7 +123,8 @@ def compile_metric(
             ("upper", sem.measure(metric.uncertainty.upper).column),
         ]
     table = _q(ds.id)
-    out_cols = [*group_by, metric.name, *(b for b, _ in bounds)]
+    flag = ds.contract.flag_column(measure.column)
+    out_cols = [*group_by, metric.name, *(b for b, _ in bounds), *(["flag"] if flag else [])]
     if metric.aggregation == "cumulative_latest":
         return _compile_cumulative(
             ds, metric, where, params, period_where, period_params, period_col, group_by
@@ -133,6 +134,12 @@ def compile_metric(
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
     if metric.aggregation == "sum":
         sel = [*select_dims, f"sum({m_col}) AS {_q(metric.name)}"]
+        if flag:
+            # The publisher's flags on the empty cells the sum had to leave out, so a gap is never silent.
+            f_col = _q(flag.name)
+            sel.append(
+                f"string_agg(DISTINCT {f_col}, ', ' ORDER BY {f_col}) FILTER (WHERE {m_col} IS NULL) AS flag"
+            )
         sql = f"SELECT {', '.join(sel)} FROM {table}{where_sql}"  # noqa: S608 - quoted contract identifiers, bound values
         if group_cols:
             sql += " GROUP BY ALL ORDER BY ALL"
@@ -149,6 +156,8 @@ def compile_metric(
     else:
         # Rates, percents and estimates are read as published, never added up. One row per group or refuse.
         sel = [*select_dims, f"{m_col} AS {_q(metric.name)}", *(f"{_q(c)} AS {_q(b)}" for b, c in bounds)]
+        if flag:
+            sel.append(f"{_q(flag.name)} AS flag")
         sql = f"SELECT {', '.join(sel)} FROM {table}{where_sql}"  # noqa: S608 - quoted contract identifiers, bound values
         if group_cols:
             sql += " ORDER BY ALL"
@@ -156,6 +165,27 @@ def compile_metric(
             " Lower and upper are the publisher's own uncertainty bounds." if bounds else ""
         )
     return CompiledMetric(sql=sql, params=params, columns=out_cols, method=method)
+
+
+def _lit(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def label_key_sql(expr: str, renamed: Sequence[tuple[str, str]] = ()) -> str:
+    """SQL for registry.label_key, then the contract's renamed labels mapped onto the label they continue."""
+    key = f"regexp_replace(upper(trim(CAST({expr} AS VARCHAR))), '[.]', '', 'g')"
+    if not renamed:
+        return key
+    whens = " ".join(f"WHEN {_lit(label_key(a))} THEN {_lit(label_key(b))}" for a, b in renamed)
+    return f"CASE {key} {whens} ELSE {key} END"
+
+
+def _flag_text(flag: Column | None, code_sql: str) -> str:
+    """SQL text for a publisher flag: its code and, where the contract quotes the codebook, what it means."""
+    if flag is None or not flag.flag_codes:
+        return f"'''' || {code_sql} || ''''"
+    whens = " ".join(f"WHEN {_lit(c)} THEN {_lit(f"'{c}' = {m}")}" for c, m in flag.flag_codes)
+    return f"CASE {code_sql} {whens} ELSE '''' || {code_sql} || '''' END"
 
 
 def _compile_cumulative(
@@ -168,10 +198,11 @@ def _compile_cumulative(
     period_col: str | None,
     group_by: Sequence[str],
 ) -> CompiledMetric:
-    """A running total read at the last week of each period, replaced by the next period's restatement once
-    that covers the whole period (e.g. NNDSS: year-to-date at week 52, or next year's prior-year column).
+    """A running total read at the last week that has a number in each period (e.g. NNDSS year-to-date).
 
-    The rows say which they are: 'final' (restated) or 'provisional' (as of the last week published).
+    The next period's restatement (NNDSS: next year's prior-year column) is returned beside it, never in its
+    place: the publisher's codebook doesn't say the two count the same thing, and for some conditions they
+    differ widely. Each value says the week it comes from; neither is called final.
     """
     sem = ds.semantic
     time_dims = [d.name for d in sem.dimensions if d.type == "time" and d.name != metric.order_by]
@@ -186,58 +217,96 @@ def _compile_cumulative(
         raise QueryRefused(
             "needs_period", f"{metric.name} can't be grouped by {tname}, the within-period order."
         )
+    order_by = str(metric.order_by)
     col = {d.name: d.column for d in sem.dimensions}
-    ob = _q(col[str(metric.order_by)])
+    ob = _q(col[order_by])
+    unit = "week" if "week" in order_by else order_by.replace("_", " ")
+    span = "year" if "year" in tname else "period"
     others = [g for g in group_by if g != tname]
-    # Publishers re-case labels between years (NNDSS: MICHIGAN in 2024, Michigan from 2025), so a period and its
-    # restatement are matched on the label ignoring case, edge spaces and dots (U.S. RESIDENTS = US RESIDENTS).
+    # Publishers re-case and rename labels between years (NNDSS: MICHIGAN in 2024, Michigan from 2025), so a
+    # period and its restatement are matched on the label key, with the contract's renamed labels mapped back.
     keys = [
-        f"regexp_replace(upper(trim(CAST({_q(col[g])} AS VARCHAR))), '[.]', '', 'g') AS {_q(g)}"
-        for g in others
+        f"{label_key_sql(_q(col[g]), ds.contract.column(col[g]).renamed_labels)} AS {_q(g)}" for g in others
     ]
     t = _q(col[tname])
-    m_col = _q(sem.measure(metric.measure).column)
+    m_col = sem.measure(metric.measure).column
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
-    key_list = ", ".join([*keys, f"{t} AS {_q(tname)}"])
-    cur = f"SELECT {key_list}, arg_max({m_col}, {ob}) AS v, max({ob}) AS last_at FROM base GROUP BY ALL"  # noqa: S608 - quoted contract identifiers
-    final_sql = "'provisional: running total as of ' || c.last_at"
-    if metric.restated_by:
-        r_col = _q(sem.measure(metric.restated_by.measure).column)
-        nxt_keys = ", ".join([*keys, f"{t} - 1 AS {_q(tname)}"])
-        nxt = f"SELECT {nxt_keys}, arg_max({r_col}, {ob}) AS v, max({ob}) AS last_at FROM base GROUP BY ALL"  # noqa: S608 - quoted contract identifiers
-        done = f"n.last_at >= {int(metric.restated_by.complete_at)}"
-        value = f"CASE WHEN {done} THEN n.v ELSE c.v END"
-        status = f"CASE WHEN {done} THEN 'final: restated in the next table' ELSE {final_sql} END"
-        join = " LEFT JOIN nxt n USING (" + ", ".join(_q(g) for g in [*others, tname]) + ")"
-        ctes = f"WITH base AS (SELECT * FROM {_q(ds.id)}{where_sql}), cur AS ({cur}), nxt AS ({nxt})"  # noqa: S608 - quoted contract identifiers
-    else:
-        value, status, join = "c.v", final_sql, ""
-        ctes = f"WITH base AS (SELECT * FROM {_q(ds.id)}{where_sql}), cur AS ({cur})"  # noqa: S608 - quoted contract identifiers
-    outer_where = [w.replace(t, f"c.{_q(tname)}", 1) for w in period_where]
-    sel = ", ".join(
-        [*(f"c.{_q(g)}" for g in group_by), f"{value} AS {_q(metric.name)}", f"{status} AS period_status"]
+
+    def running(value_col: str, period_sql: str) -> str:
+        """Per group and period: the last number published, the week it comes from, the period's last week,
+        and the flag at that last week."""
+        v = _q(value_col)
+        fc = ds.contract.flag_column(value_col)
+        last_flag = f"arg_max(coalesce({_q(fc.name)}, ''), {ob})" if fc else "''"
+        cols = ", ".join([*keys, f"{period_sql} AS {_q(tname)}"])
+        aggs = (
+            f"arg_max({v}, {ob}) FILTER (WHERE {v} IS NOT NULL) AS v, "
+            f"max({ob}) FILTER (WHERE {v} IS NOT NULL) AS v_at, max({ob}) AS last_at, {last_flag} AS last_flag"
+        )
+        return f"SELECT {cols}, {aggs} FROM base GROUP BY ALL"  # noqa: S608 - quoted contract identifiers
+
+    m_flag = ds.contract.flag_column(m_col)
+    gap = (
+        f"'; later {unit}s have no number' || CASE WHEN c.last_flag <> '' THEN ' (flag at {unit} ' || c.last_at"
+        f" || ': ' || {_flag_text(m_flag, 'c.last_flag')} || ')' ELSE '' END"
     )
-    sql = f"{ctes} SELECT {sel} FROM cur c{join}"  # noqa: S608 - quoted contract identifiers, bound values
+    status = (
+        f"CASE WHEN c.v IS NULL THEN 'no number published through {unit} ' || c.last_at"
+        f" || CASE WHEN c.last_flag <> '' THEN ' (flag: ' || {_flag_text(m_flag, 'c.last_flag')} || ')' ELSE '' END"
+        f" WHEN c.v_at < c.last_at THEN 'incomplete: running total last published at {unit} ' || c.v_at"
+        f" || ' of ' || c.last_at || {gap} || ', so this is not the {span} total'"
+        f" WHEN {{ended}} THEN 'as published at {span} end (through {unit} ' || c.v_at || ')'"
+        f" ELSE 'provisional: running total so far (through {unit} ' || c.v_at || ')' END"
+    )
+    flag_out = "CASE WHEN c.v_at IS DISTINCT FROM c.last_at THEN nullif(c.last_flag, '') END"
+    ctes = f"WITH base AS (SELECT * FROM {_q(ds.id)}{where_sql}), cur AS ({running(m_col, t)})"  # noqa: S608 - quoted contract identifiers
+    sel = [*(f"c.{_q(g)}" for g in group_by), f"c.v AS {_q(metric.name)}"]
+    columns = [*group_by, metric.name, "period_status", "flag"]
+    join = ""
+    if metric.restated_by:
+        r_col = sem.measure(metric.restated_by.measure).column
+        r_flag = ds.contract.flag_column(r_col)
+        ctes += f", nxt AS ({running(r_col, f'{t} - 1')})"
+        join = " LEFT JOIN nxt n USING (" + ", ".join(_q(g) for g in [*others, tname]) + ")"
+        status = status.replace("{ended}", "n.last_at IS NOT NULL")
+        r_status = (
+            f"CASE WHEN n.last_at IS NULL THEN 'no next-{span} table yet'"
+            f" WHEN n.v IS NULL THEN 'next {span}''s table has no number for this {span}'"
+            f" || CASE WHEN n.last_flag <> '' THEN ' (flag: ' || {_flag_text(r_flag, 'n.last_flag')} || ')' ELSE '' END"
+            f" ELSE 'as published in next {span}''s table (through {unit} ' || n.v_at || ')'"
+            f" || CASE WHEN n.v_at < c.last_at THEN '; covers {unit}s 1-' || n.v_at || ' of ' || c.last_at"
+            f" || ' only, not the whole {span}' ELSE '' END END"
+        )
+        sel += [
+            f"{status} AS period_status",
+            f"{flag_out} AS flag",
+            "n.v AS restated",
+            f"{r_status} AS restated_status",
+        ]
+        columns += ["restated", "restated_status"]
+    else:
+        # Without a restatement there is no sign the period has ended, so the last week read is provisional.
+        sel += [f"{status.replace('{ended}', 'false')} AS period_status", f"{flag_out} AS flag"]
+    outer_where = [w.replace(t, f"c.{_q(tname)}", 1) for w in period_where]
+    sql = f"{ctes} SELECT {', '.join(sel)} FROM cur c{join}"  # noqa: S608 - quoted contract identifiers, bound values
     if outer_where:
         sql += " WHERE " + " AND ".join(outer_where)
     sql += " ORDER BY ALL"
     method = (
-        f"Running total ({sem.measure(metric.measure).name}) read at the last {metric.order_by} of each {tname}"
+        f"Running total ({sem.measure(metric.measure).name}) read at the last {unit} of each {span} that has a "
+        f"number, labelled with that {unit}"
         + (
-            f"; once the next {tname}'s table restates it through {metric.order_by} "
-            f"{metric.restated_by.complete_at}, that restated total is used instead"
+            f"; next {span}'s table's figure for the same {span} "
+            f"({sem.measure(metric.restated_by.measure).name}) is shown beside it as 'restated', with the {unit} "
+            "it reaches. The two are never swapped or combined, because the publisher doesn't say they count the "
+            "same thing"
             if metric.restated_by
             else ""
         )
         + ("; publisher total rows excluded" if metric.exclude_total_rows and ds.contract.total_rows else "")
         + ". Weekly counts are never added up, because late reports land in the running total, not the week."
     )
-    return CompiledMetric(
-        sql=sql,
-        params=[*params, *period_params],
-        columns=[*group_by, metric.name, "period_status"],
-        method=method,
-    )
+    return CompiledMetric(sql=sql, params=[*params, *period_params], columns=columns, method=method)
 
 
 @dataclass
@@ -388,6 +457,7 @@ def envelope(
         "columns": columns,
         "rows": out,
         "row_count": len(out),
+        "truncated": truncated,
         "sql": sql,
         "params": params,
         "method": method,

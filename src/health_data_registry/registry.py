@@ -27,6 +27,13 @@ class RegistryError(ValueError):
     """A registry file is malformed or inconsistent with another file."""
 
 
+class UnknownDataset(KeyError):
+    """No catalogued dataset has this id. The message is safe to show a clinician as is."""
+
+    def __str__(self) -> str:
+        return str(self.args[0]) if self.args else "unknown dataset"
+
+
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -137,6 +144,33 @@ class Column:
     unit: str | None = None
     missing_codes: tuple[str, ...] = ()
     flag_for: str | None = None
+    # A flag column's codes and what the publisher's codebook says each means, e.g. ("-", "no reported cases").
+    flag_codes: tuple[tuple[str, str], ...] = ()
+    # Place labels that cover only part of the place they are named after: (label, note); "*" means every label.
+    partial_places: tuple[tuple[str, str], ...] = ()
+    # Labels the publisher renamed between years: (later label, the earlier label it continues).
+    renamed_labels: tuple[tuple[str, str], ...] = ()
+
+    def partial_note(self, label: str) -> str | None:
+        """The contract's note when this place label covers only part of the place it is named after."""
+        notes = {label_key(k): v for k, v in self.partial_places}
+        return notes.get(label_key(label), notes.get("*"))
+
+    def canonical_label(self, label: str) -> str:
+        """The label key a renamed label continues (compared ignoring case, edge spaces and dots)."""
+        k = label_key(label)
+        return {label_key(a): label_key(b) for a, b in self.renamed_labels}.get(k, k)
+
+    def display_label(self, label: str) -> str:
+        """The label to show: both names of a renamed area show as the contract's earlier label, so every year
+        of that area reads the same; any other label shows as published."""
+        names = {label_key(x): b for a, b in self.renamed_labels for x in (a, b)}
+        return names.get(label_key(label), str(label))
+
+
+def label_key(text: str) -> str:
+    """A publisher label compared ignoring case, edge spaces and dots (U.S. RESIDENTS = US RESIDENTS)."""
+    return str(text).strip().upper().replace(".", "")
 
 
 @dataclass(frozen=True)
@@ -151,6 +185,8 @@ class Contract:
     table_shape: str
     open_questions: tuple[str, ...]
     raw: Mapping[str, Any] = field(repr=False, compare=False)
+    # The rule, if any, by which the publisher suppresses or marks unreliable values (from its own codebook).
+    unreliable_rule: str | None = None
 
     def column(self, name: str) -> Column:
         for c in self.columns:
@@ -162,6 +198,10 @@ class Contract:
     def column_names(self) -> frozenset[str]:
         return frozenset(c.name for c in self.columns)
 
+    def flag_column(self, column: str) -> Column | None:
+        """The publisher's flag column for a measure column, if the contract declares one."""
+        return next((c for c in self.columns if c.flag_for == column), None)
+
 
 def _custom(props: Any) -> dict[str, Any]:
     out: dict[str, Any] = {}
@@ -170,6 +210,17 @@ def _custom(props: Any) -> dict[str, Any]:
             raise RegistryError(f"customProperties entries need 'property' and 'value': {item!r}")
         out[str(item["property"])] = item.get("value")
     return out
+
+
+_PAIR_PROPS = ("flagCodes", "partialPlaces", "renamedLabels")
+
+
+def _pairs(value: Any, where: str) -> tuple[tuple[str, str], ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, Mapping) or not all(str(v or "").strip() for v in value.values()):
+        raise RegistryError(f"{where} must map each label or code to a non-empty text")
+    return tuple((str(k), str(v)) for k, v in value.items())
 
 
 def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
@@ -211,6 +262,12 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
         missing = cp.get("missingCodes") or []
         if not isinstance(missing, list):
             raise RegistryError(f"{expected_id}.{name}: missingCodes must be a list")
+        if missing and cp.get("flagFor") is not None:
+            # Hard rule 4: publishers' suppression and availability flags are kept as published, never blanked.
+            raise RegistryError(
+                f"{expected_id}.{name}: a flag column keeps its codes; it can't have missingCodes"
+            )
+        pairs = {k: _pairs(cp.get(k), f"{expected_id}.{name}.{k}") for k in _PAIR_PROPS}
         cols.append(
             Column(
                 name=name,
@@ -223,6 +280,9 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
                 unit=None if cp.get("unit") is None else str(cp.get("unit")),
                 missing_codes=tuple(str(m) for m in missing),
                 flag_for=None if cp.get("flagFor") is None else str(cp.get("flagFor")),
+                flag_codes=pairs["flagCodes"],
+                partial_places=pairs["partialPlaces"],
+                renamed_labels=pairs["renamedLabels"],
             )
         )
     if not cols:
@@ -242,6 +302,9 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
         table_shape=str(obj_custom.get("tableShape", "")),
         open_questions=tuple(str(q) for q in oq),
         raw=doc,
+        unreliable_rule=None
+        if top_custom.get("unreliableRule") is None
+        else str(top_custom["unreliableRule"]),
     )
 
 
@@ -271,10 +334,14 @@ class Uncertainty(_Strict):
 
 
 class Restatement(_Strict):
-    """A later table restating a whole earlier period (e.g. NNDSS's prior-year year-to-date column)."""
+    """A later table's running total for the earlier period (e.g. NNDSS's prior-year year-to-date column).
 
-    measure: str  # cumulative count for the previous period, as restated in the current period's table
-    complete_at: int  # the order_by value from which the restatement covers the whole previous period
+    It is returned beside the period's own running total, never in its place: nothing in the publisher's
+    codebook says the two count the same thing. It covers the whole earlier period only once it reaches that
+    period's own last order_by value (week 53 in a 53-week MMWR year).
+    """
+
+    measure: str  # cumulative count for the previous period, as published in the current period's table
 
 
 class Metric(_Strict):
@@ -307,6 +374,8 @@ class Series(_Strict):
     measure: SeriesMeasure
     filters: dict[str, str | int | list[str | int]] = Field(default_factory=dict)
     location_dimension: str | None = None
+    # For a series with no location_dimension: what its one figure per period covers, in plain words.
+    place_coverage: str | None = None
     time_dimension: str
     case_status: str | None = None
     case_definition: str | None = None
@@ -414,7 +483,7 @@ class Registry:
             return self.datasets[dataset_id]
         except KeyError:
             known = ", ".join(sorted(self.datasets)) or "none"
-            raise KeyError(f"unknown dataset {dataset_id!r}; catalogued: {known}") from None
+            raise UnknownDataset(f"unknown dataset {dataset_id!r}; catalogued: {known}") from None
 
     def __iter__(self) -> Iterator[Dataset]:
         return iter(self.datasets[k] for k in sorted(self.datasets))
@@ -524,6 +593,8 @@ def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticMode
     for c in contract.columns:
         if c.flag_for is not None and c.flag_for not in cols:
             raise RegistryError(f"{entry.id}: {c.name} flags unknown column {c.flag_for}")
+        if c.flag_codes and c.flag_for is None:
+            raise RegistryError(f"{entry.id}: {c.name} lists flagCodes but flags no column (flagFor)")
 
 
 def load_registry(root: Path | None = None) -> Registry:

@@ -157,6 +157,7 @@ customProperties:
   - {property: redistribution, value: false}
   - {property: citation, value: "World Health Organization. Global Health Observatory, indicator MDG_0000000020: Incidence of tuberculosis (per 100 000 population per year). https://ghoapi.azureedge.net/api/MDG_0000000020"}
   - {property: refresh, value: annual}
+  - {property: unreliableRule, value: "None: WHO publishes a modelled estimate with low and high bounds for every value; none is marked unreliable."}
   - property: openQuestions
     value:
       - "Licence and terms: CC BY-NC-SA 3.0 IGO and the terms URL are taken from the brief, not read from WHO (www.who.int was not fetched). Maintainer to confirm."

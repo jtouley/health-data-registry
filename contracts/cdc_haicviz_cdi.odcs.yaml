@@ -98,6 +98,7 @@ customProperties:
   - {property: licence, value: public-domain-us-federal}
   - {property: citation, value: "Centers for Disease Control and Prevention, Emerging Infections Program HAIC. HAICViz - CDI. https://data.cdc.gov/d/abgz-qs4g"}
   - {property: refresh, value: annual}
+  - {property: unreliableRule, value: "None stated: data.cdc.gov publishes no codebook or small-number rule for these EIP figures (see openQuestions)."}
   - property: openQuestions
     value:
       - "Licence: no licence field in the Socrata metadata; public-domain-us-federal assumed from its being a CDC work."

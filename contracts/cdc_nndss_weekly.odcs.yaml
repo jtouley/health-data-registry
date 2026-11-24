@@ -54,6 +54,12 @@ schema:
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: states}
+          - property: partialPlaces
+            value: {"New York": "New York State excluding New York City, which NNDSS reports as its own area; not the whole state GBD models"}
+            description: "Structural check above: the 51 state/DC rows plus New York City add up to US RESIDENTS, so New York excludes New York City."
+          - property: renamedLabels
+            value: {"Commonwealth of Northern Mariana Islands": "Northern Mariana Islands"}
+            description: "The 2025 tables name the territory by its official title, Commonwealth of the Northern Mariana Islands; 2022-2024 tables call it Northern Mariana Islands. Same jurisdiction, one row per table each year (live data, 2026-11-24)."
       - name: year
         physicalType: BIGINT
         logicalType: integer
@@ -92,12 +98,12 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: false
-        description: "Why the current-week count is empty. Codes from the dataset notes: '-' no reported cases; U unavailable; N not reportable in the jurisdiction; NN not nationally notifiable; NP nationally notifiable but not published; NC not calculated. From 2025 the flag is empty when a count is present."
+        description: "Why the current-week count is empty. Codes from the dataset notes: '-' no reported cases; U unavailable; N not reportable in the jurisdiction; NN not nationally notifiable; NP nationally notifiable but not published; NC not calculated. From 2025 the flag is empty when a count is present; through 2024 rows with a count also carry '-', so a flag explains only an empty count. Kept as published, never turned into an empty value."
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: m1_flag}
           - {property: flagFor, value: m1}
-          - {property: missingCodes, value: ["U", "N", "NN", "NP", "NC"]}
+          - {property: flagCodes, value: {"-": "no reported cases", "U": "unavailable", "N": "not reportable in this jurisdiction", "NN": "not nationally notifiable", "NP": "nationally notifiable but not published", "NC": "not calculated"}}
         quality:
           - id: m1_flag_codes
             type: library
@@ -123,7 +129,7 @@ schema:
           - {property: role, value: attribute}
           - {property: sourceField, value: m2_flag}
           - {property: flagFor, value: m2}
-          - {property: missingCodes, value: ["U", "N", "NN", "NP", "NC"]}
+          - {property: flagCodes, value: {"-": "no reported cases", "U": "unavailable", "N": "not reportable in this jurisdiction", "NN": "not nationally notifiable", "NP": "nationally notifiable but not published", "NC": "not calculated"}}
       - name: m3
         physicalType: BIGINT
         logicalType: integer
@@ -142,12 +148,12 @@ schema:
           - {property: role, value: attribute}
           - {property: sourceField, value: m3_flag}
           - {property: flagFor, value: m3}
-          - {property: missingCodes, value: ["U", "N", "NN", "NP", "NC"]}
+          - {property: flagCodes, value: {"-": "no reported cases", "U": "unavailable", "N": "not reportable in this jurisdiction", "NN": "not nationally notifiable", "NP": "nationally notifiable but not published", "NC": "not calculated"}}
       - name: m4
         physicalType: BIGINT
         logicalType: integer
         required: false
-        description: "Cumulative cases in the previous MMWR year up to the same week, as published in this week's table (so it reflects revisions made since that year's own tables)."
+        description: "Cumulative cases in the previous MMWR year up to the same week, as published in this week's table. The codebook doesn't say whether it counts the same thing as that year's own year-to-date (m3); for some conditions the two differ widely (see openQuestions), so it is shown beside m3, never in its place."
         customProperties:
           - {property: role, value: measure}
           - {property: sourceField, value: m4}
@@ -161,7 +167,7 @@ schema:
           - {property: role, value: attribute}
           - {property: sourceField, value: m4_flag}
           - {property: flagFor, value: m4}
-          - {property: missingCodes, value: ["U", "N", "NN", "NP", "NC"]}
+          - {property: flagCodes, value: {"-": "no reported cases", "U": "unavailable", "N": "not reportable in this jurisdiction", "NN": "not nationally notifiable", "NP": "nationally notifiable but not published", "NC": "not calculated"}}
       - name: location1
         physicalType: VARCHAR
         logicalType: string
@@ -190,8 +196,11 @@ customProperties:
   - {property: licence, value: public-domain-us-federal}
   - {property: citation, value: "Centers for Disease Control and Prevention. National Notifiable Diseases Surveillance System (NNDSS). NNDSS Weekly Data. https://data.cdc.gov/d/x9gk-5huc"}
   - {property: refresh, value: weekly}
+  - {property: unreliableRule, value: "None: the publisher marks no counts as unreliable and publishes no rates. Empty counts carry a flag ('-' no reported cases; U, N, NN, NP, NC)."}
   - property: openQuestions
     value:
+      - "Is next year's prior-year year-to-date (m4) a like-for-like restatement of a year's own year-to-date (m3)? Nothing in the codebook says so, and for Candida auris, clinical they differ widely (m3 at the year's last week vs next year's m4 at its last week, live data 2026-11-24: California 2023 1275 vs 551; Georgia 2023 390 vs 191; Georgia 2024 651 vs 365; Michigan 2023 103 vs 110). Until a maintainer answers, both are returned side by side and neither is called final."
+      - "A year-to-date that had a number and later weeks show only '-' (e.g. Minnesota, Candida auris, clinical, 2025: 1 through week 38, '-' for weeks 39-53): withdrawn, reset or missing? Reported as incomplete until answered."
       - "Licence: the Socrata metadata has no licence field for this dataset; public-domain-us-federal is assumed from its being a CDC work. Maintainer to confirm."
       - "Should an empty m1 with flag '-' (no reported cases) be stored as 0 rather than NULL? The publisher defines '-' as no reported cases, but filling a number is a maintainer decision."
       - "Year-to-date (m3, m4) must be read at a single week; the semantic format has no way to require a week filter. Should the compiler refuse YTD metrics without a week filter?"

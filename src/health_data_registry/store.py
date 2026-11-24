@@ -10,7 +10,8 @@ Layout under the lake root ($HDR_LAKE, default ./lake):
     datasets/<id>/LATEST                 the snapshot_id the server reads
 
 Normalisation is driven only by the contract: rename each publisher field to its column, turn the
-codebook's missing codes into NULL, cast to the declared type. Nothing else changes a value.
+codebook's missing codes into NULL, cast to the declared type. Nothing else changes a value. Flag columns
+are never missing-coded (the registry refuses it): the publisher's flags are kept as published.
 """
 
 from __future__ import annotations
@@ -91,6 +92,12 @@ def select_list(contract: Contract) -> str:
         elif c.physical_type in ("DATE", "TIMESTAMP"):
             # Socrata floating timestamps look like 2024-01-06T00:00:00.000
             expr = f"CAST(CAST(NULLIF(trim({src}), '') AS TIMESTAMP) AS {c.physical_type})"
+        elif c.physical_type in ("BIGINT", "INTEGER"):
+            # Counts arrive as text, "31" or "31.0" (NNDSS from 2025). A plain cast would round "1.5" to 2, so
+            # anything with a fraction stops the load instead of becoming a different count.
+            dec = f"CAST(NULLIF(trim({src}), '') AS DECIMAL(38, 6))"
+            msg = _lit(f"{c.name}: a value has a fraction, so it isn't a whole count; check the contract")
+            expr = f"CASE WHEN {dec} IS NULL THEN NULL WHEN {dec} = trunc({dec}) THEN CAST({dec} AS {c.physical_type}) ELSE error({msg}) END"
         else:
             expr = f"CAST(NULLIF(trim({src}), '') AS {c.physical_type})"
         parts.append(f"{expr} AS {_q(c.name)}")

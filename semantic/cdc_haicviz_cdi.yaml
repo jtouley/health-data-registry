@@ -51,9 +51,11 @@ series:
     label: "C. difficile infection (EIP sites, all ages)"
     metric: cdi_cases_total
     measure: cases
+    place_coverage: "the Emerging Infections Program sites combined, not by state"
     time_dimension: year
   - condition: "Clostridioides difficile infection"
     label: "C. difficile infection (EIP sites, all ages)"
     metric: cdi_incidence_rate
     measure: rate
+    place_coverage: "the Emerging Infections Program sites combined, not by state"
     time_dimension: year
