@@ -115,7 +115,10 @@ Everything a clinician reads (tool descriptions, helpers, refusals) follows the 
   `make test-network` when you change an adapter, a contract or the fetcher.
 - **Mutation tests.** `scripts/mutate_changed.py` runs mutmut on the modules changed since the merge base and
   prints each surviving mutant. A survivor means the tests would not notice that change: add or sharpen a test, or
-  say in the PR why the mutant is equivalent. `make mutate` is part of `make check`, and CI runs it on every PR.
+  say in the PR why the mutant is equivalent. `make mutate` is part of `make check`. CI runs the same check on
+  every PR in shards: `--list` names the changed modules, one job per module runs mutmut (60 minutes each), and
+  the aggregate job applies the 70% floor to the summed counts. It fails if any shard failed its baseline,
+  checked no mutant or left no report.
 - **New features and fixes add tests.** A bug fix includes a test that fails without it.
 
 ## Adding a dataset
