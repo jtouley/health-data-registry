@@ -73,7 +73,8 @@ ignore = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src"]
+files = ["src", "eval"]
+exclude = ["^eval/sealed/"]
 strict = true
 ignore_missing_imports = true
 
@@ -83,7 +84,7 @@ addopts = "-q --strict-markers"
 markers = ["network: hits a live publisher (deselected in CI by default)"]
 
 [tool.coverage.run]
-source = ["health_data_registry"]
+source = ["health_data_registry", "eval"]
 branch = true
 
 [tool.mutmut]
