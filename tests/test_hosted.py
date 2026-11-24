@@ -38,7 +38,7 @@ from health_data_registry.registry import Registry, load_registry
 from health_data_registry.store import RawFetch
 from tests.test_publish import RUN, make_lake, write_hub_registry
 
-SECRET = "zz-private-question-0xBEEF"  # stands in for a clinician's words
+SECRET = "zz-private-question-0xBEEF"  # noqa: S105 - not a password: stands in for a clinician's words
 
 
 def cfg(tmp_path: Path, **kw: Any) -> HostedConfig:
@@ -161,7 +161,12 @@ def test_initialize_gets_an_opaque_session_id_and_rate_limits_answer_429(
             "clientInfo": {"name": "t", "version": "1"},
         },
     }
-    call = {"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "list_caveats", "arguments": {}}}
+    call = {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "tools/call",
+        "params": {"name": "list_caveats", "arguments": {}},
+    }
     with Running(app) as srv, httpx.Client(base_url=srv.url, headers=headers) as c:
         r = c.post("/mcp", json=init)
         sid = r.headers["mcp-session-id"]

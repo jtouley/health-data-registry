@@ -81,7 +81,8 @@ def build_server(
     ) -> Out:
         """Datasets that fit a topic (e.g. "legionella", "syphilis in states"), ranked, each with a one-line
         reason. Filters: id_area (infectious_disease), geography level, years."""
-        return safe("search_datasets", 
+        return safe(
+            "search_datasets",
             lambda: tools.search_datasets(
                 reg, topic=topic, id_area=id_area, geography=geography, year_start=year_start, year_end=year_end,
                 fmt=fmt,
@@ -117,7 +118,8 @@ def build_server(
         Running totals give two observations per year: year_end_ytd (provisional) and
         subsequent_year_restatement (unverified, not a final count). The flag column gives the publisher's
         reason for an empty value."""
-        return safe("get_series", 
+        return safe(
+            "get_series",
             lambda: tools.get_series(
                 reg, eng, condition=condition, locations=locations or [], year_start=year_start, year_end=year_end,
                 measure=measure, sex=sex, source_id=source_id, fmt=fmt,
@@ -135,7 +137,8 @@ def build_server(
     ) -> Out:
         """The same observed rows keyed to GBD location and cause names, plus the exact IHME GBD connector call
         to run next. This server never calls GBD and never judges the two against each other."""
-        return safe("get_aligned_with_gbd", 
+        return safe(
+            "get_aligned_with_gbd",
             lambda: tools.get_aligned_with_gbd(
                 reg, eng, condition=condition, locations=locations or [], year_start=year_start, year_end=year_end,
                 fmt=fmt,
@@ -167,7 +170,8 @@ def build_server(
     ) -> Out:
         """Is it higher here than there, or now than then? Rate ratio and rate difference with 95% intervals,
         between two places in one year (other_location) or one place in two years (other_year)."""
-        return safe("compare_rates", 
+        return safe(
+            "compare_rates",
             lambda: analysis.compare_rates(
                 reg, eng, condition=condition, location=location, year=year, other_location=other_location,
                 other_year=other_year, fmt=fmt,
@@ -189,7 +193,8 @@ def build_server(
         the case definition changed; provisional years are left out unless include_provisional is true; needs at
         least 3 usable years. fit_on "rates" (default) needs Census population for every year and refuses
         otherwise; "counts" is a trend in case counts that ignores population change."""
-        return safe("get_trend", 
+        return safe(
+            "get_trend",
             lambda: analysis.get_trend(
                 reg, eng, condition=condition, location=location, year_start=year_start, year_end=year_end,
                 include_provisional=include_provisional, fit_on=fit_on, fmt=fmt,
@@ -250,7 +255,8 @@ def build_server(
     ) -> Out:
         """Conference abstracts, case reports and health department reports on a condition, with the datasets
         each used. (The index is not built yet; the tool says so rather than guessing.)"""
-        return safe("find_prior_work", 
+        return safe(
+            "find_prior_work",
             lambda: tools.find_prior_work(reg, condition=condition, geography=geography, years=years,
                                           dataset=dataset, fmt=fmt),
             fmt,

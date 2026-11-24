@@ -23,6 +23,7 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 | `make docs` | Regenerate `docs/helpers.md`, `template/.claude/skills/`, `plugin/` and the marketplace from `helpers.py` |
 | `make kit` | Build the Claude Projects kit into `dist/projects-kit/` ([docs/dev/distribution.md](docs/dev/distribution.md)) |
 | `make refresh` / `make serve` | Fetch every source into the lake / run the MCP server on stdio |
+| `make serve-http` | The hosted read-only server (Streamable HTTP, hub releases only; [docs/dev/hosting.md](docs/dev/hosting.md)) |
 | `make check-contracts` | Check each publisher still serves the fields its contract reads |
 | `make eval` | Verify the sealed sets; never run or read the held-out pool while developing |
 | `uv run health-data-registry refresh <id> [--max-rows N]` | One dataset; `--max-rows` marks the snapshot partial |
@@ -62,7 +63,7 @@ One review round, one fix round, merge, then follow-ups. We don't get stuck in r
 
 ```text
 src/health_data_registry/
-  cli.py          serve, refresh <dataset>|--all, fetch <source>, export-public --to, check-contracts, validate, eval
+  cli.py          serve [--http], refresh <dataset>|--all, fetch <source>, export-public --to, check-contracts, validate, eval
   server.py       the MCP server (stdio): registers the tools and the helper prompts; wraps every failure
                   as a plain-words refusal
   tools.py        list_sources, search_datasets, describe_dataset, suggest_datasets, get_series,
@@ -80,6 +81,9 @@ src/health_data_registry/
                   with data.parquet, data.duckdb and manifest.json, LATEST, fetch_log/
   crawl.py        fetch one source into a lake (refresh, fetch, and run-time fetches)
   publish.py      export-public to the open data hub: cards, licence, manifest, pre-publish checks, tag
+  hosted.py       serve --http: stateless Streamable HTTP for the claude.ai connector; hub releases and live only,
+                  rate limits per session and overall, result cap, no request content in any log
+  deadline.py     one deadline per hosted tool call, capping every fetch, retry and download
   hub.py          hosted read path: immutable hub release, sha256 and contract checks, bounded cache
   live.py         restricted sources (WHO GHO) read live per question, in memory only, never stored
   product.py      the ODPS data product (contracts/health-data-registry.odps.yaml)
