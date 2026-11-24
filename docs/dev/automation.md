@@ -36,8 +36,9 @@ ends green with a notice and does nothing. Each starts working on its next run a
 
 ### Weekly refresh (`refresh.yml`)
 
-1. **plan** lists the public sources from the catalog: licence allows redistribution and not a private-tier
-   source. WHO GHO and other restricted sources are never fetched here; the server reads them live.
+1. **plan** lists the sources whose catalog entry says `hosting: public`. That field defaults to `private`,
+   and `hosting: public` is refused for a licence that doesn't allow redistribution. WHO GHO and other
+   restricted sources are never fetched here; the server reads them live.
 2. **fetch** runs one job per source (a matrix with `fail-fast: false`, so one broken publisher doesn't stop the
    others). Each job starts from an empty lake, fetches fresh from the publisher and uploads its lake as an
    artifact kept 7 days. Nothing is restored from the Actions cache, and `setup-uv` caching is off, so a
@@ -47,8 +48,9 @@ ends green with a notice and does nothing. Each starts working on its next run a
    `<owner>/health-data-registry-ops-raw-archive` ([naming.md](naming.md)). They never go in the public release.
    Skipped with a notice if the variable or token is missing; fails if the variable names any other dataset.
 4. **publish** (main only, full runs only) runs only when every fetch job passed. It checks that each planned
-   source has a snapshot, merges the per-source lakes, runs `validate` and `check-contracts`, stages the release
-   locally (all pre-publish checks), then runs `export-public --to hf://datasets/<repo>`, which tags the hub
+   source has a snapshot, merges the per-source lakes, runs `validate` and `check-contracts` (publishers still
+   serve every contract field), stages the release locally (all pre-publish checks, including that every
+   snapshot has rows and each data file has exactly the rows its snapshot's manifest records), then runs `export-public --to hf://datasets/<repo>`, which tags the hub
    commit `release-<date>`. `export-public` stops before uploading if a check fails, never moves a tag, and
    publishes a correction for the same date as `release-<date>.2`. A release is never partial: if any source
    fails, nothing is published or tagged. Without a token, the release is staged and checked and the job ends
@@ -84,10 +86,11 @@ The names come from `naming.py` ([naming.md](naming.md)); `<owner>` is `HDR_PRIV
 | `<owner>/health-data-registry-private-croi-abstracts-index` | Metadata rows, read by the hosted server (`private.py`) |
 | `<owner>/health-data-registry-private-croi-abstracts-text` | Abstract text. Private tier only; never in a public release |
 
-**The public gate stays with the maintainer.** `catalog/croi_abstracts_index.yaml` says `hosting: private`.
-Nothing from the crawl reaches the public release until a maintainer changes that in a reviewed pull request;
-`export-public` refuses private-tier data and checks the staged release for private text. Abstract text is
-never public.
+**The public gate stays with the maintainer.** Every catalog entry has `hosting: public` or `hosting: private`
+(the default). Only `hosting: public` sources are planned by the refresh and given data files by
+`export-public`; its pre-publish check refuses data files staged for any other source. When
+`croi_abstracts_index` is catalogued it stays `hosting: private` until a maintainer changes that in a reviewed
+pull request. Abstract text is never public.
 
 When a year is complete, the run says so; set `HDR_CROI_YEAR` to the next year or disable the workflow.
 

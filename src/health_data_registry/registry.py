@@ -181,6 +181,9 @@ class CatalogEntry(_Strict):
     contract: str
     semantic_model: str
     status: Literal["draft", "reviewed"]
+    # Whether the open data release may carry this source's data files. Private unless a maintainer's reviewed
+    # catalog change says public; only `hosting: public` is planned by the weekly refresh or published.
+    hosting: Literal["public", "private"] = "private"
 
     @field_validator("id")
     @classmethod
@@ -188,6 +191,19 @@ class CatalogEntry(_Strict):
         if not _ID.fullmatch(v):
             raise ValueError("id must be snake_case, 2-63 chars")
         return v
+
+    @model_validator(mode="after")
+    def _public_needs_redistribution(self) -> CatalogEntry:
+        if self.hosting == "public" and not self.licence.redistribution:
+            raise ValueError(
+                f"hosting: public needs a licence that allows redistribution; {self.licence.id} does not"
+            )
+        return self
+
+    @property
+    def hosted(self) -> bool:
+        """True only for `hosting: public` (which also needs a licence that allows redistribution)."""
+        return self.hosting == "public"
 
 
 # --------------------------------------------------------------------------------------------- contract

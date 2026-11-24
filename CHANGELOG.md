@@ -30,6 +30,10 @@ All notable changes to this project are documented here. The format follows
   sitemaps, with week-to-week diffs, in a private Hugging Face dataset; a refusal opens a "Sitemap refresh
   blocked" issue and is never worked around.
 - `naming.py`: every Hugging Face repository name built from one convention (docs/dev/naming.md).
+- Catalog entries carry `hosting: public` or `hosting: private` (the default). Only `hosting: public` sources
+  are refreshed for and published to the open data release, and the pre-publish check refuses data files staged
+  for any other source. It also refuses a snapshot with no rows, or a data file whose row count differs from
+  its snapshot's manifest.
 - The MCP server and its read-only tools: `list_sources`, `search_datasets`, `describe_dataset`,
   `suggest_datasets`, `get_series`, `get_aligned_with_gbd`, `get_provenance`, `list_caveats`, `find_prior_work`
   (says the index isn't built yet), `get_publication_outlook` and the guarded `query_sql`.

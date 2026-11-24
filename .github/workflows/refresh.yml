@@ -1,6 +1,7 @@
 # Weekly refresh: fetch each public source in its own job, then publish one immutable release to the hub.
 #
-#   plan     lists the sources the lake may hold (licence allows redistribution, not a private-tier source)
+#   plan     lists the sources whose catalog entry says `hosting: public` (which needs a licence that allows
+#            redistribution); every other source is private or read live and is never fetched here
 #   fetch    one job per source (matrix, fail-fast off): fresh fetch into an empty lake, uploaded as an
 #            artifact; nothing is restored from the Actions cache, so every run starts from the publishers
 #   raw      optional: the raw publisher bytes and fetch logs go to a maintainer-only PRIVATE dataset
@@ -65,10 +66,7 @@ jobs:
           from health_data_registry.registry import load_registry
 
           reg = load_registry()
-          public = sorted(
-              ds.id for ds in reg
-              if ds.entry.licence.redistribution and getattr(ds.entry, "tier", "public") == "public"
-          )
+          public = sorted(ds.id for ds in reg if ds.entry.hosting == "public")
           only = os.environ.get("ONLY", "").strip()
           if only:
               if not re.fullmatch(r"[a-z][a-z0-9_]{1,62}", only) or only not in public:
@@ -214,9 +212,11 @@ jobs:
           fi
       - name: Cross-check the catalog, contracts and semantic models
         run: uv run --no-sync health-data-registry validate
-      - name: Check every source against its contract
+      - name: Publishers still serve every contract field
         run: uv run --no-sync health-data-registry check-contracts
-      - name: Stage the release locally (pre-publish checks, no upload)
+      # The pre-publish checks include the data: every snapshot has rows, and each data file has exactly the
+      # rows its snapshot's manifest records. Any problem stops the run before anything is uploaded.
+      - name: Stage the release locally (pre-publish and row-count checks, no upload)
         run: uv run --no-sync health-data-registry export-public --to build/release-preview
       # export-public tags the hub commit release-<run date> (release-<run date>.N for a correction); a tag is
       # never moved or deleted. It runs its own pre-publish checks and uploads nothing if one fails.

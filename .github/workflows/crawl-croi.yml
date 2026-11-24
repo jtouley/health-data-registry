@@ -15,8 +15,10 @@
 # robots.txt is read first on every run by `index-croi` (polite.py), and its Crawl-delay and Disallow rules
 # are obeyed. Only one CROI crawl runs at a time (concurrency group croi-crawl).
 #
-# Public metadata: the catalog entry croi_abstracts_index says `hosting: private`. Until the maintainer changes
-# that in a reviewed pull request, nothing from this crawl reaches the public release (export-public refuses).
+# Public metadata: only a catalog entry with `hosting: public` (registry.CatalogEntry) is planned by the weekly
+# refresh or given data files by export-public, whose pre-publish check refuses data staged for any other source.
+# croi_abstracts_index will say `hosting: private` (the default) when it is catalogued; until a maintainer changes
+# that in a reviewed pull request, nothing from this crawl reaches the public release.
 #
 # Secrets: HF_TOKEN (HF_CRAWL_TOKEN, if set, overrides it with a token limited to the three datasets above).
 #
@@ -164,7 +166,7 @@ jobs:
       - name: Public metadata gate
         if: steps.gate.outputs.go == 'true'
         run: |
-          hosting=$(uv run --no-sync python -c "import yaml; print(yaml.safe_load(open('catalog/croi_abstracts_index.yaml'))['hosting'])")
+          hosting=$(uv run --no-sync python -c "from health_data_registry.registry import load_registry as r; print(next((d.entry.hosting for d in r() if d.id == 'croi_abstracts_index'), 'private (not catalogued)'))")
           if [ "$hosting" = "public" ]; then
             echo "::notice::The maintainer has made the CROI metadata index public; the weekly refresh decides what is published."
           else
