@@ -87,20 +87,91 @@ class Reshape(_Strict):
     wide_to_long: WideToLong
 
 
+_DOI = re.compile(r"^10\.\d{4,9}/\S+$")
+_ISSN = re.compile(r"^\d{4}-\d{3}[\dX]$")
+
+
+class Supplement(_Strict):
+    """One conference year's abstracts in a journal, as Crossref lists them (doi portal only; doi_abstracts.py).
+
+    Every field is an exact structural fact read from Crossref's own metadata for the journal (volume, issue,
+    page prefix, DOI prefix, publication month), each a filter a record must pass to belong to the year.
+    Which conference year a supplement holds is a maintainer's declaration, cited in ``evidence``.
+    """
+
+    year: int  # the conference year, not the publication year
+    issn: str
+    volume: str
+    issue: str | None = None  # Crossref's issue value, e.g. Supplement_1 or S1; None when Crossref gives none
+    page_prefix: str | None = None  # e.g. "S": supplement pages, when the issue is shared with regular papers
+    doi_prefix: str | None = None  # e.g. 10.1093/ofid/ofaf695.
+    exclude_dois: list[str] = Field(
+        default_factory=list
+    )  # items of the same supplement that are not abstracts
+    from_pub_date: str  # Crossref from-pub-date filter, YYYY-MM-DD
+    until_pub_date: str
+    evidence: str  # where the supplement-to-conference mapping comes from
+    # abstract: one DOI per abstract. congress: one DOI for the whole abstract book (one record per year).
+    granularity: Literal["abstract", "congress"] = "abstract"
+    # by_licence: keep text where the article licence allows (doi_abstracts.abstract_tier). link_only: never keep
+    # text, whatever an API says (e.g. a subscriber-only supplement): metadata and the DOI link only.
+    text_policy: Literal["by_licence", "link_only"] = "by_licence"
+    # False until a maintainer has checked the supplement-to-conference mapping on the journal's issue page; an
+    # unverified year harvests one record at most (a route check), never a full year.
+    verified: bool = False
+
+    @field_validator("issn")
+    @classmethod
+    def _issn(cls, v: str) -> str:
+        if not _ISSN.fullmatch(v):
+            raise ValueError("issn must look like 1234-567X")
+        return v
+
+    @field_validator("from_pub_date", "until_pub_date")
+    @classmethod
+    def _date(cls, v: str) -> str:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+            raise ValueError("publication dates are YYYY-MM-DD")
+        return v
+
+    @field_validator("exclude_dois")
+    @classmethod
+    def _dois(cls, v: list[str]) -> list[str]:
+        bad = [d for d in v if not _DOI.fullmatch(d) or d != d.lower()]
+        if bad:
+            raise ValueError(f"not lower-case DOIs: {', '.join(bad)}")
+        return v
+
+
 class Source(_Strict):
-    portal: Literal["socrata", "who_gho", "https_csv"]
+    portal: Literal["socrata", "who_gho", "https_csv", "doi"]
     host: str
     dataset: str
     landing_url: str
     api_url: str
     encoding: str = "utf-8"  # https_csv only: the file's text encoding, from the publisher's documentation
     reshape: Reshape | None = None  # https_csv only
+    # doi only: the conference years, and the other bibliographic APIs read for the same DOIs (OpenAlex, Europe
+    # PMC). Every host fetched is named here, so the fetcher's allowlist stays the catalog's.
+    supplements: list[Supplement] = Field(default_factory=list)
+    enrich_hosts: list[str] = Field(default_factory=list)
+    # doi only: the conference's short key (``harvest-doi <conference>``) and its name on every row.
+    conference: str | None = None
+    conference_name: str | None = None
 
     @field_validator("host")
     @classmethod
     def _lower_host(cls, v: str) -> str:
         if not re.fullmatch(r"[a-z0-9.-]+", v):
             raise ValueError("host must be a bare lower-case DNS name")
+        return v
+
+    @field_validator("enrich_hosts")
+    @classmethod
+    def _lower_hosts(cls, v: list[str]) -> list[str]:
+        for h in v:
+            if not re.fullmatch(r"[a-z0-9.-]+", h):
+                raise ValueError("enrich_hosts must be bare lower-case DNS names")
         return v
 
     @field_validator("api_url", "landing_url")
@@ -114,6 +185,19 @@ class Source(_Strict):
     def _csv_only(self) -> Source:
         if self.portal != "https_csv" and (self.reshape is not None or self.encoding != "utf-8"):
             raise ValueError("encoding and reshape apply only to the https_csv portal")
+        doi_only = (self.supplements, self.enrich_hosts, self.conference, self.conference_name)
+        if self.portal != "doi" and any(doi_only):
+            raise ValueError("supplements, enrich_hosts and conference apply only to the doi portal")
+        if self.portal == "doi":
+            if not self.supplements:
+                raise ValueError("a doi source lists at least one supplement")
+            if not (self.conference and re.fullmatch(r"[a-z][a-z0-9_]{1,30}", self.conference)):
+                raise ValueError("a doi source names its conference key (lower case, e.g. idweek)")
+            if not self.conference_name:
+                raise ValueError("a doi source names its conference in full (conference_name)")
+            years = [s.year for s in self.supplements]
+            if len(set(years)) != len(years):
+                raise ValueError("a doi source lists each conference year once")
         if self.reshape is not None:
             try:
                 re.compile(self.reshape.wide_to_long.key_pattern)
@@ -142,6 +226,14 @@ Shape = Literal[
     "registry",
     "wide_indicators",
 ]
+
+
+# Where a source's rows may live (ADR 0009, licences decide mirroring):
+#   public   redistribution allowed: snapshotted in the lake and published on the open data hub
+#   live     redistribution forbidden: read from the publisher per question, in memory only, never stored
+#   private  redistribution forbidden: kept only in that source's own private store (lake/private/<id>/ locally,
+#            one private Hugging Face dataset per source for the hosted server), never in a public release
+Hosting = Literal["public", "live", "private"]
 
 
 # The hub's infectious-disease areas: one Hugging Face collection per area, and a tag on each dataset card.
@@ -181,6 +273,23 @@ class CatalogEntry(_Strict):
     contract: str
     semantic_model: str
     status: Literal["draft", "reviewed"]
+    # Unset: public when the licence allows redistribution, else live. Set "private" to keep a restricted
+    # source in its own private store (store.private) instead of reading it live.
+    hosting: Hosting | None = None
+
+    @property
+    def tier(self) -> Hosting:
+        if self.hosting is not None:
+            return self.hosting
+        return "public" if self.licence.redistribution else "live"
+
+    @model_validator(mode="after")
+    def _hosting_matches_licence(self) -> CatalogEntry:
+        if self.hosting == "public" and not self.licence.redistribution:
+            raise ValueError("hosting: public needs licence.redistribution: true")
+        if self.hosting in ("live", "private") and self.licence.redistribution:
+            raise ValueError(f"hosting: {self.hosting} is for sources whose licence forbids redistribution")
+        return self
 
     @field_validator("id")
     @classmethod
@@ -671,7 +780,9 @@ class Registry:
 
     @property
     def hosts(self) -> frozenset[str]:
-        return frozenset(d.entry.source.host for d in self.datasets.values())
+        return frozenset(
+            h for d in self.datasets.values() for h in (d.entry.source.host, *d.entry.source.enrich_hosts)
+        )
 
 
 def default_root() -> Path:
@@ -752,6 +863,15 @@ def check_predicate(sql: str, columns: frozenset[str], *, where: str) -> None:
 def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticModel) -> None:
     if semantic.dataset != entry.id:
         raise RegistryError(f"{entry.id}: semantic model names dataset {semantic.dataset!r}")
+    top = _custom(contract.raw.get("customProperties"))
+    if "redistribution" in top and bool(top["redistribution"]) != entry.licence.redistribution:
+        raise RegistryError(f"{entry.id}: the contract and the catalog disagree on redistribution")
+    if "hosting" in top and top["hosting"] != entry.tier:
+        raise RegistryError(
+            f"{entry.id}: the contract says hosting {top['hosting']!r} but the catalog says {entry.tier!r}"
+        )
+    if entry.tier == "private" and top.get("hosting") != "private":
+        raise RegistryError(f"{entry.id}: a private-tier source's contract must say hosting: private too")
     cols = contract.column_names
     if contract.total_rows:
         check_predicate(contract.total_rows, cols, where=f"{entry.id}: totalRows")

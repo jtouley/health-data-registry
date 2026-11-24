@@ -1,0 +1,363 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: apic_abstracts
+name: APIC Annual Conference abstracts (AJIC supplement)
+version: 0.1.0
+status: draft
+domain: research_landscape
+description:
+  purpose: An index of APIC abstracts so a fellow can see what has been presented on a condition, place or year,
+    each with its DOI link, in the same research index as CROI's abstracts.
+  usage: Built by `health-data-registry harvest-doi apic --year <year>`. Each row gives the title, year, authors,
+    DOI link and licence; the text only where its licence allows.
+  limitations: Only what the journal supplement published by DOI. Tags are from fixed word rules. Session details
+    are not in the APIs.
+  authoritativeDefinitions:
+  - type: canonicalUrl
+    url: https://www.crossref.org/documentation/retrieve-metadata/rest-api/
+    description: Crossref REST API documentation (read 24 Nov 2026)
+  - type: canonicalUrl
+    url: https://help.openalex.org/access/overview/
+    description: 'OpenAlex: all data CC0 (read 24 Nov 2026)'
+  - type: canonicalUrl
+    url: https://dev.europepmc.org/RestfulWebService
+    description: Europe PMC RESTful web service (read 24 Nov 2026)
+servers:
+- id: crossref
+  server: api.crossref.org
+  type: https
+  location: https://api.crossref.org/journals/0196-6553/works
+  description: JSON, cursor-paged; without a mailto list queries are limited to 1 a second, one at a time (Crossref
+    docs).
+- id: openalex
+  server: api.openalex.org
+  type: https
+  location: https://api.openalex.org/works
+  description: JSON, looked up by DOI (filter=doi:a|b, at most 100 values); 10 requests a second without a key.
+- id: europepmc
+  server: www.ebi.ac.uk
+  type: https
+  location: https://www.ebi.ac.uk/europepmc/webservices/rest/search
+  description: JSON, looked up by DOI (resultType=core); robots.txt asks 10 s between requests.
+schema:
+- name: apic_abstracts
+  physicalName: apic_abstracts
+  physicalType: table
+  logicalType: object
+  description: One row per abstract DOI.
+  dataGranularityDescription: abstract DOI (within one conference year)
+  customProperties:
+  - property: totalRows
+    value: none
+  - property: tableShape
+    value: registry
+  properties:
+  - name: doi
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The abstract's DOI in lower case, without a resolver prefix (e.g. 10.1093/ofid/ofaf695.177). One
+      row per DOI.
+    primaryKey: true
+    customProperties:
+    - property: role
+      value: dimension
+  - name: conference
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The conference whose abstract this is, as named in the catalog entry.
+    customProperties:
+    - property: role
+      value: dimension
+  - name: year
+    physicalType: INTEGER
+    logicalType: integer
+    required: true
+    description: Conference year the abstract was presented in, from the catalog's supplement for that year (not
+      the journal's publication year).
+    customProperties:
+    - property: role
+      value: dimension
+  - name: granularity
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: 'What one DOI is in this conference year, from the catalog''s supplement: abstract (one DOI per
+      abstract) or congress (one DOI for the whole abstract book).'
+    customProperties:
+    - property: role
+      value: dimension
+  - name: abstract_number
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: The abstract or poster number at the start of the published title, when the title starts with one
+      (e.g. 568 or P-1589); empty otherwise.
+    customProperties:
+    - property: role
+      value: dimension
+  - name: title
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The abstract's title as Crossref gives it (markup removed), number included when the title carries
+      one.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: authors
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Authors in published order, as the first API that lists them gives them, separated by '; '.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: session_type
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Kind of session; the journal supplements don't say, so it is empty (kept so every conference has
+      the same columns as CROI's).
+    customProperties:
+    - property: role
+      value: dimension
+  - name: session_title
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Session title; empty for the same reason as session_type.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: category
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: The conference's own topic track for the abstract; empty because the bibliographic APIs don't
+      carry it. Kept so every conference shares the CROI index's columns.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: journal
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: The journal that published the supplement.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: volume
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Journal volume, as Crossref gives it.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: issue
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Journal issue or supplement, as Crossref gives it (e.g. Supplement_1, S1); empty when Crossref
+      gives none.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: pages
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Page or page range in the supplement, as Crossref gives it (e.g. S176).
+    customProperties:
+    - property: role
+      value: attribute
+  - name: published
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: When the journal published it (YYYY-MM or YYYY-MM-DD), as Crossref gives it.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: doi_url
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: Link that opens the abstract at its publisher, through doi.org.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: page_url
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The abstract's own page, the same doi.org link as doi_url; the column every conference in the
+      research index shares with CROI.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: poster_url
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Link to a poster; always empty here, since no poster is ever requested.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: condition_tags
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Conditions named in the title or abstract by our fixed word rules (research_tags.py), separated
+      by '; '.
+    customProperties:
+    - property: role
+      value: dimension
+  - name: design_tags
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Study designs named in the title or abstract by our fixed word rules.
+    customProperties:
+    - property: role
+      value: dimension
+  - name: data_source_tags
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Kinds of data named in the title or abstract by our fixed word rules.
+    customProperties:
+    - property: role
+      value: dimension
+  - name: geography_tags
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Countries and regions named in the title or abstract by our fixed word rules.
+    customProperties:
+    - property: role
+      value: dimension
+  - name: abstract_text
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: The abstract's text, markup removed, kept only when its licence is a Creative Commons one (abstract_tier
+      public or private); empty for link-only rows.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: abstract_tier
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: 'Where the abstract''s text may go: public (CC BY), private (another Creative Commons licence,
+      e.g. BY-NC-ND) or link_only (a publisher''s own licence, no licence, or no text from any API).'
+    customProperties:
+    - property: role
+      value: dimension
+  - name: abstract_licence
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: The article's licence as the API gives it (a URL such as https://creativecommons.org/licenses/by/4.0/,
+      or an id such as cc-by); empty when no API gives one.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: metadata_sources
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The APIs that returned this DOI (crossref; openalex; europepmc), in the order their values are
+      used.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: metadata_terms
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The terms of each API's metadata, as each API's documentation states them.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: pubmed_pmid
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: PubMed id Europe PMC gives for this abstract, when it indexes it.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: pmcid
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: PubMed Central id Europe PMC gives, when there is one.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: source_url
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The Crossref request that listed this DOI.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: raw_sha256
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: SHA-256 of that Crossref response as received; the bytes are kept in the lake at raw/<sha256>.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: retrieved_at
+    physicalType: VARCHAR
+    logicalType: timestamp
+    required: true
+    description: When that Crossref response was received (ISO 8601, UTC).
+    customProperties:
+    - property: role
+      value: attribute
+customProperties:
+- property: licence
+  value: doi-abstracts-mixed
+- property: licenceNote
+  value: metadata from Crossref (free to use) and OpenAlex (CC0); each abstract under its own article licence, recorded
+    per row
+- property: redistribution
+  value: false
+- property: hosting
+  value: private
+- property: attribution
+  value: Abstracts published in American Journal of Infection Control; metadata from Crossref, OpenAlex and Europe
+    PMC. Each abstract's text belongs to its authors or publisher under its own licence.
+- property: citation
+  value: <authors>. <title>. American Journal of Infection Control <volume>(<issue>):<pages>. https://doi.org/<doi>
+    (abstract, APIC <year>; metadata via Crossref, accessed <retrieved_at>).
+- property: refresh
+  value: annual
+- property: unreliableRule
+  value:
+    kind: none
+    description: 'None: an index of abstracts holds no rates or counts, so no value is marked unreliable.'
+- property: openQuestions
+  value:
+  - Confirm that the S-paginated works of AJIC volume 54 issue 6 (June 2026, 223 works) are the APIC 2026 Annual
+    Conference abstracts, and whether any of them (an introduction, an author index) is not an abstract and belongs
+    in exclude_dois.
+  - Crossref and OpenAlex give no abstract text for these works and Elsevier's licence does not allow a copy, so
+    rows are link-only unless an abstract is CC licensed and an API gives its text.
+  - 'Redistribution: Crossref says its metadata is free to use for any purpose and OpenAlex is CC0, so titles, authors
+    and links could be public, and CC BY abstracts could be too. Neither CC0 nor CC BY is on the reviewed licence
+    list (registry.REDISTRIBUTABLE_LICENCES), so until the maintainer adds them in a reviewed change this source
+    is hosting: private and nothing reaches the public release. abstract_tier already marks which rows could be
+    public.'
+  - Abstract text from OpenAlex is rebuilt from its inverted index and from Crossref by removing JATS markup; confirm
+    that this plain-text form is acceptable as published text.
+  - Matching to full papers (pubmed_pmid) comes only from Europe PMC when it indexes the abstract itself; matching
+    abstracts to later papers is not built yet.

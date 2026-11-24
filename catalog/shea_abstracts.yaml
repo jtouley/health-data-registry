@@ -1,0 +1,65 @@
+id: shea_abstracts
+title: SHEA Spring Conference abstracts (ASHE supplement)
+agency: Society for Healthcare Epidemiology of America (SHEA)
+publisher: SHEA Spring Conference abstracts as published by Cambridge University Press in Antimicrobial Stewardship
+  & Healthcare Epidemiology (ASHE) supplements
+level: international
+country: null
+research_areas:
+- infectious_disease
+- research_landscape
+id_areas:
+- hais_amr
+- respiratory
+- vaccine_preventable
+years:
+  start: 2026
+  end: null
+geography:
+- world
+shape: registry
+grain: 'One row is one SHEA Spring abstract (one DOI) in one conference year: title, authors as published, journal,
+  the DOI link, its licence, our own rule-based tags and, only where its licence allows, its text.'
+refresh: annual
+licence:
+  id: doi-abstracts-mixed
+  redistribution: false
+  terms_url: https://www.crossref.org/documentation/retrieve-metadata/rest-api/
+hosting: private
+citation: <authors>. <title>. Antimicrobial Stewardship & Healthcare Epidemiology <volume>(<issue>):<pages>. https://doi.org/<doi>
+  (abstract, SHEA Spring <year>; metadata via Crossref, accessed <retrieved_at>).
+source:
+  portal: doi
+  host: api.crossref.org
+  dataset: journals/2732-494X
+  landing_url: https://www.cambridge.org/core/journals/antimicrobial-stewardship-and-healthcare-epidemiology
+  api_url: https://api.crossref.org/journals/2732-494X/works
+  conference: shea
+  conference_name: SHEA Spring Conference
+  supplements:
+  - year: 2026
+    issn: 2732-494X
+    volume: '6'
+    issue: S1
+    from_pub_date: '2026-06-01'
+    until_pub_date: '2026-07-31'
+    verified: false
+    evidence: 'Crossref, read 24 Nov 2026: ASHE volume 6, issue S1 (published 23 June 2026) holds 310 works (DOIs
+      10.1017/ash.2026.*), all CC BY 4.0 with abstracts. That this supplement is SHEA Spring 2026 is inferred from
+      its timing and topics and is an open question until the maintainer confirms it on the journal''s issue page.'
+  enrich_hosts:
+  - api.openalex.org
+  - www.ebi.ac.uk
+codebook_url: https://www.crossref.org/documentation/retrieve-metadata/rest-api/
+caveats:
+- An abstract is not a peer-reviewed paper; many are never published in full.
+- 'Metadata comes from Crossref, OpenAlex and Europe PMC, not the conference: a year holds the abstracts the journal
+  supplement published under one DOI each.'
+- Abstract text is kept only where its licence is Creative Commons; otherwise read the abstract at its DOI link.
+- Condition, design, data-source and geography tags come from fixed word rules over the title and text, not from
+  a model; a missing tag doesn't mean the topic is absent.
+- Kept in this source's private store only, until the maintainer confirms which parts may be redistributed; never
+  in a public release.
+contract: contracts/shea_abstracts.odcs.yaml
+semantic_model: semantic/shea_abstracts.yaml
+status: draft

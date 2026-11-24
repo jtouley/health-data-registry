@@ -1,0 +1,67 @@
+id: apic_abstracts
+title: APIC Annual Conference abstracts (AJIC supplement)
+agency: Association for Professionals in Infection Control and Epidemiology (APIC)
+publisher: APIC Annual Conference abstracts as published by Elsevier in the American Journal of Infection Control
+  (AJIC)
+level: international
+country: null
+research_areas:
+- infectious_disease
+- research_landscape
+id_areas:
+- hais_amr
+- respiratory
+- vaccine_preventable
+years:
+  start: 2026
+  end: null
+geography:
+- world
+shape: registry
+grain: 'One row is one APIC abstract (one DOI) in one conference year: title, authors as published, journal, the
+  DOI link, its licence, our own rule-based tags and, only where its licence allows, its text.'
+refresh: annual
+licence:
+  id: doi-abstracts-mixed
+  redistribution: false
+  terms_url: https://www.crossref.org/documentation/retrieve-metadata/rest-api/
+hosting: private
+citation: <authors>. <title>. American Journal of Infection Control <volume>(<issue>):<pages>. https://doi.org/<doi>
+  (abstract, APIC <year>; metadata via Crossref, accessed <retrieved_at>).
+source:
+  portal: doi
+  host: api.crossref.org
+  dataset: journals/0196-6553
+  landing_url: https://www.ajicjournal.org/
+  api_url: https://api.crossref.org/journals/0196-6553/works
+  conference: apic
+  conference_name: APIC Annual Conference
+  supplements:
+  - year: 2026
+    issn: 0196-6553
+    volume: '54'
+    issue: '6'
+    page_prefix: S
+    from_pub_date: '2026-06-01'
+    until_pub_date: '2026-06-30'
+    verified: false
+    evidence: 'Crossref, read 24 Nov 2026: AJIC volume 54 issue 6 (June 2026) holds 252 works, 223 of them on supplement
+      pages (S1 on), with abstract-style titles; Crossref has no abstract text for them and their licence is Elsevier''s
+      own (a few CC BY-NC-ND or CC BY). That these supplement pages are the APIC 2026 conference abstracts is inferred
+      and is an open question until the maintainer confirms it on AJIC''s issue page.'
+  enrich_hosts:
+  - api.openalex.org
+  - www.ebi.ac.uk
+codebook_url: https://www.crossref.org/documentation/retrieve-metadata/rest-api/
+caveats:
+- An abstract is not a peer-reviewed paper; many are never published in full.
+- 'Metadata comes from Crossref, OpenAlex and Europe PMC, not the conference: a year holds the abstracts the journal
+  supplement published under one DOI each.'
+- Abstract text is kept only where its licence is Creative Commons; otherwise read the abstract at its DOI link.
+- Condition, design, data-source and geography tags come from fixed word rules over the title and text, not from
+  a model; a missing tag doesn't mean the topic is absent.
+- Kept in this source's private store only, until the maintainer confirms which parts may be redistributed; never
+  in a public release.
+contract: contracts/apic_abstracts.odcs.yaml
+semantic_model: semantic/apic_abstracts.yaml
+status: draft
