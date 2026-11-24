@@ -252,7 +252,7 @@ schema:
     physicalType: VARCHAR
     logicalType: string
     required: true
-    description: 'Where the abstract''s text may go: public (CC BY or CC0, with every attribution field), private (another Creative Commons licence,
+    description: 'Where the abstract''s text may go: public (CC BY), private (another Creative Commons licence,
       e.g. BY-NC-ND) or link_only (a publisher''s own licence, no licence, or no text from any API).'
     customProperties:
     - property: role
@@ -351,18 +351,13 @@ customProperties:
   - Confirm that the S-paginated works of AJIC volume 54 issue 6 (June 2026, 223 works) are the APIC 2026 Annual
     Conference abstracts, and whether any of them (an introduction, an author index) is not an abstract and belongs
     in exclude_dois.
-  - 'Earlier years, 2017 to 2025, are catalogued the same way (AJIC volumes 45 to 53, S pages), each checked with a
-    three-record sample harvest; which APIC conference each holds is inferred. The issue moves: June (issue 6) in
-    most years, August (issue 8) in 2020 and July (issue 7) in 2022 and 2023. Every sampled year is under Elsevier''s
-    text-mining licence, so link only. The 2017 sample included a work titled Withdrawn: confirm whether withdrawn
-    abstracts belong in exclude_dois.'
   - Crossref and OpenAlex give no abstract text for these works and Elsevier's licence does not allow a copy, so
     rows are link-only unless an abstract is CC licensed and an API gives its text.
-  - 'Redistribution: CC BY (any version) and CC0 text may now be shared publicly with full attribution on every
-    record and result (authors, title, journal, DOI link, licence; owner decision, 24 Nov 2026), and both are on
-    registry.REDISTRIBUTABLE_LICENCES with registry.require_attribution. A public export of the CC BY and CC0
-    rows of this mixed-licence source is not built yet, so it stays hosting: private; abstract_tier public
-    marks the rows that carry full attribution and could be shared.'
+  - 'Redistribution: Crossref says its metadata is free to use for any purpose and OpenAlex is CC0, so titles, authors
+    and links could be public, and CC BY abstracts could be too. Neither CC0 nor CC BY is on the reviewed licence
+    list (registry.REDISTRIBUTABLE_LICENCES), so until the maintainer adds them in a reviewed change this source
+    is hosting: private and nothing reaches the public release. abstract_tier already marks which rows could be
+    public.'
   - Abstract text from OpenAlex is rebuilt from its inverted index and from Crossref by removing JATS markup; confirm
     that this plain-text form is acceptable as published text.
   - Matching to full papers (pubmed_pmid) comes only from Europe PMC when it indexes the abstract itself; matching

@@ -252,7 +252,7 @@ schema:
     physicalType: VARCHAR
     logicalType: string
     required: true
-    description: 'Where the abstract''s text may go: public (CC BY or CC0, with every attribution field), private (another Creative Commons licence,
+    description: 'Where the abstract''s text may go: public (CC BY), private (another Creative Commons licence,
       e.g. BY-NC-ND) or link_only (a publisher''s own licence, no licence, or no text from any API).'
     customProperties:
     - property: role
@@ -349,19 +349,16 @@ customProperties:
 - property: openQuestions
   value:
   - Confirm that ASHE volume 6 issue S1 (June 2026, 310 works) is the SHEA Spring 2026 abstract supplement, from
-    Cambridge's issue page. Earlier years are catalogued the same way, each checked with a three-record sample
-    harvest, and each year's conference is inferred. They are 2021 to 2024 ASHE volumes 1 to 4 (S1, S1, S2, S1; 2023 S1 is
-    SG-APSIC), 2025 volume 5 S2 (S1 reads as an Asian infection-control meeting; confirm S2 is SHEA Spring 2025), and
-    2020 ICHE volume 41 S1, a different journal before ASHE existed (confirm it is SHEA's 2020 meeting). 2020 is
-    under Cambridge's own terms, so link only; 2021 on is CC BY 4.0. ICHE has no abstract supplement from 2015 to
-    2019, so no earlier year is catalogued.
+    Cambridge's issue page; ASHE's 2025 volume has two supplements (S1, May 2025, 400 works and S2, July 2025, 239
+    works) and only one of them is likely to be SHEA Spring 2025, so 2025 is not catalogued until the maintainer
+    says which.
   - ASHE supplement titles carry no abstract number, so abstract_number is empty; confirm whether SHEA numbers its
     abstracts anywhere the APIs show.
-  - 'Redistribution: CC BY (any version) and CC0 text may now be shared publicly with full attribution on every
-    record and result (authors, title, journal, DOI link, licence; owner decision, 24 Nov 2026), and both are on
-    registry.REDISTRIBUTABLE_LICENCES with registry.require_attribution. A public export of the CC BY and CC0
-    rows of this mixed-licence source is not built yet, so it stays hosting: private; abstract_tier public
-    marks the rows that carry full attribution and could be shared.'
+  - 'Redistribution: Crossref says its metadata is free to use for any purpose and OpenAlex is CC0, so titles, authors
+    and links could be public, and CC BY abstracts could be too. Neither CC0 nor CC BY is on the reviewed licence
+    list (registry.REDISTRIBUTABLE_LICENCES), so until the maintainer adds them in a reviewed change this source
+    is hosting: private and nothing reaches the public release. abstract_tier already marks which rows could be
+    public.'
   - Abstract text from OpenAlex is rebuilt from its inverted index and from Crossref by removing JATS markup; confirm
     that this plain-text form is acceptable as published text.
   - Matching to full papers (pubmed_pmid) comes only from Europe PMC when it indexes the abstract itself; matching
