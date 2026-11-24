@@ -4,10 +4,10 @@ dimensions:
   - {name: virus_network, column: surveillance_network, type: categorical, description: "COVID-NET, FluSurv-NET, RSV-NET or Combined."}
   - {name: season, column: season, type: categorical, description: "Respiratory season, e.g. 2025-26."}
   - {name: week_ending, column: date, type: time, description: "Week-ending date (YYYY-MM-DD) for weekly rows; the season for season rows."}
-  - {name: site, column: state, type: categorical, description: "RESP-NET site named by state, or Overall for all sites."}
-  - {name: age_group, column: age_category, type: categorical, description: "Age group of hospitalized patients."}
-  - {name: race_ethnicity, column: race, type: categorical, description: "Race and ethnicity group."}
-  - {name: sex, column: sex, type: categorical, description: "Sex of patients."}
+  - {name: site, column: state, type: categorical, description: "RESP-NET surveillance site, named by state: the site's catchment area, not necessarily the whole state. Overall or a network name means all sites combined."}
+  - {name: age_group, column: age_category, type: categorical, description: "Age group of hospitalized patients; Overall (rate rows) or All (clinical-outcome rows) for all ages. Labels differ between rate rows (e.g. '65+ yr') and clinical rows (e.g. '≥65 years'), so copy the label from the row type you filter."}
+  - {name: race_ethnicity, column: race, type: categorical, description: "Race and ethnicity group, or All. Labels differ between rate rows (e.g. 'Black, NH') and clinical-outcome rows (e.g. 'Non-Hispanic Black'), so copy the label from the row type you filter."}
+  - {name: sex, column: sex, type: categorical, description: "Sex of hospitalized patients: Female, Male, or All for both combined."}
   - {name: estimate_kind, column: data_type, type: categorical, description: "Weekly rate, cumulative rate, or a clinical outcome percent."}
   - {name: rate_method, column: rate_type, type: categorical, description: "Observed, age-adjusted or estimated."}
 measures:
