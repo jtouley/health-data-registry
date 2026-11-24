@@ -646,3 +646,79 @@ def test_no_such_page_counts_pages_in_words(registry: Registry, eng: Engine) -> 
     assert _respond(registry, eng, "json", 3, None, 10**9)["message"].startswith(
         "This answer has 1 page, so "
     )
+
+
+def test_a_two_page_answer_says_pages(registry: Registry, eng: Engine) -> None:
+    whole = paging.wire_size(_respond(registry, eng, "json", 1, None, 10**9))
+    two = next(
+        b
+        for b in range(whole // 2, whole, 2_000)
+        if _respond(registry, eng, "json", 1, None, b)["page"]["pages"] == 2
+    )
+    assert _respond(registry, eng, "json", 3, None, two)["message"].startswith("This answer has 2 pages, so ")
+
+
+# ------------------------------------------------------------------------------------- engines on old versions
+
+
+def test_engines_on_pinned_lake_snapshots_are_kept_two_at_most(
+    tmp_path: Path, registry: Registry, eng: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import duckdb
+
+    monkeypatch.setenv("HDR_FETCH_AT_RUN_TIME", "1")  # an engine on old data never reads a publisher anyway
+    sids = [eng.manifest("toy_cases").snapshot_id]
+    sids += [snapshot(eng.lake, registry, tmp_path, big_records(bump=d), day=d) for d in (25, 26, 27)]
+    getter = object()
+    now = Engine(registry=registry, lake=eng.lake, hub=None, cache=tmp_path / "c", getter=getter)
+    assert now.manifest("toy_cases").snapshot_id == sids[-1]
+    assert now.at({"toy_cases": (sids[-1], None)}) is now
+    alts = []
+    for sid in sids[:3]:
+        alt = now.at({"toy_cases": (sid, None)})
+        assert alt is not None and alt is not now and alt.manifest("toy_cases").snapshot_id == sid
+        assert alt.cache == now.cache and alt.getter is getter and alt.fetch_at_run_time is False
+        assert alt.lake_pins == {"toy_cases": sid}
+        alts.append(alt)
+    assert list(now._pinned) == [(("toy_cases", (s, None)),) for s in sids[1:3]]
+    assert now.at({"toy_cases": (sids[1], None)}) is alts[1]  # kept, not rebuilt
+    assert list(now._pinned)[-1] == (("toy_cases", (sids[1], None)),)  # most recently used last
+    with pytest.raises(duckdb.ConnectionException):
+        alts[0].connect().execute("SELECT 1")  # the evicted engine's connection was closed
+    assert now.at({"toy_cases": ("20991231T000000Z-000000000000", None)}) is None
+    assert now.at({"no_such_source": (sids[0], None)}) is None
+
+
+def test_a_missing_pinned_lake_snapshot_reads_as_no_data(
+    tmp_path: Path, registry: Registry, eng: Engine
+) -> None:
+    from health_data_registry.query import QueryRefused as Refused
+
+    gone = Engine(
+        registry=registry, lake=eng.lake, hub=None, lake_pins={"toy_cases": "20991231T000000Z-000000000000"}
+    )
+    with pytest.raises(Refused) as e:
+        gone.manifest("toy_cases")
+    assert e.value.code == "no_snapshot"
+
+
+def test_hub_at_reads_one_immutable_release_of_a_remote_hub(tmp_path: Path, registry: Registry) -> None:
+    api = object()
+    remote = Hub(url=f"hf://datasets/org/hub@release-{RUN2}", cache=tmp_path / "h", api=api, max_bytes=12345)
+    e = Engine(registry=registry, lake=tmp_path / "none", hub=remote, cache=tmp_path / "h")
+    old = e._hub_at({"toy_cases": ("s", f"release-{RUN}")})
+    assert old is not None and old.url == f"hf://datasets/org/hub@release-{RUN}"
+    assert old.api is api and old.max_bytes == 12345 and old.cache == tmp_path / "h"
+    assert e._hub_at({"toy_cases": ("s", f"release-{RUN2}")}) is remote
+    assert e._hub_at({"toy_cases": ("s", None)}) is remote
+    assert (
+        e._hub_at({"a": ("s", f"release-{RUN}"), "b": ("s", f"release-{RUN2}")}) is None
+    )  # one release per answer
+    assert e._hub_at({"toy_cases": ("s", "main")}) is None  # a moving branch is never read
+    local = Engine(
+        registry=registry, lake=tmp_path / "none", hub=Hub(url=str(tmp_path), cache=tmp_path / "h")
+    )
+    assert (
+        local._hub_at({"toy_cases": ("s", f"release-{RUN}")}) is None
+    )  # a local copy has only its own release
+    assert Engine(registry=registry, lake=tmp_path / "none", hub=None)._hub_at({"x": ("s", "r")}) is None
