@@ -1,0 +1,124 @@
+# ODCS v3.1.0 contract fragment: NNDSS Weekly Data (data.cdc.gov x9gk-5huc), C. auris rows only
+# Evidence: the authoritativeDefinitions below (primary sources, read 2026-11-24). Draft: review before moving into contracts/
+apiVersion: v3.1.0
+kind: DataContract
+id: cdc-nndss-weekly-cauris
+name: NNDSS Weekly Data - Candida auris, clinical and screening
+version: 0.1.0
+status: draft
+domain: notifiable-disease-surveillance
+dataProduct: candida-auris
+tags: [candida-auris, nndss, provisional, mmwr-week]
+description:
+  purpose: >-
+    Provisional weekly and cumulative year-to-date counts of nationally notifiable C. auris
+    cases (clinical; screening) as notified by jurisdictions to NNDSS.
+  limitations: >-
+    Provisional. Current-week counts are not additive; cumulative YTD is recomputed each week and
+    revised later. MMWR week meaning varies by jurisdiction and condition. Previous-year YTD (m4)
+    reflects later revisions and does not match the value published at year end. Screening has
+    been notifiable only since 2023 and is not reportable in all jurisdictions (flag N).
+  usage: Use the last week of an MMWR year for an annual provisional total; prefer finalized annual NNDSS tables when available.
+  authoritativeDefinitions:
+    - type: businessDefinition
+      url: https://ndc.services.cdc.gov/case-definitions/candida-auris-2023/
+      description: CSTE 22-ID-05; in force for MMWR year 2023 onward (clinical and screening; confirmed only).
+    - type: businessDefinition
+      url: https://ndc.services.cdc.gov/case-definitions/candida-auris-2019/
+      description: CSTE 18-ID-05; clinical (confirmed/probable/suspect) notifiable 2019-2022.
+    - type: businessDefinition
+      url: https://cdn.ymaws.com/www.cste.org/resource/resmgr/ps/ps2022/22-ID-05_C_auris.pdf
+      description: CSTE position statement 22-ID-05, print criteria = Confirmed.
+    - type: implementation
+      url: https://www.cdc.gov/nndss/docs/Readers-Guide-WONDER-Tables-20210421-508.pdf
+      description: Column semantics (current week, 52-week max, cumulative YTD) and row definitions.
+    - type: implementation
+      url: https://www.cdc.gov/nndss/infectious-disease/notice-to-data-users.html
+      description: 2023 notices - C. auris screening added; clinical published as confirmed only from 2023.
+  customProperties:
+    - property: conditionCode
+      value: candida-auris
+    - property: countedUnit
+      value: person-case
+      description: Case notifications meeting the CSTE definition; patient counted once per subtype.
+    - property: caseSubtype
+      value: [clinical, screening]
+      description: Distinguished by column `label`.
+    - property: caseStatus
+      value: [confirmed]
+      description: 2023+ confirmed only; MMWR year 2022 clinical rows include confirmed and probable (notice to data users).
+    - property: dateBasis
+      value: mmwrWeekAssignedByJurisdiction
+      description: Jurisdiction-assigned MMWR week/year; epidemiologic meaning varies by jurisdiction.
+    - property: periodGranularity
+      value: mmwrWeek
+    - property: geographyBasis
+      value: reportingJurisdiction
+      description: Case assigned to submitting jurisdiction if country of usual residence is US, territory, unknown or null; else "Non-U.S. Residents".
+    - property: dedupRule
+      value: CSTE 22-ID-05 new-case rule, applied by jurisdictions before notification.
+    - property: sourceSystem
+      value: National Notifiable Diseases Surveillance System (NNDSS)
+    - property: revisionPolicy
+      value: provisional weekly; finalized ~10 months after year end in separate annual tables
+    - property: suppressionRule
+      value: none for small counts; non-numeric flags U, -, N, NN, NP, NC
+    - property: comparableWith
+      value:
+        - target: cdc-cauris-tracking-clinical
+          comparable: false
+          reason: Tracking page uses specimen collection date and location; NNDSS uses MMWR week and reporting jurisdiction, and is provisional.
+        - target: cdc-arpsp-arln-cauris
+          comparable: false
+          reason: ARLN counts isolates tested, not cases.
+schema:
+  - name: nndss_weekly_cauris
+    physicalName: x9gk-5huc
+    logicalType: object
+    physicalType: socrata-dataset
+    dataGranularityDescription: one row per reporting area x MMWR year x MMWR week x label
+    properties:
+      - {name: states, physicalName: states, logicalType: string, required: true, description: "Reporting area (state, NYC, territory, HHS-style region, U.S. Residents, U.S. Territories, Non-U.S. Residents, Total). Case differs by year (MICHIGAN in 2023-2024, Michigan in 2025+)."}
+      - {name: year, physicalName: year, logicalType: string, required: true, description: Current MMWR year (text)}
+      - {name: week, physicalName: week, logicalType: integer, required: true, description: MMWR week 1-53}
+      - {name: label, physicalName: label, logicalType: string, required: true, quality: [{type: library, metric: invalidValues, arguments: {validValues: ["Candida auris, clinical", "Candida auris, screening"]}, mustBe: 0}]}
+      - {name: m1, physicalName: m1, logicalType: number, description: Current week count (non-additive)}
+      - {name: m1_flag, physicalName: m1_flag, logicalType: string}
+      - {name: m2, physicalName: m2, logicalType: number, description: Previous 52-week maximum}
+      - {name: m2_flag, physicalName: m2_flag, logicalType: string}
+      - {name: m3, physicalName: m3, logicalType: number, description: Cumulative YTD current MMWR year}
+      - {name: m3_flag, physicalName: m3_flag, logicalType: string}
+      - {name: m4, physicalName: m4, logicalType: number, description: Cumulative YTD previous MMWR year through the same week}
+      - {name: m4_flag, physicalName: m4_flag, logicalType: string}
+      - {name: location1, physicalName: location1, logicalType: string}
+      - {name: location2, physicalName: location2, logicalType: string}
+      - {name: sort_order, physicalName: sort_order, logicalType: string}
+      - {name: geocode, physicalName: geocode, logicalType: object}
+    quality:
+      - type: library
+        metric: invalidValues
+        description: Flags restricted to the published symbol set.
+        arguments: {validValues: ["U", "-", "N", "NN", "NP", "NC"]}
+        mustBe: 0
+      - type: text
+        dimension: consistency
+        description: >-
+          In 2022-2024 rows m1_flag is "-" even when m1 holds a value; treat the flag as meaningful only when the value is null.
+      - type: text
+        dimension: accuracy
+        description: >-
+          Known anomaly - 2025 screening rows show m4 = 5343 at weeks 52 and 53, equal to the 2025 week-52 m3, versus 3624 published for 2024 week 52. Check before use.
+servers:
+  - server: data-cdc-gov-soda
+    type: api
+    location: https://data.cdc.gov/resource/x9gk-5huc.json
+    description: "Socrata SODA; filter with $where=label like 'Candida auris%'. Metadata: https://data.cdc.gov/api/views/x9gk-5huc.json"
+customProperties:
+  - property: licence
+    value: No licence in Socrata metadata (license null); CDC states most agency material is public domain.
+  - property: citation
+    value: "Centers for Disease Control and Prevention. NNDSS Weekly Data (x9gk-5huc). Office of Public Health Data, Surveillance, and Technology. https://data.cdc.gov/d/x9gk-5huc. Accessed 2026-11-24."
+  - property: updateCadence
+    value: weekly (rowsUpdatedAt 2026-11-18; latest MMWR 2026 week 45)
+  - property: yearsAvailable
+    value: clinical 2022-2026; screening 2023-2026 (in this dataset)

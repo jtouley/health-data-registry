@@ -1,0 +1,110 @@
+# ODCS v3.1.0 contract fragment: AR & Patient Safety Portal, AR Lab Network C. auris antifungal susceptibility
+# Evidence: the authoritativeDefinitions below (primary sources, read 2026-11-24). Draft: review before moving into contracts/
+apiVersion: v3.1.0
+kind: DataContract
+id: cdc-arpsp-arln-cauris
+name: ARPSP AR Lab Network - C. auris isolates tested and antifungal resistance
+version: 0.1.0
+status: draft
+domain: antimicrobial-resistance
+dataProduct: candida-auris
+tags: [candida-auris, arln, antifungal-susceptibility, isolates]
+description:
+  purpose: >-
+    Number of C. auris isolates tested by the AR Lab Network and the number and percent resistant
+    to each antifungal under CDC tentative MIC breakpoints, by year, state and ARLN region.
+  limitations: >-
+    Not a traditional surveillance system. Isolates are a convenience sample and include clinical,
+    surveillance and outbreak specimens; submission and testing follow state priorities. No
+    clinical/screening split. Year-to-year changes may reflect testing changes. 2021 data were not
+    validated with labs (COVID-19). States with fewer than 5 isolates are not shown on the portal.
+    The isolate is the unit; whether more than one isolate per patient is counted is UNVERIFIED
+    (technical appendix and data dictionary links return 404).
+  usage: Use as a denominator for resistance proportions; never as a case count or incidence.
+  authoritativeDefinitions:
+    - type: businessDefinition
+      url: https://arpsp.cdc.gov/psp/listing/arln/profile/c-auris
+      description: Profile page - breakpoints, specimen-collection-date year rule, convenience-sample note, citation.
+    - type: businessDefinition
+      url: https://www.cdc.gov/candida-auris/hcp/laboratories/antifungal-susceptibility-testing.html
+      description: CDC tentative MIC breakpoints for C. auris.
+    - type: implementation
+      url: https://arpsp.cdc.gov/resources/ARLN-PSP-Technical_Appendix%20-%20C.%20auris.docx
+      description: Linked technical appendix (HTTP 404 on 2026-11-24).
+  customProperties:
+    - property: conditionCode
+      value: candida-auris
+    - property: countedUnit
+      value: isolate-tested
+      description: numberOfIsolates = isolates with an AFST result for the drug; numberOfResistantIsolates = MIC at or above breakpoint.
+    - property: caseSubtype
+      value: mixed
+      description: Clinical, surveillance (screening) and outbreak specimens, not separated.
+    - property: caseStatus
+      value: notApplicable
+    - property: dateBasis
+      value: specimenCollectionDate
+      description: '"Year classification is defined by specimen collection date."'
+    - property: periodGranularity
+      value: calendarYear
+    - property: geographyBasis
+      value: UNVERIFIED (state attached to isolate; submitting public health lab vs patient residence vs facility not documented)
+    - property: dedupRule
+      value: UNVERIFIED (no documented per-patient deduplication)
+    - property: sourceSystem
+      value: Antimicrobial Resistance Laboratory Network (AR Lab Network)
+    - property: revisionPolicy
+      value: annual refresh; data may be corrected after supplementary testing ("updated as of January 2026")
+    - property: suppressionRule
+      value: portal hides states with fewer than 5 isolates tested; API returns 0 for them (indistinguishable from true zero)
+    - property: comparableWith
+      value:
+        - target: cdc-cauris-tracking-clinical
+          comparable: false
+          reason: Isolates from a convenience sample including screening and outbreak specimens; not unique patients.
+        - target: cdc-nndss-weekly-cauris
+          comparable: false
+          reason: Isolates versus notified cases; different date and geography rules.
+schema:
+  - name: arln_cauris_afst
+    physicalName: mdwz-ar4b
+    logicalType: object
+    physicalType: socrata-dataset
+    dataGranularityDescription: one row per year x geography x drug (state rows, a US row, and an unlabelled geographyid 354 row)
+    properties:
+      - {name: antifungal_class, physicalName: antifungal_class, logicalType: string, quality: [{type: library, metric: invalidValues, arguments: {validValues: [Azole, Echinocandin, Polyene, Pan R]}, mustBe: 0}]}
+      - {name: drug, physicalName: drug, logicalType: string, quality: [{type: library, metric: invalidValues, arguments: {validValues: [Fluconazole, Anidulafungin, Micafungin, Micafungin Or Anidulafungin, Amphotericin B, Pan Resistant]}, mustBe: 0}]}
+      - {name: year, physicalName: year, logicalType: integer, description: Specimen collection year (2016-2024 in dataset)}
+      - {name: state_abbreviation, physicalName: state_abbreviation, logicalType: string, description: "USPS code, 'US' for national; null for geographyid 354 (meaning UNVERIFIED)"}
+      - {name: number_of_isolates, physicalName: number_of_isolates, logicalType: integer}
+      - {name: number_of_resistant_isolates, physicalName: number_of_resistant_isolates, logicalType: integer}
+      - {name: percent_resistant, physicalName: percent_resistant, logicalType: number, description: "Proportion 0-1 in Socrata (the portal API returns 0-100)"}
+      - {name: region, physicalName: region, logicalType: string, description: ARLN region; 'National' for US; null for DC}
+      - {name: classid, physicalName: classid, logicalType: integer}
+      - {name: drugid, physicalName: drugid, logicalType: integer, description: "Not the same coding as the portal API drugId (Fluconazole = 3 here, 1 in API)"}
+      - {name: eventyearid, physicalName: eventyearid, logicalType: integer}
+      - {name: geographyid, physicalName: geographyid, logicalType: integer}
+    quality:
+      - type: text
+        dimension: consistency
+        description: Do not sum state rows with the US row; US row is the national total.
+      - type: text
+        dimension: consistency
+        description: >-
+          Portal totals disagree - hero card 24,301 isolates 2017-2024; API by-year All Years 22,532 (fluconazole);
+          API by-state US All Years 21,498; 2024 US 7,779 (by-year) vs 7,743 (by-state).
+servers:
+  - server: data-cdc-gov-soda
+    type: api
+    location: https://data.cdc.gov/resource/mdwz-ar4b.json
+  - server: arpsp-api
+    type: api
+    location: https://arpsp.cdc.gov/api/arln/c-auris/
+    description: "Undocumented portal API: by-year?year=, by-state?year=&drug=<drug name>, by-region?year=&drug=, susceptibility-by-drug"
+customProperties:
+  - property: licence
+    value: No licence in Socrata metadata; CDC states most agency material is public domain.
+  - property: citation
+    value: "CDC Antibiotic Resistance & Patient Safety Portal (AR&PSP) AR Lab Network Data. Atlanta, Georgia: U.S. Department of Health and Human Services, CDC. https://arpsp.cdc.gov/"
+  - property: updateCadence
+    value: annual (Socrata rowsUpdatedAt 2026-04-21; portal "updated as of January 2026")
