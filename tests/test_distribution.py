@@ -223,3 +223,14 @@ def test_no_forbidden_names_in_generated_text(kit: dict[str, bytes]) -> None:
     texts += [v.decode() for k, v in kit.items() if not k.endswith(".zip")]
     for t in texts:
         assert "GBD companion" not in t
+
+
+def test_tool_lists_match_the_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The README and docs/tools.md list exactly the tools the server registers (make docs writes them)."""
+    monkeypatch.setenv("HDR_HUB", "off")
+    table = distribution.tool_table()
+    for rel in distribution.TOOL_LIST_FILES:
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        assert distribution.TOOLS_START in text, rel
+        assert distribution.with_tool_table(text, table) == text, f"{rel} is stale: run make docs"
+    assert distribution.with_tool_table("no markers", table) == "no markers"

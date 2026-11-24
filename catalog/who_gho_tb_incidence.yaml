@@ -12,7 +12,10 @@ shape: estimate_table
 grain: "One row is one country, WHO region, World Bank income group or the globe in one year, with WHO's estimated tuberculosis incidence per 100,000 population and its lower and upper uncertainty bounds."
 refresh: annual
 licence:
-  id: CC-BY-NC-SA-3.0-IGO
+  # Read from terms_url on 2026-11-24: WHO's own "Terms and Conditions" for datasets, not a Creative Commons
+  # licence. Use, copy and distribute for public health purposes; no commercial promotion; only minimal
+  # style changes without WHO's written authorization; WHO may end the licence. Never mirrored here.
+  id: WHO-dataset-terms
   redistribution: false
   terms_url: https://www.who.int/about/policies/publishing/data-policy/terms-and-conditions
 citation: "World Health Organization. Global Health Observatory: Incidence of tuberculosis (per 100 000 population per year), indicator MDG_0000000020. https://ghoapi.azureedge.net/api/MDG_0000000020 (accessed <retrieved_at>)."

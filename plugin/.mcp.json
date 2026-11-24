@@ -2,7 +2,7 @@
   "mcpServers": {
     "health-data-registry": {
       "type": "http",
-      "url": "https://hosted-url-not-set.invalid/mcp"
+      "url": "https://jtouley-health-data-registry-mcp.hf.space/mcp"
     }
   }
 }

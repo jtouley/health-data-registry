@@ -81,8 +81,8 @@ flowchart LR
    the views, so the aggregation rules apply; `query_sql` runs a guarded read-only statement ([ADR 0008](adr/0008-governed-sql-and-metrics.md)). Every result returns the provenance from
    the manifest ([ADR 0003](adr/0003-provenance-on-every-result.md)).
 
-Sources whose terms forbid mirroring, such as WHO GHO, are fetched from the publisher onto the user's own machine
-(today by `refresh`, which the setup guide runs once), and their raw bytes and snapshots are never published. GBD never enters this flow; it is reached through the IHME
+Sources whose terms forbid mirroring, such as WHO GHO, are read live from the publisher for each question, held in
+memory for a few minutes (`live.py`) and never written to disk, stored in a lake or published. GBD never enters this flow; it is reached through the IHME
 connector ([ADR 0004](adr/0004-aligned-data-no-gbd-verdicts.md)).
 
 ## What runs where

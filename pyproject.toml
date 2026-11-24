@@ -1,7 +1,7 @@
 [project]
 name = "health-data-registry"
 version = "0.0.1"
-description = "Ask Claude about public health data (GBD, CDC, WHO and more) in plain English: a read-only MCP server over reviewed dataset contracts."
+description = "Ask Claude about observed public health data (CDC, WHO and more), alongside the GBD connector, in plain English: a read-only MCP server over reviewed dataset contracts."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
@@ -56,7 +56,7 @@ packages = ["src/health_data_registry"]
 [tool.health-data-registry]
 # The hosted server's public MCP endpoint, the one URL in plugin/.mcp.json (`make docs` writes it there).
 # A placeholder until a domain exists: .invalid never resolves, so nothing connects to it by accident.
-HDR_PUBLIC_URL = "https://hosted-url-not-set.invalid/mcp"
+HDR_PUBLIC_URL = "https://jtouley-health-data-registry-mcp.hf.space/mcp"
 
 [tool.ruff]
 line-length = 110

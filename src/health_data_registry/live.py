@@ -1,4 +1,4 @@
-"""Live sources: restricted-licence data (e.g. WHO GHO, CC BY-NC-SA 3.0 IGO) served per request, never stored.
+"""Live sources: restricted-licence data (e.g. WHO GHO, under WHO's dataset terms) served per request, never stored.
 
 Share-alike terms would attach to anything derived from these sources, so nothing derived from them is ever
 written to disk: no lake snapshot, no Parquet, no DuckDB file, no cache of the normalised table. The server
@@ -38,7 +38,10 @@ def attribution(ds: Dataset) -> str:
 
 
 def _licence_name(licence_id: str) -> str:
-    return "CC BY-NC-SA 3.0 IGO" if licence_id.upper() == "CC-BY-NC-SA-3.0-IGO" else licence_id
+    return {
+        "CC-BY-NC-SA-3.0-IGO": "CC BY-NC-SA 3.0 IGO",
+        "WHO-DATASET-TERMS": "WHO's Terms and Conditions for datasets",
+    }.get(licence_id.upper(), licence_id)
 
 
 @dataclass(frozen=True)

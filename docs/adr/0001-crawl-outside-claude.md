@@ -18,9 +18,9 @@ Fetching and snapshotting happen outside the chat: a scheduled job (a weekly Git
 snapshot. A nightly check flags any source that no longer matches its contract, and a shape change opens a PR.
 
 At question time the server reads only from snapshots. Sources whose terms forbid mirroring
-([ADR 0009](0009-licences-decide-mirroring.md)) are fetched from the catalogued publisher host onto the user's own
-machine, through the same contract-checked path, and never published; today that is the `refresh` run the setup
-guide has the user do once. The server never browses, searches or scrapes during a chat.
+([ADR 0009](0009-licences-decide-mirroring.md)) are read live from the catalogued publisher host for each question,
+through the same contract-checked path, held in memory only and never stored or published (amended 2026-11-24:
+the earlier one-time `refresh` onto the user's machine is gone). The server never browses, searches or scrapes during a chat.
 
 ## Consequences
 

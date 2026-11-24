@@ -8,7 +8,7 @@ domain: infectious_disease
 description:
   purpose: "WHO estimates of tuberculosis incidence per 100,000 population per year, with uncertainty bounds, by country, WHO region, World Bank income group and globally (GHO indicator MDG_0000000020)."
   usage: "Read one estimate and its bounds for a place and year; compare places or years only with the bounds shown; never add rates. Fetched from WHO at run time; never mirrored."
-  limitations: "Modelled estimates, revised in full each year; WHO terms are non-commercial (CC BY-NC-SA 3.0 IGO)."
+  limitations: "Modelled estimates, revised in full each year; WHO's Terms and Conditions for datasets: public health purposes only, no commercial promotion, only minimal changes without WHO's written authorization."
   authoritativeDefinitions:
     - {type: canonicalUrl, url: "https://ghoapi.azureedge.net/api/MDG_0000000020", description: "GHO OData endpoint for the indicator (fetched 2026-11-24)"}
     - {type: businessDefinition, url: "https://ghoapi.azureedge.net/api/Indicator", description: "GHO indicator list giving the code and name"}
@@ -153,7 +153,7 @@ schema:
           - {property: role, value: attribute}
           - {property: sourceField, value: Date}
 customProperties:
-  - {property: licence, value: CC-BY-NC-SA-3.0-IGO}
+  - {property: licence, value: WHO-dataset-terms}
   - {property: redistribution, value: false}
   - {property: citation, value: "World Health Organization. Global Health Observatory, indicator MDG_0000000020: Incidence of tuberculosis (per 100 000 population per year). https://ghoapi.azureedge.net/api/MDG_0000000020"}
   - {property: refresh, value: annual}
@@ -161,7 +161,7 @@ customProperties:
   - {property: unreliableRule, value: {kind: none, description: "None: WHO publishes a modelled estimate with low and high bounds for every value; none is marked unreliable."}}
   - property: openQuestions
     value:
-      - "Licence and terms: CC BY-NC-SA 3.0 IGO and the terms URL are taken from the brief, not read from WHO (www.who.int was not fetched). Maintainer to confirm."
+      - "Licence: read from the terms URL on 2026-11-24. It is WHO's own Terms and Conditions for datasets, not CC BY-NC-SA 3.0 IGO as the brief said: royalty-free use, copying and distribution for public health purposes; no use in promoting a commercial enterprise; alterations beyond minimal style changes need WHO's written authorization; WHO may terminate the licence. Maintainer to confirm that reading live and normalising column types in memory counts as a minimal change, and that the attribution format (WHO, dataset title, year, date of access, providing countries) is met by the citation."
       - "Is the Low-High range a 95% uncertainty interval? Not stated in the GHO API response."
       - "Does incidence include people with HIV and relapses for every year back to 2000? The definition is taken from the indicator name only; WHO's metadata registry entry was not fetched and its id (1076) is unverified."
       - "WHO has announced a successor to the GHO OData API; when ghoapi.azureedge.net is retired the adapter and api_url must move. Current status not checked."

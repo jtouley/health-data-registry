@@ -28,8 +28,10 @@ Every row says which kind of number it is, in its `measure` column. There are fo
 - **Measures never mix in one answer.** If a question matches series of different kinds (for example, a count from
   one source and a rate from another), the answer opens with a warning and the `measure` column tells them apart.
   Never compare or add numbers across measures.
-- **A rate the tool works out is labelled as such.** `get_rate` divides cases by Census population and labels the
-  column `crude_rate_per_100k_computed`, so it can't be mistaken for a published rate.
+- **A number the tool works out is labelled as such.** `get_rate` divides cases by Census population and returns
+  `rate_per_100k` with `lower_95` and `upper_95`; every row of `get_rate`, `compare_rates`, `get_trend`,
+  `age_adjust` and `check_signal` ends with a `computed` column saying it was computed here and how, so it can't
+  be mistaken for a published rate.
 - **Population is an estimate, too.** The denominator is the Census Bureau's estimate of the resident population on
   1 July (Vintage 2025, years 2020–2025). Each new vintage revises every earlier year, so a rate's denominator can
   change between releases. Census publishes no uncertainty for it.
@@ -41,16 +43,27 @@ Every row says which kind of number it is, in its `measure` column. There are fo
 Recent surveillance counts change as late reports arrive. Every row from a running-total source carries a
 `period_status`:
 
-- **`final: restated in the next table`.** CDC's next yearly table restated the whole year (it reached MMWR week
-  52), so late reports are included. This is the number to cite.
-- **`provisional: running total as of <week>`.** The year is still open to late or corrected reports, so the
-  number can still go up (or, after corrections, down). Say "provisional" whenever you quote it.
+- **`provisional: as published at year end (through week N)`.** The year's own running total at its last week
+  with a number (`observation_type` `year_end_ytd`). Late reports can still change it. Say "provisional" whenever
+  you quote it.
+- **`provisional: running total so far (through week N)`.** The year is still open: the total so far, not the
+  year's count.
+- **`incomplete: …`** The running total stops before the year's last week, so it is not the year's total and is
+  never used as one.
+- **CDC's revised provisional figure, from the next year's table** (`observation_type`
+  `subsequent_year_restatement`). The following year's table gives its own figure for the same year, with the
+  week it reaches. CDC doesn't say the two count the same thing, and for some states they differ a lot, so both
+  are kept, as separate rows: this one never replaces or merges with the year-end figure, and neither is final
+  until a domain reviewer approves them as the same count (`resolution_policy: require_domain_review`).
 
 How NNDSS annual counts are read: the tool takes CDC's running year-to-date column at the last week published for
-that year. Once the following year's table carries a restated prior-year column through week 52, that restated
-number replaces it. Weekly counts are **never** added up to make a year, because late reports land in the running
-total, not in the week they happened. In the real example in the [README](../README.md#example), adding the weekly
-column for Michigan in 2023 gives 62 cases; the correct annual count is 110.
+that year. Weekly counts are **never** added up to make a year, because late reports land in the running total,
+not in the week they happened: for Michigan in 2023, adding the weekly column gives 62 cases, the year-end running
+total 103. A year-to-date column is added across places only at one week; the tool refuses it otherwise.
+
+An empty NNDSS count flagged `-` is CDC's "no reported cases" (dataset notes), so it is read as **0**, with the
+flag kept beside it. Every other flag (`U` unavailable, `N` not reportable, `NN`, `NP`, `NC`) leaves the cell
+empty, never zero.
 
 Other sources:
 
@@ -60,20 +73,21 @@ Other sources:
 - **WHO** re-estimates its whole tuberculosis series each year, so earlier years can change between releases.
   Cite the fetch date that comes with each row.
 
-## Empty cells: suppression and missing codes, never zero
+## Empty cells: suppression and missing codes
 
 An empty value means the publisher marked it missing, not reportable or suppressed. **It is never a zero**, and
-the tool never fills it in or back-calculates it.
+the tool never fills it in or back-calculates it. The one exception is a code the publisher's own codebook
+defines as "no reported cases" (NNDSS `-`): that cell is read as 0, always with its flag beside it.
 
 | Source | What an empty cell can mean |
 |---|---|
-| NNDSS weekly | A flag explains it: `U` the jurisdiction could not send data; `N` not reportable there; `NN` not nationally notifiable; `NP` notifiable but not published; `NC` not calculated. A flag of `-` with an empty count means no reported cases that week. |
+| NNDSS weekly | A flag explains it: `U` the jurisdiction could not send data; `N` not reportable there; `NN` not nationally notifiable; `NP` notifiable but not published; `NC` not calculated. A flag of `-` with an empty count means no reported cases (dataset notes), so it is read as 0 with the flag kept. |
 | NHSN resistance | Resistant count and percent resistant are shown only when at least 20 isolates were tested; smaller cells are empty. |
 | RESP-NET | Some estimated cumulative rates for the current season are published empty. |
 | WHO tuberculosis | No value published for that country and year. |
 
-Whether NNDSS's `-` ("no reported cases") should be stored as 0 is an open question for a maintainer to decide;
-until then it stays empty. If you need a zero for an analysis, decide it yourself and say so in your methods.
+NNDSS's `-` stays stored as published (empty, with the flag); only reading it turns it into 0, labelled "no
+reported cases". A maintainer confirms this on review of the contract (its `noCasesCode`).
 
 ## Uncertainty
 
@@ -86,8 +100,8 @@ until then it stays empty. If you need a zero for an analysis, decide it yoursel
     stated in WHO's data feed; this is an open question in the contract.
 - **GBD values** (from the IHME GBD connector, not this tool) are modelled and come with 95% uncertainty
   intervals.
-- Coming: the analysis tools (`get_rate`'s exact Poisson interval, `compare_rates`, `get_trend`, `age_adjust`)
-  will each return the number with a 95% interval and its method in one sentence.
+- **The analysis tools** (`get_rate`, `compare_rates`, `get_trend`, `age_adjust`, `check_signal`) return each
+  number with a 95% interval and its method in one sentence, labelled as computed here.
 
 ## Places
 
@@ -143,8 +157,8 @@ nine planning regions, not its former counties. No case source publishes county 
   compared, and a crude rate cannot be compared with either.
 - **RESP-NET's age-adjusted rates** are a separate series. Which standard population they use is not yet
   confirmed, so they must not be set beside GBD.
-- Coming: `age_adjust` will standardise directly to the 2000 US standard population, with gamma (Fay–Feuer)
-  intervals as NCHS uses, and only where age-specific counts and populations exist.
+- `age_adjust` standardises directly to the 2000 US standard population, with gamma (Fay–Feuer) intervals as NCHS
+  uses, and only where age-specific counts and populations exist (no loaded source has them yet).
 
 ## Case definitions
 
@@ -162,8 +176,9 @@ like it rose or fell.
 - **HAICViz** splits C. diff into healthcare-associated and community-associated by the EIP's epidemiologic
   classification; its exact definitions are not on data.cdc.gov and are an open question.
 - **WHO** tuberculosis incidence covers new and relapse tuberculosis of all forms, including people with HIV.
-- `describe_dataset` and `get_provenance` show the case definition where the contract records one. Coming: the
-  year each CSTE definition took effect, so `get_trend` can split a trend where the definition changed.
+- `describe_dataset` and `get_provenance` show the case definition where the contract records one. Where the
+  contract records the year a definition took effect (`caseDefinitions`), `get_trend` splits the trend there and
+  `compare_rates` says so; no real contract records one yet.
 
 ## Using it with GBD
 

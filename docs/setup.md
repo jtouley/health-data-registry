@@ -24,37 +24,42 @@ Never put patient information in any chat, whichever tools you use.
   [IHME GBD](#ihme-gbd-connector)).
 
 > [!NOTE]
-> Coming: this tool's web address is not published yet. Until it is, use the
-> [one-time install](#one-time-install-on-your-computer-for-now) in Claude Desktop or [Claude Code](#claude-code).
+> The hosted server is a preview. Until the open data hub's first data release, CDC and Census questions get a
+> plain message saying the release isn't out yet; WHO questions are answered today, read live from WHO. If you
+> can't add a custom connector, use the [one-time install](#one-time-install-on-your-computer-for-now) in Claude
+> Desktop or [Claude Code](#claude-code).
 
 ## Claude on the web or Claude Desktop
 
-These steps are the main path once the tool's web address is published. They need no terminal and no install.
+This is the main path. It needs no terminal and no install.
 
-1. **Open the connector settings.** In Claude, open Settings → Connectors (on some accounts it is under
-   Customize).
+1. **Open the connector settings.** In Claude, open **Customize → Connectors** (on some accounts it is under
+   Settings → Connectors).
    You should see a list of connectors and a button to add a custom connector.
-   <!-- SCREENSHOT: Claude Settings → Connectors, with "Add custom connector" visible -->
-2. **Add this tool.** Click **Add custom connector**. Name it `health-data-registry`, paste the tool's web address
-   (to be published here), and click **Add**.
+2. **Add this tool.** Click **Add custom connector**. Name it `health-data-registry`, paste this web address, and
+   click **Add**:
+
+   ```text
+   https://jtouley-health-data-registry-mcp.hf.space/mcp
+   ```
+
    You should see health-data-registry in your list of connectors.
    If you see an error, check that you pasted the whole address, with nothing before or after it.
-   <!-- SCREENSHOT: the Add custom connector dialog with the name and address filled in -->
 3. **Start a new chat.** A connector only appears in chats started after you add it.
-   <!-- SCREENSHOT: the new-chat button -->
 4. **Check that it is switched on.** Click the **+** button at the bottom left of the message box, then
    **Connectors**. Make sure health-data-registry is switched on.
-   <!-- SCREENSHOT: the + menu → Connectors, with health-data-registry switched on -->
 5. **Run the "Start here" helper.** In the message box, open the menu of ready-made starters, choose
    health-data-registry, then **Start here: check my tools work**.
    You should see one line per tool saying whether it works, with steps for any that are missing.
    If the menu doesn't show the helpers, paste [Start here](helpers.md#start-here-check-my-tools-work) as your
    message instead.
-   <!-- SCREENSHOT: the starters menu with "Start here: check my tools work" highlighted -->
-6. **Ask one question,** for example: "Use health-data-registry: how many legionellosis cases were reported in
-   Michigan each year since 2022?"
-   You should see a table, then lines saying where the numbers came from and when.
-   <!-- SCREENSHOT: a question and the sourced answer table -->
+6. **Ask one question,** for example: "Use health-data-registry: what was WHO's estimate of tuberculosis
+   incidence in South Africa each year since 2015?"
+   You should see a table, then lines saying where the numbers came from, when, and WHO's terms. A question about
+   CDC data (for example legionellosis in Michigan) gets a plain message that the hub's first release isn't out
+   yet, until it is.
+
+Screenshots of these steps are coming.
 
 Not yet checked: whether Claude on the web and the mobile app show a connector's ready-made starters the way
 Claude Desktop does. If yours doesn't, use the copy-paste versions on the [helpers page](helpers.md).
@@ -69,10 +74,10 @@ connectors, for your team. Send them this page. Each member then switches it on 
 
 Claude Code is Anthropic's coding tool. Use one of these options, not both: using both adds the tool twice.
 
-**Option A, hosted (coming).** Once the web address is published, run:
+**Option A, hosted (preview).** Run:
 
 ```bash
-claude mcp add --transport http health-data-registry <web address, to be published>
+claude mcp add --transport http health-data-registry https://jtouley-health-data-registry-mcp.hf.space/mcp
 ```
 
 Then run `/mcp` inside Claude Code. You should see health-data-registry listed as connected.
@@ -89,8 +94,9 @@ reads it from the open health data hub when you ask.
 
 ## One-time install on your computer (for now)
 
-Until the web address is published, this tool needs a **one-time install** on your computer and works in the
-**Claude Desktop app**. It takes about 10 minutes. You will type three commands into a **terminal**, the window
+If you can't add a custom connector (some work accounts turn it off), install this tool once on your computer for
+the **Claude Desktop app**. You need a Mac or Windows computer where you can install programs. It takes about 15
+minutes. You will type three commands into a **terminal**, the window
 where you type commands to your computer.
 
 There is no data to download. The tool reads CDC and Census data from the open health data hub when you ask, and

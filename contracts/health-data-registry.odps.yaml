@@ -58,7 +58,7 @@ inputPorts:
       - property: description
         value: WHO Global Health Observatory OData API, read live per request only; never mirrored or stored.
       - property: license
-        value: CC-BY-NC-SA-3.0-IGO
+        value: WHO-dataset-terms
     authoritativeDefinitions:
       - type: canonicalUrl
         url: https://www.who.int/data/gho

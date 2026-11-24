@@ -1,7 +1,8 @@
 """WHO Global Health Observatory OData adapter.
 
-WHO data is licensed CC BY-NC-SA 3.0 IGO: it is fetched from WHO at run time into the user's own local
-lake and never published to the shared snapshot dataset (catalog licence.redistribution: false).
+WHO data is used under WHO's Terms and Conditions for datasets (public health purposes only): it is read live
+from WHO for each question, held in memory only (live.py), never written to any lake and never published
+(catalog licence.redistribution: false).
 """
 
 from __future__ import annotations

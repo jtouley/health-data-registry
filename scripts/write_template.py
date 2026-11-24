@@ -35,6 +35,14 @@ def write_docs() -> None:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text, encoding="utf-8")
         print(f"wrote {rel}")
+    table = distribution.tool_table()
+    for rel in distribution.TOOL_LIST_FILES:
+        path = root / rel
+        text = path.read_text(encoding="utf-8")
+        new = distribution.with_tool_table(text, table)
+        if new != text:
+            path.write_text(new, encoding="utf-8")
+            print(f"wrote the tool list in {rel}")
 
 
 def write_kit(out: Path) -> None:

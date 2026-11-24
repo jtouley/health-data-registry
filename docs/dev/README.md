@@ -53,7 +53,7 @@ attempt under `fetch_log/source=<id>/`. `refresh --max-rows N` takes a developme
 partial. The lake is for maintainers and CI: the server reads a hosted source from the hub release in `$HDR_HUB`
 (checked against its sha256), cached under `$HDR_CACHE` (default `~/.cache/health-data-registry`, bounded by `$HDR_CACHE_MAX_GB`, default 5, least
 recently used first out; publishers' raw bytes are never kept there); `hub.py` has the order. Reading the hub needs no sign-in or
-token. A restricted source (WHO GHO, CC BY-NC-SA 3.0 IGO) is never stored anywhere, not even in the
+token. A restricted source (WHO GHO, under WHO's Terms and Conditions for datasets) is never stored anywhere, not even in the
 maintainers' lake: `live.py` reads it from the publisher per question, keeps the parsed records in memory for at
 most 10 minutes, and every answer carries the attribution, licence and terms URL. `refresh --all` skips it. The server reads
 only an immutable release: `HDR_HUB=hf://datasets/<org>/<name>@release-<run date>` pins one, and an unpinned
