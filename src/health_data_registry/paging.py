@@ -43,8 +43,6 @@ DEFAULT_PAGE_CHARS = 120_000
 HF_WEB = "https://huggingface.co/datasets/"
 _PIN_PART = re.compile(r"^([a-z0-9_]{1,64}):([A-Za-z0-9._-]{1,80})(?:@([A-Za-z0-9._-]{1,80}))?$")
 _MAX_PIN_CHARS = 2000
-_SHRINK = 0.9  # when a page renders over budget, cut the room for rows by this much and cut again
-_MAX_TRIES = 40
 
 Pins = dict[str, tuple[str, str | None]]  # dataset id -> (snapshot id, hub release tag or None)
 
@@ -130,24 +128,21 @@ def download_lines(engine: Engine, used: Sequence[tuple[Dataset, Manifest]]) -> 
     """Direct links to a whole release file, only for redistributable sources read from a hub release."""
     from health_data_registry.publish import HF_PREFIX, data_path, hf_repo_id
 
-    hub = getattr(engine, "hub", None)
-    url = getattr(hub, "url", "") or ""
-    if not url.startswith(HF_PREFIX):
+    if engine.hub is None or not engine.hub.url.startswith(HF_PREFIX):
         return []
-    repo = hf_repo_id(url)
+    repo = hf_repo_id(engine.hub.url)
     lines = []
     for ds, m in used:
-        if not ds.entry.licence.redistribution or m.origin != "hub" or not m.release_ref:
-            continue  # restricted terms page only; a maintainer's lake copy has no public file
-        path = data_path(ds.id)
-        sha = m.release_files.get(path) or m.release_files.get(f"{ds.id}/{path.split('/', 1)[1]}")
-        lines.append(
-            f"Whole dataset {ds.id}: rather than paging, download the release file {HF_WEB}{repo}/resolve/"
-            f"{m.release_ref}/{path} (or {HF_PREFIX}{repo}@{m.release_ref}/{path})"
-            + (f", sha256 {sha}" if sha else "")
-            + f". It holds every row of {ds.entry.title}, not only this answer's. Licence {ds.entry.licence.id} "
-            f"({ds.entry.licence.terms_url}); cite as: {ds.entry.citation}"
-        )
+        # Restricted terms page only; a maintainer's lake copy and a live read have no public release file.
+        if ds.entry.licence.redistribution and m.origin == "hub":
+            path = data_path(ds.id)  # the release manifest keys its files by this path
+            lines.append(
+                f"Whole dataset {ds.id}: rather than paging, download the release file {HF_WEB}{repo}/resolve/"
+                f"{m.release_ref}/{path} (or {HF_PREFIX}{repo}@{m.release_ref}/{path}), sha256 "
+                f"{m.release_files.get(path, 'not recorded')}. It holds every row of {ds.entry.title}, not only "
+                f"this answer's. Licence {ds.entry.licence.id} ({ds.entry.licence.terms_url}); cite as: "
+                f"{ds.entry.citation}"
+            )
     return lines
 
 
@@ -222,19 +217,16 @@ def _render_page(res: Result, lo: int, hi: int, page: int, bounds: Sequence[tupl
 
 
 def plan(res: Result, fmt: Fmt, budget: int, render: Callable[[int, int, int, list[tuple[int, int]]], Out]) -> list[tuple[int, int]]:  # fmt: skip
-    """Page bounds such that every page renders within `budget`; depends only on the rows and the notes."""
+    """Page bounds such that every page renders within `budget`; depends only on the rows and the notes.
+
+    Row costs are exact (a row adds exactly its cost to a page, plus 2 for the first row of a JSON page), and a
+    page without rows is measured at its widest (every number at its most digits, with a Next line and as the
+    last page), so the rows that fit in what is left always fit. A row too long for any page gets a page alone.
+    """
     costs = [_row_cost(r, fmt) for r in res.rows]
-    # Room for rows: half the budget (one copy) less what a page with no rows takes, at its widest.
-    n = max(len(res.rows), 1)
-    empty = render(len(res.rows), len(res.rows), n, [(0, 0)] * (n + 1))
-    room = max(1, budget // 2 - wire_size(empty) // 2)
-    bounds = cut(costs, room)
-    for _ in range(_MAX_TRIES):
-        if all(wire_size(render(lo, hi, n, bounds)) <= budget for n, (lo, hi) in enumerate(bounds, 1)):
-            return bounds
-        room = max(1, int(room * _SHRINK))
-        bounds = cut(costs, room)
-    return bounds  # one row alone is over the budget: the closest it can get
+    n = len(res.rows) + 1
+    widest = max(wire_size(render(n, n, n - 1, [(0, 0)] * n)), wire_size(render(n, n, n, [(0, 0)] * n)))
+    return cut(costs, budget // 2 - widest // 2 - (2 if fmt == "json" else 0))
 
 
 # ------------------------------------------------------------------------------------------------ respond

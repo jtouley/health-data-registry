@@ -19,7 +19,7 @@ from health_data_registry import analysis, cli, geo, paging, tools
 from health_data_registry.hosted import CallGuard, HostedConfig, Metrics
 from health_data_registry.hub import Hub
 from health_data_registry.publish import export_public
-from health_data_registry.query import Engine
+from health_data_registry.query import Engine, QueryRefused
 from health_data_registry.registry import Registry, load_registry
 from health_data_registry.sql_guard import guard_sql
 from health_data_registry.store import build_snapshot, latest_snapshot, write_ndjson
@@ -463,3 +463,150 @@ def test_page_budget_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     assert paging.page_budget() == 120_000
     monkeypatch.setenv("HDR_PAGE_CHARS", "5000")
     assert paging.page_budget() == 5000
+
+
+# ------------------------------------------------------------------------------------ exact sizes and words
+
+
+def test_row_costs_are_exact() -> None:
+    rows: list[list[Any]] = [["Ohio", 2023, None, 'a"b,c', 1.5, "x\ny"], ["é", 1, 2, 3, 4, 5], [None] * 6]
+    for fmt in ("csv", "json"):
+        for k in range(3):
+            before = paging.wire_size(tools.Result(list("abcdef"), rows[:k], ["n"]).render(fmt)) // 2
+            after = paging.wire_size(tools.Result(list("abcdef"), rows[: k + 1], ["n"]).render(fmt)) // 2
+            first = 2 if fmt == "json" and k == 0 else 0
+            assert after - before == paging._row_cost(rows[k], fmt) + first, (fmt, k)
+    assert paging._row_cost([None, "a"], "csv") == len(",a\n")
+
+
+def _respond(registry: Registry, eng: Engine, fmt: str, page: int, pin: str | None, budget: int) -> Any:
+    return paging.respond(
+        "get_series", {"condition": "legionellosis", "fmt": fmt}, eng,
+        lambda e: tools.get_series.__wrapped__(registry, e, condition="legionellosis", fmt=fmt),
+        page=page, pin=pin, fmt=fmt, budget=budget,
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize("fmt", ["csv", "json"])
+def test_pages_are_full_up_to_the_budget(registry: Registry, eng: Engine, fmt: str) -> None:
+    """Every page but the last is as full as the budget allows: the next row would not have fitted."""
+    budget = 20_000
+    page, pin, pages = 1, None, []
+    while True:
+        out = _respond(registry, eng, fmt, page, pin, budget)
+        pages.append(out)
+        if (nxt := next_call(out)) is None:
+            break
+        page, pin = nxt
+    full = tools.get_series.__wrapped__(registry, eng, condition="legionellosis", fmt="json").rows
+    assert len(pages) > 2
+    at = 0
+    for p in pages:
+        size = paging.wire_size(p)
+        assert size <= budget
+        at += len(p["rows"]) if fmt == "json" else len(csv_rows(p)[1])
+        if p is not pages[-1]:
+            assert size + 2 * paging._row_cost(full[at], fmt) > budget - 400  # slack: header digits only
+
+
+def test_a_pin_for_other_sources_is_refused(
+    tmp_path: Path, releases: tuple[Registry, dict[str, Path]], fake_hf: set[str]
+) -> None:
+    reg = releases[0]
+    rows = big_records()
+    e = hub_engine(
+        reg, tmp_path, f"release-{RUN}", fetch_at_run_time=True, getter=lambda u: raw_fetch(u, rows)
+    )
+    pin = paging.pin_token([(reg.get("toy_cases"), e.manifest("toy_cases"))])
+    out = tools.query_sql(e, "SELECT year FROM toy_listed", page=1, pin=pin, fmt="json")
+    assert out["refused"] == "page_data_changed"
+    ok = tools.query_sql(e, "SELECT year FROM toy_cases", page=1, pin=pin, fmt="json")
+    assert ok["rows"]
+
+
+def test_one_page_answers_are_unchanged_by_page_one(registry: Registry, eng: Engine) -> None:
+    one = series(registry, eng, locations=["Ohio"])
+    assert series(registry, eng, locations=["Ohio"], page=1) == one
+    bad = series(registry, eng, page=-1, fmt="json")
+    assert bad == {
+        "message": "Pages are numbered from 1. Ask for page=1, or leave page out.",
+        "refused": "bad_page",
+    }
+
+
+def test_provenance_lines_name_every_part(registry: Registry, eng: Engine) -> None:
+    import dataclasses
+
+    ds = registry.get("toy_cases")
+    m = eng.manifest("toy_cases")
+    many = dataclasses.replace(m, source_urls=["https://a/1", "https://a/2", "https://a/3"],
+                               raw_sha256=["s1", "s2", "s3"], release_ref="release-2026-11-24")  # fmt: skip
+    (line,) = paging.provenance_lines([(ds, many)])
+    assert line == (
+        f"Provenance toy_cases: source https://a/1 and 2 more (get_provenance lists them all); retrieved_at "
+        f"{m.retrieved_at}; sha256 s1 (first file); version snapshot {m.snapshot_id}, contract 0.1.0, hub release "
+        "release-2026-11-24; licence public-domain-us-federal (https://www.cdc.gov/other/agencymaterials.html); "
+        "cite as: CDC. Toy table. https://data.cdc.gov/d/toy0-toy0"
+    )
+    two = dataclasses.replace(m, source_urls=["https://a/1", "https://a/2"], raw_sha256=["s1", "s2"])
+    (pair,) = paging.provenance_lines([(ds, two)])
+    assert " and 1 more (get_provenance" in pair and "sha256 s1 (first file);" in pair
+    none = dataclasses.replace(m, source_urls=[], raw_sha256=[])
+    (bare,) = paging.provenance_lines([(ds, none)])
+    assert "source https://data.cdc.gov/d/toy0-toy0; " in bare and "sha256 not recorded; " in bare
+    assert "more" not in bare and "first file" not in bare
+
+
+def test_data_changed_and_pin_words() -> None:
+    e = paging.data_changed({"b": ("s2", None), "a": ("s1", "release-2026-11-24")})
+    assert e.code == "page_data_changed"
+    assert str(e) == (
+        "This page can't be shown: the data the first page came from (a version s1 (hub release "
+        "release-2026-11-24); b version s2) is no longer available here, and a page from newer data wouldn't fit "
+        "with the pages you already have, so no rows are shown. Ask the same question again without page and pin "
+        "to start from page 1 with the current data, and set aside the pages you saved from the older version."
+    )
+    with pytest.raises(QueryRefused) as bad:
+        paging.parse_pin("")
+    assert bad.value.code == "bad_pin" and str(bad.value) == (
+        "The pin given with this page isn't one this server wrote, so no rows are shown. Copy the Next line from "
+        "the previous page exactly, or ask again without page and pin to start from page 1."
+    )
+    parts = [f"d{i:03d}:" + "s" * 74 for i in range(24)]
+    exactly = ",".join([*parts, "d999:" + "s" * 75])
+    assert len(exactly) == 2000 and len(paging.parse_pin(exactly)) == 25
+    with pytest.raises(QueryRefused):
+        paging.parse_pin(exactly + "s")
+
+
+def test_token_call_and_size_details() -> None:
+    from datetime import date
+
+    from health_data_registry.store import Manifest
+
+    def man(sid: str, ref: str | None) -> Manifest:
+        return Manifest(dataset="x", snapshot_id=sid, contract_version="1", semantic_version="1",
+                        catalog_status="draft", retrieved_at="t", source_urls=[], raw_sha256=[], row_count=0,
+                        licence="l", redistribution=True, partial=False, release_ref=ref)  # fmt: skip
+
+    class D:
+        def __init__(self, i: str) -> None:
+            self.id = i
+
+    used: Any = [(D("b"), man("s2", "release-2026-11-24")), (D("a"), man("s1", None))]
+    assert paging.pin_token(used) == "a:s1,b:s2@release-2026-11-24"
+    assert paging.call_text("t", {"a": None, "b": 1}, 2, "p") == "t(b=1, page=2, pin='p')"
+    assert paging.wire_size({"d": date(2026, 1, 2)}) == 2 * len('{\n  "d": "2026-01-02"\n}')
+
+
+def test_json_last_page_says_so(registry: Registry, eng: Engine) -> None:
+    first = _respond(registry, eng, "json", 1, None, 30_000)
+    n, pin = first["page"]["pages"], first["page"]["pin"]
+    assert first["page"]["next"] == f"get_series(condition='legionellosis', fmt='json', page=2, pin='{pin}')"
+    assert f"This answer is long, so it comes in {n} pages ({TOTAL:,} rows in all)" in first["notes"][1]
+    last = _respond(registry, eng, "json", n, None, 30_000)
+    assert last["page"]["next"] is None and last["page"]["last_row"] == TOTAL and last["page"]["pages"] == n
+    assert last["notes"][0] == "This is the last page: with every page saved, the answer is complete."
+    assert _respond(registry, eng, "json", n - 1, None, 30_000)["page"]["next"].endswith(
+        f"page={n}, pin='{pin}')"
+    )
