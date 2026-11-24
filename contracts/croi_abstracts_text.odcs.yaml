@@ -106,8 +106,9 @@ customProperties:
   value: annual
 - property: openQuestions
   value:
-  - The private Hugging Face dataset for this source (<owner>/hdr-private-croi_abstracts_text) and its read-only
-    Space secret are created by the maintainer; the code never creates or uploads it.
+  - The private Hugging Face dataset for this source (<owner>/health-data-registry-private-croi-abstracts-text,
+    named as in docs/dev/naming.md) and its read-only Space secret are created by the maintainer; the code never
+    creates or uploads it.
   - 'Terms: the CROI terms quoted in the spec (''copy, or print ... for personal, noncommercial use only ... may
     not otherwise reproduce ... without prior written consent''; copyright CROI Foundation) were read during research,
     not re-read here; terms_url points at the home page until the maintainer records the exact terms page.'

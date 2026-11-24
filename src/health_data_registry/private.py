@@ -6,8 +6,9 @@ live only in that source's own store, never in the public lake area, a public re
     lake/private/<source_id>/<partition>.jsonl      written by the maintainer's crawl (CLI or API only)
     lake/private/_hub/<source_id>/                  read-only copy of the source's private Hugging Face dataset
 
-The hosted server reads one private Hugging Face dataset per source, ``<owner>/hdr-private-<source_id>``, so
-each source can be deleted on its own. The owner comes from ``HDR_PRIVATE_HF_OWNER`` and the read-only token
+The hosted server reads one private Hugging Face dataset per source,
+``<owner>/health-data-registry-private-<source-id>`` (named by ``naming.private_dataset``), so each source can
+be deleted on its own. The owner comes from ``HDR_PRIVATE_HF_OWNER`` and the read-only token
 from ``HDR_PRIVATE_HF_TOKEN`` (a Space secret): it is never shown to users and nobody signs in. This module
 never creates or uploads to a Hugging Face dataset; the maintainer does that.
 
@@ -30,13 +31,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from health_data_registry import naming
 from health_data_registry.registry import Dataset
 
 PRIVATE_DIR = "private"
 HUB_CACHE_DIR = "_hub"
-HF_OWNER_ENV = "HDR_PRIVATE_HF_OWNER"
+HF_OWNER_ENV = naming.OWNER_ENV
 HF_TOKEN_ENV = "HDR_PRIVATE_HF_TOKEN"  # noqa: S105 - the name of an environment variable, not a secret
-HF_REPO_PREFIX = "hdr-private-"
 HUB_TTL_S = 3600.0
 
 _SOURCE_ID = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
@@ -83,8 +84,8 @@ def hub_cache(lake: Path, source_id: str) -> Path:
 
 def hf_repo(source_id: str, owner: str | None = None) -> str | None:
     """The private Hugging Face dataset of one source, or None when no owner is configured."""
-    owner = owner if owner is not None else os.environ.get(HF_OWNER_ENV, "").strip()
-    return f"{owner}/{HF_REPO_PREFIX}{_check_id(source_id)}" if owner else None
+    found = naming.owner(owner)
+    return naming.private_dataset(_check_id(source_id), found) if found else None
 
 
 def is_private(ds: Dataset) -> bool:
