@@ -88,14 +88,18 @@ Nothing here deploys; the deployment is a separate task. Once:
 
 1. Create a Space (Docker SDK, CPU Basic). Hugging Face's docs say creating a Docker Space now needs a paid plan
    (PRO for a personal account), though CPU Basic hardware has no hourly cost.
-2. Put the repository at a tagged commit in the Space repo with `space/Dockerfile` as `Dockerfile`, and
-   `space/README.md` and `space/PRIVACY.md` at the root (the Space README's front matter sets `sdk: docker` and
-   `app_port: 7860`).
+2. Upload `space/` as the Space repo's root, and nothing else (`Dockerfile`, `README.md`, `PRIVACY.md`; the
+   README's front matter sets `sdk: docker` and `app_port: 7860`). The Dockerfile builds only from a release:
+   `HDR_TAG` is a `vX.Y.Z` tag that `release.yml` built from a commit on main, and `HDR_COMMIT` is the commit that
+   tag names, checked at build time, so a deploy is reproducible and a moved tag fails the build. Both are empty
+   in git and a build without them stops. The deploy is a GitHub Actions job still to be added: on a release it
+   fills in both and uploads `space/`. To deploy newer code, cut a release; never point them at a branch.
 3. Optional: attach a Storage Bucket as a volume at `/data`, so the cache survives restarts.
 4. Settings, Variables and secrets: `HDR_HUB` only to pin a release; the secret `HDR_PRIVATE_HF_TOKEN`
    (read-only) once the private tier ships. Never put a token in a file.
-5. Add `https://<owner>-<space>.hf.space/mcp` as a custom connector in Claude and run one real call. Then set
-   `HDR_PUBLIC_URL` in `pyproject.toml` and run `make docs`, so the plugin points at it.
+5. Add `https://jtouley-health-data-registry-mcp.hf.space/mcp` as a custom connector in Claude and run one real
+   call. `HDR_PUBLIC_URL` in `pyproject.toml` already names it, so the plugin points at it; if the Space moves,
+   change it there and run `make docs`.
 
 Ongoing: publish a new hub release with `export-public`; restart the Space (or pin `HDR_HUB`) to move to it, since a
 running server keeps the release it resolved at start. Read the hourly counters in the Space's logs for refusals,

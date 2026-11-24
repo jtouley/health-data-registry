@@ -1,9 +1,36 @@
 # The hosted, read-only MCP server on a Hugging Face Docker Space (CPU Basic hardware).
-# Build context: a checkout of this repository at a tagged commit, with this file as the Space's Dockerfile and
-# space/README.md and space/PRIVACY.md at the Space's root (docs/dev/hosting.md has the steps). Nothing secret is
-# read at build time; the private-tier token (HDR_PRIVATE_HF_TOKEN) is a Space secret, read from the environment
-# at run time only.
+# The Space repo holds only space/ (this Dockerfile, README.md with the Space's config header, PRIVACY.md).
+# The package source is one release of the public GitHub repository: a vX.Y.Z tag that release.yml built from a
+# commit on main (HDR_TAG), checked against the commit that tag named when the deploy was prepared (HDR_COMMIT), so
+# a deploy is reproducible and a moved tag fails the build. Both are left empty here on purpose: the deploy (a
+# GitHub Actions job, not added yet; docs/dev/hosting.md) fills them in from the release, and a build without them
+# stops. Never point them at a branch or an unreleased commit. Nothing secret is read at build time; the
+# private-tier token (HDR_PRIVATE_HF_TOKEN) is a Space secret, read from the environment at run time only.
+ARG HDR_REPO=https://github.com/jtouley/health-data-registry.git
+ARG HDR_TAG=
+ARG HDR_COMMIT=
+
+# Stage 1: fetch exactly that release (git checks every object against its hash) and verify it.
+FROM python:3.12-slim AS source
+ARG HDR_REPO
+ARG HDR_TAG
+ARG HDR_COMMIT
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN case "$HDR_TAG" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "HDR_TAG must be a release tag vX.Y.Z" >&2; exit 1 ;; esac \
+    && test -n "$HDR_COMMIT" \
+    && git init -q . \
+    && git remote add origin "$HDR_REPO" \
+    && git fetch -q --depth 1 origin "refs/tags/$HDR_TAG:refs/tags/$HDR_TAG" \
+    && git checkout -q --detach "refs/tags/$HDR_TAG^{commit}" \
+    && test "$(git rev-parse HEAD)" = "$HDR_COMMIT"
+
+# Stage 2: the server, without git.
 FROM python:3.12-slim
+ARG HDR_TAG
+ARG HDR_COMMIT
 
 # uv, pinned to the release the maintainers use.
 COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /usr/local/bin/uv
@@ -17,16 +44,18 @@ ENV HOME=/home/user \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     HF_HUB_DISABLE_TELEMETRY=1 \
-    DO_NOT_TRACK=1
+    DO_NOT_TRACK=1 \
+    HDR_SOURCE_TAG=$HDR_TAG \
+    HDR_SOURCE_COMMIT=$HDR_COMMIT
 WORKDIR /home/user/app
 
 # Only what the server needs: the package, the reviewed registry and the lock file. Never a lake.
-COPY --chown=user pyproject.toml uv.lock README.md LICENSE NOTICE ./
-COPY --chown=user src ./src
-COPY --chown=user catalog ./catalog
-COPY --chown=user contracts ./contracts
-COPY --chown=user semantic ./semantic
-COPY --chown=user licenses ./licenses
+COPY --from=source --chown=user /src/pyproject.toml /src/uv.lock /src/README.md /src/LICENSE /src/NOTICE ./
+COPY --from=source --chown=user /src/src ./src
+COPY --from=source --chown=user /src/catalog ./catalog
+COPY --from=source --chown=user /src/contracts ./contracts
+COPY --from=source --chown=user /src/semantic ./semantic
+COPY --from=source --chown=user /src/licenses ./licenses
 RUN uv sync --frozen --no-dev --no-editable
 
 # app_port in README.md. The cache goes to HDR_CACHE_DIR, else /data when storage is attached there, else /tmp.

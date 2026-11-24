@@ -79,8 +79,8 @@ Both are generated from the workflow records in `src/health_data_registry/helper
 - **Plugin** (`plugin/`, kept in git, written by `make docs`). `plugin/.claude-plugin/plugin.json` takes its version
   from `pyproject.toml`; `plugin/skills/<name>/SKILL.md` holds one skill per workflow, with only the Agent Skills
   frontmatter fields (`name`, `description`) so it loads in chat; `plugin/.mcp.json` lists one `http` server, this
-  one, at `HDR_PUBLIC_URL` under `[tool.health-data-registry]` in `pyproject.toml`. That URL is a `.invalid`
-  placeholder until the hosted server has a domain; change it there and run `make docs`. The IHME GBD and PubMed
+  one, at `HDR_PUBLIC_URL` under `[tool.health-data-registry]` in `pyproject.toml`. That URL is the hosted
+  server, `https://jtouley-health-data-registry-mcp.hf.space/mcp`; if it moves, change it there and run `make docs`. The IHME GBD and PubMed
   connectors are the fellow's own and are not in the plugin.
 - **Marketplace** (`.claude-plugin/marketplace.json` at the repo root). A marketplace is the directory that holds
   that file, and claude.ai adds one by repository URL (**Customize > Plugins > Add > Add marketplace**), so it has
