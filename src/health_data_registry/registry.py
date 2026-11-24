@@ -96,6 +96,17 @@ class TableauView(_Strict):
 
     view: str
     worksheets: dict[str, str]
+    # A count the chart carries as a number while the dashboard shows it suppressed on the same mark (its tooltip
+    # reads "<16"): count field -> the field whose marker suppresses it. Where that marker is shown, the count is
+    # read as suppressed (empty, with the marker in "<count> flag"), never as the number behind the chart.
+    suppressed_by: dict[str, str] = {}
+
+    @field_validator("suppressed_by")
+    @classmethod
+    def _suppressed_by(cls, v: dict[str, str]) -> dict[str, str]:
+        if any(not k.strip() or not m.strip() or k == m for k, m in v.items()):
+            raise ValueError("suppressed_by maps a count field to another field that carries its marker")
+        return v
 
     @field_validator("view")
     @classmethod
