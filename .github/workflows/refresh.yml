@@ -1,82 +1,253 @@
-# Weekly refresh: fetch every catalogued source, then check each against its contract.
-# On failure, opens an issue (or comments on the open one) so a changed source is seen.
+# Weekly refresh: fetch each public source in its own job, then publish one immutable release to the hub.
+#
+#   plan     lists the sources the lake may hold (licence allows redistribution, not a private-tier source)
+#   fetch    one job per source (matrix, fail-fast off): fresh fetch into an empty lake, uploaded as an
+#            artifact; nothing is restored from the Actions cache, so every run starts from the publishers
+#   raw      optional: the raw publisher bytes and fetch logs go to a maintainer-only PRIVATE dataset
+#            (vars.HDR_RAW_DATASET), never to the public release
+#   publish  runs only when every fetch job passed: it checks each planned source has a snapshot, merges the
+#            per-source lakes, re-checks every contract, then `export-public` publishes a new immutable
+#            release-<run date> tag to the hub. A release is never partial: if any source fails, nothing is
+#            published or tagged and report-failure opens an issue instead. Skipped with a notice when no
+#            Hugging Face token is set; runs only on main.
+#   report-failure  opens (or comments on) one issue when any job fails on main
+#
+# Secrets: HF_TOKEN is the one secret. HF_PUBLISH_TOKEN and HF_CRAWL_TOKEN, if ever set, override it for the
+# publish and the raw archive (narrower tokens); they are optional.
+#
+# Docs: docs/dev/automation.md. Restricted sources (WHO GHO) are never fetched here: they are read live.
 name: Weekly refresh
 
 on:
   schedule:
+    # Tuesday 06:17 UTC; off the hour, because scheduled runs are delayed under load at :00.
     - cron: "17 6 * * 2"
   workflow_dispatch:
+    inputs:
+      source:
+        description: "Refresh only this source id (blank: every public source). A single source never publishes."
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
 
+# One refresh at a time; a run never cancels another mid-fetch.
 concurrency:
   group: refresh
   cancel-in-progress: false
 
 jobs:
-  refresh:
-    name: Refresh and check contracts
+  plan:
+    name: List the public sources
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    permissions:
-      contents: read
+    timeout-minutes: 10
+    outputs:
+      sources: ${{ steps.list.outputs.sources }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: "3.12"
-
+          enable-cache: false
       - name: Install dependencies (locked)
         run: uv sync --locked --no-dev
-
-      - name: Refresh every source
-        run: uv run --no-sync health-data-registry refresh --all
-
-      - name: Check every source against its contract
-        run: uv run --no-sync health-data-registry check-contracts
-
-      # -----------------------------------------------------------------------------------------
-      # PUBLISHING TO THE OPEN DATA HUB IS DISABLED until the maintainer:
-      #   1. adds the repository secret HF_TOKEN (a fine-grained write token for the dataset only), and
-      #   2. sets the repository variable HDR_LAKE to the hub dataset id, e.g. <org>/<dataset-name>.
-      # Until HDR_LAKE is set this step is skipped. `export-public` uploads only sources whose catalog
-      # licence allows redistribution; WHO and other restricted sources get a card and no data files.
-      # It runs the pre-publish checks first and uploads nothing if one fails, then tags the commit
-      # release-<run date>. It runs only on main, after the contract check passed. The variable is
-      # passed as HUB_REPO, not HDR_LAKE, because HDR_LAKE in the environment names the local lake.
-      # -----------------------------------------------------------------------------------------
-      - name: Publish the release to the open data hub
-        if: vars.HDR_LAKE != '' && github.ref == 'refs/heads/main'
+      - name: List sources from the catalog
+        id: list
         env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HUB_REPO: ${{ vars.HDR_LAKE }}
+          ONLY: ${{ inputs.source }}
         run: |
-          if [ -z "$HF_TOKEN" ]; then
-            echo "::error::HDR_LAKE is set but the HF_TOKEN secret is missing"
+          uv run --no-sync python - <<'PY'
+          import json, os, re, sys
+          from health_data_registry.registry import load_registry
+
+          reg = load_registry()
+          public = sorted(
+              ds.id for ds in reg
+              if ds.entry.licence.redistribution and getattr(ds.entry, "tier", "public") == "public"
+          )
+          only = os.environ.get("ONLY", "").strip()
+          if only:
+              if not re.fullmatch(r"[a-z][a-z0-9_]{1,62}", only) or only not in public:
+                  print(f"::error::{only!r} is not a public source; choose one of {', '.join(public)}")
+                  sys.exit(1)
+              public = [only]
+          print("sources:", ", ".join(public))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"sources={json.dumps(public)}\n")
+          PY
+
+  fetch:
+    name: Fetch ${{ matrix.source }}
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # One fetch per source at a time, across runs as well as within this one.
+    concurrency:
+      group: refresh-fetch-${{ matrix.source }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        source: ${{ fromJSON(needs.plan.outputs.sources) }}
+    env:
+      HDR_LAKE: ${{ github.workspace }}/lake
+      SOURCE: ${{ matrix.source }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+          # Nothing from another run's cache reaches a published release.
+          enable-cache: false
+      - name: Install dependencies (locked)
+        run: uv sync --locked --no-dev
+      - name: Fetch the source into a fresh lake
+        run: uv run --no-sync health-data-registry fetch "$SOURCE"
+      - name: Keep this source's lake for the publish job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lake-${{ matrix.source }}
+          path: lake/
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 7
+
+  raw:
+    name: Archive raw bytes (private, optional)
+    needs: [plan, fetch]
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Is a private raw archive configured?
+        id: gate
+        env:
+          HF_TOKEN: ${{ secrets.HF_CRAWL_TOKEN || secrets.HF_TOKEN }}
+          RAW_DATASET: ${{ vars.HDR_RAW_DATASET }}
+        run: |
+          if [ -z "$RAW_DATASET" ]; then
+            echo "::notice::Raw bytes not archived: set the repository variable HDR_RAW_DATASET to a PRIVATE dataset named <owner>/health-data-registry-ops-raw-archive (docs/dev/naming.md)."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          elif [ -z "$HF_TOKEN" ]; then
+            echo "::notice::Raw bytes not archived: no HF_TOKEN secret (or HF_CRAWL_TOKEN override)."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.gate.outputs.go == 'true'
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        if: steps.gate.outputs.go == 'true'
+        with:
+          python-version: "3.12"
+          enable-cache: false
+      - name: Install dependencies (locked)
+        if: steps.gate.outputs.go == 'true'
+        run: uv sync --locked --no-dev
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.go == 'true'
+        with:
+          pattern: lake-*
+          path: lake/
+          merge-multiple: true
+      - name: Upload raw bytes and fetch logs to the private dataset
+        if: steps.gate.outputs.go == 'true'
+        env:
+          HF_TOKEN: ${{ secrets.HF_CRAWL_TOKEN || secrets.HF_TOKEN }}
+          RAW_DATASET: ${{ vars.HDR_RAW_DATASET }}
+        run: |
+          # Only the governed name is accepted (naming.py, docs/dev/naming.md), so the crawl token's repo list holds.
+          want=$(uv run --no-sync python -m health_data_registry.naming --owner "${RAW_DATASET%%/*}" ops raw-archive) \
+            || { echo "::error::HDR_RAW_DATASET's owner is not a Hugging Face user or organisation name"; exit 1; }
+          if [ "$RAW_DATASET" != "$want" ]; then
+            echo "::error::HDR_RAW_DATASET must be $want (docs/dev/naming.md)"
             exit 1
           fi
-          uv run --no-sync health-data-registry export-public --to "hf://datasets/$HUB_REPO"
+          # raw/<sha256> is content-addressed, so a file already archived is the same bytes.
+          uv run --no-sync hf upload "$RAW_DATASET" lake . --repo-type dataset --private \
+            --include "raw/*" --include "fetch_log/*" \
+            --commit-message "Raw bytes and fetch logs, run ${GITHUB_RUN_ID}"
 
+  publish:
+    name: Check and publish the release
+    needs: [plan, fetch]
+    # Only a full refresh on main publishes, and only when every fetch passed (success() is explicit so the
+    # rule can't be lost by a later edit); a single-source run never does.
+    if: ${{ success() && github.ref == 'refs/heads/main' && !inputs.source }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      HDR_LAKE: ${{ github.workspace }}/lake
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+          enable-cache: false
+      - name: Install dependencies (locked)
+        run: uv sync --locked --no-dev
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: lake-*
+          path: lake/
+          merge-multiple: true
+      - name: Every planned source has a snapshot
+        env:
+          SOURCES: ${{ needs.plan.outputs.sources }}
+        run: |
+          missing=$(jq -r '.[]' <<<"$SOURCES" | while read -r id; do
+            [ -s "lake/datasets/$id/LATEST" ] || echo "$id"
+          done)
+          if [ -n "$missing" ]; then
+            echo "::error::No snapshot for: $(echo "$missing" | paste -sd, -). Nothing is published or tagged."
+            exit 1
+          fi
+      - name: Cross-check the catalog, contracts and semantic models
+        run: uv run --no-sync health-data-registry validate
+      - name: Check every source against its contract
+        run: uv run --no-sync health-data-registry check-contracts
+      - name: Stage the release locally (pre-publish checks, no upload)
+        run: uv run --no-sync health-data-registry export-public --to build/release-preview
+      # export-public tags the hub commit release-<run date> (release-<run date>.N for a correction); a tag is
+      # never moved or deleted. It runs its own pre-publish checks and uploads nothing if one fails.
+      - name: Publish the release and tag it on the open data hub
+        env:
+          HF_TOKEN: ${{ secrets.HF_PUBLISH_TOKEN || secrets.HF_TOKEN }}
+          HF_HUB_DISABLE_TELEMETRY: "1"
+          HDR_PRIVATE_HF_OWNER: ${{ vars.HDR_PRIVATE_HF_OWNER }}
+        run: |
+          hub_repo=$(uv run --no-sync python -m health_data_registry.naming public)
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::notice::Not published: add the HF_TOKEN secret with write access to $hub_repo. The release was staged and checked."
+            exit 0
+          fi
+          uv run --no-sync health-data-registry export-public --to "hf://datasets/$hub_repo"
       - name: Keep the manual publish checklist
-        if: vars.HDR_LAKE != '' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: publish-checklist
-          path: build/hub/publish-checklist.md
+          path: build/release-preview/publish-checklist.md
           if-no-files-found: ignore
+          retention-days: 30
 
   report-failure:
     name: Open or update the failure issue
-    needs: refresh
-    if: failure()
+    needs: [plan, fetch, raw, publish]
+    if: ${{ failure() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      issues: write
+      issues: write # open or comment on the failure issue
     steps:
       - name: Open or comment on the refresh-failure issue
         env:
@@ -84,10 +255,10 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TITLE: "Weekly refresh failed"
         run: |
-          body="The weekly refresh or contract check failed: $RUN_URL
+          body="The weekly refresh, contract check or publish failed: $RUN_URL
 
           A source may have changed shape, moved, or be down. Check the run log, then update the
-          adapter or contract in a pull request."
+          adapter or contract in a pull request. No release is published or tagged until every source passes."
           number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
             --search "\"$TITLE\" in:title" --json number,title \
             --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
