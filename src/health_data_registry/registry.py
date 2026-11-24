@@ -87,14 +87,61 @@ class Reshape(_Strict):
     wide_to_long: WideToLong
 
 
+class TableauView(_Strict):
+    """One dashboard view (the URL name after /views/<workbook>/) and the worksheets read from it.
+
+    Each worksheet maps to the sha256 of its column list (adapters/tableau.layout_hash), recorded when the
+    contract was written: a dashboard whose columns change no longer matches, and the load stops.
+    """
+
+    view: str
+    worksheets: dict[str, str]
+    # A count the chart carries as a number while the dashboard shows it suppressed on the same mark (its tooltip
+    # reads "<16"): count field -> the field whose marker suppresses it. Where that marker is shown, the count is
+    # read as suppressed (empty, with the marker in "<count> flag"), never as the number behind the chart.
+    suppressed_by: dict[str, str] = {}
+
+    @field_validator("suppressed_by")
+    @classmethod
+    def _suppressed_by(cls, v: dict[str, str]) -> dict[str, str]:
+        if any(not k.strip() or not m.strip() or k == m for k, m in v.items()):
+            raise ValueError("suppressed_by maps a count field to another field that carries its marker")
+        return v
+
+    @field_validator("view")
+    @classmethod
+    def _view(cls, v: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", v):
+            raise ValueError("view must be the view's URL name (letters, digits, - and _)")
+        return v
+
+    @field_validator("worksheets")
+    @classmethod
+    def _hashes(cls, v: dict[str, str]) -> dict[str, str]:
+        if not v or not all(re.fullmatch(r"[0-9a-f]{64}", h) for h in v.values()):
+            raise ValueError("worksheets must map each worksheet name to its 64-character layout sha256")
+        return v
+
+
+class Tableau(_Strict):
+    views: list[TableauView]
+
+
 class Source(_Strict):
-    portal: Literal["socrata", "who_gho", "https_csv"]
+    portal: Literal["socrata", "who_gho", "https_csv", "tableau"]
     host: str
     dataset: str
     landing_url: str
     api_url: str
     encoding: str = "utf-8"  # https_csv only: the file's text encoding, from the publisher's documentation
     reshape: Reshape | None = None  # https_csv only
+    tableau: Tableau | None = None  # tableau only: the views and worksheets read
+    # A government host (.gov, .mi.us, a county's or city's own domain, a state-run dashboard host): by the
+    # maintainer's access policy a robots.txt disallow there does not stop the crawler (the pacing, the honest
+    # user agent and every other rule still apply). Default false: robots.txt is honoured in full.
+    government_host: bool = False
+    # The host answers only a real browser (browser_fetch.py): Tableau Server views, michigan.gov behind Akamai.
+    browser: bool = False
 
     @field_validator("host")
     @classmethod
@@ -114,6 +161,10 @@ class Source(_Strict):
     def _csv_only(self) -> Source:
         if self.portal != "https_csv" and (self.reshape is not None or self.encoding != "utf-8"):
             raise ValueError("encoding and reshape apply only to the https_csv portal")
+        if (self.portal == "tableau") != (self.tableau is not None):
+            raise ValueError(
+                "a tableau source lists its views (tableau.views), and only a tableau source does"
+            )
         if self.reshape is not None:
             try:
                 re.compile(self.reshape.wide_to_long.key_pattern)

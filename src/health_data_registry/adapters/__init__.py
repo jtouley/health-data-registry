@@ -7,7 +7,7 @@ the raw store, and hand back records keyed by the publisher's own field names; t
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from health_data_registry.registry import CatalogEntry
@@ -20,6 +20,8 @@ Fetcher = Callable[[str], RawFetch]
 class Page:
     fetch: RawFetch
     records: list[dict[str, Any]]
+    # The sha256 of each table's column list this page was read from (Tableau worksheets), for the manifest.
+    layout: dict[str, str] = field(default_factory=dict)
 
 
 def pages(
@@ -37,14 +39,20 @@ def pages(
         from health_data_registry.adapters import https_csv
 
         yield from https_csv.pages(entry, fetcher, max_rows=max_rows, fields=fields)
+    elif entry.source.portal == "tableau":
+        from health_data_registry.adapters import tableau
+
+        yield from tableau.pages(entry, fetcher, max_rows=max_rows, fields=fields)
     else:  # pragma: no cover - the catalog model forbids other portals
         raise ValueError(f"no adapter for portal {entry.source.portal}")
 
 
 def publisher_fields(entry: CatalogEntry, fetcher: Fetcher) -> set[str]:
     """The field names the publisher serves today, for the contract drift check (any portal)."""
-    from health_data_registry.adapters import https_csv, socrata, who_gho
+    from health_data_registry.adapters import https_csv, socrata, tableau, who_gho
 
+    if entry.source.portal == "tableau":
+        return tableau.publisher_fields(entry, fetcher)
     if entry.source.portal == "socrata":
         return socrata.publisher_fields(entry, fetcher)
     if entry.source.portal == "who_gho":
