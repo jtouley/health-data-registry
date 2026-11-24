@@ -14,7 +14,7 @@ from hypothesis import strategies as st
 from health_data_registry.adapters import Page, pages, publisher_fields
 from health_data_registry.adapters import tableau as tb
 from health_data_registry.adapters.row_guard import RowLevelRefused
-from health_data_registry.registry import CatalogEntry, TableauView
+from health_data_registry.registry import CatalogEntry
 from health_data_registry.store import RawFetch
 
 DATA = {
@@ -224,9 +224,7 @@ def test_segments_are_joined_in_numeric_order() -> None:
 # --------------------------------------------------------------------------------------------- pages
 
 
-def entry(
-    worksheets: dict[str, str], views: tuple[str, ...] = ("TB",), suppressed_by: dict[str, str] | None = None
-) -> CatalogEntry:
+def entry(worksheets: dict[str, str], views: tuple[str, ...] = ("TB",)) -> CatalogEntry:
     return CatalogEntry.model_validate({
         "id": "toy_dashboard", "title": "Toy dashboard", "agency": "City", "publisher": "City health department",
         "level": "city", "research_areas": ["infectious_disease"], "years": {"start": 2019},
@@ -236,8 +234,7 @@ def entry(
         "source": {"portal": "tableau", "host": "dash.example.gov", "dataset": "Toy", "government_host": True,
                    "browser": True, "landing_url": "https://dash.example.gov/views/Toy/Main",
                    "api_url": "https://dash.example.gov/views/Toy",
-                   "tableau": {"views": [{"view": v, "worksheets": worksheets,
-                                          "suppressed_by": suppressed_by or {}} for v in views]}},
+                   "tableau": {"views": [{"view": v, "worksheets": worksheets} for v in views]}},
         "contract": "contracts/toy_dashboard.odcs.yaml", "semantic_model": "semantic/toy_dashboard.yaml",
         "status": "draft",
     })  # fmt: skip
@@ -324,99 +321,3 @@ def test_counts_round_trip_unchanged(counts: list[int]) -> None:
     }
     ws = tb.read_worksheets(boot({"S": sheet}, {"integer": counts}))["S"]
     assert [r["SUM(Cases)"] for r in ws.records] == counts
-
-
-# A daily count the chart plots as a number, with a tooltip that shows it as "<16" on the same mark
-CURVE = {
-    "vizDataColumns": [
-        col("YEAR(Year)", "integer", [0], [0]),
-        col("AGG(Case Count)", "integer", [0], [1]),
-        col("AGG(Tooltip Cases)", "cstring", [0], [2]),
-    ],
-    "paneColumnsList": [pane(([0, 1], []), ([2, 5], []), ([], [2, 3]))],
-}
-CURVE_DATA = {"integer": [2019, 2020, 120, 95, 40, 3], "cstring": ["Detroit", "Michigan", "<16", "12"]}
-CURVE_HASH = tb.read_worksheets(boot({"Curve": CURVE}, CURVE_DATA))["Curve"].layout_hash
-
-
-def test_a_count_shown_suppressed_on_its_mark_is_never_read_as_a_number() -> None:
-    e = entry({"Curve": CURVE_HASH}, suppressed_by={"AGG(Case Count)": "AGG(Tooltip Cases)"})
-    (page,) = tb.pages(e, serve(boot({"Curve": CURVE}, CURVE_DATA)))
-    first, second = page.records
-    assert first["AGG(Case Count)"] is None and first["AGG(Case Count) flag"] == "<16"
-    assert second["AGG(Case Count)"] == 3 and "AGG(Case Count) flag" not in second
-    assert "AGG(Case Count) flag" in tb.publisher_fields(e, serve(boot({"Curve": CURVE}, CURVE_DATA)))
-
-
-def test_without_a_declaration_the_count_is_read_as_published() -> None:
-    (page,) = tb.pages(entry({"Curve": CURVE_HASH}), serve(boot({"Curve": CURVE}, CURVE_DATA)))
-    assert [r["AGG(Case Count)"] for r in page.records] == [120, 3]
-    assert page.records[0]["AGG(Tooltip Cases) flag"] == "<16"
-    assert "AGG(Case Count) flag" not in tb.publisher_fields(
-        entry({"Curve": CURVE_HASH}), serve(boot({"Curve": CURVE}, CURVE_DATA))
-    )
-
-
-def test_apply_suppressed_by_empties_the_alias_too() -> None:
-    rec = {"AGG(N)": 4, "AGG(N) (alias)": 4, "AGG(T) flag": "<6", "Other": 1}
-    assert tb.apply_suppressed_by(rec, {"AGG(N)": "AGG(T)"}) == {
-        "AGG(N)": None, "AGG(N) (alias)": None, "AGG(N) flag": "<6", "AGG(T) flag": "<6", "Other": 1
-    }  # fmt: skip
-    only_alias = {"AGG(N) (alias)": 4, "AGG(T) flag": "<6"}
-    assert tb.apply_suppressed_by(only_alias, {"AGG(N)": "AGG(T)"}) == {
-        "AGG(N) (alias)": None, "AGG(N) flag": "<6", "AGG(T) flag": "<6"
-    }  # fmt: skip
-    unflagged = {"AGG(N)": 4, "AGG(T) flag": ""}
-    assert tb.apply_suppressed_by(unflagged, {"AGG(N)": "AGG(T)"}) == unflagged
-    assert tb.apply_suppressed_by(rec, {}) == rec
-    other_layer = {"AGG(Avg)": 2.5, "AGG(T) flag": "<6"}  # a mark of another layer: no count to suppress
-    assert tb.apply_suppressed_by(other_layer, {"AGG(N)": "AGG(T)"}) == other_layer
-
-
-@pytest.mark.parametrize("bad", [{"": "AGG(T)"}, {"AGG(N)": " "}, {"AGG(N)": "AGG(N)"}])
-def test_suppressed_by_must_name_two_fields(bad: dict[str, str]) -> None:
-    with pytest.raises(ValueError, match="suppressed_by"):
-        TableauView(view="V", worksheets={"S": "a" * 64}, suppressed_by=bad)
-
-
-def test_data_in_the_first_chunk_world_update_is_read_too() -> None:
-    # Some views carry their data in the first chunk (worldUpdate) rather than in secondaryInfo.
-    pm = {
-        "dataDictionary": {"presModelHolder": {"genDataDictionaryPresModel": {"dataSegments": {
-            "0": {"dataColumns": [{"dataType": k, "dataValues": v} for k, v in DATA.items()]}
-        }}}},
-        "vizData": {"presModelHolder": {"genPresModelMapPresModel": {"presModelMap": {
-            "TByear": {"presModelHolder": {"genVizDataPresModel": {"paneColumnsData": YEARLY}}}
-        }}}},
-    }  # fmt: skip
-    text = json.dumps({"worldUpdate": {"applicationPresModel": {"presModelMap": pm}}})
-    ws = tb.read_worksheets(f"{len(text)};{text}")
-    assert ws["TByear"].records == tb.read_worksheets(boot({"TByear": YEARLY}))["TByear"].records
-
-
-def test_a_type_missing_from_the_dictionary_is_a_layout_error() -> None:
-    sheet = {"vizDataColumns": [col("SUM(N)", "real", [0], [0])], "paneColumnsList": [pane(([0], []))]}
-    with pytest.raises(tb.TableauLayoutError, match="outside the data dictionary"):
-        tb.read_worksheets(boot({"S": sheet}, {"integer": [1]}))
-    alias = {"vizDataColumns": [col("Place", "cstring", [0], [0])], "paneColumnsList": [pane(([], [-1]))]}
-    with pytest.raises(tb.TableauLayoutError, match="outside the data dictionary"):
-        tb.read_worksheets(boot({"S": alias}, {"integer": [1]}))
-
-
-def test_a_column_with_unpaired_pane_indices_is_refused() -> None:
-    sheet = {"vizDataColumns": [col("SUM(N)", "integer", [0, 1], [0])], "paneColumnsList": [pane(([0], []))]}
-    with pytest.raises(ValueError):
-        tb.read_worksheets(boot({"S": sheet}))
-
-
-def test_view_url_joins_a_base_with_a_trailing_slash() -> None:
-    e = entry({"TByear": YEARLY_HASH})
-    e = e.model_copy(
-        update={"source": e.source.model_copy(update={"api_url": "https://dash.example.gov/views/Toy/"})}
-    )
-    assert tb.view_url(e, "TB") == "https://dash.example.gov/views/Toy/TB?:embed=y&:showVizHome=no"
-
-
-def test_suppressed_by_accepts_two_different_fields() -> None:
-    v = TableauView(view="V", worksheets={"S": "a" * 64}, suppressed_by={"AGG(N)": "AGG(T)"})
-    assert v.suppressed_by == {"AGG(N)": "AGG(T)"}

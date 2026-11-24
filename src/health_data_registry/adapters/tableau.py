@@ -10,14 +10,10 @@ up each column (``paneColumnsData``). This module reads those structures and not
   value) and ``<caption> (alias)`` (the text shown).
 - the dashboard's own suppression is kept as published: an aggregated count shown as "<6" (or "<11", ">=5"
   ...) is never turned into a number. Its field is left empty and ``<caption> flag`` holds the marker exactly as shown.
-- a count the chart carries as a number while the dashboard shows it suppressed on the same mark (a tooltip
-  reading "<16") is read as suppressed too, where the catalog entry declares which field carries its marker
-  (``suppressed_by``).
 - each worksheet's column list is hashed (``layout_hash``) and must equal the hash in the catalog entry, so a
   redesigned dashboard stops the load instead of shifting a column.
 - a worksheet whose grain is one person is refused (adapters/row_guard.py).
-- workbook files (.twb, .twbx) are never downloaded. ``<view>.csv`` is not used: on the Detroit Health
-  Department's server a dashboard view's .csv answered 404 (checked 2026-11-24); bootstrapSession works everywhere.
+- workbook files (.twb, .twbx) are never downloaded; ``<view>.csv`` is not used by this adapter.
 
 The fetcher hands back the captured bootstrapSession for a view URL (crawl.py opens the view in the browser
 fetcher and captures the answer whose path contains ``/bootstrapSession/``).
@@ -254,24 +250,6 @@ def _flag_suppressed(record: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def apply_suppressed_by(record: Mapping[str, Any], suppressed_by: Mapping[str, str]) -> dict[str, Any]:
-    """Empty a count wherever the dashboard shows its declared marker field suppressed ("<16") on the same mark.
-
-    The count's own field and its alias are emptied and ``<count> flag`` holds the marker as shown, so the number
-    behind a suppressed bar is never read.
-    """
-    out = dict(record)
-    for count, marker_field in suppressed_by.items():
-        marker = record.get(marker_field + FLAG_SUFFIX)
-        if not marker or (count not in record and count + ALIAS_SUFFIX not in record):
-            continue  # nothing shown suppressed, or this mark (another layer of the chart) has no such count
-        for k in (count, count + ALIAS_SUFFIX):
-            if k in out:
-                out[k] = None
-        out[count + FLAG_SUFFIX] = marker
-    return out
-
-
 def view_url(entry: CatalogEntry, view: str) -> str:
     base = entry.source.api_url.rstrip("/")
     return f"{base}/{view}?:embed=y&:showVizHome=no"
@@ -305,11 +283,7 @@ def pages(
             check_grain(f"{entry.id}: {view.view}/{ws_name}", ws.captions, ws.by_caption())
             layout[f"{view.view}/{ws_name}"] = ws.layout_hash
             for r in ws.records:
-                rec = {
-                    VIEW_FIELD: view.view,
-                    WORKSHEET_FIELD: ws_name,
-                    **apply_suppressed_by(r, view.suppressed_by),
-                }
+                rec = {VIEW_FIELD: view.view, WORKSHEET_FIELD: ws_name, **r}
                 recs.append({k: v for k, v in rec.items() if k in set(fields)} if fields else rec)
         if left is not None:
             recs, left = recs[: max(0, left)], max(0, left - len(recs))
@@ -325,5 +299,4 @@ def publisher_fields(entry: CatalogEntry, fetcher: Fetcher) -> set[str]:
         for ws_name in view.worksheets:
             if ws_name in sheets:
                 out |= set(sheets[ws_name].fields)
-        out |= {count + FLAG_SUFFIX for count in view.suppressed_by}
     return out
