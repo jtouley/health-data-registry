@@ -322,3 +322,63 @@ def test_a_flag_column_cant_be_missing_coded(tmp_path: Path) -> None:
 def test_text_counts_with_a_fraction_stop_the_load(tmp_path: Path) -> None:
     with pytest.raises(duckdb.Error, match="ytd: a value has a fraction"):
         _setup(tmp_path, [rec("Michigan", 2025, 1, 1, "1.5", None)])
+
+
+def test_compiled_running_total_sql_is_exact(tmp_path: Path) -> None:
+    """The whole compiled query, pinned: a change to it should be a reviewed change to tests/golden."""
+    reg = _registry(tmp_path)
+    cm = compile_metric(
+        reg.get("toy_cases"), "annual", group_by=["state", "year"], period={"start": 2023, "end": 2023}
+    )
+    golden = (
+        (Path(__file__).parent / "golden" / "cumulative_annual.sql").read_text().strip().replace("\n", " ")
+    )
+    assert cm.sql == golden
+    assert cm.params == [2023, 2023]
+
+
+SEQ_SEMANTIC = SEMANTIC.replace(
+    "  - {name: week, column: week, type: time}\n",
+    "  - {name: week, column: week, type: time}\n  - {name: epi_seq, column: week, type: time}\n"
+    "  - {name: span_id, column: year, type: time}\n",
+).replace(
+    "  - {name: weekly,",
+    "  - name: by_seq\n    description: Running total by another order\n    measure: ytd\n"
+    "    aggregation: cumulative_latest\n    order_by: epi_seq\n    exclude_total_rows: false\n  - {name: weekly,",
+)
+
+
+def test_other_period_and_order_names_read_plainly(tmp_path: Path) -> None:
+    records = [
+        rec("Ohio", 2023, 1, 1, 1, None),
+        rec("Ohio", 2023, 2, 1, 2, None),
+        rec("US RESIDENTS", 2023, 2, 1, 9, None),
+    ]
+    reg = _registry(tmp_path, SEQ_SEMANTIC)
+    lake = tmp_path / "lake"
+    lake.mkdir()
+    f = tmp_path / "p.ndjson"
+    write_ndjson(f, records)
+    build_snapshot(
+        lake, reg.get("toy_cases"), [raw_fetch("https://data.cdc.gov/resource/x.json", records)], [f]
+    )
+    eng = Engine(registry=reg, lake=lake)
+    out = eng.query_metric(
+        "toy_cases", "by_seq", group_by=["state", "span_id"], period={"dimension": "span_id"}
+    )
+    assert [r[:4] for r in out["rows"]] == [
+        ["OHIO", 2023, 2, "provisional: running total so far (through epi seq 2)"],
+        [
+            "US RESIDENTS",
+            2023,
+            9,
+            "provisional: running total so far (through epi seq 2)",
+        ],  # totals kept here
+    ]
+    assert out["method"] == (
+        "Running total (ytd) read at the last epi seq of each period that has a number, labelled with that epi "
+        "seq. Weekly counts are never added up, because late reports land in the running total, not the week."
+    )
+    with pytest.raises(QueryRefused) as e:
+        compile_metric(reg.get("toy_cases"), "by_seq", group_by=["state"], period={"dimension": "span_id"})
+    assert str(e.value) == "by_seq is a running total, so it is read once per span_id; group by span_id."

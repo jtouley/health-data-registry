@@ -775,7 +775,10 @@ def get_rate(
         rows: list[list[Any]] = []
         for ds, s in cases:
             got, _, _ = series_rows(engine, ds, s, locations, year, year)
-            for place, y, value, *_ in got:
+            # A rate is worked out from the year's own count only, never from an unverified restatement.
+            for place, y, value, *_ in (
+                r for r in got if r.observation_type != "subsequent_year_restatement"
+            ):
                 denom = pop.get(place)
                 rate = None if value is None or not denom else round(value / denom * 100_000, 2)
                 rows.append([place, y, s.label, value, denom, rate, ds.id, pd.id])
