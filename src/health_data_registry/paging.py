@@ -171,7 +171,7 @@ def _row_cost(row: Sequence[Any], fmt: Fmt) -> int:
         # A row in json.dumps(..., indent=2) at depth 2: its own lines, each indented 4 more, plus ",\n".
         return len(json.dumps(list(row), indent=2, default=str)) + 4 * (len(row) + 2) + 2
     buf = io.StringIO()
-    csv.writer(buf, lineterminator="\n").writerow(["" if v is None else v for v in row])
+    csv.writer(buf, lineterminator="\n").writerow(row)  # csv writes None as an empty cell, as render does
     return len(buf.getvalue())
 
 

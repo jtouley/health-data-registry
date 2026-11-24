@@ -312,7 +312,8 @@ def test_public_domain_hub_source_gets_a_static_download_link(
     )  # no question, no argument, no query string
     assert "legionellosis" not in " ".join(hub_urls).lower() and "?" not in " ".join(hub_urls)
     assert "Licence public-domain-us-federal" in link[0] and "cite as: CDC. Toy table." in link[0]
-    assert "sha256 " in link[0]
+    sha = e.manifest("toy_cases").release_files["toy_cases/data/toy_cases.parquet"]
+    assert len(sha) == 64 and f"), sha256 {sha}. It holds every row of" in link[0]
 
 
 def test_restricted_source_never_gets_a_download_link(
@@ -506,7 +507,7 @@ def test_pages_are_full_up_to_the_budget(registry: Registry, eng: Engine, fmt: s
         assert size <= budget
         at += len(p["rows"]) if fmt == "json" else len(csv_rows(p)[1])
         if p is not pages[-1]:
-            assert size + 2 * paging._row_cost(full[at], fmt) > budget - 400  # slack: header digits only
+            assert size + 2 * paging._row_cost(full[at], fmt) > budget - 60  # slack: header digits only
 
 
 def test_a_pin_for_other_sources_is_refused(
@@ -609,4 +610,39 @@ def test_json_last_page_says_so(registry: Registry, eng: Engine) -> None:
     assert last["notes"][0] == "This is the last page: with every page saved, the answer is complete."
     assert _respond(registry, eng, "json", n - 1, None, 30_000)["page"]["next"].endswith(
         f"page={n}, pin='{pin}')"
+    )
+
+
+def test_download_lines_only_for_public_sources_read_from_a_hub_release(
+    registry: Registry, eng: Engine
+) -> None:
+    import dataclasses
+    from types import SimpleNamespace
+
+    ds = registry.get("toy_cases")
+    m = dataclasses.replace(eng.manifest("toy_cases"), release_ref="release-2026-11-24")
+    remote: Any = SimpleNamespace(hub=SimpleNamespace(url="hf://datasets/org/hub@release-2026-11-24"))
+    hub_copy = dataclasses.replace(m, origin="hub")
+    (line,) = paging.download_lines(remote, [(ds, hub_copy)])
+    assert (
+        "sha256 not recorded." in line
+    )  # a release that doesn't list the file says so, never a made-up hash
+    assert paging.download_lines(remote, [(ds, m)]) == []  # a maintainer's lake copy has no public file
+    no_sharing = SimpleNamespace(redistribution=False)
+    restricted: Any = SimpleNamespace(id="toy_listed", entry=SimpleNamespace(licence=no_sharing))
+    assert paging.download_lines(remote, [(restricted, hub_copy)]) == []
+    assert paging.download_lines(SimpleNamespace(hub=None), [(ds, hub_copy)]) == []  # type: ignore[arg-type]
+    local: Any = SimpleNamespace(hub=SimpleNamespace(url="/some/dir"))
+    assert paging.download_lines(local, [(ds, hub_copy)]) == []
+
+
+def test_no_such_page_counts_pages_in_words(registry: Registry, eng: Engine) -> None:
+    two = _respond(registry, eng, "json", 1, None, 60_000)
+    n = two["page"]["pages"]
+    beyond = _respond(registry, eng, "json", n + 1, None, 60_000)
+    assert beyond["message"] == (
+        f"This answer has {n} pages, so there is no page {n + 1}. Ask for a page from 1 to {n}."
+    )
+    assert _respond(registry, eng, "json", 3, None, 10**9)["message"].startswith(
+        "This answer has 1 page, so "
     )
