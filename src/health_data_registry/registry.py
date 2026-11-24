@@ -45,12 +45,32 @@ class Licence(_Strict):
     terms_url: str
 
 
+class WideToLong(_Strict):
+    """A purely structural pivot of a wide file: columns named <stub><key> become one record per key.
+
+    Each `keep` column is copied unchanged onto every record; for each key (e.g. the year 2023 in
+    POPESTIMATE2023) the record gets `key_field` = the key text and, for each stub, `<stub>` = that column's
+    value exactly as published. No value is changed, computed or dropped.
+    """
+
+    keep: list[str]
+    stubs: list[str]
+    key_field: str
+    key_pattern: str = r"\d{4}"
+
+
+class Reshape(_Strict):
+    wide_to_long: WideToLong
+
+
 class Source(_Strict):
-    portal: Literal["socrata", "who_gho"]
+    portal: Literal["socrata", "who_gho", "https_csv"]
     host: str
     dataset: str
     landing_url: str
     api_url: str
+    encoding: str = "utf-8"  # https_csv only: the file's text encoding, from the publisher's documentation
+    reshape: Reshape | None = None  # https_csv only
 
     @field_validator("host")
     @classmethod
@@ -65,6 +85,14 @@ class Source(_Strict):
         if not v.startswith("https://"):
             raise ValueError("publisher URLs must be https")
         return v
+
+    @model_validator(mode="after")
+    def _csv_only(self) -> Source:
+        if self.portal != "https_csv" and (self.reshape is not None or self.encoding != "utf-8"):
+            raise ValueError("encoding and reshape apply only to the https_csv portal")
+        if self.reshape is not None:
+            re.compile(self.reshape.wide_to_long.key_pattern)
+        return self
 
 
 class GbdCause(_Strict):
@@ -317,6 +345,11 @@ class Series(_Strict):
     time_dimension: str
     case_status: str | None = None
     case_definition: str | None = None
+    # A weekly series (check_signal): its metric adds up counts per week, grouped by this within-year week.
+    # get_series never reads weekly series, so a year is never built by adding up provisional weeks.
+    week_dimension: str | None = None
+    # An age-specific series (age_adjust): counts or populations split by this age-group dimension.
+    age_dimension: str | None = None
 
 
 class SemanticModel(_Strict):
@@ -362,11 +395,19 @@ class SemanticModel(_Strict):
                 *ser.filters,
                 ser.time_dimension,
                 *([ser.location_dimension] if ser.location_dimension else []),
+                *([ser.week_dimension] if ser.week_dimension else []),
+                *([ser.age_dimension] if ser.age_dimension else []),
             ]:
                 if d not in dims:
                     raise ValueError(f"series {ser.condition} names unknown dimension {d}")
             if dims[ser.time_dimension].type != "time":
                 raise ValueError(f"series {ser.condition}: {ser.time_dimension} is not a time dimension")
+            if ser.week_dimension is not None and (
+                dims[ser.week_dimension].type != "time" or met.aggregation != "sum"
+            ):
+                raise ValueError(
+                    f"series {ser.condition}: a weekly series needs a time week_dimension and a summed metric"
+                )
             kind = measures[met.measure].kind
             if ser.measure in ("cases", "deaths", "population") and kind != "count":
                 raise ValueError(f"series {ser.condition} says {ser.measure} but its metric reads a {kind}")

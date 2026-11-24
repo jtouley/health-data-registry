@@ -1,0 +1,104 @@
+# ODPS data product: the open health data hub on Hugging Face, and the output ports it serves. Each port is one
+# catalogued source; its contract is the ODCS file in this folder whose id is the port's contractId. Follows the
+# ODPS version coffee-data-tracker's contracts/coffee-data.odps.yaml uses (Bitol ODPS v1.1.0).
+# tests/test_publish.py checks every port against the catalog and contracts, so the two never drift apart.
+apiVersion: v1.1.0
+kind: DataProduct
+id: health-data-registry-hub
+name: Open health data hub
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: >-
+    Public, population-level infectious disease data from CDC, WHO and other publishers, each table with its
+    source, version, method and reviewed contract, so clinicians, students and epidemiologists can browse,
+    preview, download or query it without running anything.
+  usage: >-
+    Read a hosted source's Parquet file from the Hugging Face dataset (pin a weekly release with
+    @release-<run date>), or ask through the health-data-registry MCP server. Listed sources have a card but no
+    data files: the MCP server and `health-data-registry fetch <source>` get them from the publisher at run time.
+  limitations: >-
+    Only sources whose licence allows redistribution are hosted (US federal public domain today). Publishers'
+    suppression and missing-value codes are kept exactly as published: an empty cell is never a zero and is
+    never filled in. Contracts are drafts until a maintainer reviews them.
+tags: [public-health, infectious-disease, surveillance, open-data, weekly]
+authoritativeDefinitions:
+  - type: license
+    url: https://github.com/jtouley/health-data-registry/blob/main/licenses/README.md
+    description: >-
+      Each source keeps its publisher's terms (recorded in catalog/<id>.yaml and shipped as LICENSE.md beside its
+      data). The code is Apache-2.0.
+inputPorts:
+  - name: data-cdc-gov
+    tags: [cdc, socrata]
+    customProperties:
+      - property: description
+        value: CDC's open data portal (Socrata SODA API), read weekly over HTTPS.
+      - property: license
+        value: public-domain-us-federal
+    authoritativeDefinitions:
+      - type: canonicalUrl
+        url: https://data.cdc.gov/
+        description: CDC open data portal.
+  - name: who-gho
+    tags: [who, odata]
+    customProperties:
+      - property: description
+        value: WHO Global Health Observatory OData API, fetched at run time only, never mirrored.
+      - property: license
+        value: CC-BY-NC-SA-3.0-IGO
+    authoritativeDefinitions:
+      - type: canonicalUrl
+        url: https://www.who.int/data/gho
+        description: WHO Global Health Observatory.
+outputPorts:
+  - name: cdc_haicviz_cdi
+    description: HAICViz - CDI (Clostridioides difficile infection, Emerging Infections Program).
+    type: tables
+    version: 0.1.0
+    contractId: cdc_haicviz_cdi
+    customProperties:
+      - {property: hosted, value: true}
+  - name: cdc_nhsn_ar_hai
+    description: NHSN antimicrobial resistance in healthcare-associated infections, 2011-2025.
+    type: tables
+    version: 0.1.0
+    contractId: cdc_nhsn_ar_hai
+    customProperties:
+      - {property: hosted, value: true}
+  - name: cdc_nndss_weekly
+    description: NNDSS weekly provisional counts of notifiable infectious diseases.
+    type: tables
+    version: 0.1.0
+    contractId: cdc_nndss_weekly
+    customProperties:
+      - {property: hosted, value: true}
+  - name: cdc_respnet
+    description: RESP-NET hospitalization rates and clinical data (COVID-NET, FluSurv-NET, RSV-NET).
+    type: tables
+    version: 0.1.0
+    contractId: cdc_respnet
+    customProperties:
+      - {property: hosted, value: true}
+  - name: who_gho_tb_incidence
+    description: WHO estimated tuberculosis incidence. Listed, not hosted (non-commercial terms).
+    type: tables
+    version: 0.1.0
+    contractId: who_gho_tb_incidence
+    customProperties:
+      - {property: hosted, value: false}
+customProperties:
+  - property: hub
+    value: One Hugging Face dataset; each source in its own folder (<source>/data/<source>.parquet) with its card.
+  - property: releases
+    value: Each weekly export is one commit tagged release-<run date>; manifest.json lists every file's sha256.
+team:
+  name: health-data-registry
+  members:
+    - username: jtouley
+      role: owner
+support:
+  - channel: issues
+    url: https://github.com/jtouley/health-data-registry/issues
+    description: Questions, wrong-number reports and dataset requests
