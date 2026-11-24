@@ -600,6 +600,86 @@ def test_harvest_notes_an_api_it_could_not_read(registry: Any, tmp_path: Path) -
     assert "note: Europe PMC could not be read" in "\n".join(s.lines())
 
 
+def test_summary_lines_in_plain_words() -> None:
+    s = doi_harvest.HarvestSummary(
+        source="icid_abstracts", year=2022, listed=3, rows=2, stored_rows=5,
+        requests={"openalex": 1, "crossref": 2}, tiers={"private": 1, "link_only": 1},
+        licences={"cc-by-nc-nd": 1, "none given": 1}, skipped=["Europe PMC could not be read (busy)"],
+    )  # fmt: skip
+    assert s.lines() == [
+        "icid_abstracts 2022: 3 DOIs listed, 2 rows written (5 in the year's store); requests: crossref 2, openalex 1",
+        "abstract text: link_only 1, private 1",
+        "licences: cc-by-nc-nd 1, none given 1",
+        "a sample: the supplement was not read in full",
+        "note: Europe PMC could not be read (busy)",
+    ]
+    empty = doi_harvest.HarvestSummary(source="x", year=1, complete=True)
+    assert empty.lines() == [
+        "x 1: 0 DOIs listed, 0 rows written (0 in the year's store); requests: none",
+        "abstract text: none",
+        "licences: none",
+        "the supplement was read in full",
+    ]
+
+
+def test_harvest_counts_licences_and_survives_a_failing_publisher(registry: Any, tmp_path: Path) -> None:
+    page = crossref_body([cr_item(1), cr_item(2, license=None)], cursor=None)
+    get = FakeApis([page])
+    s = doi_harvest.harvest(registry, tmp_path, "idweek", enrich=False, get=get)
+    assert s.licences == {CC_BY: 1, "none given": 1}
+
+    class Broken(FakeApis):
+        def __call__(self, url: str) -> RawFetch:
+            if urlsplit(url).hostname == doi.OPENALEX_HOST:
+                raise RuntimeError("the publisher answered with status 500 instead of the data")
+            return super().__call__(url)
+
+    s2 = doi_harvest.harvest(registry, tmp_path / "b", "idweek", get=Broken([page]))
+    assert s2.skipped == [
+        "OpenAlex could not be read (the publisher answered with status 500 instead of the data); its fields "
+        "are missing this run"
+    ]
+
+
+def test_harvest_default_getter_reads_robots_logs_and_paces(
+    registry: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from health_data_registry import fetch as fetch_mod
+
+    apis = FakeApis([crossref_body([cr_item(1)], cursor=None)])
+    seen: list[tuple[str, frozenset[str]]] = []
+
+    def fake_fetch(url: str, *, allowed_hosts: frozenset[str], **kw: Any) -> fetch_mod.FetchResult:
+        seen.append((url, allowed_hosts))
+        if url.endswith("/robots.txt"):
+            if "openalex" in url:
+                body = b"User-agent: *\nDisallow: /works\n"
+                return fetch_mod.FetchResult(
+                    url=url, final_url=url, status=200, content=body, content_type="text/plain",
+                    sha256=hashlib.sha256(body).hexdigest(), retrieved_at=WHEN,
+                )  # fmt: skip
+            raise FetchRefused("http_error", "none", status=404)
+        r = apis(url)
+        return fetch_mod.FetchResult(
+            url=url, final_url=url, status=200, content=r.content, content_type="application/json",
+            sha256=r.sha256, retrieved_at=WHEN,
+        )  # fmt: skip
+
+    monkeypatch.setattr(fetch_mod, "fetch", fake_fetch)
+    s = doi_harvest.harvest(registry, tmp_path, "idweek")
+    urls = [u for u, _ in seen]
+    assert urls[0] == "https://api.crossref.org/robots.txt"
+    assert all(hosts == registry.hosts for _, hosts in seen)
+    assert "https://api.openalex.org/robots.txt" in urls
+    assert not any(u.startswith("https://api.openalex.org/works") for u in urls)  # robots.txt said no
+    assert s.skipped and s.skipped[0].startswith("OpenAlex could not be read (The publisher's robots.txt")
+    assert s.rows == 1 and s.requests == {"crossref": 1, "openalex": 1, "europepmc": 1}
+    log = read_fetch_log(tmp_path, "idweek_abstracts")
+    assert [r["status"] for r in log] == ["ok", "error", "ok"]
+    assert log[0]["sha256"] == hashlib.sha256(crossref_body([cr_item(1)], cursor=None)).hexdigest()
+    assert log[0]["source"] == "idweek_abstracts" and "robots.txt" in log[1]["error"]
+
+
 def test_harvest_link_only_unverified_and_congress_supplements(registry: Any, tmp_path: Path) -> None:
     ds = registry.get("idweek_abstracts")
     sup = ds.entry.source.supplements[0]
