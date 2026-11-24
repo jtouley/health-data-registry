@@ -615,3 +615,28 @@ def test_manifest_quality_section(tmp_path: Path, hub_registry: Registry, hub_la
     ]
     with pytest.raises(PublishCheckFailed, match="not pass/warn/fail"):
         publish.quality_section([{"test": "x", "status": "ok"}])
+
+
+def test_export_never_deletes_a_directory_it_did_not_stage(tmp_path: Path) -> None:
+    """Outside review (b): `export-public --to .` must not delete the checkout."""
+    from health_data_registry.publish import STAGING_MARK, PublishCheckFailed, prepare_staging
+
+    mine = tmp_path / "checkout"
+    mine.mkdir()
+    (mine / "README.md").write_text("keep me")
+    with pytest.raises(PublishCheckFailed, match="didn't stage"):
+        prepare_staging(mine)
+    assert (mine / "README.md").read_text() == "keep me"
+    a_file = tmp_path / "f.txt"
+    a_file.write_text("x")
+    with pytest.raises(PublishCheckFailed, match="not a directory"):
+        prepare_staging(a_file)
+    fresh = tmp_path / "new" / "release"
+    prepare_staging(fresh)
+    (fresh / "old.json").write_text("{}")
+    prepare_staging(fresh)  # an earlier staging is emptied
+    assert sorted(p.name for p in fresh.iterdir()) == [STAGING_MARK]
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    prepare_staging(empty)
+    assert (empty / STAGING_MARK).is_file()

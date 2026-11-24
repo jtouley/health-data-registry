@@ -52,6 +52,8 @@ HF_PREFIX = "hf://datasets/"
 STAGING = Path("build") / "hub"
 LICENCE_FILE = "LICENSE.md"
 CHECKLIST = "publish-checklist.md"
+# Written into every staging directory export-public creates: only a directory carrying it is ever emptied.
+STAGING_MARK = ".health-data-registry-staging"
 SAMPLE_ROWS = 5
 _RUN_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -619,6 +621,25 @@ def lake_snapshots(registry: Registry, lake: Path) -> dict[str, tuple[Path, Mani
     return snaps
 
 
+def prepare_staging(out: Path) -> None:
+    """Make `out` an empty staging directory, deleting only what an earlier export staged there.
+
+    A missing or empty directory is used as is; one export-public staged before (it carries STAGING_MARK) is
+    emptied; anything else, such as the checkout (`--to .`) or a home folder, is refused and left untouched.
+    """
+    if out.is_symlink() or (out.exists() and not out.is_dir()):
+        raise PublishCheckFailed(f"{out} is not a directory export-public can write a release into")
+    if out.is_dir() and any(out.iterdir()):
+        if not (out / STAGING_MARK).is_file():
+            raise PublishCheckFailed(
+                f"{out} already has files that export-public didn't stage, so nothing was written or deleted. "
+                "Give --to a new or empty directory."
+            )
+        shutil.rmtree(out)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / STAGING_MARK).write_text("Staged by health-data-registry export-public; safe to delete.\n")
+
+
 def stage(
     registry: Registry,
     lake: Path,
@@ -637,9 +658,7 @@ def stage(
     snaps = lake_snapshots(registry, lake)
     rid = release_id(run_date, [m.snapshot_id for _, m in snaps.values()])
     plan = plan or ReleasePlan(tag=release_tag(run_date))
-    if out.exists():
-        shutil.rmtree(out)
-    out.mkdir(parents=True)
+    prepare_staging(out)
     release: dict[str, Any] = {
         "release_id": rid,
         "run_date": run_date,
@@ -912,7 +931,7 @@ def export_public(
 
 def upload_files(out: Path) -> list[Path]:
     """What goes to the Hub: everything staged but the manual checklist."""
-    return sorted(p for p in out.rglob("*") if p.is_file() and p.name != CHECKLIST)
+    return sorted(p for p in out.rglob("*") if p.is_file() and p.name not in (CHECKLIST, STAGING_MARK))
 
 
 def _tagged_release(api: Any, repo_id: str, tag: str) -> str | None:
