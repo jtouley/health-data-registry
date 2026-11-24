@@ -78,6 +78,9 @@ class Manifest:
     quality: dict[str, Any] = field(
         default_factory=dict
     )  # the release's data-test results (publish.quality_section)
+    # Dashboard sources: the sha256 of each worksheet's column list read ("<view>/<worksheet>" -> sha256), so a
+    # redesign is visible in provenance as well as stopping the load.
+    layouts: dict[str, str] = field(default_factory=dict)
 
     @staticmethod
     def read(path: Path) -> Manifest:
@@ -209,6 +212,7 @@ def build_snapshot(
     records_files: Sequence[Path],
     *,
     partial: bool = False,
+    layouts: dict[str, str] | None = None,
 ) -> Manifest:
     """Normalise newline-delimited JSON record files (publisher field names, raw values) into a snapshot."""
     if not fetches:
@@ -252,6 +256,7 @@ def build_snapshot(
             licence=ds.entry.licence.id,
             redistribution=ds.entry.licence.redistribution,
             partial=partial,
+            layouts=dict(layouts or {}),
         )
         (tmp / "manifest.json").write_text(json.dumps(asdict(manifest), indent=2) + "\n", encoding="utf-8")
         out.parent.mkdir(parents=True, exist_ok=True)

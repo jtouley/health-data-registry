@@ -61,8 +61,10 @@ def fetch_live(ds: Dataset, get: Any) -> LiveTable:
     fields = sorted({c.source_field for c in ds.contract.columns})
     records: list[dict[str, Any]] = []
     fetches: list[RawFetch] = []
+    layouts: dict[str, str] = {}
     for page in pages(ds.entry, get, fields=fields):
         fetches.append(page.fetch)
+        layouts.update(page.layout)
         records += [{k: (None if v is None else str(v)) for k, v in r.items()} for r in page.records]
     if not fetches:
         raise ValueError(f"{ds.id}: the publisher returned nothing")
@@ -83,6 +85,7 @@ def fetch_live(ds: Dataset, get: Any) -> LiveTable:
         partial=False,
         origin="publisher",
         notes=[attribution(ds)],
+        layouts=layouts,
     )
     return LiveTable(records=records, manifest=m, fetched=time.monotonic())
 
