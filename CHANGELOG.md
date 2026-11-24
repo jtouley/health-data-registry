@@ -15,7 +15,7 @@ All notable changes to this project are documented here. The format follows
   (bug, dataset request, wrong number).
 - `licenses/README.md`: what may be mirrored for each class of source.
 - CI on every pull request and push to `main`: ruff, mypy, pytest with coverage on Python 3.12 and 3.13.
-- CodeQL (Python and Actions), OpenSSF Scorecard, a pull request size check, and Dependabot for uv and
+- CodeQL (Python and Actions), OpenSSF Scorecard, and Dependabot for uv and
   GitHub Actions. Every action is pinned to a commit SHA.
 - Release workflow: sdist and wheel, CycloneDX SBOM, Sigstore signatures, SLSA provenance, and PyPI trusted
   publishing.
