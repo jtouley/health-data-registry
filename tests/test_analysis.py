@@ -334,7 +334,7 @@ def test_rate_matches_hand_computation_and_garwood(env: tuple[Registry, Engine])
         "not age-standardised" in n for n in out["notes"]
     )
     assert any("toy_weekly: unreliable rates are flagged by the source's own rule" in n for n in out["notes"])
-    assert any(n.startswith("Source: toy_pop") for n in out["notes"])
+    assert any(n.startswith("Provenance for toy_pop: ") and "raw file sha256 " in n for n in out["notes"])
 
 
 def test_rate_flags_unreliable_partial_and_suppressed_never_zero(env: tuple[Registry, Engine]) -> None:

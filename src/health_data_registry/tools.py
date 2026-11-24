@@ -580,7 +580,10 @@ def series_rows(
             label = places.get(r[0]) or by_key.get(loc_col.canonical_label(raw)) or raw
             partial = loc_col.partial_note(raw) if geo.place(label) else None
         year = r[n_keys - 1]
-        status = str(get(r, "period_status") or "")
+        # Every row says how final it is, so a running total part way through a year never reads as final.
+        status = str(get(r, "period_status") or "") or (
+            "the publisher marks no provisional or final status for this row"
+        )
         if get(r, "suppressed_rows"):
             n_empty = int(get(r, "suppressed_rows"))
             status = (
@@ -592,16 +595,39 @@ def series_rows(
         )  # fmt: skip
         r_status = str(get(r, "restated_status") or "")
         if r_status.startswith("unverified_restatement"):
+            revised = (
+                f"{ds.entry.agency}'s revised provisional figure, from the {int(year) + 1} table "
+                f"({r_status}); kept apart from the year-end figure, never merged with it"
+            )
             rows.append(
-                SeriesRow(label, year, get(r, "restated"), r_status, None, None, get(r, "restated_flag"),
+                SeriesRow(label, year, get(r, "restated"), revised, None, None, get(r, "restated_flag"),
                           "subsequent_year_restatement", partial)
             )  # fmt: skip
     return rows, unmatched, str(out["method"])
 
 
+def provenance_note(ds: Dataset, m: Any) -> str:
+    """One line with everything hard rule 8 asks of a result, for one source: where the numbers come from, when
+    they were fetched, the raw files' sha256, the version, the contract status, the licence and the citation."""
+    hashes = list(m.raw_sha256 or [])
+    sha = (
+        "raw file sha256 "
+        + ", ".join(hashes[:2])
+        + (f" and {len(hashes) - 2} more (get_provenance lists every file)" if len(hashes) > 2 else "")
+        if hashes
+        else "read live, not stored (no stored raw file)"
+    )
+    release = f"; hub release {m.release_ref} ({m.release_id})" if getattr(m, "release_id", None) else ""
+    return (
+        f"Provenance for {ds.id}: {ds.entry.source.landing_url}; retrieved_at {str(m.retrieved_at)[:19]}; {sha}; "
+        f"snapshot {m.snapshot_id}; contract version {m.contract_version} (contract_status: {m.catalog_status})"
+        f"{release}; licence {ds.entry.licence.id} ({ds.entry.licence.terms_url}); cite as: {ds.entry.citation}"
+    )
+
+
 def _dataset_notes(ds: Dataset, m: Any, method: str, got: Sequence[SeriesRow]) -> list[str]:
-    """The lines every answer from a dataset carries: method, caveats, review state, partial copy, flags."""
-    notes = [f"{ds.id}: {method} Source: {ds.entry.source.landing_url}"]
+    """The lines every answer from a dataset carries: method, provenance, caveats, review state, flags."""
+    notes = [f"{ds.id}: {method}", provenance_note(ds, m)]
     notes += [f"{ds.id}: {c}" for c in ds.entry.caveats[:3]]
     if ds.entry.status != "reviewed":
         notes.append(f"{ds.id}: this source's contract is still a draft; no maintainer has reviewed it yet.")
@@ -610,9 +636,10 @@ def _dataset_notes(ds: Dataset, m: Any, method: str, got: Sequence[SeriesRow]) -
     if any(r.observation_type == "subsequent_year_restatement" for r in got):
         notes.append(
             f"{ds.id}: each year has two observations. year_end_ytd is the year's own running total at the last "
-            "week that has a number (provisional). subsequent_year_restatement is the next year's table's figure "
-            "for the same year (unverified_restatement): the publisher doesn't say they count the same thing, so "
-            "it is not a final disease count, and neither is final until a domain reviewer approves them as one."
+            f"week that has a number (provisional). subsequent_year_restatement is {ds.entry.agency}'s revised "
+            "provisional figure for the same year, from the next year's table (unverified_restatement): the "
+            "publisher doesn't say they count the same thing, so it is not a final disease count, and neither is "
+            "final until a domain reviewer approves them as one."
         )
     if ds.contract.geography_basis:
         notes.append(f"{ds.id}: places are by {ds.contract.geography_basis}.")
@@ -910,8 +937,9 @@ def query_sql(engine: Engine, sql: str, *, fmt: Fmt = "csv") -> Out:
             fmt,
             refused=getattr(e, "code", "refused"),
         )
-    src = out.get("source") or {}
+    sources = [out["source"]] if out.get("source") else list(out.get("sources") or [])
     notes = [f"SQL run: {out['sql']}", f"Method: {out['method']}"]
-    if src:
-        notes.append(f"Source: {src['title']}, fetched {src['retrieved_at'][:19]} ({src['landing_url']})")
+    for src in sources:  # every table the query read, never only the first
+        ds = engine.registry.get(src["dataset"])
+        notes.append(provenance_note(ds, engine.manifest(src["dataset"])))
     return Result(out["columns"], out["rows"], notes + list(out.get("caveats", []))).render(fmt)
