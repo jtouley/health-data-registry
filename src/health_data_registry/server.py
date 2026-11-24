@@ -13,7 +13,7 @@ from typing import Any, Literal
 from mcp import types
 from mcp.server.mcpserver import MCPServer
 
-from health_data_registry import __version__, analysis, helpers, tools
+from health_data_registry import __version__, analysis, helpers, publication, tools
 from health_data_registry.query import Engine
 from health_data_registry.registry import Registry, load_registry
 from health_data_registry.store import lake_root
@@ -231,6 +231,28 @@ def build_server(registry: Registry | None = None, engine: Engine | None = None)
         return _safe(
             lambda: tools.find_prior_work(reg, condition=condition, geography=geography, years=years,
                                           dataset=dataset, fmt=fmt),
+            fmt,
+        )  # fmt: skip
+
+    @mcp.tool(annotations=READ_ONLY)
+    def get_publication_outlook(
+        conference: str | None = None,
+        design: str | None = None,
+        data_sources: list[str] | None = None,
+        condition: str | None = None,
+        geography: str | None = None,
+        fmt: Fmt = "csv",
+    ) -> Out:
+        """How often presented abstracts at a conference (e.g. "IDWeek", "CROI") became full papers: one row per
+        stage from idea to paper, each with its source, n and 95% interval, or "unknown". Base rate only: never a
+        probability for this idea, never one number multiplied across stages, never a rate borrowed from another
+        meeting. Without a conference it lists every conference side by side. design, data_sources, condition
+        and geography are recorded but not used yet."""
+        return _safe(
+            lambda: publication.get_publication_outlook(
+                conference=conference, design=design, data_sources=data_sources, condition=condition,
+                geography=geography, fmt=fmt,
+            ),
             fmt,
         )  # fmt: skip
 

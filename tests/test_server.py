@@ -13,7 +13,7 @@ from health_data_registry.server import build_server
 SPEC_TOOLS = {
     "list_sources", "search_datasets", "describe_dataset", "suggest_datasets", "get_series",
     "get_aligned_with_gbd", "get_rate", "get_provenance", "list_caveats", "find_prior_work", "query_sql",
-    "compare_rates", "get_trend", "age_adjust", "check_signal",
+    "compare_rates", "get_trend", "age_adjust", "check_signal", "get_publication_outlook",
 }  # fmt: skip
 SPEC_HELPERS = {
     "start_here", "research_story", "scope_an_area", "find_opportunities", "refine_hypothesis", "build_story",
@@ -63,3 +63,10 @@ def test_unexpected_failure_is_plain_words(
     out = asyncio.run(s.call_tool("get_series", {"condition": "syphilis"}))
     text = out.content[0].text  # type: ignore[union-attr]
     assert "Something went wrong" in text and "0x7f" not in text and "Traceback" not in text
+
+
+def test_publication_outlook_over_mcp(registry: Registry, lake: Path) -> None:
+    s = build_server(registry, Engine(registry=registry, lake=lake))
+    out = asyncio.run(s.call_tool("get_publication_outlook", {"conference": "IDWeek"}))
+    text = out.content[0].text  # type: ignore[union-attr]
+    assert text.startswith("conference,stage,step") and "24–30%" in text and "base rate only" in text

@@ -1,4 +1,5 @@
-"""Command line: serve, refresh, fetch, export-public, check-contracts, validate, eval, and the analysis tools."""
+"""Command line: serve, refresh, fetch, export-public, check-contracts, validate, eval, publication-outlook,
+and the analysis tools."""
 
 from __future__ import annotations
 
@@ -153,6 +154,26 @@ def run_analysis(registry: Registry, a: argparse.Namespace) -> int:
     return 0
 
 
+def publication_outlook(a: argparse.Namespace) -> int:
+    import json
+
+    from health_data_registry.publication import get_publication_outlook
+
+    out = get_publication_outlook(
+        conference=a.conference,
+        design=a.design,
+        data_sources=a.data_sources,
+        condition=a.condition,
+        geography=a.geography,
+        fmt="json" if a.json else "csv",
+    )
+    if isinstance(out, dict):
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+        return 1 if "refused" in out else 0
+    print(out.rstrip("\n"))
+    return 0 if out.startswith("conference,") else 1  # a plain-words refusal is not a table
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="health-data-registry", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -182,7 +203,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     ev.add_argument("--sealed", type=Path, default=Path("eval/sealed"))
     ev.add_argument("--run", type=Path, default=None, help="JSON lines of a client's answers")
     _add_analysis_commands(sub)
+    po = sub.add_parser(
+        "publication-outlook",
+        help="how often presented abstracts became full papers, per conference and stage (base rate only)",
+    )
+    po.add_argument("--conference", default=None, help='e.g. "IDWeek" or "CROI"; leave out to list them all')
+    po.add_argument("--design", default=None, help="study design (recorded, not used yet)")
+    po.add_argument("--data-source", dest="data_sources", action="append", default=None, help="repeatable")
+    po.add_argument("--condition", default=None)
+    po.add_argument("--geography", default=None)
+    po.add_argument("--json", action="store_true", help="JSON instead of CSV")
     a = p.parse_args(argv)
+    if a.cmd == "publication-outlook":  # reads only the packaged base rates, not the registry
+        return publication_outlook(a)
     try:
         registry = load_registry()
     except RegistryError as e:
