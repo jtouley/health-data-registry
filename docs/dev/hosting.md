@@ -88,9 +88,11 @@ Nothing here deploys; the deployment is a separate task. Once:
 
 1. Create a Space (Docker SDK, CPU Basic). Hugging Face's docs say creating a Docker Space now needs a paid plan
    (PRO for a personal account), though CPU Basic hardware has no hourly cost.
-2. Put the repository at a tagged commit in the Space repo with `space/Dockerfile` as `Dockerfile`, and
-   `space/README.md` and `space/PRIVACY.md` at the root (the Space README's front matter sets `sdk: docker` and
-   `app_port: 7860`).
+2. Upload `space/` as the Space repo's root, and nothing else (`Dockerfile`, `README.md`, `PRIVACY.md`; the
+   README's front matter sets `sdk: docker` and `app_port: 7860`). `.github/workflows/deploy-space.yml` does this
+   on every push to main that changes `space/`. The Dockerfile fetches the package source from one pinned commit
+   of the public GitHub repository (`HDR_COMMIT`) and checks it, so a deploy is reproducible; to deploy newer
+   code, change `HDR_COMMIT` to a commit on main and push.
 3. Optional: attach a Storage Bucket as a volume at `/data`, so the cache survives restarts.
 4. Settings, Variables and secrets: `HDR_HUB` only to pin a release; the secret `HDR_PRIVATE_HF_TOKEN`
    (read-only) once the private tier ships. Never put a token in a file.

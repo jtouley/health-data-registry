@@ -1,9 +1,29 @@
 # The hosted, read-only MCP server on a Hugging Face Docker Space (CPU Basic hardware).
-# Build context: a checkout of this repository at a tagged commit, with this file as the Space's Dockerfile and
-# space/README.md and space/PRIVACY.md at the Space's root (docs/dev/hosting.md has the steps). Nothing secret is
-# read at build time; the private-tier token (HDR_PRIVATE_HF_TOKEN) is a Space secret, read from the environment
-# at run time only.
+# The Space repo holds only space/ (this Dockerfile, README.md with the Space's config header, PRIVACY.md);
+# .github/workflows/deploy-space.yml syncs space/ to the Space exactly. The package source comes from one pinned
+# commit of the public GitHub repository, so a deploy is reproducible: change HDR_COMMIT to deploy another
+# commit (docs/dev/hosting.md has the steps). Nothing secret is read at build time; the private-tier token
+# (HDR_PRIVATE_HF_TOKEN) is a Space secret, read from the environment at run time only.
+ARG HDR_REPO=https://github.com/jtouley/health-data-registry.git
+ARG HDR_COMMIT=3c448007f7cb4417b8342e12243933fb8f185993
+
+# Stage 1: fetch exactly that commit (git checks every object against its hash) and verify it.
+FROM python:3.12-slim AS source
+ARG HDR_REPO
+ARG HDR_COMMIT
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN git init -q . \
+    && git remote add origin "$HDR_REPO" \
+    && git fetch -q --depth 1 origin "$HDR_COMMIT" \
+    && git checkout -q --detach FETCH_HEAD \
+    && test "$(git rev-parse HEAD)" = "$HDR_COMMIT"
+
+# Stage 2: the server, without git.
 FROM python:3.12-slim
+ARG HDR_COMMIT
 
 # uv, pinned to the release the maintainers use.
 COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /usr/local/bin/uv
@@ -17,16 +37,17 @@ ENV HOME=/home/user \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     HF_HUB_DISABLE_TELEMETRY=1 \
-    DO_NOT_TRACK=1
+    DO_NOT_TRACK=1 \
+    HDR_SOURCE_COMMIT=$HDR_COMMIT
 WORKDIR /home/user/app
 
 # Only what the server needs: the package, the reviewed registry and the lock file. Never a lake.
-COPY --chown=user pyproject.toml uv.lock README.md LICENSE NOTICE ./
-COPY --chown=user src ./src
-COPY --chown=user catalog ./catalog
-COPY --chown=user contracts ./contracts
-COPY --chown=user semantic ./semantic
-COPY --chown=user licenses ./licenses
+COPY --from=source --chown=user /src/pyproject.toml /src/uv.lock /src/README.md /src/LICENSE /src/NOTICE ./
+COPY --from=source --chown=user /src/src ./src
+COPY --from=source --chown=user /src/catalog ./catalog
+COPY --from=source --chown=user /src/contracts ./contracts
+COPY --from=source --chown=user /src/semantic ./semantic
+COPY --from=source --chown=user /src/licenses ./licenses
 RUN uv sync --frozen --no-dev --no-editable
 
 # app_port in README.md. The cache goes to HDR_CACHE_DIR, else /data when storage is attached there, else /tmp.
