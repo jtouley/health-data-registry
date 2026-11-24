@@ -20,7 +20,7 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 | `make test` | Offline tests with coverage (floor 85%) |
 | `make test-network` | Live publisher checks in `tests/integration` (marker `network`) |
 | `make mutate` | Mutation tests on modules changed since `BASE` (`scripts/mutate_changed.py`, floor 70%) |
-| `make docs` | Regenerate `docs/helpers.md`, `template/.claude/skills/`, `plugin/` and the marketplace from `helpers.py` |
+| `make docs` | Regenerate `docs/helpers.md`, `template/.claude/skills/`, `plugin/` and the marketplace from `helpers.py`, and the tool lists in README.md, docs/tools.md and this file from the server |
 | `make kit` | Build the Claude Projects kit into `dist/projects-kit/` ([docs/dev/distribution.md](docs/dev/distribution.md)) |
 | `make refresh` / `make serve` | Fetch every source into the lake / run the MCP server on stdio |
 | `make check-contracts` | Check each publisher still serves the fields its contract reads |
@@ -51,26 +51,35 @@ One review round, one fix round, merge, then follow-ups. We don't get stuck in r
    - READMEs and user docs: good-readme, better-writing, readme-roast (structure and install steps only).
    - Security-sensitive changes (fetchers, the SQL sandbox, workflows, tokens, the hosted server): sharp-edges.
 3. **One fix round.** A fresh subagent addresses all posted findings, from `/code-review` and the skill reviews,
-   using the skills that match the files touched. Findings it doesn't fix in that round become follow-up issues or
-   the next PR, never a second review round.
+   using the skills that match the files touched. Its scope is frozen at the findings posted in its review round:
+   anything raised later goes to an issue or the next PR. Findings it doesn't fix in that round become follow-up
+   issues or the next PR, never a second review round.
 4. **Approve and merge.** Claude may approve PRs for now (the maintainer's decision, 24 Nov 2026), but only after
    the review round and the fix round are done and every posted finding is addressed or filed as a follow-up.
    GitHub doesn't let a PR's author approve their own PR, and Scorecard's Code-Review check counts only approvals
-   from people with write access. Then the PR is merged, and follow-ups get their own PRs on the same cycle.
+   from people with write access. Then the PR is squash-merged into main and its branch is deleted, and follow-ups
+   get their own PRs on the same cycle.
+5. **Branch cleanup.** `wip/*` and `claude/*` branches are deleted once their work is in main or is recorded as
+   abandoned (in an issue or PR comment).
 
 ## Architecture map
 
 ```text
 src/health_data_registry/
-  cli.py          serve, refresh <dataset>|--all, fetch <source>, export-public --to, check-contracts, validate, eval
-  server.py       the MCP server (stdio): registers the tools and the helper prompts; wraps every failure
-                  as a plain-words refusal
-  tools.py        list_sources, search_datasets, describe_dataset, suggest_datasets, get_series,
-                  get_aligned_with_gbd, get_rate, get_provenance, list_caveats, find_prior_work
-                  ("index not built yet"), query_sql (guarded escape hatch); CSV by default, fmt="json"
+  cli.py          serve, refresh <dataset>|--all, fetch <source>, export-public --to, check-contracts, validate,
+                  eval, publication-outlook, and the analysis tools (get-rate, compare-rates, get-trend,
+                  age-adjust, check-signal)
+  server.py       the MCP server (stdio): registers the tools (listed below) and the helper prompts; wraps
+                  every failure as a plain-words refusal
+  tools.py        the data tools: sources, datasets, series, GBD alignment, provenance, caveats, prior work,
+                  guarded SQL; CSV by default, fmt="json"
+  analysis.py     the analysis tools: rates, comparisons, trends, age adjustment, signals, with the source's
+                  own flags carried through
+  stats.py        pure statistics for analysis.py (standard library only, each method with its published source)
+  publication.py  publication outlook: per-conference base rates from publication_base_rates.yaml
   helpers.py      the clinician workflows: MCP prompts, and the source of docs/helpers.md and the
                   template's Claude Code skills (template/.claude/skills/)
-  distribution.py the plugin (plugin/), its marketplace and the Claude Projects kit, from helpers.py
+  distribution.py the plugin (plugin/), its marketplace, the Claude Projects kit, and the generated tool lists
   registry.py     loads and cross-checks catalog/, contracts/ (ODCS v3.2.0) and semantic/; strict on purpose
   query.py        the read path: attaches snapshots read-only, compiles semantic-model metrics to SQL,
                   runs guarded SQL, wraps every answer with its source, version, SQL and method
@@ -85,15 +94,44 @@ src/health_data_registry/
   product.py      the ODPS data product (contracts/health-data-registry.odps.yaml)
   geo.py          one place whatever the publisher calls it (name, postal code, FIPS; GBD location name)
   evaluation.py   sealed blind sets: seal check, scorer, release gate
-  adapters/       socrata.py (CDC portals), who_gho.py (WHO GHO OData)
-catalog/          one reviewed YAML per dataset (5 infectious-disease sources; contracts all draft)
-contracts/        one ODCS v3.2.0 contract per dataset
+  adapters/       socrata.py (CDC portals), who_gho.py (WHO GHO OData), https_csv.py (one CSV file, e.g. Census)
+catalog/          one reviewed YAML per dataset (6 sources: 5 infectious-disease, plus Census county population
+                  as the denominator; contracts all draft)
+contracts/        one ODCS v3.2.0 contract per dataset, and the ODPS data product
 semantic/         one dbt-style semantic model per dataset
-eval/sealed/      held-out blind sets, hash-sealed; don't read them while developing
-tests/            synthetic data only; tests/integration holds the live `network` checks
-scripts/          mutate_changed.py, write_template.py
-docs/             setup.md and helpers.md (clinicians), dev/ (developers), architecture.md, adr/
+eval/sealed/      held-out blind sets, hash-sealed, when present; don't read them while developing
+tests/            synthetic data only; tests/golden holds golden SQL; tests/integration the live `network` checks
+scripts/          mutate_changed.py, write_template.py (make docs, make kit)
+plugin/, template/, packaging/, npm/
+                  generated plugin and template; MCP Registry, mcpb and npm packaging
+docs/             setup.md, helpers.md and tools.md (clinicians), dev/ (developers), architecture.md,
+                  data-conventions.md, publication-outlook.md, adr/
 ```
+
+The tools the server registers (generated by `make docs`; a test fails if this list drifts):
+
+<!-- tools:start (generated by `make docs` from the server's tool registry; don't edit) -->
+
+| Tool | What it gives you |
+|---|---|
+| `list_sources` | What's loaded: each source's publisher, years, places, how often it updates, when it was last fetched, its licence and whether its contract has been reviewed. geography_level: nation, state, county, country. |
+| `search_datasets` | Datasets that fit a topic (e.g. "legionella", "syphilis in states"), ranked, each with a one-line reason. |
+| `describe_dataset` | A source explained in clinical words: what one row is, the conditions and case definitions, what each column means, counts vs rates, missing codes, total rows, caveats, licence and how to cite it. |
+| `suggest_datasets` | For a research question in plain words: which sources can answer it, which can't and why. |
+| `get_series` | Observed values over time for a condition (e.g. "legionellosis") in places (e.g. ["Michigan", "Ohio", "United States"]), one row per place and year, each with its source, fetch time and case definition. measure: cases, deaths, rate, percent. |
+| `get_aligned_with_gbd` | The same observed rows keyed to GBD location and cause names, plus the exact IHME GBD connector call to run next. |
+| `get_rate` | How common is it here? Crude rate per 100,000 (cases / Census population) with an exact Poisson 95% interval, computed here and never age-standardised. |
+| `compare_rates` | Is it higher here than there, or now than then? Rate ratio and rate difference with 95% intervals, between two places in one year (other_location) or one place in two years (other_year). |
+| `get_trend` | Is it rising? Annual percent change with a 95% interval from a Poisson regression on year. |
+| `age_adjust` | Does age explain the difference? Rate directly standardised to the 2000 US standard population, with the gamma (Fay-Feuer) interval NCHS uses. |
+| `check_signal` | Is this week unusual? The last 4 weeks' cases against the same, preceding and following 4 weeks of the past 5 years, in the style of CDC's historical limits for notifiable diseases. |
+| `get_provenance` | Where a source's numbers came from: the exact URLs, when they were fetched, content hashes, case definitions and how to cite them. |
+| `list_caveats` | What the data can't tell you: geography traps, suppression, provisional years, unreviewed contracts and facts not yet confirmed with the publisher. |
+| `find_prior_work` | Conference abstracts, case reports and health department reports on a condition, with the datasets each used. (The index is not built yet; the tool says so rather than guessing.) |
+| `get_publication_outlook` | How often presented abstracts at a conference (e.g. "IDWeek", "CROI") became full papers: one row per stage from idea to paper, each with its source, n and 95% interval, or "unknown". |
+| `query_sql` | Escape hatch for questions the other tools don't cover: one read-only SELECT over loaded sources (tables are named by source_id). |
+
+<!-- tools:end -->
 
 Data flow: adapter fetch → raw bytes, hash-addressed → contract-driven normalise → Parquet snapshot + manifest →
 DuckDB read-only views → tools. See [docs/architecture.md](docs/architecture.md).
@@ -137,7 +175,7 @@ These come from the spec and [docs/adr/](docs/adr/README.md). A PR that breaks o
 
 ## Skills and how to use them
 
-This repo uses the outside skills that earned their place on registry.coffee
+This repo uses the outside skills that earned their place in the maintainer's ratings
 ([Outside skills we've used](https://claude.ai/code/artifact/bb6ca1eb-0207-44d6-ac03-23141120ea9e)), each for the
 work below. Skills rated 2 or lower there are left out.
 
@@ -172,7 +210,8 @@ Rules for every skill:
 | Fix round | simplify (built into Claude Code) | Optional, inside the one fix round only; never a separate round |
 
 Left out: DuckDB's duckdb-skills (rated 1; DuckDB's own docs are more useful), wshobson data-quality-frameworks
-(rated 2; reverted on registry.coffee), and HashiCorp terraform-style-guide (rated 1.5).
+(rated 2; its changes were reverted), and HashiCorp terraform-style-guide (rated 1.5).
 
 Semantic models here are dbt-style YAML (MetricFlow concepts) without a dbt project, so the dbt skills apply to
-`semantic/` and the metric compiler in `semantic.py`.
+`semantic/`, to `registry.py`, which loads and cross-checks the models, and to `query.py`, which compiles their
+metrics to SQL.

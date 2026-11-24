@@ -226,7 +226,7 @@ def test_no_forbidden_names_in_generated_text(kit: dict[str, bytes]) -> None:
 
 
 def test_tool_lists_match_the_server(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The README and docs/tools.md list exactly the tools the server registers (make docs writes them)."""
+    """README.md, docs/tools.md and CLAUDE.md list exactly the tools the server registers (make docs writes them)."""
     monkeypatch.setenv("HDR_HUB", "off")
     table = distribution.tool_table()
     for rel in distribution.TOOL_LIST_FILES:
