@@ -32,8 +32,26 @@ DOC_PATH = "docs/helpers.md"
 RULES = (
     "Rules for this whole conversation: cite every number to the tool it came from, with its source and date; "
     "never fill a number from memory or the news; show uncertainty ranges where GBD gives them and say that "
-    "observed counts have none; flag provisional, suppressed or partial-geography numbers; and never ask me "
-    "for, or accept, patient information."
+    "observed counts have none; flag provisional, suppressed or partial-geography numbers; when an answer comes "
+    "in pages, fetch every page and save all the rows to one CSV file or artifact rather than pasting them into "
+    "the chat; and never ask me for, or accept, patient information."
+)
+
+# Said on every page of a long answer ({pages} and {total} are filled in), written for the clinician and for Claude.
+PAGING_GUIDANCE = (
+    "This answer is long, so it comes in {pages} pages ({total} rows in all), each with real rows and the same "
+    "sources. Fetch every page with the Next call (same question, same pin), then save all the rows to one CSV "
+    "file or artifact rather than pasting them into the chat, and work from that file. Keep the sources and "
+    "citation lines with it."
+)
+
+# Added to the description of every tool that returns rows.
+TOOL_PAGING = (
+    "Long answers come in pages of real rows, never cut off: the first line says 'Page 1 of N', and a Next line "
+    "names the exact call for the next page (the same arguments plus page and pin; the pin keeps every page on the "
+    "same version of the data). When there is more than one page, fetch every page, then save all the rows to one "
+    "CSV file or artifact rather than pasting them into the chat. For a public-domain source, a long answer also "
+    "gives the direct download link to the whole release file; sources whose terms don't allow sharing only page."
 )
 
 ARTIFACT_TEXT: dict[Artifact, str] = {
@@ -233,7 +251,9 @@ WORKFLOWS: tuple[Workflow, ...] = (
                 "Check the data: the IHME GBD connector for the modelled trend (with uncertainty ranges) up to "
                 "2023; this public health data tool's get_series for what was actually reported, including years "
                 "after 2023 if available, and get_aligned_with_gbd to line the two up. Show one small table side "
-                "by side and say whether the change is bigger than GBD's uncertainty range.",
+                "by side and say whether the change is bigger than GBD's uncertainty range. If an answer says "
+                "'Page 1 of N', fetch every page and save the rows to one CSV file or artifact first, then build "
+                "the small table from that file.",
                 ("get_series", "get_aligned_with_gbd"),
             ),
             Step(
@@ -310,6 +330,11 @@ WORKFLOWS: tuple[Workflow, ...] = (
                 ("describe_dataset",),
             ),
             Step("It refused a query: the message says why; ask the same question in plain words instead."),
+            Step(
+                "It says 'Page 1 of N': nothing is wrong, the answer is long. Ask for every page with the Next "
+                "line it gives, and save all the rows to one CSV file or artifact. If a later page says the data "
+                "changed, start again from page 1."
+            ),
             Step("The app asks for a password or my login: stop; this tool never needs one."),
             Step(
                 "If none match, ask me one question at a time until we find it. Never ask for patient information."

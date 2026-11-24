@@ -17,6 +17,7 @@ from typing import Any, Literal, NamedTuple
 
 from health_data_registry import geo
 from health_data_registry.deadline import DeadlineExceeded
+from health_data_registry.paging import paged, respond
 from health_data_registry.query import Engine, QueryRefused
 from health_data_registry.registry import Dataset, Registry, Series, UnknownDataset
 
@@ -620,6 +621,7 @@ def _dataset_notes(ds: Dataset, m: Any, method: str, got: Sequence[SeriesRow]) -
     return notes
 
 
+@paged("get_series")
 def get_series(
     registry: Registry,
     engine: Engine,
@@ -632,7 +634,7 @@ def get_series(
     sex: str | None = None,
     source_id: str | None = None,
     fmt: Fmt = "csv",
-) -> Out:
+) -> Result | Out:
     if sex not in (None, "", "both"):
         return message(
             "None of the loaded sources split this by sex yet, so only both-sexes values are available. "
@@ -678,7 +680,7 @@ def get_series(
         "lower and upper are the publisher's own uncertainty bounds, shown only where published; observed counts "
         "have none. An empty value is never a zero: where the publisher gives a reason, it is in the flag column."
     )
-    return Result(columns, rows, notes).render(fmt)
+    return Result(columns, rows, notes)
 
 
 def gbd_call(cause: str, pathogen: str | None, places: list[str], y0: int | None, y1: int | None) -> str:
@@ -697,6 +699,7 @@ def gbd_call(cause: str, pathogen: str | None, places: list[str], y0: int | None
     )
 
 
+@paged("get_aligned_with_gbd")
 def get_aligned_with_gbd(
     registry: Registry,
     engine: Engine,
@@ -706,7 +709,7 @@ def get_aligned_with_gbd(
     year_start: int | None = None,
     year_end: int | None = None,
     fmt: Fmt = "csv",
-) -> Out:
+) -> Result | Out:
     matches = series_for(registry, condition)
     if not matches:
         return message(
@@ -778,7 +781,7 @@ def get_aligned_with_gbd(
         if unmatched:
             notes.append(f"{ds.id} has no rows for: {', '.join(unmatched)}.")
         notes += _dataset_notes(ds, m, method, got)
-    return Result(columns, rows, notes).render(fmt)
+    return Result(columns, rows, notes)
 
 
 def get_rate(
@@ -788,20 +791,25 @@ def get_rate(
     condition: str,
     locations: Sequence[str] = (),
     year: int,
+    page: int | None = None,
+    pin: str | None = None,
     fmt: Fmt = "csv",
 ) -> Out:
     """Crude rate per 100,000 with an exact Poisson interval: see analysis.get_rate."""
     from health_data_registry import analysis
 
-    return analysis.get_rate(registry, engine, condition=condition, locations=locations, year=year, fmt=fmt)
+    return analysis.get_rate(
+        registry, engine, condition=condition, locations=locations, year=year, page=page, pin=pin, fmt=fmt
+    )
 
 
 # ------------------------------------------------------------------------------------------ provenance
 
 
+@paged("get_provenance")
 def get_provenance(
     registry: Registry, engine: Engine, *, source_id: str, year: int | None = None, fmt: Fmt = "csv"
-) -> Out:
+) -> Result | Out:
     try:
         ds = registry.get(source_id)
         m = engine.manifest(source_id)
@@ -837,7 +845,7 @@ def get_provenance(
     if year is not None:
         notes.insert(0, f"Every row for {year} in this source comes from the fetches listed.")
     cols = ["source_id", "url", "retrieved_at", "content_sha256", "snapshot_id", "contract_version"]
-    return Result(cols, rows, notes).render(fmt)
+    return Result(cols, rows, notes)
 
 
 GEOGRAPHY_TRAPS = [
@@ -889,7 +897,16 @@ def find_prior_work(
     )
 
 
-def query_sql(engine: Engine, sql: str, *, fmt: Fmt = "csv") -> Out:
+def query_sql(
+    engine: Engine, sql: str, *, page: int | None = None, pin: str | None = None, fmt: Fmt = "csv"
+) -> Out:
+    return respond(
+        "query_sql", {"sql": sql, "fmt": fmt}, engine, lambda eng: _query_sql(eng, sql, fmt), page=page, pin=pin,
+        fmt=fmt,
+    )  # fmt: skip
+
+
+def _query_sql(engine: Engine, sql: str, fmt: Fmt) -> Result | Out:
     from health_data_registry.sql_guard import SqlRefused
 
     try:
@@ -905,4 +922,4 @@ def query_sql(engine: Engine, sql: str, *, fmt: Fmt = "csv") -> Out:
     notes = [f"SQL run: {out['sql']}", f"Method: {out['method']}"]
     if src:
         notes.append(f"Source: {src['title']}, fetched {src['retrieved_at'][:19]} ({src['landing_url']})")
-    return Result(out["columns"], out["rows"], notes + list(out.get("caveats", []))).render(fmt)
+    return Result(out["columns"], out["rows"], notes + list(out.get("caveats", [])))

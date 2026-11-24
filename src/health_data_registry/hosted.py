@@ -11,9 +11,11 @@ The same tools as the stdio server (server.build_server), with these rules on to
   initialize (the specification allows it, and clients send it back); it is used only as the key for the
   per-session rate limit and is never stored with anything else or logged.
 - One deadline per tool call (HDR_TOOL_TIMEOUT_S, default 200 s, under claude.ai's 240 s) that caps every
-  fetch, retry and download (deadline.py); one call reads the engine at a time; a result over
-  HDR_MAX_RESULT_CHARS (default 140,000, under claude.ai's ~150,000) is replaced by a plain "narrow your
-  question" message.
+  fetch, retry and download (deadline.py); one call reads the engine at a time.
+- Long answers come in pages (paging.py, in the tools layer, so stdio and the CLI page the same way): each page
+  stays under HDR_PAGE_CHARS (default 120,000, both copies counted), carries real rows, its provenance and the
+  exact call for the next page. HDR_MAX_RESULT_CHARS (default 140,000, under claude.ai's ~150,000) stays as a
+  backstop only: a result over it (one row alone too long for a page) is replaced by a plain message.
 - Rate limits per MCP session and overall (HDR_RATE_PER_SESSION, HDR_RATE_GLOBAL, tool calls per minute),
   never per IP address: every claude.ai user arrives from the same Anthropic address range. Over the limit,
   HTTP 429 with a plain-words JSON-RPC error and Retry-After.
@@ -46,6 +48,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from health_data_registry import __version__, tools
 from health_data_registry.deadline import DeadlineExceeded, call_deadline
+from health_data_registry.paging import wire_size
 from health_data_registry.server import Fmt, Out
 
 # The project's open data hub. The hosted server reads only its tagged releases.
@@ -125,17 +128,11 @@ class Metrics:
 # ------------------------------------------------------------------------------------------- the guard
 
 
-def _size(out: Out) -> int:
-    """Characters on the wire, as a client might count them: the text block plus its structured copy."""
-    text = out if isinstance(out, str) else json.dumps(out, indent=2, default=str)
-    return 2 * len(text)
-
-
 def too_large_message(size: int, limit: int) -> str:
     return (
         f"This answer is too long to send in one reply (about {size:,} characters; the limit is {limit:,}), "
-        "so nothing was sent. Narrow your question: fewer places, a shorter span of years, one condition or "
-        "one measure, or ask for a summary first."
+        "even one page at a time, so nothing was sent. Narrow your question: fewer places, a shorter span of "
+        "years, one condition or one measure, or ask for a summary first."
     )
 
 
@@ -189,7 +186,7 @@ class CallGuard:
             self._interrupt()
             box["status"], box["out"] = "timeout", tools.refusal(DeadlineExceeded(budget), fmt)
         out: Out = box["out"]
-        size = _size(out)
+        size = wire_size(out)
         if size > self.cfg.max_result_chars:
             box["status"] = "too_large"
             out = tools.message(too_large_message(size, self.cfg.max_result_chars), fmt, refused="too_large")

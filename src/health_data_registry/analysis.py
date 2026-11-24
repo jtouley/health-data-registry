@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from health_data_registry import geo, stats
+from health_data_registry.paging import paged
 from health_data_registry.query import Engine, QueryRefused
 from health_data_registry.registry import Dataset, Registry, Series
 from health_data_registry.tools import (
@@ -355,6 +356,7 @@ def _rule_notes(datasets: Sequence[Dataset]) -> list[str]:
     return notes
 
 
+@paged("get_rate")
 def get_rate(
     registry: Registry,
     engine: Engine,
@@ -363,7 +365,7 @@ def get_rate(
     year: int,
     locations: Sequence[str] = (),
     fmt: Fmt = "csv",
-) -> Out:
+) -> Result | Out:
     if not _population_series(registry):
         return _no_population(fmt)
     if not series_for(registry, condition, "cases"):
@@ -392,12 +394,13 @@ def get_rate(
         out_notes.append(f"No rows for: {', '.join(dict.fromkeys(unmatched))}.")
     if not rows:
         out_notes.append(f"No case counts for '{condition}' in {year} for the places asked.")
-    return Result(cols, table, out_notes + notes).render(fmt)
+    return Result(cols, table, out_notes + notes)
 
 
 # ---------------------------------------------------------------------------------- compare_rates
 
 
+@paged("compare_rates")
 def compare_rates(
     registry: Registry,
     engine: Engine,
@@ -408,7 +411,7 @@ def compare_rates(
     other_location: str | None = None,
     other_year: int | None = None,
     fmt: Fmt = "csv",
-) -> Out:
+) -> Result | Out:
     loc_b = other_location or location
     year_b = other_year if other_year is not None else year
     if _place_name(loc_b) == _place_name(location) and year_b == year:
@@ -481,7 +484,7 @@ def compare_rates(
                              "years compared: part of any difference may be the definition, not the disease.")  # fmt: skip
     if _provisional(a.status) or _provisional(b.status):
         out_notes.append("At least one count is provisional and may change.")
-    return Result(cols, table, out_notes + notes).render(fmt)
+    return Result(cols, table, out_notes + notes)
 
 
 def _series_condition(ds: Dataset, label: str) -> str:
@@ -505,6 +508,7 @@ def _segments(years: Sequence[int], changes: Sequence[tuple[int, str]]) -> list[
     return list(out.items())
 
 
+@paged("get_trend")
 def get_trend(
     registry: Registry,
     engine: Engine,
@@ -516,7 +520,7 @@ def get_trend(
     include_provisional: bool = False,
     fit_on: Literal["rates", "counts"] = "rates",
     fmt: Fmt = "csv",
-) -> Out:
+) -> Result | Out:
     """Annual percent change. fit_on="rates" (the default) needs a population for every year fitted and refuses
     otherwise; fit_on="counts" fits case counts and ignores population change. Never one in place of the other."""
     if fit_on not in ("rates", "counts"):
@@ -640,7 +644,7 @@ def get_trend(
             "This is a trend in case counts: population growth or decline is not taken into account, so part of "
             "any change can be the population, not the disease."
         )
-    return Result(cols, table, out_notes + notes).render(fmt)
+    return Result(cols, table, out_notes + notes)
 
 
 # ---------------------------------------------------------------------------------- age_adjust
@@ -678,6 +682,7 @@ def _standard_for(
     return None
 
 
+@paged("age_adjust")
 def age_adjust(
     registry: Registry,
     engine: Engine,
@@ -686,7 +691,7 @@ def age_adjust(
     location: str,
     year: int,
     fmt: Fmt = "csv",
-) -> Out:
+) -> Result | Out:
     case_series = series_for(registry, condition, "cases", kind="age")
     pop_series = [
         (d, s) for d in registry for s in d.semantic.series if s.measure == "population" and s.age_dimension
@@ -760,7 +765,7 @@ def age_adjust(
         + " "
         + GBD_WARNING,
     ]
-    return Result(cols, table, out_notes + notes).render(fmt)
+    return Result(cols, table, out_notes + notes)
 
 
 # ---------------------------------------------------------------------------------- check_signal
@@ -769,6 +774,7 @@ HISTORY_YEARS = 5
 WINDOW = 4
 
 
+@paged("check_signal")
 def check_signal(
     registry: Registry,
     engine: Engine,
@@ -778,7 +784,7 @@ def check_signal(
     year: int,
     week: int,
     fmt: Fmt = "csv",
-) -> Out:
+) -> Result | Out:
     matches = series_for(registry, condition, "cases", kind="weekly")
     if not matches:
         return message(
@@ -854,4 +860,4 @@ def check_signal(
         "with the health department before acting on it.",
         "Weekly counts are provisional and can change as late reports arrive.",
     ]
-    return Result(cols, table, out_notes + notes).render(fmt)
+    return Result(cols, table, out_notes + notes)

@@ -6,6 +6,7 @@ so a clinician (or a grader) can check the number without trusting the model tha
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,9 +16,10 @@ import duckdb
 
 from health_data_registry.registry import Column, Dataset, Metric, Registry, label_key
 from health_data_registry.sql_guard import GuardedQuery, guard_sql, harden, run_guarded
-from health_data_registry.store import Manifest, latest_snapshot
+from health_data_registry.store import Manifest, latest_snapshot, snapshot_dir
 
 MAX_ROWS = 5000
+MAX_PINNED = 2  # engines kept on older pinned versions, so the next page of an answer needn't rebuild one
 FilterValue = str | int | float | bool | Sequence[str | int | float | bool]
 
 
@@ -351,6 +353,13 @@ class Engine:
     _con: duckdb.DuckDBPyConnection | None = None
     _hub_files: dict[str, tuple[Path, Manifest]] = field(default_factory=dict)
     _live: dict[str, Any] = field(default_factory=dict)  # dataset id -> live.LiveTable (memory only)
+    # Lake snapshots to read instead of LATEST (dataset id -> snapshot id): a later page pinned to older data.
+    lake_pins: dict[str, str] = field(default_factory=dict)
+    # The sources the current call has read, in order (paging.respond clears it per call and reads it after).
+    touched: dict[str, None] = field(default_factory=dict)
+    _pinned: OrderedDict[tuple[tuple[str, tuple[str, str | None]], ...], Engine] = field(
+        default_factory=OrderedDict
+    )
 
     def connect(self) -> duckdb.DuckDBPyConnection:
         if self._con is not None:
@@ -366,7 +375,7 @@ class Engine:
                     continue  # restricted sources are never read from disk, even a maintainer's lake
                 load_live(con, ds, table.records)
                 manifest = table.manifest
-            elif (found := latest_snapshot(self.lake, ds.id)) is not None:
+            elif (found := self._lake_snapshot(ds.id)) is not None:
                 path, manifest = found
                 alias = f"snap_{ds.id}"
                 db = str(path / "data.duckdb").replace("'", "''")
@@ -383,6 +392,13 @@ class Engine:
         harden(con, allowed_paths=parquet)
         self._con = con
         return con
+
+    def _lake_snapshot(self, dataset_id: str) -> tuple[Path, Manifest] | None:
+        sid = self.lake_pins.get(dataset_id)
+        if sid is None:
+            return latest_snapshot(self.lake, dataset_id)
+        path = snapshot_dir(self.lake, dataset_id, sid)
+        return (path, Manifest.read(path / "manifest.json")) if (path / "manifest.json").is_file() else None
 
     def _reconnect(self) -> None:
         if self._con is not None:
@@ -433,6 +449,8 @@ class Engine:
         if m is None and ds is not None and self._obtain(ds):
             self._reconnect()
             m = self.manifests.get(dataset_id)
+        if m is not None:
+            self.touched[dataset_id] = None
         if m is None:
             raise QueryRefused(
                 "no_snapshot",
@@ -440,6 +458,64 @@ class Engine:
                 "to show. The one-time 'load the data' step in the setup guide (docs/setup.md) fixes this.",
             )
         return m
+
+    def _serves(self, pins: Mapping[str, tuple[str, str | None]]) -> bool:
+        """Does this engine read exactly these versions (snapshot id, hub release tag) of these sources?"""
+        for dataset_id, version in pins.items():
+            if dataset_id not in self.registry.datasets:
+                return False
+            try:
+                m = self.manifest(dataset_id)
+            except QueryRefused:
+                return False
+            if (m.snapshot_id, m.release_ref) != version:
+                return False
+        return True
+
+    def _hub_at(self, pins: Mapping[str, tuple[str, str | None]]) -> Any:
+        """The hub read at the pinned release tag, when the pins name one and this hub can be read at another."""
+        from health_data_registry.hub import Hub, is_immutable_ref
+
+        refs = {r for _, r in pins.values() if r}
+        if not refs or self.hub is None:
+            return self.hub
+        ref = refs.pop()
+        if refs or not self.hub.is_remote or not is_immutable_ref(ref):
+            return None  # one answer reads one release; a local hub copy has only its own
+        if self.hub.revision() == ref:
+            return self.hub
+        return Hub(url=f"{self.hub.url.split('@')[0]}@{ref}", cache=self.cache, max_bytes=self.hub.max_bytes,
+                   api=self.hub.api)  # fmt: skip
+
+    def at(self, pins: Mapping[str, tuple[str, str | None]]) -> Engine | None:
+        """An engine that reads exactly the pinned versions (this one when it does), or None when they are gone.
+
+        A later page names the versions its first page read. This engine serves them if it still does; otherwise
+        an engine on the pinned hub release or lake snapshot (kept for the next page, at most two) serves them;
+        restricted sources are never re-read for an old page, because their copies are never kept.
+        """
+        if self._serves(pins):
+            return self
+        key = tuple(sorted(pins.items()))
+        if key in self._pinned:
+            self._pinned.move_to_end(key)
+            return self._pinned[key]
+        try:
+            hub = self._hub_at(pins)
+            if hub is None and any(r for _, r in pins.values()):
+                return None
+            alt = Engine(registry=self.registry, lake=self.lake, hub=hub, cache=self.cache, fetch_at_run_time=False,
+                         getter=self.getter, lake_pins={i: s for i, (s, r) in pins.items() if r is None})  # fmt: skip
+            if not alt._serves(pins):
+                return None
+        except (QueryRefused, ValueError, OSError):  # an old release that can't be read is gone
+            return None
+        self._pinned[key] = alt
+        while len(self._pinned) > MAX_PINNED:
+            _, old = self._pinned.popitem(last=False)
+            if old._con is not None:
+                old._con.close()
+        return alt
 
     def provenance(self, dataset_id: str) -> dict[str, Any]:
         """Where a source's numbers come from, without downloading anything: origin, contract, product, release."""
@@ -538,7 +614,7 @@ class Engine:
     def query_sql(self, sql: str) -> dict[str, Any]:
         self.connect()
         available = {ds.id: ds.contract.column_names for ds in self.registry}
-        q: GuardedQuery = guard_sql(sql, allowed_tables=available, max_rows=MAX_ROWS)
+        q: GuardedQuery = guard_sql(sql, allowed_tables=available, max_rows=MAX_ROWS, ordered=True)
         for t in sorted(q.tables):
             if t in self.registry.datasets:
                 self.manifest(t)  # brings a hub or run-time source onto this computer on first use
