@@ -289,6 +289,12 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
     if obj.get("name") != expected_id:
         raise RegistryError(f"{expected_id}: schema object name must equal the dataset id")
     obj_custom = _custom(obj.get("customProperties"))
+    if "partialAreas" in obj_custom:
+        # One fact, one place: the get_rate check and the answer's note both read partialPlaces on the column.
+        raise RegistryError(
+            f"{expected_id}: declare places that cover only part of a place once, as partialPlaces on the place "
+            "column, not as a schema-level partialAreas"
+        )
     total = obj_custom.get("totalRows")
     if total is None:
         raise RegistryError(

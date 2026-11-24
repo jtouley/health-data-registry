@@ -65,10 +65,6 @@ def _place_name(text: str) -> str:
     return p.name if p else str(text)
 
 
-def _key(text: str) -> str:
-    return re.sub(r"[.]", "", " ".join(str(text).upper().split()))
-
-
 def _unlocated_place(ds: Dataset, s: Series) -> str:
     """A series with no location dimension: the nation for a US population source, else 'as published'."""
     if s.measure == "population" and ds.entry.country == "US" and "nation" in ds.entry.geography:
@@ -167,11 +163,6 @@ def contract_property(ds: Dataset, name: str) -> Any:
     return _custom(ds.contract.raw.get("customProperties")).get(name)
 
 
-def schema_property(ds: Dataset, name: str) -> Any:
-    schema = ds.contract.raw.get("schema") or [{}]
-    return _custom(schema[0].get("customProperties")).get(name)
-
-
 @dataclass(frozen=True)
 class UnreliableRule:
     """When a source calls its own rates unreliable, read from its contract (property unreliableRateRule).
@@ -220,13 +211,16 @@ def case_definition_years(ds: Dataset, condition: str) -> list[tuple[int, str]]:
     return sorted(out)
 
 
-def partial_area(ds: Dataset, raw_place: str) -> str | None:
-    """Why a source's count for this area covers only part of the place (e.g. New York State without NYC)."""
-    areas = schema_property(ds, "partialAreas") or {}
-    for label, reason in dict(areas).items():
-        if _key(label) == _key(raw_place):
-            return str(reason)
-    return None
+def partial_area(ds: Dataset, s: Series, raw_place: str) -> str | None:
+    """Why a source's count for this area covers only part of the place (e.g. New York State without NYC).
+
+    Read from the one place the contract declares it: partialPlaces on the series' place column, the same note
+    describe_dataset and get_series show, so the rate and the note can never disagree.
+    """
+    if s.location_dimension is None:
+        return None
+    col = ds.contract.column(ds.semantic.dimension(s.location_dimension).column)
+    return col.partial_note(raw_place)
 
 
 def _provisional(status: str) -> bool:
@@ -311,7 +305,8 @@ def populations(
         rows, _ = read_series(engine, ds, s, locs if s.location_dimension else [], year_start, year_end)
         for o in rows:
             years.add(o.year)
-            found.setdefault((o.place, o.year), (o.value, ds))
+            if o.value is not None:  # an empty figure never hides a real one from another series
+                found.setdefault((o.place, o.year), (o.value, ds))
     return found, years
 
 
@@ -373,7 +368,7 @@ def _rate_rows(
             flags: list[str] = []
             denom, pds = pop.get((o.place, o.year), (None, None))
             est = None
-            part = partial_area(ds, o.raw_place)
+            part = partial_area(ds, s, o.raw_place)
             if o.not_total:
                 flags.append(f"{o.not_total}; no rate")
             elif o.value is None and o.suppressed:
@@ -494,8 +489,19 @@ def compare_rates(
         notes = _source_notes(engine, used_a + used_b)
     except QueryRefused as e:
         return refusal(e, fmt)
+    # Both sides come from one series (same source and label), so a ratio never mixes two kinds of count.
+    found = sorted({(r.case_ds.id, r.label) for r in a_rows + b_rows})
+    if len(found) > 1:
+        return message(
+            f"'{condition}' matches more than one series ("
+            + "; ".join(f"{label} from {ds_id}" for ds_id, label in found)
+            + "), and a comparison has to use the same one on both sides. Ask again with the full name of one "
+            "of them as the condition.",
+            fmt,
+            refused="ambiguous_condition",
+        )
     a = next((r for r in a_rows if r.est), None)
-    b = next((r for r in b_rows if r.est and (a is None or r.case_ds.id == a.case_ds.id)), None)
+    b = next((r for r in b_rows if r.est), None)
     if a is None or b is None:
         side, rows = ((location, year), a_rows) if a is None else ((loc_b, year_b), b_rows)
         why = "; ".join(rows[0].flags) if rows else "no case count was found"
@@ -625,7 +631,7 @@ def get_trend(
                     and not o.not_total
                     and (include_provisional or not _in_progress(o.status))
                 ]
-                part = partial_area(ds, seg[0].raw_place)
+                part = partial_area(ds, s, seg[0].raw_place)
                 if part and fit_on == "rates":
                     no_denominator.append(
                         f"{seg[0].place}: {ds.id} counts cover only part of the place ({part})"
@@ -639,7 +645,7 @@ def get_trend(
                     continue
                 on_rates = fit_on == "rates"
                 denoms = [pop.get((o.place, o.year), (None, None))[0] for o in pts]
-                missing = [str(o.year) for o, d in zip(pts, denoms, strict=True) if d is None]
+                missing = [str(o.year) for o, d in zip(pts, denoms, strict=True) if d is None or d <= 0]
                 if on_rates and missing:
                     no_denominator.append(f"{pts[0].place} in {', '.join(missing)}")
                     continue

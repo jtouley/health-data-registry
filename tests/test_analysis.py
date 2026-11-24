@@ -92,11 +92,11 @@ schema:
   - name: toy_weekly
     customProperties:
       - {property: totalRows, value: "upper(area) = 'US RESIDENTS'"}
-      - property: partialAreas
-        value: {"NEW YORK": "excludes New York City"}
     properties:
+      - {name: area, physicalType: VARCHAR, logicalType: x, required: true, description: toy column,
+         customProperties: [{property: role, value: dimension},
+                            {property: partialPlaces, value: {"NEW YORK": "excludes New York City"}}]}
 """
-    + prop("area", "VARCHAR", "dimension", required=True)
     + prop("year", "INTEGER", "dimension", required=True)
     + prop("week", "INTEGER", "dimension", required=True)
     + prop("wk", "BIGINT", "measure")
@@ -789,3 +789,66 @@ def test_a_running_total_that_stops_early_is_never_a_year_count(
     after = rows_by(trend, "case_definition_from")[2020]
     assert after["years"] == "2020-2023" and after["points_used"] == 3
     assert "2022 not the year's total (incomplete" in after["left_out"]
+
+
+def test_compare_refuses_a_condition_that_matches_two_series(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both sides must come from one series: never one kind of count against another."""
+    extra = (
+        "  - {condition: legionellosis_travel, label: 'Legionellosis, travel-associated', metric: annual, "
+        "measure: cases,\n     location_dimension: state, time_dimension: year}\n"
+    )
+    monkeypatch.setattr(sys.modules[__name__], "CASES_SEMANTIC", CASES_SEMANTIC + extra)
+    reg, eng = build(tmp_path)
+    out = analysis.compare_rates(reg, eng, condition="legionellosis", location="Ohio", year=2023,
+                                 other_location="Michigan", fmt="json")  # fmt: skip
+    assert out["refused"] == "ambiguous_condition"
+    assert "Legionellosis from toy_weekly" in out["message"]
+    assert "Legionellosis, travel-associated from toy_weekly" in out["message"]
+    one = analysis.compare_rates(reg, eng, condition="travel-associated", location="Ohio", year=2023,
+                                 other_location="Michigan", fmt="json")  # fmt: skip
+    assert "rows" in one and len(one["rows"]) == 4
+
+
+def test_a_zero_population_leaves_that_year_out_of_a_rate_trend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = pop_records()
+    zero = [{**r, "population": 0} if (r["state"], r["year"]) == ("Michigan", 2016) else r for r in original]
+    monkeypatch.setattr(sys.modules[__name__], "pop_records", lambda: zero)
+    reg, eng = build(tmp_path)
+    out = analysis.get_trend(reg, eng, condition="legionellosis", location="Michigan", fmt="json")
+    assert "rows" in out, out  # not a StatsError refusal for the whole answer
+    assert any("Michigan in 2016" in n for n in out["notes"])
+
+
+def test_an_empty_population_never_hides_a_real_one(
+    env: tuple[Registry, Engine], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reg, eng = env
+    ds = reg.get("toy_pop")
+    s = ds.semantic.series[0]
+    answers = [None, 5000.0]
+
+    def fake(*a: Any, **k: Any) -> tuple[list[analysis.Obs], list[str]]:
+        return [analysis.Obs("Michigan", "MICHIGAN", 2023, answers.pop(0), "")], []
+
+    monkeypatch.setattr(analysis, "read_series", fake)
+    found, years = analysis.populations(eng, [(ds, s), (ds, s)], ["Michigan"], 2023, 2023)
+    assert found[("Michigan", 2023)][0] == 5000.0 and years == {2023}
+
+
+def test_a_schema_level_partial_areas_is_refused() -> None:
+    import yaml
+
+    from health_data_registry.registry import RegistryError, parse_contract
+
+    bad = CASES_CONTRACT.replace(
+        "      - {property: totalRows, value: \"upper(area) = 'US RESIDENTS'\"}\n",
+        "      - {property: totalRows, value: \"upper(area) = 'US RESIDENTS'\"}\n"
+        '      - {property: partialAreas, value: {"NEW YORK": "excludes New York City"}}\n',
+    )
+    assert bad != CASES_CONTRACT
+    with pytest.raises(RegistryError, match="once, as partialPlaces"):
+        parse_contract(yaml.safe_load(bad.replace("RULES_HERE\n", "")), expected_id="toy_weekly")

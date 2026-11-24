@@ -35,10 +35,6 @@ schema:
         value: "location2 IS NOT NULL AND upper(location2) NOT IN ('NON-US RESIDENTS', 'NON-U.S. RESIDENTS')"
         description: "Summary areas (TOTAL, US RESIDENTS, US TERRITORIES and the nine census divisions) carry location2; single jurisdictions carry location1. Non-U.S. Residents also carries location2 but is its own bucket, not a sum. Structural fact checked live 2026-11-24: for Legionellosis 2024 week 52 the 51 state/DC rows plus New York City (7012 + 249) equal US RESIDENTS (7261), and US RESIDENTS + US TERRITORIES + NON-US RESIDENTS (7261 + 3 + 1) equal TOTAL (7265)."
       - {property: tableShape, value: surveillance_series}
-      - property: partialAreas
-        value:
-          "NEW YORK": "New York State excluding New York City, which NNDSS reports as its own area"
-        description: "Reporting areas whose counts cover only part of the place of the same name, so a rate against that place's whole population would be wrong. From the dataset footnote that New York City is reported separately, and the structural check under totalRows (the 51 state/DC rows plus New York City equal US RESIDENTS). Matched ignoring case and dots, so it covers the title-case 'New York' from 2025."
       - property: idDimensions
         value:
           condition: label
@@ -60,7 +56,7 @@ schema:
           - {property: sourceField, value: states}
           - property: partialPlaces
             value: {"New York": "New York State excluding New York City, which NNDSS reports as its own area; not the whole state GBD models"}
-            description: "Structural check above: the 51 state/DC rows plus New York City add up to US RESIDENTS, so New York excludes New York City."
+            description: "The one declaration of areas that cover only part of the place of the same name: get_rate and get_trend refuse a rate against the whole place's population, and answers carry the note. From the dataset footnote that New York City is reported separately, and the structural check under totalRows (the 51 state/DC rows plus New York City add up to US RESIDENTS), so New York excludes New York City. Matched ignoring case and dots, so it covers 'NEW YORK' through 2024 and 'New York' from 2025."
           - property: renamedLabels
             value: {"Commonwealth of Northern Mariana Islands": "Northern Mariana Islands"}
             description: "The 2025 tables name the territory by its official title, Commonwealth of the Northern Mariana Islands; 2022-2024 tables call it Northern Mariana Islands. Same jurisdiction, one row per table each year (live data, 2026-11-24)."
