@@ -158,15 +158,19 @@ function missingUvMessage(platform = process.platform) {
   ].join('\n');
 }
 
-/** Download Astral's installer script (following redirects only within astral.sh) and run it. */
-async function installUv({ platform = process.platform, fetchImpl = globalThis.fetch } = {}) {
-  if (platform === 'win32') {
-    const cmd = `irm ${INSTALLER.win32} | iex`;
-    return run('powershell', ['-NoProfile', '-ExecutionPolicy', 'ByPass', '-Command', cmd], null);
-  }
+/** Download Astral's installer script (following redirects only within astral.sh) and run it.
+ *
+ * On every platform the script is fetched here, through fetchInstaller's host and redirect checks, and only
+ * then handed to the shell on stdin: PowerShell never downloads anything itself (no `irm | iex`). */
+async function installUv({ platform = process.platform, fetchImpl = globalThis.fetch, runImpl = run } = {}) {
   if (typeof fetchImpl !== 'function') throw new Error('this Node.js has no fetch; install uv by hand');
+  if (platform === 'win32') {
+    const script = await fetchInstaller(INSTALLER.win32, fetchImpl);
+    // `-Command -` reads the checked script from stdin; nothing is fetched by PowerShell.
+    return runImpl('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'ByPass', '-Command', '-'], script);
+  }
   const script = await fetchInstaller(INSTALLER.posix, fetchImpl);
-  return run('sh', ['-s'], script);
+  return runImpl('sh', ['-s'], script);
 }
 
 async function fetchInstaller(url, fetchImpl, hops = 0) {
@@ -231,14 +235,18 @@ async function main(argv = process.argv.slice(2), { env = process.env, platform 
   }
   return new Promise((resolve) => {
     const child = spawn(command, args, { stdio: 'inherit', env: childEnv(env) });
-    const forward = (sig) => () => child.kill(sig);
     const signals = platform === 'win32' ? ['SIGINT', 'SIGTERM'] : ['SIGINT', 'SIGTERM', 'SIGHUP'];
-    for (const s of signals) process.on(s, forward(s));
+    const handlers = signals.map((s) => [s, () => child.kill(s)]);
+    for (const [s, h] of handlers) process.on(s, h);
+    const done = (code) => {
+      for (const [s, h] of handlers) process.removeListener(s, h); // no listeners left behind
+      resolve(code);
+    };
     child.on('error', (err) => {
       process.stderr.write(`health-data-registry could not start uv (${command}): ${err.message}\n`);
-      resolve(1);
+      done(1);
     });
-    child.on('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0)));
+    child.on('exit', (code, signal) => done(code ?? (signal ? 1 : 0)));
   });
 }
 
@@ -256,5 +264,6 @@ module.exports = {
   wantsInstall,
   missingUvMessage,
   fetchInstaller,
+  installUv,
   main,
 };

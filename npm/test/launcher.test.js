@@ -178,3 +178,18 @@ test('npm, PyPI, MCP Registry and .mcpb versions and names stay in sync', () => 
   assert.equal(manifest.version, pkg.version);
   assert.equal(manifest.name, pkg.name);
 });
+
+test('Windows installs uv through the checked download, never irm | iex', async () => {
+  const ran = [];
+  const runImpl = async (cmd, args, stdin) => ran.push({ cmd, args, stdin });
+  const ok = fakeFetch({ 'https://astral.sh/uv/install.ps1': { status: 200, body: 'Write-Output uv' } });
+  await L.installUv({ platform: 'win32', fetchImpl: ok, runImpl });
+  assert.deepEqual(ok.seen, ['https://astral.sh/uv/install.ps1']);
+  assert.equal(ran[0].cmd, 'powershell');
+  assert.equal(ran[0].args.at(-1), '-');
+  assert.equal(ran[0].stdin, 'Write-Output uv');
+  assert.ok(!ran[0].args.join(' ').includes('irm'));
+  const evil = fakeFetch({ 'https://astral.sh/uv/install.ps1': { status: 302, location: 'https://evil.example/x.ps1' } });
+  await assert.rejects(L.installUv({ platform: 'win32', fetchImpl: evil, runImpl }), /refusing/);
+  assert.equal(ran.length, 1);
+});
