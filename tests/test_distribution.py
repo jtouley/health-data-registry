@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import tomllib
 import zipfile
@@ -226,7 +227,7 @@ def test_no_forbidden_names_in_generated_text(kit: dict[str, bytes]) -> None:
 
 
 def test_tool_lists_match_the_server(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The README and docs/tools.md list exactly the tools the server registers (make docs writes them)."""
+    """README.md, docs/tools.md and CLAUDE.md list exactly the tools the server registers (make docs writes them)."""
     monkeypatch.setenv("HDR_HUB", "off")
     table = distribution.tool_table()
     for rel in distribution.TOOL_LIST_FILES:
@@ -234,3 +235,64 @@ def test_tool_lists_match_the_server(monkeypatch: pytest.MonkeyPatch) -> None:
         assert distribution.TOOLS_START in text, rel
         assert distribution.with_tool_table(text, table) == text, f"{rel} is stale: run make docs"
     assert distribution.with_tool_table("no markers", table) == "no markers"
+
+
+def test_tool_table_is_built_with_the_hub_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`make docs` builds the table with HDR_HUB=off, as the drift test does, and leaves the developer's setting."""
+    from health_data_registry import server
+    from health_data_registry.query import Engine
+    from health_data_registry.registry import Registry
+
+    seen: list[str | None] = []
+
+    class FakeServer:
+        async def list_tools(self) -> list[object]:
+            return []
+
+    def fake_build_server(reg: object, engine: object) -> FakeServer:
+        seen.append(os.environ.get("HDR_HUB"))
+        assert isinstance(reg, Registry)
+        assert isinstance(engine, Engine)
+        assert engine.registry is reg
+        assert engine.lake == Path("lake")
+        assert engine.hub is None
+        return FakeServer()
+
+    monkeypatch.setattr(server, "build_server", fake_build_server)
+    monkeypatch.setenv("HDR_HUB", "hf://datasets/example/hub")
+    assert distribution.tool_table() == "| Tool | What it gives you |\n|---|---|"
+    assert seen == ["off"]
+    assert os.environ["HDR_HUB"] == "hf://datasets/example/hub"
+
+
+def test_tool_table_keeps_the_first_sentence_of_each_description(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One row per tool: the first sentence of the first paragraph, with pipes escaped."""
+    from types import SimpleNamespace
+
+    from health_data_registry import server
+
+    tools = [
+        SimpleNamespace(name="no_text", description=None),
+        SimpleNamespace(name="example", description="Weekly counts by state.  Then more.\n\nExtra."),
+        SimpleNamespace(name="piped", description="Cases a|b by week\n\nNext paragraph."),
+    ]
+
+    class FakeServer:
+        async def list_tools(self) -> list[object]:
+            return tools
+
+    monkeypatch.setattr(server, "build_server", lambda *a, **k: FakeServer())
+    assert distribution.tool_table().splitlines()[2:] == [
+        "| `no_text` |  |",
+        "| `example` | Weekly counts by state. |",
+        "| `piped` | Cases a/b by week |",
+    ]
+
+
+def test_with_tool_table_edge_cases() -> None:
+    """Markers at the very start work; reversed or missing markers leave the text alone; the first pair is used."""
+    s, e = distribution.TOOLS_START, distribution.TOOLS_END
+    assert distribution.with_tool_table(f"{s}old{e}", "T") == f"{s}\n\nT\n\n{e}"
+    assert distribution.with_tool_table(f"{e}x{s}", "T") == f"{e}x{s}"
+    assert distribution.with_tool_table(f"{s}", "T") == f"{s}"
+    assert distribution.with_tool_table(f"a{s}1{e}b{s}2{e}c", "T") == f"a{s}\n\nT\n\n{e}b{s}2{e}c"
