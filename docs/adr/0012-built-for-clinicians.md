@@ -20,8 +20,10 @@ not show a connector's prompts: whether Claude on the web and on mobile do is no
 - **The main path needs no terminal.** Anything that does is marked optional and a helper walks through it. Until
   the server is hosted ([ADR 0011](0011-local-stdio-first.md)) adding this tool is itself a one-time install, and
   the README says so plainly.
-- **One helper per step,** shipped as MCP prompts: `start_here`, `set_up_my_project`, `spot_a_pattern`,
-  `check_its_new`, `find_data_for_my_question`, `draft_my_pitch`, `help_me_fix_it`, `walk_me_through_install`.
+- **One helper per step,** shipped as MCP prompts: `start_here`, `research_story`, `scope_an_area`,
+  `find_opportunities`, `refine_hypothesis`, `build_story`, `help_me_fix_it`, `walk_me_through_install`,
+  `set_up_my_project`; and as skills with the same names hyphenated (`/start-here`, ...), generated from the same
+  source.
 - **Copy-paste versions** of the same helpers are in [docs/helpers.md](../helpers.md), generated from
   `src/health_data_registry/helpers.py` by `make docs`; a test fails if they differ.
 - **Separate audiences.** The README and [docs/setup.md](../setup.md) are for clinicians; developer material is in

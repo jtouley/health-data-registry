@@ -62,7 +62,13 @@ def main() -> int:
         return 0
     print("Mutating:", ", ".join(mods))
     shutil.rmtree(ROOT / "mutants", ignore_errors=True)
-    subprocess.run(["mutmut", "run", *[f"{m}.*" for m in mods]], cwd=ROOT, check=False)
+    run = subprocess.run(["mutmut", "run", *[f"{m}.*" for m in mods]], cwd=ROOT, check=False)
+    if run.returncode != 0:
+        # A failed baseline (the tests fail on the unmutated copy) checks nothing: never report it as a score.
+        print(
+            f"mutmut run failed (exit code {run.returncode}), so no mutant was checked. Fix the run above first."
+        )
+        return 1
     res = subprocess.run(
         ["mutmut", "results", "--all", "true"], cwd=ROOT, capture_output=True, text=True, check=False
     )
@@ -82,7 +88,10 @@ def main() -> int:
     for s in survivors:
         print("survived:", s)
     checked = killed + survived
-    score = 100.0 * killed / checked if checked else 100.0
+    if not checked:
+        print(f"No mutant of {', '.join(mods)} was checked, so there is no mutation score. Failing.")
+        return 1
+    score = 100.0 * killed / checked
     print(
         f"Mutation score on changed modules: {score:.1f}% ({killed} killed of {checked}); floor {a.floor:.0f}%"
     )

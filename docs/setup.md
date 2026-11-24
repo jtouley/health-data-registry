@@ -77,25 +77,25 @@ claude mcp add --transport http health-data-registry <web address, to be publish
 
 Then run `/mcp` inside Claude Code. You should see health-data-registry listed as connected.
 
-**Option B, on your own computer (works today).** You need [uv](https://docs.astral.sh/uv/) and Git. Load the data
-once (step 4 of the [one-time install](#one-time-install-on-your-computer-for-now)), then run:
+**Option B, on your own computer (works today).** You need [uv](https://docs.astral.sh/uv/) and Git. Run:
 
 ```bash
-claude mcp add health-data-registry --env HDR_LAKE="$HOME/health-data" -- \
+claude mcp add health-data-registry -- \
   uvx --from git+https://github.com/jtouley/health-data-registry health-data-registry serve
 ```
 
-Then run `/mcp`. You should see health-data-registry listed as connected. If it says failed, check that the
-`health-data` folder exists and holds the data from step 4.
+Then run `/mcp`. You should see health-data-registry listed as connected. There is no data to download: the tool
+reads it from the open health data hub when you ask.
 
 ## One-time install on your computer (for now)
 
 Until the web address is published, this tool needs a **one-time install** on your computer and works in the
-**Claude Desktop app**. It takes about 15 minutes. You will type four commands into a **terminal**, the window where
-you type commands to your computer.
+**Claude Desktop app**. It takes about 10 minutes. You will type three commands into a **terminal**, the window
+where you type commands to your computer.
 
-Coming: once the tool is hosted, the data lives on the open health data hub and the tool reads it from there, so
-this install and the "load the data" step go away.
+There is no data to download. The tool reads CDC and Census data from the open health data hub when you ask, and
+WHO data live from WHO; every answer names the release or the date it came from. Until the hub's first data
+release is published, the tool says so plainly instead of answering.
 
 Prefer to be guided? Paste the [Walk me through an install](helpers.md#walk-me-through-an-install) helper into
 any Claude chat, with "health-data-registry" as the tool, and Claude will take you through these steps one at a
@@ -129,60 +129,48 @@ time. If any step is blocked on a work computer, ask your institution's IT team 
    On Windows, if it says "not recognized", install Git from [git-scm.com](https://git-scm.com/download/win),
    then open a new PowerShell window.
 
-4. **Load the data once.** This downloads the starter datasets from CDC, WHO and the Census Bureau into a folder called
-   `health-data` in your home folder. Paste one line and press Return:
-   - Mac:
-     `HDR_LAKE="$HOME/health-data" uvx --from git+https://github.com/jtouley/health-data-registry health-data-registry refresh --all`
-   - Windows:
-     `$env:HDR_LAKE="$HOME\health-data"; uvx --from git+https://github.com/jtouley/health-data-registry health-data-registry refresh --all`
+4. **Note where uv is.** Type the line for your computer and press Return:
+   - Mac: `which uvx`
+   - Windows: `where.exe uvx`
 
-   It takes about 15 minutes and needs about 1.5 GB of free disk space (most of it is the publishers' original
-   files, kept so every number can be traced back). You should get your blinking cursor back with no error message.
-   If you see an error naming one dataset, the publisher's site may be down; try again later. The other
-   datasets still work.
+   You should see one line, for example `/Users/yourname/.local/bin/uvx`.
+   Keep this window open; you need that line in the next step.
 
-5. **Note two paths.** Type the line for your computer and press Return:
-   - Mac: `which uvx; echo $HOME/health-data`
-   - Windows: `where.exe uvx; echo $HOME\health-data`
-
-   You should see two lines, for example `/Users/yourname/.local/bin/uvx` and `/Users/yourname/health-data`.
-   Keep this window open; you need both lines in the next step.
-
-6. **Add the tool to Claude Desktop.** In Claude Desktop, open Settings → Developer → Edit Config. A file called
+5. **Add the tool to Claude Desktop.** In Claude Desktop, open Settings → Developer → Edit Config. A file called
    `claude_desktop_config.json` opens in a text editor. Replace its contents with the text below, putting your
-   two lines from step 5 where it says so. If the file already lists other tools, ask Claude to help you merge
+   line from step 4 where it says so. If the file already lists other tools, ask Claude to help you merge
    the two, using the [Something's wrong](helpers.md#somethings-wrong) helper.
 
    ```json
    {
      "mcpServers": {
        "health-data-registry": {
-         "command": "FIRST LINE FROM STEP 5",
+         "command": "THE LINE FROM STEP 4",
          "args": ["--from", "git+https://github.com/jtouley/health-data-registry",
-                  "health-data-registry", "serve"],
-         "env": { "HDR_LAKE": "SECOND LINE FROM STEP 5" }
+                  "health-data-registry", "serve"]
        }
      }
    }
    ```
 
-   On Windows, write each `\` in the paths as `\\`. Save the file.
+   On Windows, write each `\` in the path as `\\`. Save the file.
    <!-- SCREENSHOT: Claude Desktop, Settings → Developer, with the Edit Config button -->
 
-7. **Quit Claude Desktop fully and open it again.** On a Mac, use Claude → Quit Claude (closing the window isn't
+6. **Quit Claude Desktop fully and open it again.** On a Mac, use Claude → Quit Claude (closing the window isn't
    enough). On Windows, right-click the Claude icon by the clock and choose Quit.
    You should see health-data-registry under Settings → Developer, marked as running.
-   If it says "failed", check the two paths in step 6 for typos, then quit and reopen again.
+   If it says "failed", check the path in step 5 for typos, then quit and reopen again.
    <!-- SCREENSHOT: Settings → Developer showing health-data-registry running -->
 
-8. **Start a new chat and test it.** A tool only appears in chats started after you add it. Open the menu of
+7. **Start a new chat and test it.** A tool only appears in chats started after you add it. Open the menu of
    ready-made starters in the message box, choose health-data-registry, then **Start here: check my tools work**.
    You should see one line per tool saying whether it works.
    If the starters don't show in the menu, paste [Start here](helpers.md#start-here-check-my-tools-work) as your
    message instead.
    <!-- SCREENSHOT: the starters menu with "Start here: check my tools work" -->
 
-**To get newer data later,** repeat step 4. Each dataset shows the date it was fetched with every answer.
+**Newer data** arrive with each hub release; there is nothing to repeat. Every answer names the release it came
+from.
 
 ## IHME GBD connector
 
@@ -246,11 +234,11 @@ Run the [Something's wrong](helpers.md#somethings-wrong) helper and describe wha
 
 - **The tool isn't in my chat:** start a new chat. Tools added during a chat don't appear in it. Then check it is
   switched on under **+** → **Connectors**.
-- **Claude Desktop says the tool failed (one-time install):** check the two paths in step 6, then quit Claude
+- **Claude Desktop says the tool failed (one-time install):** check the path in step 5, then quit Claude
   Desktop fully and open it again. Claude Desktop's own logs are in `~/Library/Logs/Claude` (Mac) or
   `%APPDATA%\Claude\logs` (Windows); you can paste the last lines into a chat and ask Claude what they mean.
-- **An answer says the data "hasn't been downloaded on this computer yet":** repeat step 4 of the one-time
-  install.
+- **An answer says the hub "has no published release yet":** the open data hub's first release isn't out; try
+  again later. Nothing was guessed in the meantime.
 - **A number looks wrong:** ask Claude to show the provenance (`get_provenance`) and check it against the
   publisher's page it links to. If the publisher's page disagrees, trust the publisher and
   [open an issue](https://github.com/jtouley/health-data-registry/issues).

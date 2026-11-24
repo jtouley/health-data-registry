@@ -35,8 +35,10 @@ from health_data_registry.publish import HF_PREFIX, data_path, hf_repo_id, sha25
 from health_data_registry.registry import Dataset
 from health_data_registry.store import Manifest
 
-# The project's public hub, once the maintainer has created it; until then set HDR_HUB.
-DEFAULT_HUB: str | None = None
+# The project's public hub. Until its first release-<run date> tag exists, reading from it is refused plainly.
+DEFAULT_HUB: str | None = "hf://datasets/jtouley/health-data-registry"
+# HDR_HUB=off reads no hub at all (tests, and maintainers working only from their own lake).
+HUB_OFF = frozenset({"off", "none", "0"})
 
 
 class HubError(ValueError):
@@ -53,7 +55,10 @@ def cache_root() -> Path:
 
 
 def hub_from_env() -> str | None:
-    return os.environ.get("HDR_HUB") or DEFAULT_HUB
+    env = os.environ.get("HDR_HUB", "").strip()
+    if env.casefold() in HUB_OFF:
+        return None
+    return env or DEFAULT_HUB
 
 
 RELEASE_TAG = re.compile(r"^release-\d{4}-\d{2}-\d{2}(\.\d+)?$")
@@ -173,7 +178,12 @@ class Hub:
             ) from e
         newest = newest_release(tags)
         if newest is None:
-            raise HubError("no_release", f"The open data hub ({self.url}) has no tagged release yet.")
+            raise HubError(
+                "no_release",
+                f"The open data hub ({self.url}) has no published release yet, so there is no data to read from "
+                "it. Nothing was guessed. Try again after the first release, or use get_provenance and "
+                "list_sources to see what this server covers.",
+            )
         self._rev = newest
         return newest
 

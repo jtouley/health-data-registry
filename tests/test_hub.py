@@ -165,6 +165,8 @@ def test_unpinned_hub_resolves_newest_release(tmp_path: Path) -> None:
     with pytest.raises(HubError) as e:
         Hub(url="hf://datasets/org/hub", cache=tmp_path, api=Api(["main", "v1"])).revision()
     assert e.value.code == "no_release"
+    assert str(e.value).startswith("The open data hub (hf://datasets/org/hub) has no published release yet")
+    assert "Nothing was guessed" in str(e.value)
 
     class Down:
         def list_repo_refs(self, *a: Any, **kw: Any) -> Any:
@@ -296,7 +298,11 @@ def test_publisher_failure_is_a_plain_refusal(tmp_path: Path, reg: Registry) -> 
 
 
 def test_env_defaults(tmp_path: Path, monkeypatch: Any, reg: Registry) -> None:
-    assert hub.hub_from_env() is None
+    assert hub.hub_from_env() is None  # HDR_HUB=off
+    monkeypatch.delenv("HDR_HUB")
+    assert hub.hub_from_env() == hub.DEFAULT_HUB == "hf://datasets/jtouley/health-data-registry"
+    monkeypatch.setenv("HDR_HUB", " ")
+    assert hub.hub_from_env() == hub.DEFAULT_HUB
     monkeypatch.setenv("HDR_HUB", str(tmp_path / "h"))
     eng = Engine(registry=reg, lake=tmp_path / "l")
     assert eng.hub is not None and eng.hub.url == str(tmp_path / "h")

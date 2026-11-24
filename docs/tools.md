@@ -277,7 +277,8 @@ The common ones:
 | "… could not be reached to download …" | A restricted source (WHO) is fetched from the publisher, and the publisher's site didn't answer | Try again in a few minutes |
 | "The hub release … has no file …" or "… does not list …" | The hub release the server reads from is incomplete | Try again later, or [open an issue](https://github.com/jtouley/health-data-registry/issues) |
 | "The index … isn't built yet" | `find_prior_work` is coming | Search PubMed |
-| "The data for … hasn't been downloaded on this computer yet" | Local install only: the one-time load step hasn't run | Repeat step 4 of the [local install](setup.md#one-time-install-on-your-computer-for-now) |
+| "The open data hub … has no published release yet" | The hub's first data release isn't out | Try again later; nothing was guessed |
+| "The data for … hasn't been downloaded on this computer yet" | The hub is turned off (`HDR_HUB=off`) and there is no local copy | Remove `HDR_HUB=off` from the tool's settings |
 | "That query can't run: …" | `query_sql` refused the query | Use `get_series` or `describe_dataset` instead |
 | "Something went wrong while reading the data, so no numbers are shown" | Anything unexpected | Try again; if it keeps happening, run the [Something's wrong](helpers.md#somethings-wrong) helper |
 
@@ -286,13 +287,14 @@ The common ones:
 Helpers are ready-made starters for each step from setup to pitch. They appear in Claude's menu once the connector
 is added; if your Claude app doesn't show them, copy them from the [helpers page](helpers.md).
 
-| Helper | What it does for you |
+| Helper (Claude Code skill) | What it does for you |
 |---|---|
-| `start_here` | Tests each connected tool (this one, GBD, PubMed and others) and says which work and how to add any that are missing |
+| `start_here` (`/start-here`) | Tests each connected research tool and says in plain words which work and which are missing |
+| `research_story` (`/research-story`) | The entry point for a research project: asks whether you already have an area or want one found, then routes you through the steps below |
+| `scope_an_area` (`/scope-an-area`) | Takes an area or question in your own words and returns the datasets that fit, what each can't answer, and the questions worth refining |
+| `find_opportunities` (`/find-opportunities`) | For a fellow without an area yet, looks for signals in the public data worth a study and returns a short opportunity brief |
+| `refine_hypothesis` (`/refine-hypothesis`) | States the hypothesis, checks the data and whether it's new, names the confounders and what the data can't say, and revises until it's test-ready, needs revising, or should be dropped |
+| `build_story` (`/build-story`) | Turns a refined hypothesis into a one-page pitch, an IDWeek abstract or a poster outline; for a case report, writes only the population-context paragraph |
+| `help_me_fix_it` (`/help-me-fix-it`) | Asks what you see, matches it to known problems, and gives the fix one step at a time |
+| `walk_me_through_install` | Step-by-step help in the Claude Desktop app for the optional tools that need an install; never asks for a password |
 | `set_up_my_project` | Writes the Project instructions to paste, with the guardrails, and says where to paste them |
-| `spot_a_pattern` | For a condition and a place, checks GBD, then the reported numbers, and shows what changed and what the data can't say |
-| `check_its_new` | Searches PubMed, OpenEvidence if connected, and the prior-work index, then says what has been done and where the gap is |
-| `find_data_for_my_question` | Takes your question in your own words and returns datasets that fit, with what each can't answer |
-| `draft_my_pitch` | Builds a one-page summary with every number's source, case definition and citation, ready for a mentor |
-| `help_me_fix_it` | Asks what you see and gives the fix one step at a time |
-| `walk_me_through_install` | Step-by-step help installing an optional tool in Claude Desktop; never asks for a password |

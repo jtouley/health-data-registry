@@ -92,10 +92,11 @@ The MCP surface (`server.py`):
   `get_series`, `get_aligned_with_gbd`, `get_rate`, `get_provenance`, `list_caveats`, `find_prior_work` (returns
   "index not built yet") and `query_sql`, the guarded escape hatch. Results are CSV by default; `fmt="json"` gives
   structured output.
-- **Helpers** (MCP prompts): `start_here`, `set_up_my_project`, `spot_a_pattern`, `check_its_new`,
-  `find_data_for_my_question`, `draft_my_pitch`, `help_me_fix_it`, `walk_me_through_install`. Their text lives in
-  `helpers.py`; [docs/helpers.md](../helpers.md) is generated from it by `make docs`, and a test fails if the two
-  differ. Never edit `docs/helpers.md` by hand.
+- **Helpers** (MCP prompts): `start_here`, `research_story`, `scope_an_area`, `find_opportunities`,
+  `refine_hypothesis`, `build_story`, `help_me_fix_it`, `walk_me_through_install`, `set_up_my_project`; the same
+  workflows ship as skills with hyphenated names (`/start-here`, ...). Their text lives in `helpers.py`;
+  [docs/helpers.md](../helpers.md), `template/.claude/skills/` and `plugin/skills/` are generated from it by
+  `make docs`, and a test fails if they differ. Never edit the generated files by hand.
 
 When a tool's name, parameters, columns or refusals change in `server.py` or `tools.py`, update
 [docs/tools.md](../tools.md) in the same PR; when a contract changes how a number is read (missing codes, total rows,
