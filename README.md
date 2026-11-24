@@ -160,6 +160,7 @@ each tool's parameters, what comes back, an example prompt and what it says when
 | `get_provenance` | Where the numbers came from: web addresses, fetch dates and a fingerprint of each downloaded file |
 | `list_caveats` | What the data can't tell you: place traps, hidden small numbers, provisional years, unreviewed contracts |
 | `find_prior_work` | Conference abstracts, case reports and health department reports (coming; today it says so rather than guess) |
+| `get_publication_outlook` | How often abstracts at a conference became full papers, stage by stage, with the source and interval; "unknown" where there's no verified data, and never a chance for your own idea |
 | `query_sql` | A last resort for questions the others don't cover; it refuses anything but a careful, read-only lookup |
 
 Coming: analysis tools that return a number with its 95% interval and method: `compare_rates`, `get_trend`,

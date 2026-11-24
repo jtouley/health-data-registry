@@ -1,0 +1,175 @@
+# Reviewed base rates for get_publication_outlook (docs/publication-outlook.md).
+#
+# Every number here was checked against the primary source (PubMed abstract through NCBI E-utilities and, for
+# Johnson 2022, the PMC full text) on the date in `verified`. Status stays draft until a maintainer reviews it.
+# Intervals are 95%. A rate the source doesn't publish is `unknown`, never a guess.
+schema_version: 1
+
+base_rates:
+  - id: johnson_2022_idweek
+    role: primary
+    conference: IDWeek
+    status: draft
+    stage: abstract_to_paper
+    citation: >-
+      Johnson AJ, Bland CM, Teng C, et al. From Start to Finish: Examining Factors Associated With Higher
+      Likelihood of Publication Among Abstracts Presented at an International Infectious Diseases Scientific
+      Meeting. Open Forum Infect Dis. 2022;9(9):ofac415.
+    short_citation: Johnson 2022
+    pmid: "36147600"
+    pmcid: PMC9487641
+    doi: 10.1093/ofid/ofac415
+    event_definition: >-
+      Full peer-reviewed journal article after presentation as an IDWeek abstract, found by a standardised
+      search of PubMed, International Pharmaceutical Abstracts and Google Scholar, within the source's
+      follow-up (3 years for 2017 abstracts, 2 years for 2018 abstracts).
+    frame:
+      meeting: IDWeek
+      years: "2017-2018"
+      population: accepted abstracts listed in the IDWeek portal (4355 in total over both years)
+      sampling: >-
+        Simple random sample drawn in Microsoft Excel from all 4355 accepted abstracts listed in the IDWeek
+        portal; 433 from 2017 and 454 from 2018. The paper does not say whether the draw was stratified by year.
+      follow_up: 3 years from the meeting for 2017 abstracts, 2 years for 2018 abstracts
+      follow_up_months: {min: 24, max: 36}
+    n: 887
+    k: 236
+    estimate:
+      reported: "26.6%"
+      proportion: 0.2661 # 236 / 887, kept for the golden test; never shown alone
+    interval:
+      level: 0.95
+      method: Wilson score interval, computed here from n and k (the source reports no interval)
+      low: 0.2380
+      high: 0.2961
+    subgroups:
+      - {label: oral/platform presentation, n: 382, k: 132, reported: "34.6% (35% in the abstract)"}
+      - {label: poster presentation, n: 505, k: 104, reported: "20.6% (21% in the abstract)"}
+      - {label: IDWeek 2017 (3 years of follow-up), n: 433, k: 154, reported: "35.6%"}
+      - {label: IDWeek 2018 (2 years of follow-up), n: 454, k: 82, reported: "18.1%"}
+    time_to_publication:
+      median_months: 10.9
+      iqr_months: [5.0, 17.7]
+      among: the 236 published abstracts only (not a survival estimate; unpublished abstracts are not in it)
+    discrepancies:
+      - >-
+        The brief said "full PubMed-indexed paper". The source counts any peer-reviewed journal article found in
+        PubMed, International Pharmaceutical Abstracts or Google Scholar, so the event here follows the source.
+      - >-
+        The brief gave one frame for 2017-2018; follow-up differed by year (3 vs 2 years), and 2018's overlapped
+        the COVID-19 pandemic, which the authors name as their main limitation. There is no single horizon.
+      - >-
+        Oral vs poster is 35% vs 21% in the abstract and 34.6% vs 20.6% (132/382 vs 104/505) in the full text;
+        the same numbers rounded, no conflict.
+    known_limits:
+      - Papers missed when an author's name changed or the journal is not in the databases searched.
+      - Only accepted, presented abstracts are in the frame; rejected or never-submitted work is not.
+      - One meeting (IDWeek), two years, mixed topics.
+    verified:
+      on: "2026-11-24"
+      against: PubMed record 36147600 (E-utilities efetch/esummary) and PMC9487641 full text (methods, results, table 2)
+      matches_brief: "yes for 236/887 (26.6%), 35% vs 21% and 10.9 months; see discrepancies for the event definition"
+
+  - id: scherer_2018_cochrane
+    role: context # many meetings pooled; never used as any one conference's rate
+    conference: none
+    status: draft
+    stage: abstract_to_paper
+    citation: >-
+      Scherer RW, Meerpohl JJ, Pfeifer N, Schmucker C, Schwarzer G, von Elm E. Full publication of results
+      initially presented in abstracts. Cochrane Database Syst Rev. 2018;11(11):MR000005.
+    short_citation: Scherer 2018 (Cochrane)
+    pmid: "30480762"
+    pmcid: PMC7073270
+    doi: 10.1002/14651858.MR000005.pub4
+    event_definition: >-
+      Full publication of results first presented as a meeting abstract or summary, pooled across reports with
+      varying lengths of follow-up (each report searched at least 2 years after the meeting).
+    frame:
+      meeting: many biomedical meetings (425 methodology reports)
+      years: reports found up to February 2016
+      sampling: systematic review of methodology reports; abstracts as sampled by each report
+      follow_up: varies by report (at least 2 years)
+    n: 307028 # abstracts across 425 reports
+    k: unknown # a random-effects pooled proportion, not a count
+    estimate:
+      reported: "37.3%"
+      proportion: 0.373
+    interval:
+      level: 0.95
+      method: random-effects meta-analysis, as reported by the source
+      low: 0.353
+      high: 0.393
+    discrepancies: []
+    verified:
+      on: "2026-11-24"
+      against: PubMed record 30480762 abstract (E-utilities efetch)
+      matches_brief: "yes: 37.3% (95% CI 35.3-39.3%)"
+
+# Keyed by conference, in the maintainer's order (CROI first). Per conference:
+#   acceptance_rate   stage 2 (finished study -> accepted abstract); a number only where the meeting publishes it
+#   abstract_to_paper stage 3 (presented abstract -> full paper); the id of a verified base rate above, or unknown
+# A conference with `unknown` never borrows another meeting's rate, nor Scherer's pooled one.
+conferences:
+  - name: CROI
+    full_name: Conference on Retroviruses and Opportunistic Infections
+    aliases: [croi]
+    acceptance_rate: unknown
+    # SLOT: a CROI base rate is being researched separately. Add it to base_rates (conference: CROI, verified
+    # against the primary source) and put its id here; until then it stays unknown.
+    abstract_to_paper: unknown
+  - name: IDWeek
+    full_name: IDWeek (IDSA, SHEA, HIVMA, PIDS, SIDP)
+    aliases: [idweek, id week]
+    acceptance_rate: unknown
+    abstract_to_paper: johnson_2022_idweek
+  - name: ESCMID Global
+    full_name: ESCMID Global (formerly ECCMID)
+    aliases: [escmid, eccmid, escmid global]
+    acceptance_rate: unknown
+    abstract_to_paper: unknown
+  - name: SHEA Spring
+    full_name: SHEA Spring Conference
+    aliases: [shea, shea spring]
+    acceptance_rate: unknown
+    abstract_to_paper: unknown
+  - name: IAS/AIDS
+    full_name: IAS Conference on HIV Science and the International AIDS Conference
+    aliases: [ias, aids, ias/aids, international aids conference]
+    acceptance_rate: unknown
+    abstract_to_paper: unknown
+  - name: STI & HIV World Congress
+    full_name: STI & HIV World Congress
+    aliases: [sti & hiv, sti and hiv world congress, sti hiv world congress]
+    acceptance_rate: unknown
+    abstract_to_paper: unknown
+  - name: ASM Microbe
+    full_name: ASM Microbe
+    aliases: [asm, asm microbe]
+    acceptance_rate: unknown
+    abstract_to_paper: unknown
+  - name: AASLD
+    full_name: AASLD The Liver Meeting
+    aliases: [aasld, the liver meeting]
+    acceptance_rate: unknown
+    abstract_to_paper: unknown
+  - name: PIDS/ESPID
+    full_name: PIDS and ESPID meetings (paediatric infectious diseases)
+    aliases: [pids, espid, pids/espid]
+    acceptance_rate: unknown
+    abstract_to_paper: unknown
+  - name: APIC
+    full_name: APIC Annual Conference
+    aliases: [apic]
+    acceptance_rate: unknown
+    abstract_to_paper: unknown
+  - name: ICID
+    full_name: International Congress on Infectious Diseases
+    aliases: [icid]
+    acceptance_rate: unknown
+    abstract_to_paper: unknown
+  - name: Michigan ID Society
+    full_name: Michigan Infectious Disease Society meeting
+    aliases: [michigan id society, mids, michigan infectious disease society]
+    acceptance_rate: unknown
+    abstract_to_paper: unknown

@@ -22,6 +22,7 @@ Every tool only reads data. None of them can change anything, upload anything or
 | [`get_provenance`](#get_provenance) | Where exactly did these numbers come from? |
 | [`list_caveats`](#list_caveats) | What can't this data tell me? |
 | [`find_prior_work`](#find_prior_work) | Has this been looked at before? (coming) |
+| [`get_publication_outlook`](#get_publication_outlook) | How often do abstracts at this conference become papers? |
 | [`compare_rates`](#analysis-tools-coming), [`get_trend`](#analysis-tools-coming), [`age_adjust`](#analysis-tools-coming), [`check_signal`](#analysis-tools-coming) | Analysis tools (coming) |
 | [`query_sql`](#last-resort-query_sql) | Anything the others can't do |
 
@@ -211,6 +212,23 @@ the contract is still a draft, and the place traps that apply everywhere.
 Coming: the index isn't built yet. Today the tool says so, returns nothing rather than a partial list, and suggests
 searching PubMed (and OpenEvidence if you use it) and the IDWeek abstracts in the Open Forum Infectious Diseases
 supplements.
+
+### `get_publication_outlook`
+
+**How often presented abstracts at a conference became full papers**, one row per stage from idea to paper. It
+is a base rate for all abstracts at that meeting, never a chance for your own idea. See
+[publication-outlook.md](publication-outlook.md) for the method and sources.
+
+| Parameter | Required | What it does |
+|---|---|---|
+| `conference` | no | e.g. `IDWeek` or `CROI`; leave it out to see every conference side by side |
+| `design`, `data_sources`, `condition`, `geography` | no | Recorded but not used yet: they don't change the numbers until a model passes its calibration gate |
+
+**Returns:** `conference`, `stage`, `step`, `status`, `outlook` (a sentence with the count, n and 95% interval),
+`event`, `n`, `interval_95`, `interval_method`, `source`, `basis`, `model_version`, `calibration`. A stage with no
+verified data says "unknown" and is never multiplied in. Today only IDWeek has a verified base rate.
+
+**Try:** "How often do IDWeek abstracts become full papers?"
 
 ## Analysis tools (coming)
 
