@@ -7,7 +7,9 @@ worked example. The methods and their sources:
   lower = chi2(alpha/2; 2k) / 2, upper = chi2(1 - alpha/2; 2k + 2) / 2.
 - Rate ratio with the log method on Poisson counts, and rate difference with the normal approximation on
   Poisson variances (Rothman KJ, Epidemiology: An Introduction, 2nd ed., 2012; Rothman, Greenland and Lash,
-  Modern Epidemiology, 3rd ed., 2008, ch. 14).
+  Modern Epidemiology, 3rd ed., 2008, ch. 14). These large-sample intervals are not used below SMALL_COUNT (5)
+  cases in a group: the rate ratio then uses the exact conditional interval (Clopper-Pearson limits for the
+  binomial split of the cases between the groups), and the rate difference gets no interval.
 - Annual percent change from a log-linear Poisson regression on year, fitted by Newton-Raphson, with the
   standard error scaled up for overdispersion (quasi-Poisson, Pearson chi-square over degrees of freedom).
 - Direct age standardisation with the gamma interval of Fay MP, Feuer EJ. Confidence intervals for directly
@@ -23,7 +25,7 @@ Recipes, 3rd ed., section 6.2; quantiles are found by safeguarded Newton steps i
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 _EPS = 1e-15
@@ -176,6 +178,69 @@ def rate_ratio(a: int, pop_a: float, b: int, pop_b: float, level: float = 0.95) 
     rr = (a / pop_a) / (b / pop_b)
     half = normal_quantile(1.0 - _alpha(level) / 2.0) * math.sqrt(1.0 / a + 1.0 / b)
     return Estimate(rr, rr * math.exp(-half), rr * math.exp(half))
+
+
+# Below this many cases in either group the large-sample (log and normal) intervals are not trusted: the rate
+# ratio switches to the exact conditional interval and the rate difference gets no interval.
+SMALL_COUNT = 5
+
+
+def _binom_cdf(k: int, n: int, p: float) -> float:
+    """P(X <= k) for X ~ Binomial(n, p), summing the shorter tail in log space."""
+    if k < 0:
+        return 0.0
+    if k >= n or p <= 0.0:
+        return 1.0
+    if p >= 1.0:
+        return 0.0
+    lp, lq = math.log(p), math.log1p(-p)
+
+    def pmf(i: int) -> float:
+        return math.exp(
+            math.lgamma(n + 1) - math.lgamma(i + 1) - math.lgamma(n - i + 1) + i * lp + (n - i) * lq
+        )
+
+    if k <= n // 2:
+        return min(1.0, math.fsum(pmf(i) for i in range(k + 1)))
+    return max(0.0, 1.0 - math.fsum(pmf(i) for i in range(k + 1, n + 1)))
+
+
+def _solve_p(f: Callable[[float], float], target: float) -> float:
+    """The p in (0, 1) where the decreasing function f(p) equals target, by bisection."""
+    lo, hi = 0.0, 1.0
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if f(mid) > target:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
+def binomial_exact_ci(x: int, n: int, level: float = 0.95) -> tuple[float, float]:
+    """Clopper-Pearson exact interval for a binomial proportion x / n (Clopper and Pearson, Biometrika 1934)."""
+    if n <= 0 or not 0 <= x <= n or int(x) != x or int(n) != n:
+        raise StatsError("a proportion needs 0 <= x <= n and n > 0, both whole numbers")
+    a = _alpha(level)
+    # lower: P(X >= x; p) = alpha/2, i.e. P(X <= x - 1; p) = 1 - alpha/2; upper: P(X <= x; p) = alpha/2.
+    lower = 0.0 if x == 0 else _solve_p(lambda p: _binom_cdf(x - 1, n, p), 1.0 - a / 2.0)
+    upper = 1.0 if x == n else _solve_p(lambda p: _binom_cdf(x, n, p), a / 2.0)
+    return lower, upper
+
+
+def rate_ratio_exact(a: int, pop_a: float, b: int, pop_b: float, level: float = 0.95) -> Estimate:
+    """Rate ratio with the exact conditional interval: given a + b cases, a is binomial with
+    pi = RR pop_a / (RR pop_a + pop_b); the Clopper-Pearson limits for pi convert to limits for RR
+    (Rothman, Greenland and Lash, Modern Epidemiology, 3rd ed., ch. 14). Works with a = 0; refuses b = 0."""
+    if a < 0 or b < 0 or int(a) != a or int(b) != b:
+        raise StatsError("counts must be whole numbers, zero or more")
+    if pop_a <= 0 or pop_b <= 0:
+        raise StatsError("population must be positive")
+    if b == 0:
+        raise StatsError("the comparison group has no cases, so the rate ratio has no upper limit")
+    lo, hi = binomial_exact_ci(a, a + b, level)
+    k = pop_b / pop_a
+    return Estimate((a / pop_a) / (b / pop_b), lo / (1.0 - lo) * k, hi / (1.0 - hi) * k)
 
 
 def rate_difference(

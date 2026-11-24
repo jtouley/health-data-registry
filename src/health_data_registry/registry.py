@@ -91,7 +91,10 @@ class Source(_Strict):
         if self.portal != "https_csv" and (self.reshape is not None or self.encoding != "utf-8"):
             raise ValueError("encoding and reshape apply only to the https_csv portal")
         if self.reshape is not None:
-            re.compile(self.reshape.wide_to_long.key_pattern)
+            try:
+                re.compile(self.reshape.wide_to_long.key_pattern)
+            except re.error as e:
+                raise ValueError(f"reshape key_pattern is not a valid pattern: {e}") from e
         return self
 
 

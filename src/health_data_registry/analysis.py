@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from health_data_registry import geo, stats
 from health_data_registry.query import Engine, QueryRefused
@@ -31,6 +31,11 @@ NATION = "United States"
 GBD_WARNING = (
     "Never compare this with GBD's age-standardised rates: GBD standardises to its own world population, not the "
     "2000 US standard, and models its numbers, so the two are not on the same scale."
+)
+_CANT_SAY_SURVEILLANCE = (
+    "Case definitions can differ or change between places and years; ascertainment (who gets tested, how "
+    "thoroughly cases are found and reported) differs by place and over time; and coverage can differ (which "
+    "jurisdictions, facilities or residents a count includes, and whether the population matches it)."
 )
 CRUDE_WARNING = (
     "This is a crude rate, not age-standardised, so don't compare it with age-standardised GBD or CDC rates."
@@ -112,7 +117,9 @@ def read_series(
 
 
 def _custom(items: Any) -> dict[str, Any]:
-    return {str(i["property"]): i.get("value") for i in items or [] if isinstance(i, Mapping) and "property" in i}
+    return {
+        str(i["property"]): i.get("value") for i in items or [] if isinstance(i, Mapping) and "property" in i
+    }
 
 
 def contract_property(ds: Dataset, name: str) -> Any:
@@ -197,20 +204,35 @@ def _sig(x: float | None, digits: int = 4) -> float | None:
     return round(x, digits - 1 - floor(log10(abs(x))))
 
 
+def _unique(datasets: Sequence[Dataset]) -> list[Dataset]:
+    """Each dataset once, in first-seen order (datasets aren't hashable)."""
+    seen: dict[str, Dataset] = {}
+    for ds in datasets:
+        seen.setdefault(ds.id, ds)
+    return list(seen.values())
+
+
 def _source_notes(engine: Engine, datasets: Sequence[Dataset]) -> list[str]:
     notes: list[str] = []
-    for ds in dict.fromkeys(datasets):
+    for ds in _unique(datasets):
         m = engine.manifest(ds.id)
         notes.append(f"Source: {ds.id}, {ds.entry.source.landing_url}, fetched {m.retrieved_at[:19]}.")
         if ds.entry.status != "reviewed":
-            notes.append(f"{ds.id}: this source's contract is still a draft; no maintainer has reviewed it yet.")
+            notes.append(
+                f"{ds.id}: this source's contract is still a draft; no maintainer has reviewed it yet."
+            )
         if m.partial:
             notes.append(f"{ds.id}: the local copy is a partial sample, not the full dataset.")
     return notes
 
 
 def _population_series(registry: Registry) -> list[tuple[Dataset, Series]]:
-    return [(d, s) for d in registry for s in d.semantic.series if s.measure == "population" and not s.age_dimension]
+    return [
+        (d, s)
+        for d in registry
+        for s in d.semantic.series
+        if s.measure == "population" and not s.age_dimension
+    ]
 
 
 def populations(
@@ -273,7 +295,12 @@ class RateRow:
 
 
 def _rate_rows(
-    registry: Registry, engine: Engine, condition: str, locations: Sequence[str], year_start: int, year_end: int
+    registry: Registry,
+    engine: Engine,
+    condition: str,
+    locations: Sequence[str],
+    year_start: int,
+    year_end: int,
 ) -> tuple[list[RateRow], list[str], list[Dataset]]:
     cases = series_for(registry, condition, "cases")
     pop, pop_years = populations(engine, _population_series(registry), locations, year_start, year_end)
@@ -294,7 +321,9 @@ def _rate_rows(
             if o.value is None:
                 flags.append("count suppressed or missing in the source, so no rate (it is not zero)")
             elif part:
-                flags.append(f"the count covers only part of {o.place} ({part}), so no rate against its population")
+                flags.append(
+                    f"the count covers only part of {o.place} ({part}), so no rate against its population"
+                )
             elif o.year not in pop_years:
                 flags.append(f"no Census population estimate for {o.year}, so no rate")
             elif denom is None:
@@ -313,7 +342,7 @@ def _rate_rows(
 
 def _rule_notes(datasets: Sequence[Dataset]) -> list[str]:
     notes = []
-    for ds in dict.fromkeys(datasets):
+    for ds in _unique(datasets):
         if not any(s.measure == "cases" for s in ds.semantic.series):
             continue
         rule = unreliable_rule(ds)
@@ -356,7 +385,7 @@ def get_rate(
         "Method: crude rate = cases / Census July 1 population x 100,000, with the exact Poisson (Garwood) 95% "
         "interval for the count divided by the population.",
         "What this can't say: the interval covers chance variation in the count only, not error in the population "
-        "estimate, under-reporting or changes in testing. " + CRUDE_WARNING,
+        "estimate. " + _CANT_SAY_SURVEILLANCE + " " + CRUDE_WARNING,
         *_rule_notes([r.case_ds for r in rows]),
     ]
     if unmatched:
@@ -419,21 +448,29 @@ def compare_rates(
             continue
         table.append([f"rate per 100,000: {nm}", _sig(est.value), _sig(est.lower), _sig(est.upper),
                       r.cases, r.population, r.status, "; ".join(r.flags)])  # fmt: skip
-    if ca > 0 and cb > 0:
-        rr = stats.rate_ratio(ca, pa, cb, pb)
-        table.append([f"rate ratio ({name_a} / {name_b})", _sig(rr.value), _sig(rr.lower), _sig(rr.upper),
-                      "", "", "", ""])  # fmt: skip
+    small = min(ca, cb) < stats.SMALL_COUNT
+    rr_label = f"rate ratio ({name_a} / {name_b})"
+    if cb == 0:
+        table.append([rr_label, None, None, None, "", "", "",
+                      f"not computed: {name_b} has no cases, so the ratio has no upper limit"])  # fmt: skip
     else:
-        table.append([f"rate ratio ({name_a} / {name_b})", None, None, None, "", "", "",
-                      "not computed: one group has no cases, so the ratio has no finite interval"])  # fmt: skip
-    table.append([f"rate difference per 100,000 ({name_a} - {name_b})", _sig(rd.value), _sig(rd.lower),
-                  _sig(rd.upper), "", "", "", ""])  # fmt: skip
+        rr = stats.rate_ratio_exact(ca, pa, cb, pb) if small else stats.rate_ratio(ca, pa, cb, pb)
+        how = "exact conditional interval (fewer than 5 cases in a group)" if small else ""
+        table.append([rr_label, _sig(rr.value), _sig(rr.lower), _sig(rr.upper), "", "", "", how])  # fmt: skip
+    rd_label = f"rate difference per 100,000 ({name_a} - {name_b})"
+    if small:
+        table.append([rd_label, _sig(rd.value), None, None, "", "", "",
+                      "no interval: with fewer than 5 cases in a group the normal approximation is not "
+                      "trustworthy; use the rate ratio's exact interval"])  # fmt: skip
+    else:
+        table.append([rd_label, _sig(rd.value), _sig(rd.lower), _sig(rd.upper), "", "", "", ""])  # fmt: skip
     out_notes = [
         "Method: the rate ratio's 95% interval uses the log method on the two Poisson case counts (standard error "
-        "sqrt(1/a + 1/b)), and the rate difference's uses a normal approximation to their Poisson variances.",
+        "sqrt(1/a + 1/b)), or the exact conditional (Clopper-Pearson) interval when either group has fewer than 5 "
+        "cases; the rate difference's uses a normal approximation to the Poisson variances and is not given "
+        "below 5 cases in a group.",
         "What this can't say: an interval that excludes 1 (ratio) or 0 (difference) means chance alone is an "
-        "unlikely explanation, not that risk differs; reporting, testing, case definitions and age structure can "
-        "differ between places and years. " + CRUDE_WARNING,
+        "unlikely explanation, not that risk differs. " + _CANT_SAY_SURVEILLANCE + " " + CRUDE_WARNING,
         *_rule_notes([a.case_ds]),
     ]
     if a.year != b.year:
@@ -452,6 +489,10 @@ def _series_condition(ds: Dataset, label: str) -> str:
 
 
 # ---------------------------------------------------------------------------------- get_trend
+
+
+def _span(years: set[int]) -> str:
+    return f"{min(years)}-{max(years)}" if years else "no years (no population source is loaded)"
 
 
 def _segments(years: Sequence[int], changes: Sequence[tuple[int, str]]) -> list[tuple[int | None, list[int]]]:
@@ -473,8 +514,13 @@ def get_trend(
     year_start: int | None = None,
     year_end: int | None = None,
     include_provisional: bool = False,
+    fit_on: Literal["rates", "counts"] = "rates",
     fmt: Fmt = "csv",
 ) -> Out:
+    """Annual percent change. fit_on="rates" (the default) needs a population for every year fitted and refuses
+    otherwise; fit_on="counts" fits case counts and ignores population change. Never one in place of the other."""
+    if fit_on not in ("rates", "counts"):
+        return message('fit_on must be "rates" or "counts".', fmt, refused="bad_fit_on")
     matches = series_for(registry, condition, "cases")
     if not matches:
         return _unknown(condition, "case counts", fmt)
@@ -484,6 +530,7 @@ def get_trend(
     notes: list[str] = []
     used: list[Dataset] = []
     too_few: list[str] = []
+    no_denominator: list[str] = []
     try:
         pop, pop_years = populations(engine, _population_series(registry), [location], year_start, year_end)
         for ds, s in matches:
@@ -496,28 +543,43 @@ def get_trend(
                 seg = [o for o in got if o.year in years]
                 left_out = [f"{o.year} suppressed or missing" for o in seg if o.value is None]
                 if not include_provisional:
-                    left_out += [f"{o.year} provisional" for o in seg if o.value is not None and _provisional(o.status)]
-                pts = [o for o in seg if o.value is not None and (include_provisional or not _provisional(o.status))]
-                if partial_area(ds, seg[0].raw_place):
-                    too_few.append(f"{seg[0].place}: {ds.id} counts cover only part of the place")
+                    left_out += [
+                        f"{o.year} provisional" for o in seg if o.value is not None and _provisional(o.status)
+                    ]
+                pts = [
+                    o
+                    for o in seg
+                    if o.value is not None and (include_provisional or not _provisional(o.status))
+                ]
+                part = partial_area(ds, seg[0].raw_place)
+                if part and fit_on == "rates":
+                    no_denominator.append(
+                        f"{seg[0].place}: {ds.id} counts cover only part of the place ({part})"
+                    )
                     continue
+                if part:
+                    notes.append(f"{ds.id}: the counts for {seg[0].place} cover only part of it ({part}).")
                 span = f"{min(years)}-{max(years)}"
                 if len(pts) < 3:
                     too_few.append(f"{span} ({len(pts)} usable year{'s' if len(pts) != 1 else ''})")
                     continue
+                on_rates = fit_on == "rates"
                 denoms = [pop.get((o.place, o.year), (None, None))[0] for o in pts]
-                on_rates = all(d is not None for d in denoms) and all(o.year in pop_years for o in pts)
+                missing = [str(o.year) for o, d in zip(pts, denoms, strict=True) if d is None]
+                if on_rates and missing:
+                    no_denominator.append(f"{pts[0].place} in {', '.join(missing)}")
+                    continue
                 fit = stats.poisson_trend(
                     [o.year for o in pts],
                     [o.value or 0.0 for o in pts],
-                    [float(d) for d in denoms if d is not None] if on_rates else None,
+                    [float(d or 0) for d in denoms] if on_rates else None,
                 )
                 if on_rates:
                     used += [pop[(o.place, o.year)][1] for o in pts[:1]]
                 table.append([
                     pts[0].place, s.label, f"{min(o.year for o in pts)}-{max(o.year for o in pts)}", len(pts),
                     _sig(fit.apc), _sig(fit.lower), _sig(fit.upper),
-                    "rates (cases per Census population)" if on_rates else "case counts (no population for every year)",
+                    "rates (cases per Census population)" if on_rates else "case counts (population change ignored)",
                     eff if eff is not None else "", "; ".join(left_out), _sig(fit.dispersion, 3), ds.id,
                 ])  # fmt: skip
             notes.append(
@@ -536,6 +598,15 @@ def get_trend(
                 refused="no_trend",
             )
         return refusal(e, fmt)
+    if no_denominator and not table:
+        return message(
+            "A trend in rates needs a Census population for every year fitted (and counts that cover the whole "
+            f"place), and it is missing for: {'; '.join(no_denominator)}. Census estimates here cover "
+            f'{_span(pop_years)}. Ask for years inside that range, or ask again with fit_on="counts" for a trend '
+            "in case counts that ignores population change.",
+            fmt,
+            refused="no_denominator",
+        )
     if not table:
         detail = "; ".join(too_few) or f"no yearly counts for {location}"
         return message(
@@ -548,15 +619,27 @@ def get_trend(
         )  # fmt: skip
     out_notes = [
         "Method: annual percent change from a log-linear Poisson regression of yearly case counts on year (with "
-        "the Census population as an offset when it covers every year), its 95% interval widened when the counts "
+        "the Census population as an offset for a trend in rates), its 95% interval widened when the counts "
         "vary more than chance allows (dispersion above 1).",
         "What this can't say: it assumes a steady percent change each year, it is fragile over few years, and it "
-        "can't separate a real change from changes in testing, reporting or awareness. " + CRUDE_WARNING,
+        "can't separate a real change from changes in testing, reporting or awareness. "
+        + _CANT_SAY_SURVEILLANCE
+        + " "
+        + CRUDE_WARNING,
     ]
     if not include_provisional:
-        out_notes.append("Provisional years are left out of the fit by default (include_provisional=true adds them).")
+        out_notes.append(
+            "Provisional years are left out of the fit by default (include_provisional=true adds them)."
+        )
     if too_few:
         out_notes.append("Not fitted (fewer than 3 usable years): " + "; ".join(too_few) + ".")
+    if no_denominator:
+        out_notes.append("Not fitted (no population for every year): " + "; ".join(no_denominator) + ".")
+    if fit_on == "counts":
+        out_notes.append(
+            "This is a trend in case counts: population growth or decline is not taken into account, so part of "
+            "any change can be the population, not the disease."
+        )
     return Result(cols, table, out_notes + notes).render(fmt)
 
 
@@ -580,7 +663,9 @@ def parse_age_group(label: str) -> tuple[int, int | None] | None:
     return None
 
 
-def _standard_for(groups: set[tuple[int, int | None]]) -> tuple[str, dict[tuple[int, int | None], int]] | None:
+def _standard_for(
+    groups: set[tuple[int, int | None]],
+) -> tuple[str, dict[tuple[int, int | None], int]] | None:
     for name, table in (
         ("2000 US standard population, 11 age groups (NCHS Healthy People 2010 Statistical Notes no. 20, "
          "table 2, distribution #1)", stats.US2000_STD_11),
@@ -603,7 +688,9 @@ def age_adjust(
     fmt: Fmt = "csv",
 ) -> Out:
     case_series = series_for(registry, condition, "cases", kind="age")
-    pop_series = [(d, s) for d in registry for s in d.semantic.series if s.measure == "population" and s.age_dimension]
+    pop_series = [
+        (d, s) for d in registry for s in d.semantic.series if s.measure == "population" and s.age_dimension
+    ]
     if not case_series or not pop_series:
         missing = "case counts by age group" if not case_series else "population by age group"
         return message(
@@ -634,7 +721,9 @@ def age_adjust(
                 )
             into[g] = o.value
     if not counts:
-        return message(f"No age-specific counts for '{condition}' in {location} in {year}.", fmt, refused="no_rows")
+        return message(
+            f"No age-specific counts for '{condition}' in {location} in {year}.", fmt, refused="no_rows"
+        )
     std = _standard_for(set(counts))
     if std is None or set(pops) != set(counts):
         return message(
@@ -667,6 +756,8 @@ def age_adjust(
         "interval that NCHS uses.",
         "What this can't say: an age-adjusted rate is a summary for comparing places or years with different age "
         "structures, not the rate anyone actually experienced; it does not adjust for anything but age. "
+        + _CANT_SAY_SURVEILLANCE
+        + " "
         + GBD_WARNING,
     ]
     return Result(cols, table, out_notes + notes).render(fmt)
@@ -740,8 +831,14 @@ def check_signal(
     try:
         sig = stats.historical_limits(float(current), hist)
     except stats.StatsError as e:
-        return message(f"The check can't be made: {e}. Use get_series to see the counts.", fmt, refused="no_signal")
-    words = {"above": "above historical limits", "below": "below historical limits", "within": "within limits"}
+        return message(
+            f"The check can't be made: {e}. Use get_series to see the counts.", fmt, refused="no_signal"
+        )
+    words = {
+        "above": "above historical limits",
+        "below": "below historical limits",
+        "within": "within limits",
+    }
     cols = ["location", "condition", "year", "weeks", "current_4_week_total", "historical_mean", "historical_sd",
             "ratio", "lower_limit", "upper_limit", "signal", "source_id"]  # fmt: skip
     table = [[place, s.label, year, f"{week - WINDOW + 1}-{week}", sig.current, _sig(sig.mean), _sig(sig.sd),
@@ -751,7 +848,9 @@ def check_signal(
         "disease tables): the current 4-week total over the mean of 15 historical 4-week totals (the same, "
         "preceding and following 4 weeks in each of the past 5 years), flagged beyond 1 +/- 2 SD / mean.",
         "What this can't say: a flag means more (or fewer) reports than usual for these weeks, not an outbreak; "
-        "reporting delays, changes in testing or reporting, and provisional recent weeks can all cause one. Check "
+        "reporting delays, changes in testing or reporting, and provisional recent weeks can all cause one. A "
+        "case-definition change, a shift in ascertainment (more testing) or in coverage (a jurisdiction starting "
+        "or stopping reporting) within the past 5 years makes the historical baseline a poor comparison. Check "
         "with the health department before acting on it.",
         "Weekly counts are provisional and can change as late reports arrive.",
     ]

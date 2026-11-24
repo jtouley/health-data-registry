@@ -167,15 +167,17 @@ def build_server(registry: Registry | None = None, engine: Engine | None = None)
         year_start: int | None = None,
         year_end: int | None = None,
         include_provisional: bool = False,
+        fit_on: Literal["rates", "counts"] = "rates",
         fmt: Fmt = "csv",
     ) -> Out:
         """Is it rising? Annual percent change with a 95% interval from a Poisson regression on year. Split where
         the case definition changed; provisional years are left out unless include_provisional is true; needs at
-        least 3 usable years."""
+        least 3 usable years. fit_on "rates" (default) needs Census population for every year and refuses
+        otherwise; "counts" is a trend in case counts that ignores population change."""
         return _safe(
             lambda: analysis.get_trend(
                 reg, eng, condition=condition, location=location, year_start=year_start, year_end=year_end,
-                include_provisional=include_provisional, fmt=fmt,
+                include_provisional=include_provisional, fit_on=fit_on, fmt=fmt,
             ),
             fmt,
         )  # fmt: skip

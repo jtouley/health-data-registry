@@ -7,7 +7,7 @@ so a clinician (or a grader) can check the number without trusting the model tha
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -240,7 +240,7 @@ def _compile_cumulative(
     )
 
 
-def _runtime_fetch_enabled() -> bool:
+def _live_enabled() -> bool:
     import os
 
     return os.environ.get("HDR_FETCH_AT_RUN_TIME", "1") != "0"
@@ -261,11 +261,12 @@ def _default_cache() -> Path:
 
 @dataclass
 class Engine:
-    """One DuckDB connection with every available snapshot attached read-only, then locked down.
+    """One in-memory DuckDB connection with every available source attached read-only, then locked down.
 
-    Each source comes from the local lake when it holds a snapshot (maintainers, CI); otherwise a redistributable
-    source comes from the published hub release (downloaded on first use and checked against its sha256), and a
-    restricted one is fetched from its publisher at run time into the local cache (see hub.py).
+    A redistributable source comes from the local lake when it holds a snapshot (maintainers, CI), else from the
+    published hub release (downloaded on first use, checked against its sha256, bounded cache). A restricted
+    source (e.g. WHO GHO) is served live: fetched from the publisher per request, held in memory for at most
+    live.LIVE_TTL_S, and never written to disk (see live.py).
     """
 
     registry: Registry
@@ -273,28 +274,27 @@ class Engine:
     manifests: dict[str, Manifest] = field(default_factory=dict)
     hub: Any = field(default_factory=_default_hub)  # hub.Hub | None
     cache: Path = field(default_factory=_default_cache)
-    fetch_at_run_time: bool = field(default_factory=_runtime_fetch_enabled)
-    getter: Any = None  # a crawl.Getter for run-time fetches; None builds the guarded HTTPS fetcher
+    fetch_at_run_time: bool = field(default_factory=_live_enabled)
+    getter: Any = None  # a crawl.Getter for live fetches; None builds the guarded HTTPS fetcher
     _con: duckdb.DuckDBPyConnection | None = None
     _hub_files: dict[str, tuple[Path, Manifest]] = field(default_factory=dict)
-    _first_use: dict[str, str] = field(default_factory=dict)
-
-    @property
-    def runtime_lake(self) -> Path:
-        return self.cache / "publisher"
+    _live: dict[str, Any] = field(default_factory=dict)  # dataset id -> live.LiveTable (memory only)
 
     def connect(self) -> duckdb.DuckDBPyConnection:
         if self._con is not None:
             return self._con
+        from health_data_registry.live import load_live
+
         con = duckdb.connect(":memory:")
         parquet: list[str] = []
         for ds in self.registry:
-            found = latest_snapshot(self.lake, ds.id)
-            if found is None and not ds.entry.licence.redistribution:
-                found = latest_snapshot(self.runtime_lake, ds.id)
-                if found is not None:
-                    found = (found[0], replace(found[1], origin="publisher"))
-            if found is not None:
+            if not ds.entry.licence.redistribution:
+                table = self._live.get(ds.id)
+                if table is None:
+                    continue  # restricted sources are never read from disk, even a maintainer's lake
+                load_live(con, ds, table.records)
+                manifest = table.manifest
+            elif (found := latest_snapshot(self.lake, ds.id)) is not None:
                 path, manifest = found
                 alias = f"snap_{ds.id}"
                 db = str(path / "data.duckdb").replace("'", "''")
@@ -320,7 +320,7 @@ class Engine:
         self.connect()
 
     def _obtain(self, ds: Dataset) -> bool:
-        """Bring one source onto this computer: from the hub release, or from the publisher at run time."""
+        """Bring one source in: from the hub release, or live from the publisher (memory only)."""
         from health_data_registry.hub import HubError
 
         if ds.entry.licence.redistribution:
@@ -333,35 +333,29 @@ class Engine:
             return True
         if not self.fetch_at_run_time:
             return False
-        from health_data_registry.crawl import fetcher, refresh_dataset
-        from health_data_registry.store import FetchLog
+        from health_data_registry.crawl import fetcher
+        from health_data_registry.live import fetch_live
 
-        get = self.getter or fetcher(self.registry, FetchLog(self.runtime_lake, ds.id))
+        get = self.getter or fetcher(self.registry, None)
         try:
-            refresh_dataset(ds, self.runtime_lake, get)
+            self._live[ds.id] = fetch_live(ds, get)
         except Exception as e:  # noqa: BLE001 - any publisher failure becomes one plain refusal
             raise QueryRefused(
                 "publisher_unreachable",
-                f"{ds.entry.publisher} could not be reached to download {ds.entry.title}, which is fetched from "
-                "the publisher because its terms don't allow us to host a copy. Try again in a few minutes.",
+                f"{ds.entry.publisher} could not be reached for {ds.entry.title}, which is read live from the "
+                "publisher because its terms don't allow us to keep a copy. Try again in a few minutes.",
             ) from e
-        self._first_use[ds.id] = (
-            f"First use: {ds.entry.title} was just downloaded from {ds.entry.publisher}, because its terms "
-            "("
-            + ds.entry.licence.id
-            + ") don't allow us to host a copy. Later questions use the copy on this "
-            "computer."
-        )
         return True
-
-    def first_use_notice(self, dataset_id: str) -> str | None:
-        """The one-time note that a source was just downloaded from its publisher (returned once, then cleared)."""
-        return self._first_use.pop(dataset_id, None)
 
     def manifest(self, dataset_id: str) -> Manifest:
         self.connect()
+        ds = self.registry.datasets.get(dataset_id)
+        live = self._live.get(dataset_id)
+        if ds is not None and live is not None and not live.fresh():
+            del self._live[dataset_id]  # past the in-memory limit: read the publisher again
+            self._reconnect()
         m = self.manifests.get(dataset_id)
-        if m is None and dataset_id in self.registry.datasets and self._obtain(self.registry.get(dataset_id)):
+        if m is None and ds is not None and self._obtain(ds):
             self._reconnect()
             m = self.manifests.get(dataset_id)
         if m is None:
@@ -375,6 +369,7 @@ class Engine:
     def provenance(self, dataset_id: str) -> dict[str, Any]:
         """Where a source's numbers come from, without downloading anything: origin, contract, product, release."""
         from health_data_registry.product import load_ports
+        from health_data_registry.publish import HF_PREFIX, add_to_claude
 
         ds = self.registry.get(dataset_id)
         self.connect()
@@ -383,8 +378,8 @@ class Engine:
         if m is not None:
             origin = {
                 "lake": "the local lake (a maintainer's copy)",
-                "hub": f"the open data hub, release {m.release_id}",
-                "publisher": f"{ds.entry.publisher}, fetched at run time on {m.retrieved_at[:10]}",
+                "hub": f"the open data hub, release {m.release_ref} ({m.release_id})",
+                "publisher": f"{ds.entry.publisher}, read live at {m.retrieved_at[:16]} UTC and not stored",
             }.get(m.origin, m.origin)
         elif ds.entry.licence.redistribution:
             origin = (
@@ -394,9 +389,9 @@ class Engine:
             )
         else:
             origin = (
-                f"not loaded yet: {ds.entry.publisher}, fetched at run time on first use"
+                f"{ds.entry.publisher}, read live when asked (never stored)"
                 if self.fetch_at_run_time
-                else "not loaded yet: fetching from the publisher at run time is turned off"
+                else "not available: reading this publisher live is turned off"
             )
         return {
             "data_from": origin,
@@ -406,8 +401,17 @@ class Engine:
             "data_product": port.product_id if port else None,
             "output_port": port.name if port else None,
             "release_id": m.release_id if m else None,
+            "release_ref": m.release_ref if m else None,
             "run_date": m.run_date if m else None,
             "release_files": dict(m.release_files) if m else {},
+            "quality": dict(m.quality) if m and m.quality else {"tool": None, "results": []},
+            "add_to_claude": add_to_claude(
+                ds,
+                hub_url=self.hub.url.split("@")[0]
+                if self.hub is not None and self.hub.url.startswith(HF_PREFIX)
+                else None,
+                tag=m.release_ref if m else None,
+            ),
         }
 
     def query_metric(
@@ -440,8 +444,7 @@ class Engine:
                 "would_combine_rates",
                 f"{metric} is published per group and can't be added up; choose group_by from: {dims}.",
             )
-        notice = self.first_use_notice(dataset_id)
-        method = f"{notice} {cm.method}" if notice else cm.method
+        method = f"{manifest.notes[0]} {cm.method}" if manifest.origin == "publisher" else cm.method
         return envelope(ds, manifest, cm.columns, rows, sql=cm.sql, params=cm.params, method=method)
 
     def distinct_values(self, dataset_id: str, column: str) -> list[Any]:
@@ -467,13 +470,12 @@ class Engine:
         con = self.connect()
         cols, rows = run_guarded(con, q)
         ids = sorted(t for t in q.tables if t in self.manifests)
-        notices = [n for i in ids if (n := self.first_use_notice(i))]
+        notices = [n for i in ids if self.manifests[i].origin == "publisher" for n in self.manifests[i].notes]
         if len(ids) == 1:
             ds = self.registry.get(ids[0])
             out = envelope(
                 ds, self.manifests[ids[0]], cols, rows, sql=q.sql, params=[], method="Read-only SQL."
             )
-            out["caveats"] = notices + out["caveats"]
             return out
         return {
             "columns": cols,
@@ -506,6 +508,7 @@ def _source(ds: Dataset, m: Manifest) -> dict[str, Any]:
         "citation": ds.entry.citation,
         "data_from": m.origin,
         "release_id": m.release_id,
+        "release_ref": m.release_ref,
         "release_contract_version": m.release_contract_version,
         "release_files": dict(m.release_files),
     }
@@ -523,13 +526,14 @@ def envelope(
 ) -> dict[str, Any]:
     truncated = len(rows) > MAX_ROWS
     out = [list(r) for r in rows[:MAX_ROWS]]
-    notes = list(m.notes) + list(ds.entry.caveats)
+    notes = list(ds.entry.caveats)
     if m.catalog_status != "reviewed":
         notes.insert(0, "This dataset's contract is a draft that no maintainer has reviewed yet.")
     if m.partial:
         notes.insert(0, "This snapshot is a partial sample, not the full dataset.")
     if truncated:
         notes.insert(0, f"Only the first {MAX_ROWS} rows are shown.")
+    notes = list(m.notes) + notes  # e.g. a hub release built with another contract version comes first
     return {
         "columns": columns,
         "rows": out,

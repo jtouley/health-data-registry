@@ -61,7 +61,7 @@ One review round, one fix round, merge, then follow-ups. We don't get stuck in r
 
 ```text
 src/health_data_registry/
-  cli.py          serve, refresh <dataset>|--all, check-contracts, validate, eval
+  cli.py          serve, refresh <dataset>|--all, fetch <source>, export-public --to, check-contracts, validate, eval
   server.py       the MCP server (stdio): registers the tools and the helper prompts; wraps every failure
                   as a plain-words refusal
   tools.py        list_sources, search_datasets, describe_dataset, suggest_datasets, get_series,
@@ -73,8 +73,13 @@ src/health_data_registry/
                   runs guarded SQL, wraps every answer with its source, version, SQL and method
   sql_guard.py    governed read-only SQL: one SELECT, allowlisted functions, declared joins only
   fetch.py        HTTPS-only fetcher to catalogued, publicly routable publisher hosts
-  store.py        the lake ($HDR_LAKE, default ./lake): raw/<sha256>, datasets/<id>/<snapshot>/ with
-                  data.parquet, data.duckdb and manifest.json, and LATEST
+  store.py        the lake ($HDR_LAKE, default ./lake): raw/<sha256>, datasets/<id>/run_date=<d>/<snapshot>/
+                  with data.parquet, data.duckdb and manifest.json, LATEST, fetch_log/
+  crawl.py        fetch one source into a lake (refresh, fetch, and run-time fetches)
+  publish.py      export-public to the open data hub: cards, licence, manifest, pre-publish checks, tag
+  hub.py          hosted read path: immutable hub release, sha256 and contract checks, bounded cache
+  live.py         restricted sources (WHO GHO) read live per question, in memory only, never stored
+  product.py      the ODPS data product (contracts/health-data-registry.odps.yaml)
   geo.py          one place whatever the publisher calls it (name, postal code, FIPS; GBD location name)
   evaluation.py   sealed blind sets: seal check, scorer, release gate
   adapters/       socrata.py (CDC portals), who_gho.py (WHO GHO OData)

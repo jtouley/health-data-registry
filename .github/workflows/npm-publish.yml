@@ -1,0 +1,150 @@
+# npm package and Claude Desktop extension (.mcpb) for a tagged release vX.Y.Z.
+#
+#   test   the launcher's node tests; tag, npm/package.json, pyproject.toml, packaging/ versions all match
+#   npm    waits until release.yml has put health-data-registry==X.Y.Z on PyPI (the launcher pins it), then
+#          publishes npm/ by npm trusted publishing (OIDC, no stored token) with provenance, in the `npm` environment
+#   mcpb   packs packaging/mcpb with the launcher and attaches health-data-registry-X.Y.Z.mcpb to the GitHub release
+#
+# See docs/dev/distribution.md. Write permissions and id-token: write are granted per job, only where needed.
+name: npm publish
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions: read-all
+
+concurrency:
+  group: npm-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Launcher tests and version check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false # no cache on release jobs
+
+      - name: Check every version matches the tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          want="${TAG#v}"
+          npm_v=$(node -p 'require("./npm/package.json").version')
+          py_v=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n1)
+          srv_v=$(node -p 'require("./packaging/server.json").version')
+          mcpb_v=$(node -p 'require("./packaging/mcpb/manifest.json").version')
+          for v in "$npm_v" "$py_v" "$srv_v" "$mcpb_v"; do
+            if [ "$v" != "$want" ]; then
+              echo "::error::Tag $TAG: versions are npm=$npm_v pyproject=$py_v server.json=$srv_v mcpb=$mcpb_v"
+              exit 1
+            fi
+          done
+
+      - name: Node tests
+        working-directory: npm
+        run: npm test
+
+  npm:
+    name: Publish to npm
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/health-data-registry
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing and provenance (OIDC)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false # no cache on release jobs
+          registry-url: "https://registry.npmjs.org"
+
+      # The launcher runs `uvx --from health-data-registry==X.Y.Z`; publishing before PyPI has it would ship a
+      # package that cannot start. release.yml publishes to PyPI from the same tag.
+      - name: Wait for the PyPI release
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          for _ in $(seq 1 80); do
+            if curl -fsS -o /dev/null "https://pypi.org/pypi/health-data-registry/${version}/json"; then
+              echo "health-data-registry ${version} is on PyPI"
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::health-data-registry ${version} did not appear on PyPI within 40 minutes"
+          exit 1
+
+      - name: Check npm supports trusted publishing (11.5.1 or later)
+        run: |
+          v=$(npm --version)
+          if [ "$(printf '%s\n' 11.5.1 "$v" | sort -V | head -n1)" != "11.5.1" ]; then
+            echo "::error::npm $v is too old for trusted publishing"
+            exit 1
+          fi
+
+      - name: Add the licence files to the package
+        run: cp LICENSE NOTICE npm/
+
+      - name: Publish
+        working-directory: npm
+        run: npm publish --provenance --access public
+
+  mcpb:
+    name: Claude Desktop extension
+    needs: npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # attach the .mcpb to the GitHub release created by release.yml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false # no cache on release jobs
+
+      - name: Stage and pack the bundle
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p build/mcpb/server
+          cp packaging/mcpb/manifest.json LICENSE NOTICE build/mcpb/
+          cp -R npm/bin npm/lib npm/package.json build/mcpb/server/
+          npx --yes @anthropic-ai/mcpb@2.1.2 validate build/mcpb/manifest.json
+          npx --yes @anthropic-ai/mcpb@2.1.2 pack build/mcpb "health-data-registry-${TAG#v}.mcpb"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mcpb
+          path: "*.mcpb"
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Attach to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release upload "$TAG" "health-data-registry-${TAG#v}.mcpb" --repo "$GITHUB_REPOSITORY" --clobber

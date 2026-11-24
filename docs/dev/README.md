@@ -39,12 +39,41 @@ work is not committed to the PR branch: it stays uncommitted or goes on a separa
 | `make check-contracts` | Check each publisher still serves the fields its contract reads |
 | `make eval` | Verify the sealed blind sets; with `--run`, score a client run against them |
 
-The CLI behind them: `health-data-registry serve | refresh <dataset>|--all [--max-rows N] | check-contracts |
-validate | eval [--sealed DIR] [--run FILE]`. `validate` loads and cross-checks every catalog entry, contract and
+The CLI behind them: `health-data-registry serve | refresh <dataset>|--all [--max-rows N] | fetch <source> |
+export-public --to hf://datasets/<org>/<name>|DIR [--run-date YYYY-MM-DD] | check-contracts | validate |
+eval [--sealed DIR] [--run FILE]`. `fetch <source>` refreshes one source. `export-public` publishes the sources
+whose licence allows redistribution to the open data hub (cards, licence text, Parquet, `manifest.json`, tag
+`release-<run date>`), lists the rest with a card and no data, and stops if a pre-publish check fails; it needs
+`HF_TOKEN` only for an `hf://` target. `validate` loads and cross-checks every catalog entry, contract and
 semantic model.
 
-The lake lives at `$HDR_LAKE` (default `./lake`, ignored by git). `refresh --max-rows N` takes a development
-sample and marks the snapshot partial.
+The lake lives at `$HDR_LAKE` (default `./lake`, ignored by git), partitioned by source and run date
+(`datasets/<id>/run_date=<date>/<snapshot>/`), with raw bytes under `raw/<sha256>` and one fetch-log row per
+attempt under `fetch_log/source=<id>/`. `refresh --max-rows N` takes a development sample and marks the snapshot
+partial. The lake is for maintainers and CI: the server reads a hosted source from the hub release in `$HDR_HUB`
+(checked against its sha256), cached under `$HDR_CACHE` (default `~/.cache/health-data-registry`, bounded by `$HDR_CACHE_MAX_GB`, default 5, least
+recently used first out; publishers' raw bytes are never kept there); `hub.py` has the order. Reading the hub needs no sign-in or
+token. A restricted source (WHO GHO, CC BY-NC-SA 3.0 IGO) is never stored anywhere, not even in the
+maintainers' lake: `live.py` reads it from the publisher per question, keeps the parsed records in memory for at
+most 10 minutes, and every answer carries the attribution, licence and terms URL. `refresh --all` skips it. The server reads
+only an immutable release: `HDR_HUB=hf://datasets/<org>/<name>@release-<run date>` pins one, and an unpinned
+hub resolves to its newest `release-*` tag, recorded in every result; a branch such as `main` is refused. A
+release built with a different contract version than the installed one is refused unless a maintainer adds the
+pair to `hub.COMPATIBLE_CONTRACTS`. Published tags never move: a correction for the same run date is
+`release-<run date>.2` and the hub's `CHANGELOG.md` names the release it supersedes.
+
+What the hashes prove: a file's sha256 matching `manifest.json` shows the download is the file the manifest
+names. It does not show that the manifest, the Hugging Face account or the publisher is trustworthy. Release
+integrity and publisher provenance are separate controls; signed manifests (for example Sigstore) and build
+attestations (SLSA provenance) for each release would add them, and are not in place yet.
+
+Each source's entry in a release's `manifest.json` has a `quality` section for the weekly build's data tests
+(dbt: staging, then intermediate, then public), so the MCP can show them:
+`{"tool": "dbt" | null, "results": [{"test", "checks" (what it checks, in plain words), "status" (pass, warn or
+fail), "rows_affected" (or null)}]}`. It is `{"tool": null, "results": []}` until the dbt build lands.
+`export_public(..., quality={source_id: [results]})` fills it. Every hosted card, `describe_dataset` and
+`get_provenance` also say how to add the source to a Claude project: the plugin (coming), the MCP server
+reading the pinned release, or attaching the downloaded file by hand.
 
 To run the server in Claude Code from a checkout:
 

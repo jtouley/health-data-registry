@@ -3,6 +3,8 @@
 Ported from coffee-data-tracker's src/coffeedata/public.py (MIT, same owner): one commit per export with a
 manifest.json beside the licence text, holding the release id and run date, the contract and data licence, and
 each file's sha256 and row count; the commit is tagged release-<run date> so a study can pin the week it used.
+Unlike coffee-data-tracker, a tag is never moved or deleted: a correction for the same run date is a new release
+id under release-<run date>.2 (.3, ...), and CHANGELOG.md names the release it supersedes.
 
 Destinations: hf://datasets/<org>/<name> (staged in build/hub, then one commit), or a local directory.
 
@@ -10,15 +12,18 @@ Layout of a release (the same in a directory and on the Hub):
 
     README.md                      the hub card: every source, hosted or listed, one config per hosted table
     manifest.json                  the release: id, run date, product, every source and every file's sha256
+    CHANGELOG.md                   one entry per release, newest first; a correction names what it supersedes
     <source>/README.md             the dataset card, in plain clinical words, with its YAML header
-    <source>/manifest.json         this source's part of the release manifest
+    <source>/manifest.json         this source's part of the release manifest, with a `quality` section: the
+                                   weekly build's data tests (test, what it checks in plain words,
+                                   pass/warn/fail, rows affected); empty until the dbt build lands
     <source>/LICENSE.md            the publisher's terms, as recorded in licenses/ (hosted sources only)
     <source>/data/<source>.parquet the snapshot's table, byte for byte (hosted sources only)
     publish-checklist.md           the manual check of sampled numbers (never uploaded)
 
 Only sources whose catalog licence.redistribution is true get data files. The rest are listed, not hosted: a
-card saying where the data live, their terms and citation, and that the MCP server and
-`health-data-registry fetch <source>` get them from the publisher at run time.
+card saying where the data live, their terms and citation, and that the MCP server reads them live from the
+publisher for each question and keeps no copy (share-alike terms would attach to anything derived).
 
 Every export runs the pre-publish checks first and writes nothing to the Hub if one fails.
 """
@@ -30,8 +35,7 @@ import json
 import os
 import re
 import shutil
-import sys
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -78,13 +82,16 @@ class Release:
     hosted: list[str] = field(default_factory=list)
     listed: list[str] = field(default_factory=list)
     tag: str | None = None
+    unchanged: bool = False  # the identical release was already published under `tag`; nothing was uploaded
 
     def summary(self) -> list[str]:
         out = [f"release {self.release_id} (run {self.run_date}) written to {self.dest}"]
         out += [f"hosted {s}" for s in self.hosted]
-        out += [f"listed {s} (no data files; fetched from the publisher at run time)" for s in self.listed]
+        out += [f"listed {s} (no data files; read live from the publisher)" for s in self.listed]
         out.append(f"manual check before announcing: {self.local / CHECKLIST}")
-        if self.tag:
+        if self.unchanged:
+            out.append(f"already published as {self.tag}; nothing uploaded")
+        elif self.tag:
             out.append(f"tagged {self.tag}")
         return out
 
@@ -209,8 +216,54 @@ def _caveats(ds: Dataset) -> list[str]:
     return out
 
 
+# Claude's per-file upload limit for project knowledge, as we understand it; not verified against current
+# Claude documentation, so the card says so.
+CLAUDE_FILE_LIMIT_NOTE = (
+    "Claude limits the size of each file you attach (about 30 MB per file when this was written; unverified, "
+    "so check Claude's help pages for the current limit)."
+)
+
+
+def add_to_claude(
+    ds: Dataset, *, hub_url: str | None, tag: str | None, size_bytes: int | None = None
+) -> list[str]:
+    """Plain-words routes for adding a source to a Claude project: plugin, MCP server, or a file by hand."""
+    if not ds.entry.licence.redistribution:
+        return [
+            f"This source is listed, not hosted: {ds.entry.publisher}'s terms don't allow us to share a copy.",
+            "- MCP server: add health-data-registry to Claude; each time you ask about this source, the server "
+            "reads it live from the publisher and keeps no copy. Every answer carries the publisher's terms.",
+            f"- By hand: download it from the publisher ({ds.entry.source.landing_url}) and attach it to your "
+            "Claude project, following the publisher's terms. " + CLAUDE_FILE_LIMIT_NOTE,
+        ]
+    pinned = f"{hub_url}@{tag}" if hub_url and tag else (hub_url or "the open data hub")
+    path = data_path(ds.id)
+    size = f" The file is {size_bytes / 1024**2:.1f} MB." if size_bytes is not None else ""
+    to_csv = f"`COPY (SELECT * FROM '{path.rsplit('/', 1)[1]}') TO '{ds.id}.csv';`"  # noqa: S608 - instructions
+    return [
+        "- Plugin (coming): the clinician template will ship as a Claude Code plugin from a marketplace; "
+        "installing it adds this server and its helpers in one step.",
+        f"- MCP server: add health-data-registry to Claude. It reads this dataset from {pinned}, so nothing "
+        "needs downloading by you, and every answer names the release it came from.",
+        f"- By hand: download `{path}` from that release and attach it to your Claude project as a file. Claude "
+        "reads CSV more easily than Parquet; to make one, run in DuckDB: "
+        f"{to_csv}.{size} "
+        + CLAUDE_FILE_LIMIT_NOTE
+        + " A file too large to attach is a sign to use the MCP server instead.",
+    ]
+
+
 def hosted_card(
-    ds: Dataset, manifest: Manifest, *, release: str, run_date: str, rows: int, sha: str, repo: str | None
+    ds: Dataset,
+    manifest: Manifest,
+    *,
+    release: str,
+    run_date: str,
+    rows: int,
+    sha: str,
+    repo: str | None,
+    tag: str | None = None,
+    size: int | None = None,
 ) -> str:
     e = ds.entry
     path = data_path(ds.id)
@@ -275,8 +328,17 @@ def hosted_card(
         f"select * from '{where}' limit 10;",  # noqa: S608 - documentation text, never run
         "```",
         "",
-        f"Pin this release with `@{release_tag(run_date)}` after the dataset id. Contract `{ds.contract.id}` "
+        f"Pin this release with `@{tag or release_tag(run_date)}` after the dataset id. Contract `{ds.contract.id}` "
         f"version {ds.contract.version}; the codebook is at {e.codebook_url}.",
+        "",
+        "## Add it to a Claude project",
+        "",
+        *add_to_claude(
+            ds,
+            hub_url=f"hf://datasets/{repo}" if repo else None,
+            tag=tag or release_tag(run_date),
+            size_bytes=size,
+        ),
         "",
     ]
     return _front_matter(header) + "\n" + "\n".join(body)
@@ -309,9 +371,13 @@ def listed_card(ds: Dataset, *, release: str, run_date: str) -> str:
         "",
         "## How to get the data",
         "",
-        "The health-data-registry MCP server fetches it from the publisher at run time, the first time you ask "
-        f"about it. From a terminal, `health-data-registry fetch {ds.id}` gets it from the publisher into your own "
-        "local copy. Nothing is downloaded from this hub.",
+        "The health-data-registry MCP server reads it live from the publisher each time you ask about it, and "
+        "keeps no copy: no file, snapshot or cache of the table is written anywhere. Nothing is downloaded from "
+        "this hub.",
+        "",
+        "## Add it to a Claude project",
+        "",
+        *add_to_claude(ds, hub_url=None, tag=None),
         "",
         "## What one row is",
         "",
@@ -370,17 +436,94 @@ def hub_card(registry: Registry, release: dict[str, Any], repo: str | None) -> s
         "[health-data-registry](https://github.com/jtouley/health-data-registry).",
         "",
         f"Release `{release['release_id']}` (run {release['run_date']}). Pin it with "
-        f"`@{release_tag(release['run_date'])}`. `manifest.json` lists every file's sha256 and row count.",
+        f"`@{release['tag']}`. `manifest.json` lists every file's sha256 and row count.",
         "",
         *rows,
         "",
         "Listed sources have a card but no data files: their terms do not allow redistribution, so the MCP "
-        "server and `health-data-registry fetch <source>` get them from the publisher at run time.",
+        "server reads them live from the publisher for each question and keeps no copy.",
         "",
         "Empty cells are suppressed or missing as the publisher published them; they are never zeros.",
         "",
     ]
     return _front_matter(header) + "\n" + "\n".join(body)
+
+
+# ------------------------------------------------------------------------------------------------ releases
+
+
+@dataclass(frozen=True)
+class ReleasePlan:
+    """The immutable tag a new release gets, and the release it corrects (if any).
+
+    Published tags are never moved or deleted. The first release of a run date is tagged release-<run date>; a
+    correction of the same run date gets release-<run date>.2, .3 and so on, and names the release it supersedes.
+    """
+
+    tag: str
+    supersedes: str | None = None  # the release id corrected
+    supersedes_tag: str | None = None
+    already_published: str | None = None  # the tag of an identical, already published release
+    changelog: str = ""  # the hub's CHANGELOG.md so far
+
+
+def tag_order(tag: str) -> int:
+    return int(tag.rpartition(".")[2]) if "." in tag.removeprefix("release-") else 1
+
+
+def plan_release(
+    run_date: str, rid: str, published: dict[str, str | None], changelog: str = ""
+) -> ReleasePlan:
+    """Pick the tag for release `rid` given the tags already published for this run date (tag -> release id)."""
+    base = release_tag(run_date)
+    same_day = {
+        t: r for t, r in published.items() if t == base or re.fullmatch(re.escape(base) + r"\.\d+", t)
+    }
+    for t, r in same_day.items():
+        if r == rid:
+            return ReleasePlan(tag=t, already_published=t, changelog=changelog)
+    if not same_day:
+        return ReleasePlan(tag=base, changelog=changelog)
+    newest = max(same_day, key=tag_order)
+    return ReleasePlan(
+        tag=f"{base}.{tag_order(newest) + 1}",
+        supersedes=same_day[newest],
+        supersedes_tag=newest,
+        changelog=changelog,
+    )
+
+
+def changelog_entry(release: dict[str, Any]) -> str:
+    hosted = [s for s, v in release["sources"].items() if v["hosted"]]
+    listed = [s for s, v in release["sources"].items() if not v["hosted"]]
+    lines = [f"## {release['tag']}: release {release['release_id']} (run {release['run_date']})", ""]
+    if release.get("supersedes"):
+        lines.append(
+            f"- Correction: supersedes release {release['supersedes']} ({release['supersedes_tag']}), which "
+            "stays published unchanged."
+        )
+    lines += [
+        f"- Hosted: {', '.join(hosted) or 'none'}",
+        f"- Listed, not hosted: {', '.join(listed) or 'none'}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def published_releases(api: Any, repo_id: str) -> tuple[dict[str, str | None], str]:
+    """The hub's release tags with the release id each points at, and its CHANGELOG.md (empty for a new hub)."""
+    from huggingface_hub.errors import EntryNotFoundError, RepositoryNotFoundError
+
+    try:
+        tags = [t.name for t in api.list_repo_refs(repo_id, repo_type="dataset").tags]
+    except RepositoryNotFoundError:
+        return {}, ""
+    found = {t: _tagged_release(api, repo_id, t) for t in tags if t.startswith("release-")}
+    try:
+        path = api.hf_hub_download(repo_id, "CHANGELOG.md", repo_type="dataset")
+        changelog = Path(path).read_text(encoding="utf-8")
+    except EntryNotFoundError:
+        changelog = ""
+    return found, changelog
 
 
 # ------------------------------------------------------------------------------------------------ export
@@ -391,8 +534,43 @@ def _licence_text(registry: Registry, licence_id: str) -> Path | None:
     return p if p.is_file() else None
 
 
+QUALITY_STATUSES = frozenset({"pass", "warn", "fail"})
+
+
+def quality_section(results: Iterable[Mapping[str, Any]] | None) -> dict[str, Any]:
+    """The manifest's `quality` section for one source: the weekly build's data tests (dbt), empty-safe.
+
+    Shape: {"tool": "dbt" | None, "results": [{"test": str, "checks": str (plain words), "status": "pass" |
+    "warn" | "fail", "rows_affected": int | None}]}. An empty list means no tests ran for this release yet.
+    """
+    out: list[dict[str, Any]] = []
+    for r in results or []:
+        status = str(r.get("status", ""))
+        if status not in QUALITY_STATUSES:
+            raise PublishCheckFailed(
+                f"quality result {r.get('test')!r} has status {status!r}, not pass/warn/fail"
+            )
+        rows = r.get("rows_affected")
+        out.append(
+            {
+                "test": str(r["test"]),
+                "checks": str(r.get("checks", "")),
+                "status": status,
+                "rows_affected": None if rows is None else int(rows),
+            }
+        )
+    return {"tool": "dbt" if out else None, "results": out}
+
+
 def _source_manifest(
-    ds: Dataset, *, release: str, run_date: str, port: Port | None, snap: Manifest | None, hosted: bool
+    ds: Dataset,
+    *,
+    release: str,
+    run_date: str,
+    port: Port | None,
+    snap: Manifest | None,
+    hosted: bool,
+    quality: Iterable[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "release_id": release,
@@ -408,6 +586,7 @@ def _source_manifest(
         },
         "citation": citation(ds, snap),
         "snapshot": asdict(snap) if snap and hosted else None,
+        "quality": quality_section(quality),
         "files": {},
     }
 
@@ -421,9 +600,8 @@ def _parquet_rows(path: Path) -> int:
     return int(row[0]) if row else 0
 
 
-def stage(registry: Registry, lake: Path, out: Path, *, run_date: str, repo: str | None) -> dict[str, Any]:
-    """Write the release into `out` (cards, licence texts, data files, manifests). Returns the release manifest."""
-    ports = load_ports(registry.root)
+def lake_snapshots(registry: Registry, lake: Path) -> dict[str, tuple[Path, Manifest]]:
+    """The latest snapshot of every redistributable source; stops the export if one is missing."""
     snaps: dict[str, tuple[Path, Manifest]] = {}
     problems: list[str] = []
     for ds in registry:
@@ -438,14 +616,36 @@ def stage(registry: Registry, lake: Path, out: Path, *, run_date: str, repo: str
             snaps[ds.id] = found
     if problems:
         raise PublishCheckFailed("; ".join(problems))
+    return snaps
+
+
+def stage(
+    registry: Registry,
+    lake: Path,
+    out: Path,
+    *,
+    run_date: str,
+    repo: str | None,
+    plan: ReleasePlan | None = None,
+    quality: Mapping[str, Iterable[Mapping[str, Any]]] | None = None,
+) -> dict[str, Any]:
+    """Write the release into `out` (cards, licence texts, data files, manifests). Returns the release manifest.
+
+    `quality` maps a source id to its data-test results from the weekly build (see quality_section).
+    """
+    ports = load_ports(registry.root)
+    snaps = lake_snapshots(registry, lake)
     rid = release_id(run_date, [m.snapshot_id for _, m in snaps.values()])
+    plan = plan or ReleasePlan(tag=release_tag(run_date))
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
     release: dict[str, Any] = {
         "release_id": rid,
         "run_date": run_date,
-        "tag": release_tag(run_date),
+        "tag": plan.tag,
+        "supersedes": plan.supersedes,
+        "supersedes_tag": plan.supersedes_tag,
         "exported_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "data_product": None,
         "sources": {},
@@ -459,7 +659,15 @@ def stage(registry: Registry, lake: Path, out: Path, *, run_date: str, repo: str
         folder.mkdir()
         hosted = ds.entry.licence.redistribution
         snap = snaps[ds.id][1] if hosted else None
-        sm = _source_manifest(ds, release=rid, run_date=run_date, port=port, snap=snap, hosted=hosted)
+        sm = _source_manifest(
+            ds,
+            release=rid,
+            run_date=run_date,
+            port=port,
+            snap=snap,
+            hosted=hosted,
+            quality=(quality or {}).get(ds.id),
+        )
         if hosted and snap is not None:
             target = out / data_path(ds.id)
             target.parent.mkdir()
@@ -470,7 +678,17 @@ def stage(registry: Registry, lake: Path, out: Path, *, run_date: str, repo: str
             if lic is not None:
                 shutil.copyfile(lic, folder / LICENCE_FILE)
                 sm["files"][LICENCE_FILE] = {"sha256": sha256_file(folder / LICENCE_FILE), "rows": None}
-            card = hosted_card(ds, snap, release=rid, run_date=run_date, rows=rows, sha=sha, repo=repo)
+            card = hosted_card(
+                ds,
+                snap,
+                release=rid,
+                run_date=run_date,
+                rows=rows,
+                sha=sha,
+                repo=repo,
+                tag=plan.tag,
+                size=target.stat().st_size,
+            )
         else:
             card = listed_card(ds, release=rid, run_date=run_date)
         (folder / "README.md").write_text(card, encoding="utf-8")
@@ -481,6 +699,10 @@ def stage(registry: Registry, lake: Path, out: Path, *, run_date: str, repo: str
             release["files"][f"{ds.id}/{name}"] = meta
     (out / "README.md").write_text(hub_card(registry, release, repo), encoding="utf-8")
     (out / "manifest.json").write_text(json.dumps(release, indent=1) + "\n", encoding="utf-8")
+    previous = plan.changelog.removeprefix("# Changelog\n").lstrip("\n")
+    (out / "CHANGELOG.md").write_text(
+        "# Changelog\n\n" + changelog_entry(release) + ("\n" + previous if previous else ""), encoding="utf-8"
+    )
     return release
 
 
@@ -640,19 +862,34 @@ def export_public(
     run_date: str | None = None,
     uploader: Uploader | None = None,
     staging: Path = STAGING,
+    api: Any = None,
+    quality: Mapping[str, Iterable[Mapping[str, Any]]] | None = None,
 ) -> Release:
-    """Stage, check and (for hf://) upload one release. Raises PublishCheckFailed before any upload."""
+    """Stage, check and (for hf://) upload one release. Raises PublishCheckFailed before any upload.
+
+    For the Hub, the published release tags are read first: an identical release is not published again, and a
+    changed release for a run date that already has one is a correction under a new tag (never a moved tag).
+    """
     run_date = run_date or datetime.now(UTC).strftime("%Y-%m-%d")
     if not _RUN_DATE.fullmatch(run_date):
         raise PublishCheckFailed(f"run date {run_date!r} is not YYYY-MM-DD")
     to_hub = dest.startswith(HF_PREFIX)
     repo = hf_repo_id(dest) if to_hub else None
-    if to_hub and uploader is None and not os.environ.get("HF_TOKEN"):
-        raise PublishCheckFailed(
-            "publishing to Hugging Face needs a write token in the HF_TOKEN environment variable"
-        )
+    plan = None
+    if repo is not None:
+        if api is None:
+            if not os.environ.get("HF_TOKEN"):
+                raise PublishCheckFailed(
+                    "publishing to Hugging Face needs a write token in the HF_TOKEN environment variable"
+                )
+            from huggingface_hub import HfApi
+
+            api = HfApi(token=os.environ.get("HF_TOKEN"))
+        rid = release_id(run_date, [m.snapshot_id for _, m in lake_snapshots(registry, lake).values()])
+        published, changelog = published_releases(api, repo)
+        plan = plan_release(run_date, rid, published, changelog)
     out = staging if to_hub else Path(dest)
-    release = stage(registry, lake, out, run_date=run_date, repo=repo)
+    release = stage(registry, lake, out, run_date=run_date, repo=repo, plan=plan, quality=quality)
     problems = check_release(registry, lake, out)
     if problems:
         raise PublishCheckFailed("pre-publish checks failed:\n  - " + "\n  - ".join(problems))
@@ -665,8 +902,11 @@ def export_public(
         hosted=[s for s, v in release["sources"].items() if v["hosted"]],
         listed=[s for s, v in release["sources"].items() if not v["hosted"]],
     )
-    if to_hub:
-        result.tag = (uploader or upload_hf)(out, dest, release)
+    if plan is not None and plan.already_published:
+        result.tag = plan.already_published
+        result.unchanged = True
+    elif to_hub:
+        result.tag = uploader(out, dest, release) if uploader else upload_hf(out, dest, release, api=api)
     return result
 
 
@@ -688,41 +928,37 @@ def _tagged_release(api: Any, repo_id: str, tag: str) -> str | None:
 
 
 def upload_hf(out: Path, dest: str, release: dict[str, Any], api: Any = None) -> str:
-    """One commit with the release, then the tag release-<run date> on it (coffee-data-tracker's _upload_hf).
+    """One commit with the release, then its new tag on that commit (after coffee-data-tracker's _upload_hf).
 
-    The token is read only from HF_TOKEN at run time. The tag names the release served for that run date, so a
-    corrected export of the same run moves it; a re-export of the same release leaves it where it is.
+    The token is read only from HF_TOKEN at run time. Tags are immutable: this never deletes or moves one, and
+    refuses if the release's tag already exists (export_public picks a new tag for a correction).
     """
     from huggingface_hub import CommitOperationAdd, HfApi
 
     repo_id = hf_repo_id(dest)
     api = api or HfApi(token=os.environ.get("HF_TOKEN"))
+    tag = str(release["tag"])
     api.create_repo(repo_id, repo_type="dataset", private=False, exist_ok=True)
+    if tag in {t.name for t in api.list_repo_refs(repo_id, repo_type="dataset").tags}:
+        raise PublishCheckFailed(f"{repo_id} already has the tag {tag}; published releases are never moved")
     ops = [
         CommitOperationAdd(path_in_repo=p.relative_to(out).as_posix(), path_or_fileobj=str(p))
         for p in upload_files(out)
     ]
     rid = str(release["release_id"])
+    corrects = f", supersedes {release['supersedes']}" if release.get("supersedes") else ""
     commit = api.create_commit(
         repo_id=repo_id,
         repo_type="dataset",
         operations=ops,
-        commit_message=f"Weekly release {rid} (run {release['run_date']})",
+        commit_message=f"Weekly release {rid} (run {release['run_date']}{corrects})",
     )
-    tag = release_tag(str(release["run_date"]))
-    if tag in {t.name for t in api.list_repo_refs(repo_id, repo_type="dataset").tags}:
-        tagged = _tagged_release(api, repo_id, tag)
-        if tagged == rid:
-            print(f"{repo_id}: {tag} is already on release {rid}; left as it is", file=sys.stderr)
-            return tag
-        print(f"{repo_id}: moving {tag} from release {tagged} to {rid}", file=sys.stderr)
-        api.delete_tag(repo_id, tag=tag, repo_type="dataset")
     api.create_tag(
         repo_id,
         tag=tag,
         tag_message=f"release {rid}",
         revision=getattr(commit, "oid", None),
         repo_type="dataset",
-        exist_ok=True,
+        exist_ok=False,
     )
     return tag

@@ -1,11 +1,12 @@
-"""Command line: serve, refresh, fetch, export-public, check-contracts, validate, eval."""
+"""Command line: serve, refresh, fetch, export-public, check-contracts, validate, eval, and the analysis tools."""
 
 from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any, Literal
 
 from health_data_registry.registry import Registry, RegistryError, load_registry
 from health_data_registry.store import FetchLog, lake_root
@@ -18,13 +19,16 @@ def _fetcher(registry: Registry, log: FetchLog | None = None):  # type: ignore[n
 
 
 def refresh(registry: Registry, ids: Sequence[str], *, max_rows: int | None, lake: Path) -> int:
-    from health_data_registry.crawl import refresh_dataset
+    from health_data_registry.crawl import LiveOnly, refresh_dataset
 
     failed = 0
     for dataset_id in ids:
         try:
             ds = registry.get(dataset_id)
             m = refresh_dataset(ds, lake, _fetcher(registry, FetchLog(lake, ds.id)), max_rows=max_rows)
+        except LiveOnly as e:  # restricted terms: never stored, read live by the server
+            print(f"skip {dataset_id}: {e}")
+            continue
         except Exception as e:  # report and carry on with the next dataset
             failed += 1
             print(f"FAIL {dataset_id}: {e}", file=sys.stderr)
@@ -90,6 +94,65 @@ def run_eval(sealed: Path, run: Path | None) -> int:
     return 0 if result["gate"]["passed"] else 1
 
 
+ANALYSIS_COMMANDS = ("get-rate", "compare-rates", "get-trend", "age-adjust", "check-signal")
+
+
+def _add_analysis_commands(sub: Any) -> None:
+    """The analysis tools on the command line: the same functions the MCP tools call, the same output."""
+    specs: dict[str, list[tuple[str, dict[str, Any]]]] = {
+        "get-rate": [("--year", {"type": int, "required": True}), ("--location", {"action": "append"})],
+        "compare-rates": [("--location", {"required": True}), ("--year", {"type": int, "required": True}),
+                          ("--other-location", {}), ("--other-year", {"type": int})],
+        "get-trend": [("--location", {"required": True}), ("--year-start", {"type": int}),
+                      ("--year-end", {"type": int}), ("--include-provisional", {"action": "store_true"}),
+                      ("--fit-on", {"choices": ["rates", "counts"], "default": "rates"})],
+        "age-adjust": [("--location", {"required": True}), ("--year", {"type": int, "required": True})],
+        "check-signal": [("--location", {"required": True}), ("--year", {"type": int, "required": True}),
+                         ("--week", {"type": int, "required": True})],
+    }  # fmt: skip
+    for name, opts in specs.items():
+        sp = sub.add_parser(name, help=f"analysis: {name.replace('-', '_')} (same as the MCP tool)")
+        sp.add_argument("condition")
+        for flag, kw in opts:
+            sp.add_argument(flag, **kw)
+        sp.add_argument("--json", action="store_true", help="structured output instead of CSV")
+
+
+def run_analysis(registry: Registry, a: argparse.Namespace) -> int:
+    import json
+
+    from health_data_registry import analysis
+    from health_data_registry.query import Engine
+
+    eng = Engine(registry=registry, lake=lake_root())
+    fmt: Literal["csv", "json"] = "json" if a.json else "csv"
+    calls: dict[str, Callable[[], Any]] = {
+        "get-rate": lambda: analysis.get_rate(
+            registry, eng, condition=a.condition, year=a.year, locations=a.location or [], fmt=fmt
+        ),
+        "compare-rates": lambda: analysis.compare_rates(
+            registry, eng, condition=a.condition, location=a.location, year=a.year,
+            other_location=a.other_location, other_year=a.other_year, fmt=fmt,
+        ),
+        "get-trend": lambda: analysis.get_trend(
+            registry, eng, condition=a.condition, location=a.location, year_start=a.year_start,
+            year_end=a.year_end, include_provisional=a.include_provisional, fit_on=a.fit_on, fmt=fmt,
+        ),
+        "age-adjust": lambda: analysis.age_adjust(
+            registry, eng, condition=a.condition, location=a.location, year=a.year, fmt=fmt
+        ),
+        "check-signal": lambda: analysis.check_signal(
+            registry, eng, condition=a.condition, location=a.location, year=a.year, week=a.week, fmt=fmt
+        ),
+    }  # fmt: skip
+    out = calls[a.cmd]()
+    print(
+        out if isinstance(out, str) else json.dumps(out, indent=2, default=str),
+        end="" if isinstance(out, str) else "\n",
+    )
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="health-data-registry", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -118,6 +181,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     ev.add_argument("--sealed", type=Path, default=Path("eval/sealed"))
     ev.add_argument("--run", type=Path, default=None, help="JSON lines of a client's answers")
+    _add_analysis_commands(sub)
     a = p.parse_args(argv)
     try:
         registry = load_registry()
@@ -137,6 +201,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if a.cmd == "eval":
         return run_eval(a.sealed, a.run)
+    if a.cmd in ANALYSIS_COMMANDS:
+        return run_analysis(registry, a)
     if a.cmd == "check-contracts":
         return check_contracts(registry)
     if a.cmd == "export-public":

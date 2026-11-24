@@ -242,7 +242,8 @@ def list_sources(
             continue
         rows.append(
             [e.id, e.title, e.publisher, _years(ds), " ".join(e.geography), e.refresh,
-             _freshness(engine, ds), e.licence.id, e.status]
+             _freshness(engine, ds), e.licence.id, e.status, ds.contract.version,
+             engine.provenance(ds.id)["data_from"] if engine else ""]
         )  # fmt: skip
     notes = (
         ["review = draft means no maintainer has checked this source's contract yet."]
@@ -259,6 +260,8 @@ def list_sources(
         "last_fetched",
         "licence",
         "review",
+        "contract_version",
+        "data_from",
     ]
     return Result(cols, rows, notes).render(fmt)
 
@@ -344,6 +347,7 @@ def describe_dataset(
         "licence": f"{e.licence.id} ({e.licence.terms_url})",
         "review": e.status,
         "last_fetched": _freshness(engine, ds),
+        "provenance": engine.provenance(ds.id) if engine else None,
     }
     if fmt == "json":
         return info
@@ -370,6 +374,24 @@ def describe_dataset(
     if c.open_questions:
         lines += ["", "Not yet confirmed with the publisher:"] + [f"- {x}" for x in c.open_questions]
     lines += ["", f"How to cite: {e.citation}", f"Licence: {info['licence']}", f"Review status: {e.status}"]
+    if prov := info["provenance"]:
+        lines += [
+            f"Contract: {prov['contract_id']} version {prov['contract_version']}"
+            + (
+                f"; data product {prov['data_product']}, port {prov['output_port']}"
+                if prov["data_product"]
+                else ""
+            ),
+            f"Data from: {prov['data_from']}"
+            + (
+                f" (built with contract version {prov['release_contract_version']})"
+                if prov["release_id"]
+                else ""
+            ),
+            "",
+            "Add it to a Claude project:",
+            *prov["add_to_claude"],
+        ]
     return "\n".join(lines) + "\n"
 
 
@@ -657,6 +679,23 @@ def get_provenance(
         f"Cite as: {ds.entry.citation}",
         "Each content hash identifies the exact bytes fetched; the same hash means the same data.",
     ]
+    prov = engine.provenance(source_id)
+    notes.append(
+        f"Data from: {prov['data_from']}. Contract {prov['contract_id']} version {prov['contract_version']}"
+        + (
+            f"; data product {prov['data_product']}, port {prov['output_port']}"
+            if prov["data_product"]
+            else ""
+        )
+        + "."
+    )
+    notes.append("Add it to a Claude project: " + " ".join(prov["add_to_claude"]))
+    if prov["release_id"]:
+        notes.append(
+            f"Hub release {prov['release_id']} (run {prov['run_date']}, contract version "
+            f"{prov['release_contract_version']}). Release file fingerprints (sha256): "
+            + "; ".join(f"{k} {v}" for k, v in sorted(prov["release_files"].items()))
+        )
     if year is not None:
         notes.insert(0, f"Every row for {year} in this source comes from the fetches listed.")
     cols = ["source_id", "url", "retrieved_at", "content_sha256", "snapshot_id", "contract_version"]

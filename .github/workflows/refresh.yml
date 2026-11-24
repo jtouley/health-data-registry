@@ -40,25 +40,34 @@ jobs:
         run: uv run --no-sync health-data-registry check-contracts
 
       # -----------------------------------------------------------------------------------------
-      # PUBLISHING SNAPSHOTS TO HUGGING FACE IS DISABLED until the maintainer:
+      # PUBLISHING TO THE OPEN DATA HUB IS DISABLED until the maintainer:
       #   1. adds the repository secret HF_TOKEN (a fine-grained write token for the dataset only), and
-      #   2. sets the repository variable HDR_LAKE to the dataset id, e.g. <owner>/<dataset-name>.
-      # Until HDR_LAKE is set this step is skipped. Only sources whose licence allows redistribution
-      # are written to lake/ by `refresh` (licenses/README.md); WHO and other restricted sources are
-      # never uploaded. It runs only on main, after the contract check passed.
+      #   2. sets the repository variable HDR_LAKE to the hub dataset id, e.g. <org>/<dataset-name>.
+      # Until HDR_LAKE is set this step is skipped. `export-public` uploads only sources whose catalog
+      # licence allows redistribution; WHO and other restricted sources get a card and no data files.
+      # It runs the pre-publish checks first and uploads nothing if one fails, then tags the commit
+      # release-<run date>. It runs only on main, after the contract check passed. The variable is
+      # passed as HUB_REPO, not HDR_LAKE, because HDR_LAKE in the environment names the local lake.
       # -----------------------------------------------------------------------------------------
-      - name: Publish snapshots to Hugging Face
+      - name: Publish the release to the open data hub
         if: vars.HDR_LAKE != '' && github.ref == 'refs/heads/main'
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HDR_LAKE: ${{ vars.HDR_LAKE }}
+          HUB_REPO: ${{ vars.HDR_LAKE }}
         run: |
           if [ -z "$HF_TOKEN" ]; then
             echo "::error::HDR_LAKE is set but the HF_TOKEN secret is missing"
             exit 1
           fi
-          uvx --from huggingface_hub==2.4.0 hf upload "$HDR_LAKE" lake/ . \
-            --repo-type dataset --commit-message "Weekly refresh, run $GITHUB_RUN_ID"
+          uv run --no-sync health-data-registry export-public --to "hf://datasets/$HUB_REPO"
+
+      - name: Keep the manual publish checklist
+        if: vars.HDR_LAKE != '' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: publish-checklist
+          path: build/hub/publish-checklist.md
+          if-no-files-found: ignore
 
   report-failure:
     name: Open or update the failure issue

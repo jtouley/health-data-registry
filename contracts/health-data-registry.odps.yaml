@@ -17,7 +17,7 @@ description:
   usage: >-
     Read a hosted source's Parquet file from the Hugging Face dataset (pin a weekly release with
     @release-<run date>), or ask through the health-data-registry MCP server. Listed sources have a card but no
-    data files: the MCP server and `health-data-registry fetch <source>` get them from the publisher at run time.
+    data files: the MCP server reads them live from the publisher per question and keeps no copy.
   limitations: >-
     Only sources whose licence allows redistribution are hosted (US federal public domain today). Publishers'
     suppression and missing-value codes are kept exactly as published: an empty cell is never a zero and is
@@ -56,7 +56,7 @@ inputPorts:
     tags: [who, odata]
     customProperties:
       - property: description
-        value: WHO Global Health Observatory OData API, fetched at run time only, never mirrored.
+        value: WHO Global Health Observatory OData API, read live per request only; never mirrored or stored.
       - property: license
         value: CC-BY-NC-SA-3.0-IGO
     authoritativeDefinitions:

@@ -69,10 +69,14 @@ class Manifest:
     # on the open data hub) or "publisher" (fetched from the publisher at run time into the local cache).
     origin: str = "lake"
     release_id: str | None = None
+    release_ref: str | None = None  # the immutable hub reference read (release-<run date> tag or commit)
     run_date: str | None = None
     release_contract_version: str | None = None
     release_files: dict[str, str] = field(default_factory=dict)  # path in the release -> sha256
     notes: list[str] = field(default_factory=list)  # plain-words notes shown with every answer
+    quality: dict[str, Any] = field(
+        default_factory=dict
+    )  # the release's data-test results (publish.quality_section)
 
     @staticmethod
     def read(path: Path) -> Manifest:

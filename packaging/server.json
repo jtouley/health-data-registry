@@ -1,0 +1,59 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.jtouley/health-data-registry",
+  "title": "health-data-registry",
+  "description": "Public infectious-disease data from CDC, WHO and other publishers, with the source of every number.",
+  "version": "0.0.1",
+  "repository": {
+    "url": "https://github.com/jtouley/health-data-registry",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/jtouley/health-data-registry",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "health-data-registry",
+      "version": "0.0.1",
+      "runtimeHint": "uvx",
+      "transport": { "type": "stdio" },
+      "packageArguments": [{ "type": "positional", "value": "serve" }],
+      "environmentVariables": [
+        {
+          "name": "HDR_HUB",
+          "description": "Open data hub release to read published datasets from (hf://datasets/<org>/<name>).",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "HDR_LAKE",
+          "description": "Folder holding datasets loaded with `health-data-registry refresh`.",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    },
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "health-data-registry",
+      "version": "0.0.1",
+      "runtimeHint": "npx",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        {
+          "name": "HDR_HUB",
+          "description": "Open data hub release to read published datasets from (hf://datasets/<org>/<name>).",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "HDR_LAKE",
+          "description": "Folder holding datasets loaded with `health-data-registry refresh`.",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}

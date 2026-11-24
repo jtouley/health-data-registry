@@ -1,7 +1,8 @@
 """Fetch one catalogued source from its publisher into a lake: every attempt logged, raw bytes kept, one snapshot.
 
 Used by `health-data-registry refresh` / `fetch` (the maintainers' lake) and by the server for sources whose
-licence forbids redistribution, which it fetches from the publisher at run time into a local cache.
+nothing else: a source whose licence forbids redistribution (WHO GHO) is never written to any lake; the server
+reads it live (live.py).
 """
 
 from __future__ import annotations
@@ -19,6 +20,10 @@ RETRIES = 4
 FETCH_TIMEOUT_S = 180.0
 
 Getter = Callable[[str], RawFetch]
+
+
+class LiveOnly(ValueError):
+    """The source's terms forbid storing it; the server reads it live instead."""
 
 
 def fetcher(
@@ -63,6 +68,11 @@ def refresh_dataset(ds: Dataset, lake: Path, get: Getter, *, max_rows: int | Non
     """Page through one source, keep its raw bytes, and build its snapshot (partial when max_rows is set)."""
     from health_data_registry.adapters import pages
 
+    if not ds.entry.licence.redistribution:
+        raise LiveOnly(
+            f"{ds.id} is read live from {ds.entry.publisher} only: its terms ({ds.entry.licence.id}) attach to "
+            "anything derived, so no copy is ever stored"
+        )
     lake.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         fetches, files = [], []

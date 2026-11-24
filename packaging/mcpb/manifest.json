@@ -1,0 +1,58 @@
+{
+  "$schema": "https://raw.githubusercontent.com/modelcontextprotocol/mcpb/main/schemas/mcpb-manifest-v0.3.schema.json",
+  "manifest_version": "0.3",
+  "name": "health-data-registry",
+  "display_name": "health-data-registry",
+  "version": "0.0.1",
+  "description": "Public infectious-disease data from CDC, WHO and other publishers, with the source of every number.",
+  "long_description": "A read-only tool that answers plain questions about infectious disease with public, population-level data from CDC, WHO and other publishers. Every answer names its source, version and method. It never asks for patient data. It runs on your computer through uv, a small free program from Astral; tick \"Install uv if missing\" if uv isn't installed yet.",
+  "author": {
+    "name": "jtouley",
+    "url": "https://github.com/jtouley"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jtouley/health-data-registry"
+  },
+  "homepage": "https://github.com/jtouley/health-data-registry",
+  "documentation": "https://github.com/jtouley/health-data-registry/blob/main/docs/setup.md",
+  "support": "https://github.com/jtouley/health-data-registry/issues",
+  "license": "Apache-2.0",
+  "keywords": ["public health", "infectious disease", "epidemiology", "CDC", "WHO"],
+  "server": {
+    "type": "node",
+    "entry_point": "server/bin/health-data-registry.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/bin/health-data-registry.js"],
+      "env": {
+        "HDR_INSTALL_UV": "${user_config.install_uv}",
+        "HDR_LAKE": "${user_config.data_folder}"
+      }
+    }
+  },
+  "tools_generated": true,
+  "prompts_generated": true,
+  "user_config": {
+    "install_uv": {
+      "type": "boolean",
+      "title": "Install uv if missing",
+      "description": "This tool runs through uv, a small free program from Astral. If it isn't on this computer, install it from astral.sh the first time the tool starts.",
+      "default": false,
+      "required": false
+    },
+    "data_folder": {
+      "type": "directory",
+      "title": "Data folder",
+      "description": "Where downloaded public datasets are kept on this computer.",
+      "default": "${HOME}/health-data",
+      "required": false
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

@@ -37,12 +37,17 @@ layer because it checks the same catalog and semantic layer the tools use.
 | `registry.py` | Loads and cross-checks `catalog/<id>.yaml`, `contracts/<id>.odcs.yaml` (ODCS v3.2.0) and `semantic/<id>.yaml` |
 | `query.py` | The read path: attaches snapshots read-only, compiles semantic-model metrics to SQL, runs guarded SQL, wraps every answer with its provenance |
 | `sql_guard.py` | Checks `query_sql` statements: one read-only SELECT, allowlisted functions, declared joins only |
-| `store.py` | The lake: raw bytes by sha256, snapshots with manifests, the `LATEST` pointer |
+| `store.py` | The lake: raw bytes by sha256, snapshots partitioned by source and run date with manifests, the `LATEST` pointer, the fetch log |
+| `crawl.py` | Fetch one source into a lake: every attempt logged, raw bytes kept, one snapshot |
+| `publish.py` | `export-public`: hub release with cards, licence texts, Parquet and `manifest.json`; listed-not-hosted cards; pre-publish checks; upload and `release-<run date>` tag |
+| `hub.py` | The hosted read path: immutable hub release, sha256 check, fail-closed contract check, bounded cache |
+| `live.py` | Restricted-licence sources (WHO GHO): read live from the publisher per question, in memory only, never written to disk |
+| `product.py` | Reads the ODPS data product (`contracts/health-data-registry.odps.yaml`) and its output ports |
 | `fetch.py` | HTTPS-only fetches to catalogued, publicly routable publisher hosts |
 | `geo.py` | One place whatever the publisher calls it; GBD location names |
 | `evaluation.py` | Sealed blind sets, the scorer and the release gate |
 | `adapters/socrata.py`, `adapters/who_gho.py` | Per-portal fetch and column metadata |
-| `cli.py` | `serve`, `refresh <dataset>\|--all`, `check-contracts`, `validate`, `eval` |
+| `cli.py` | `serve`, `refresh <dataset>\|--all`, `fetch <source>`, `export-public --to`, `check-contracts`, `validate`, `eval` |
 
 ## Data flow
 
