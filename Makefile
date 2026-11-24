@@ -1,6 +1,6 @@
 # Developer and CI entry points. `make help` lists the targets.
 .DEFAULT_GOAL := help
-.PHONY: help install lint fmt typecheck test test-network check refresh serve check-contracts eval
+.PHONY: help install lint fmt typecheck test test-network check refresh serve check-contracts eval mutation
 
 UV ?= uv
 COV_FLOOR ?= 85
@@ -41,3 +41,6 @@ check-contracts: ## Check every source against its ODCS contract
 
 eval: ## Run the evaluation over the blind question sets
 	$(UV) run health-data-registry eval
+
+mutation: ## Mutation tests on the PDF report parser (mutmut; scope in pyproject [tool.mutmut])
+	$(UV) run mutmut run --max-children 3

@@ -266,6 +266,7 @@ def test_total_rows_predicate_is_checked(tmp_path: Path, predicate: str) -> None
 
 def test_allowed_predicate_functions(tmp_path: Path) -> None:
     contract = CONTRACT.replace(
-        "\"reporting_area = 'US RESIDENTS'\"", json.dumps("upper(trim(reporting_area)) IN ('US RESIDENTS', 'TOTAL')")
+        "\"reporting_area = 'US RESIDENTS'\"",
+        json.dumps("upper(trim(reporting_area)) IN ('US RESIDENTS', 'TOTAL')"),
     )
     assert load_registry(write_registry(tmp_path, contract=contract))
