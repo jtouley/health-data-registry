@@ -2,7 +2,7 @@
 
 Usage: python scripts/mutate_changed.py [--base origin/main] [--floor 70] [--all]
 
-Finds the Python modules under src/ changed since --base (merge-base), runs mutmut on just those modules,
+Finds the Python modules under src/ and eval/ changed since --base (merge-base), runs mutmut on just those modules,
 prints each surviving mutant, and fails when the share of killed mutants among checked ones is below --floor.
 A survivor means a test suite that would not notice that change to the code: add or sharpen a test, or say in
 the PR why the mutant is equivalent.
@@ -18,6 +18,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PKG = ROOT / "src" / "health_data_registry"
+# Mutated packages: the server, and the eval scorer that decides release gates. Keep in step with
+# [tool.mutmut] source_paths in pyproject.toml.
+PACKAGES = (PKG, ROOT / "eval")
 
 
 def changed_modules(base: str) -> list[str]:
@@ -27,12 +30,13 @@ def changed_modules(base: str) -> list[str]:
         ).stdout.strip()
         or base
     )
+    dirs = [str(p.relative_to(ROOT)) for p in PACKAGES]
     out = subprocess.run(
-        ["git", "diff", "--name-only", merge_base, "--", "src/health_data_registry"],
+        ["git", "diff", "--name-only", merge_base, "--", *dirs],
         cwd=ROOT, capture_output=True, text=True, check=True,
     ).stdout  # fmt: skip
     untracked = subprocess.run(
-        ["git", "ls-files", "--others", "--exclude-standard", "src/health_data_registry"],
+        ["git", "ls-files", "--others", "--exclude-standard", *dirs],
         cwd=ROOT, capture_output=True, text=True, check=True,
     ).stdout  # fmt: skip
     return sorted(
@@ -41,7 +45,10 @@ def changed_modules(base: str) -> list[str]:
 
 
 def _module(path: str) -> str:
-    rel = Path(path).relative_to("src").with_suffix("")
+    """src/health_data_registry/x.py -> health_data_registry.x; eval/x.py -> eval.x."""
+    rel = Path(path).with_suffix("")
+    if rel.parts[0] == "src":
+        rel = rel.relative_to("src")
     return ".".join(rel.parts)
 
 
@@ -52,7 +59,7 @@ def main() -> int:
     ap.add_argument("--all", action="store_true", help="every module, not only changed ones (slow)")
     a = ap.parse_args()
     mods = (
-        sorted(_module(str(p.relative_to(ROOT))) for p in PKG.rglob("*.py"))
+        sorted(_module(str(p.relative_to(ROOT))) for pkg in PACKAGES for p in pkg.rglob("*.py"))
         if a.all
         else changed_modules(a.base)
     )

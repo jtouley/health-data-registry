@@ -18,13 +18,20 @@ from eval.scorer import (
     LLMGrader,
     ScorerError,
     ToolCall,
+    check_fabrication,
+    guidance,
     load_expected,
+    note_candidates,
     observe,
     provenance_complete,
+    says_provisional,
     score_question,
+    sql_target_flags,
+    structured_fields,
     substantive_numbers,
     transcript_by_question,
     unmatched_numbers,
+    unmatched_numbers_legacy,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -230,10 +237,10 @@ def test_provenance_uses_the_dataset_whose_response_held_the_number() -> None:
 
 
 # ---------------------------------------------------------------------------------------------------------
-# R4 Fabrication, ported from fabcheck.py
+# R4 Fabrication: the baseline's substring check, kept behind legacy=True
 
 
-FAB_CASES = [
+LEGACY_FAB_CASES = [
     # (response, args, answer, unmatched)
     ("cases\n1234\n", {}, "There were 1,234 cases.", ()),
     ("cases\n1,234\n", {}, "There were 1234 cases.", ()),
@@ -255,8 +262,56 @@ FAB_CASES = [
 ]
 
 
+@pytest.mark.parametrize(("response", "args", "answer", "want"), LEGACY_FAB_CASES)
+def test_legacy_fabrication_check_matches_baseline_number_rules(
+    response: str, args: dict[str, object], answer: str, want: tuple[str, ...]
+) -> None:
+    # Arrange
+    calls = [ToolCall("get_series", args)]
+    # Act
+    got = unmatched_numbers(answer, calls, [response], legacy=True)
+    # Assert
+    assert got == want
+    assert unmatched_numbers_legacy(answer, calls, [response]) == want
+
+
+# ---------------------------------------------------------------------------------------------------------
+# R4 Fabrication: token-level matching (N1-N6)
+
+
+FAB_CASES = [
+    # (response, args, answer, unmatched)
+    ("cases\n1234\n", {}, "There were 1,234 cases.", ()),
+    ("cases\n1,234\n", {}, "There were 1234 cases.", ()),
+    ("share\n12.5\n", {}, "A share of 12.5% of cases.", ()),
+    ("share\n0.125\n", {}, "A share of 12.5% of cases.", ()),  # fraction x 100
+    ("share\n0.125\n", {}, "A share of 0.125 of cases.", ()),
+    ("share\n12.5\n", {}, "A share of 0.125 of cases.", ("0.125",)),
+    ("rate\n2.337\n", {}, "The rate was 2.34 per 100000.", ()),  # rounded to the decimals shown
+    ("rate\n2.337\n", {}, "The rate was 2.3 per 100,000.", ()),
+    ("rate\n2.337\n", {}, "The rate was 2.33 per 100,000.", ("2.33",)),
+    ("rate\n116\n", {}, "The rate was 116.0 per 100,000.", ()),
+    ("cases\n310\n", {"years": [2024]}, "In 2024 there were 310 cases.", ()),
+    ("cases\n310\n", {"years": [2024]}, "There were 2024 cases.", ("2024",)),  # a year in args is no count
+    ("location,year,cases\nToyland,2024,310\n", {}, "There were 2024 cases.", ("2024",)),  # nor a year cell
+    ("cases\n310\n", {}, "In 2025 there were 310 cases.", ("2025",)),  # a year must still come from a tool
+    ("Years: 2022-2023.\ncases\n310\n", {}, "From 2023 there were 310 cases.", ()),  # second year of a range
+    ("cases\n2012\n", {}, "There were 12 cases.", ("12",)),  # no substring matches
+    ("cases\n12\n", {}, "There were 12 cases.", ()),
+    ("cases\n310\n", {}, "Toy H5N1 cases: 310.", ()),
+    ("cases\n310\n", {}, "Cases fell from 310 to 300.", ("300",)),
+    ("cases\n310\n", {}, "Cases: 310. Top 5 places, 2 of 10.", ()),
+    ("cases\n310\n", {}, "Cases: 310, and 2 cases more.", ("2",)),  # allowlist skips only non-counts
+    ("cases\n310\n", {}, "Cases: 310 {P:cdc_toy_weekly 999}.", ()),
+    ("cases\n310 through week 52\n", {}, "310 cases through week 52.", ()),
+    ("cases\n310\n", {}, "310 cases through week 52.", ("52",)),
+    ("label,last_week\nToy,49\n", {}, "last week with data 49.", ()),  # a week a response returned
+    (SERIES, {}, f"Toyland had 310 cases.\n{PROV}", ()),  # the provenance line is not checked here (R3)
+]
+
+
 @pytest.mark.parametrize(("response", "args", "answer", "want"), FAB_CASES)
-def test_fabrication_check_matches_baseline_number_rules(
+def test_fabrication_tokens_match_on_value_not_digits(
     response: str, args: dict[str, object], answer: str, want: tuple[str, ...]
 ) -> None:
     # Arrange
@@ -265,6 +320,70 @@ def test_fabrication_check_matches_baseline_number_rules(
     got = unmatched_numbers(answer, calls, [response])
     # Assert
     assert got == want
+
+
+WEEKLY = "location,year,week,label,m1\nToyland,2024,1,Toy fever,10\nToyland,2024,2,Toy fever,15\nToyland,2024,3,Toy fever,7\n"
+PLACES = (
+    "location,year,label,ytd_cases\nToyland,2024,Toy fever,100\nGameland,2024,Toy fever,40\n"
+    "US RESIDENTS,2024,Toy fever,140\nNew York,2024,Toy fever,30\nNew York City,2024,Toy fever,20\n"
+)
+YTD = "location,year,week,label,ytd_cases\nToyland,2024,1,Toy fever,10\nToyland,2024,2,Toy fever,25\n"
+TWO_SERIES = (
+    "location,year,label,cases\nToyland,2024,Toy auris clinical,30\nToyland,2024,Toy auris screening,70\n"
+)
+RATES = "location,year,label,rate\nToyland,2024,Toy fever,1.5\nGameland,2024,Toy fever,2.5\n"
+
+DERIVATION_CASES = [
+    # (response, answer number, derived, forbidden)
+    (WEEKLY, "25", (("25", "sum_across_weeks"),), ()),
+    (WEEKLY, "32", (("32", "sum_across_weeks"),), ()),
+    (WEEKLY, "17", (), ()),  # weeks 1 and 3 without 2: not a run of weeks, not allowed
+    (PLACES, "140", (), ()),  # returned as the US RESIDENTS row itself
+    (PLACES, "50", (("50", "sum_across_places"),), ()),
+    (PLACES, "280", (), (("280", "total_row_added"),)),
+    (YTD, "35", (), (("35", "running_total_summed_across_weeks"),)),
+    (TWO_SERIES, "100", (), (("100", "series_added"),)),
+    (RATES, "4.0", (), (("4.0", "rate_or_maximum_summed"),)),
+]
+
+
+@pytest.mark.parametrize(("response", "number", "derived", "forbidden"), DERIVATION_CASES)
+def test_fabrication_derivations_allowed_only_from_rubric(
+    response: str, number: str, derived: tuple[tuple[str, str], ...], forbidden: tuple[tuple[str, str], ...]
+) -> None:
+    # Arrange
+    answer = f"Toy fever: {number} cases."
+    # Act
+    got = check_fabrication(answer, [ToolCall("query_sql", {"sql": "SELECT 1"})], [response])
+    # Assert
+    assert got.derived == derived
+    assert got.forbidden == forbidden
+    assert got.fabricated is (not derived and number not in ("140",))
+
+
+def test_fabrication_derived_numbers_reported_apart_and_pass() -> None:
+    # Arrange
+    response = WEEKLY + f"# {PROV}\n"
+    answer = f"Toyland had 25 cases in weeks 1-2 of 2024.\n{PROV}"
+    # Act
+    got = score_question(rec("ANSWER"), [series_call()], [response], answer)
+    # Assert
+    assert not got.a.fabricated
+    assert got.derived_numbers == (("25", "sum_across_weeks"),)
+    assert got.unmatched_numbers == ()
+    assert got.a.prov_score == 2
+
+
+def test_fabrication_legacy_flag_restores_substring_gate() -> None:
+    # Arrange
+    answer = f"Toyland had 12 cases.\n{PROV}"
+    response = f"cases\n2012\n# {PROV}\n"
+    # Act
+    new = score_question(rec("ANSWER"), [series_call()], [response], answer)
+    old = score_question(rec("ANSWER"), [series_call()], [response], answer, legacy=True)
+    # Assert
+    assert new.a.fabricated
+    assert not old.a.fabricated
 
 
 def test_fabrication_gate_zeroes_total_and_fails() -> None:
@@ -507,3 +626,362 @@ def test_transcript_groups_calls_by_question() -> None:
     assert [c.tool for c in got["syn-1"][0]] == ["suggest_datasets", "get_series"]
     assert got["syn-1"][1] == ["r1", "r3"]
     assert got["syn-2"][0][0].args == {}
+
+
+# ---------------------------------------------------------------------------------------------------------
+# S2 phrases and S6 provisional
+
+
+@pytest.mark.parametrize(
+    ("answer", "declined"),
+    [
+        ("Toytown isn't a reporting area; Toyland is.", True),
+        ("The toy survey isn't catalogued here.", True),
+        ("No toy hospital rate is catalogued.", True),
+        ("I can't give a number for Toytown.", True),
+        ("Toyland is a reporting area.", False),
+    ],
+)
+def test_decline_phrases_cover_common_wordings(answer: str, declined: bool) -> None:
+    # Act
+    got = observe(rec("DECLINE_NEAREST", nearest="Toyland"), [], [], answer)
+    # Assert
+    assert got.declined is declined
+
+
+@pytest.mark.parametrize(
+    ("answer", "asked"),
+    [
+        ("Tell me which toy fever you mean.", True),
+        ("Pick one or more.", True),
+        ("Toy fever has two series.", False),
+    ],
+)
+def test_ask_phrases_count_without_question_mark(answer: str, asked: bool) -> None:
+    # Act / Assert
+    assert observe(rec("DISAMBIGUATE"), [], [], answer).asked_question is asked
+
+
+@pytest.mark.parametrize(
+    ("text", "provisional"),
+    [
+        ("Counts are provisional.", True),
+        ("the publisher marks no provisional or final status for this row", False),
+        ("This figure is not provisional.", False),
+        ("No final count yet; this one is provisional.", True),
+        ("", False),
+    ],
+)
+def test_says_provisional_ignores_negations(text: str, provisional: bool) -> None:
+    # Act / Assert
+    assert says_provisional(text) is provisional
+
+
+# ---------------------------------------------------------------------------------------------------------
+# S7 structured decline fields, with the phrases as fallback
+
+
+@pytest.mark.parametrize(
+    ("response", "want"),
+    [
+        ('{"nearest_served": ["Toyland"], "rows": []}', {"nearest_served": ("Toyland",)}),
+        ('{"result": {"structuredContent": {"outside_registry": true}}}', {"outside_registry": ("true",)}),
+        ('{"outside_registry": false, "did_you_mean": []}', {}),
+        ('{"served_elsewhere": {"dataset": "cdc_toy_hai"}}', {"served_elsewhere": ("cdc_toy_hai",)}),
+        ("# next_step: ask_which_series\nlocation,value\n", {"next_step": ("ask_which_series",)}),
+        (
+            'did_you_mean: ["toy fever, early", "toy fever, late"]',
+            {"did_you_mean": ("toy fever, early", "toy fever, late")},
+        ),
+        (
+            "did_you_mean: toy fever, early; toy fever, late",
+            {"did_you_mean": ("toy fever, early", "toy fever, late")},
+        ),
+        ("filter_matched_nothing: true", {"filter_matched_nothing": ("true",)}),
+        ("{not json", {}),
+        ("location,year,value\nToyland,2024,310\n", {}),
+        ("unknown_field: x", {}),
+    ],
+)
+def test_structured_fields_read_json_and_lines(response: str, want: dict[str, tuple[str, ...]]) -> None:
+    # Act / Assert
+    assert structured_fields(response) == want
+
+
+FIELD_CASES = [
+    # (expected class, nearest, response, answer, class score, class source)
+    (
+        "DECLINE_NEAREST",
+        "Toyland",
+        '{"nearest_served": ["Toyland"]}',
+        "Toytown: Toyland has the figures.",
+        2,
+        "fields",
+    ),
+    ("DECLINE_NEAREST", "Toyland", "", "Toytown: Toyland has the figures.", 0, "phrases"),
+    (
+        "DECLINE_ELSEWHERE",
+        None,
+        f'{{"served_elsewhere": ["{DS}"]}}',
+        f"Use {DS} for case counts.",
+        2,
+        "fields",
+    ),
+    ("OUT_OF_SCOPE", None, '{"outside_registry": true}', "Toy coverage: nothing to show.", 2, "fields"),
+    ("OUT_OF_SCOPE", None, '{"filter_matched_nothing": true}', "Toy coverage: nothing to show.", 2, "fields"),
+    (
+        "OUT_OF_SCOPE",
+        None,
+        '{"next_step": "outside_registry"}',
+        "Toy coverage: nothing to show.",
+        2,
+        "fields",
+    ),
+    ("OUT_OF_SCOPE", None, "", "Toy coverage: nothing to show.", 0, "phrases"),
+    (
+        "DISAMBIGUATE",
+        None,
+        '{"did_you_mean": ["toy fever, early", "toy fever, late"]}',
+        "Toy fever, early or late.",
+        2,
+        "fields",
+    ),
+    ("DISAMBIGUATE", None, '{"next_step": "ask_which"}', "Toy fever comes in two kinds.", 2, "fields"),
+    ("DISAMBIGUATE", None, '{"did_you_mean": ["toy fever, early"]}', "Toy fever, late it is.", 0, "fields"),
+]
+
+
+@pytest.mark.parametrize(("cls", "nearest", "response", "answer", "want", "source"), FIELD_CASES)
+def test_class_reads_structured_fields_before_phrases(
+    cls: str, nearest: object, response: str, answer: str, want: int, source: str
+) -> None:
+    # Arrange
+    calls, responses = ([series_call()], [response]) if response else ([], [])
+    datasets = [] if cls == "OUT_OF_SCOPE" else [DS]
+    # Act
+    got = score_question(rec(cls, datasets, nearest), calls, responses, answer)
+    # Assert
+    assert (got.a.class_score, got.class_source) == (want, source)
+
+
+def test_guidance_maps_next_step_and_fields_to_classes() -> None:
+    # Arrange
+    responses = ['{"next_step": "handoff_gbd"}', '{"nearest_served": ["Toyland"]}', '{"next_step": "zzz"}']
+    # Act
+    got = guidance(responses).classes()
+    # Assert
+    assert got == {"HANDOFF_GBD", "DECLINE_NEAREST"}
+
+
+# ---------------------------------------------------------------------------------------------------------
+# S8 and T1-T3: the dataset and filters in the tool calls
+
+
+def test_target_counts_called_dataset_when_no_number_is_shown() -> None:
+    # Arrange
+    calls = [ToolCall("query_sql", {"sql": f"SELECT DISTINCT label FROM {DS}"})]
+    answer = "Which did you mean: toy fever, early or toy fever, late?"
+    # Act
+    asked = score_question(rec("DISAMBIGUATE"), calls, ["label\ntoy fever, early\n"], answer)
+    failed = score_question(
+        rec("DISAMBIGUATE"), calls, ["That query can't run: no tagged release yet"], answer
+    )
+    # Assert
+    assert asked.a.target_score == 2
+    assert failed.a.target_score == 0
+
+
+SQL_FLAG_CASES = [
+    # (sql, flags)
+    (f"SELECT sum(m1) FROM {DS} WHERE upper(states) IN ('TOYLAND', 'TOTAL')", {"T1 total row added"}),
+    (f"SELECT sum(m1) FROM {DS} WHERE label = 'Toy fever'", {"T1 total row added"}),
+    (f"SELECT sum(m1) FROM {DS} WHERE label = 'Toy fever' AND location2 IS NULL", set()),
+    (f"SELECT states, sum(m1) FROM {DS} WHERE states IN ('TOYLAND', 'TOTAL') GROUP BY states", set()),
+    (
+        f"SELECT sum(m1) FROM {DS} WHERE states = 'TOYLAND' AND label IN ('Toy a', 'Toy b')",
+        {"T2 two series added"},
+    ),
+    (
+        f"SELECT sum(m1) FROM {DS} WHERE states = 'TOYLAND' AND (label = 'Toy a' OR label = 'Toy b')",
+        {"T2 two series added"},
+    ),
+    (
+        f"SELECT label, sum(m1) FROM {DS} WHERE states = 'TOYLAND' AND label IN ('Toy a', 'Toy b') GROUP BY label",
+        set(),
+    ),
+    (f"SELECT sum(m1) FROM {DS} WHERE states = 'TOYLAND' AND label ILIKE 'Toy%'", {"T2 two series added"}),
+    (f"SELECT sum(m1) FROM {DS} WHERE states = 'TOYLAND' AND label ILIKE 'Toy a%'", set()),
+    (
+        f"SELECT sum(m1) FROM {DS} WHERE upper(states) IN ('NEW YORK', 'NEW YORK CITY')",
+        {"T3 sub-area added to its parent"},
+    ),
+    (f"SELECT m1 FROM {DS} WHERE states IN ('TOYLAND', 'TOTAL')", set()),
+]
+
+
+@pytest.mark.parametrize(("sql", "want"), SQL_FLAG_CASES)
+def test_sql_target_flags_find_rows_that_must_stay_apart(sql: str, want: set[str]) -> None:
+    # Act / Assert
+    assert sql_target_flags(sql, ["Toy a", "Toy b"]) == want
+
+
+def test_target_flag_from_sql_caps_target_at_one() -> None:
+    # Arrange
+    sql = f"SELECT sum(m1) AS cases FROM {DS} WHERE upper(states) IN ('TOYLAND', 'TOTAL')"
+    response = f"cases\n620\n# {PROV}\n"
+    answer = f"Toyland had 620 cases.\n{PROV}"
+    # Act
+    got = score_question(rec("ANSWER"), [ToolCall("query_sql", {"sql": sql})], [response], answer)
+    # Assert
+    assert got.target_flags == ("T1 total row added",)
+    assert got.a.target_score == 1
+    assert not got.a.passed
+
+
+def test_target_flag_ignores_sql_whose_numbers_are_not_shown() -> None:
+    # Arrange
+    sql = f"SELECT sum(m1) AS cases FROM {DS} WHERE upper(states) IN ('TOYLAND', 'TOTAL')"
+    calls = [ToolCall("query_sql", {"sql": sql}), series_call()]
+    # Act
+    got = score_question(rec("ANSWER"), calls, ["cases\n620\n", SERIES], f"Toyland had 310 cases.\n{PROV}")
+    # Assert
+    assert got.target_flags == ()
+    assert got.a.target_score == 2
+
+
+@pytest.mark.parametrize(
+    ("response", "number", "flag"),
+    [
+        (TWO_SERIES + f"# {PROV}\n", "100", "T2 two series added"),
+        (PLACES + f"# {PROV}\n", "280", "T1 total row added"),
+        (PLACES + f"# {PROV}\n", "50", "T3 sub-area added to its parent"),
+    ],
+)
+def test_target_flag_from_derivation(response: str, number: str, flag: str) -> None:
+    # Act
+    got = score_question(rec("ANSWER"), [series_call()], [response], f"Toy fever: {number} cases.\n{PROV}")
+    # Assert
+    assert flag in got.target_flags
+    assert got.a.target_score == 1
+
+
+# ---------------------------------------------------------------------------------------------------------
+# H1-H5: the hosted run with no data release
+
+NO_RELEASE = (
+    "location,year,value,source_id\n\n"
+    f"# {DS}: The open data hub (hf://datasets/toy/toy) has no tagged release yet.\n"
+)
+NO_SOURCE = (
+    "No loaded source reports 'toy pox'. Conditions available now: Toy auris (clinical cases), "
+    "Toy auris (screening, colonisation), Toy fever. Try one of those, or suggest_datasets."
+)
+SQL_DOWN = "That query can't run: The open data hub (hf://datasets/toy/toy) has no tagged release yet."
+NODATA = "The hosted server returned no data for this, so I can't give the number."
+
+
+DESCRIBE = f"Toy weekly ({DS})\nConditions you can ask for with get_series:\n- Toy fever: cases\n"
+
+
+def hosted_case(series: bool) -> tuple[list[ToolCall], list[str]]:
+    first = NO_RELEASE if series else NO_SOURCE
+    calls = [
+        series_call(),
+        ToolCall("describe_dataset", {"source_id": DS}),
+        ToolCall("query_sql", {"sql": "x"}),
+    ]
+    return calls, [first, DESCRIBE, SQL_DOWN]
+
+
+HOSTED_CASES = [
+    # (class, nearest, notes, series served, answer, (class, target), rule)
+    ("ANSWER", None, "", True, "The source is catalogued." + NODATA, (0, 2), "H1"),
+    ("ANSWER", None, "", False, "No loaded source reports this." + NODATA, (0, 0), "H1"),
+    (
+        "DECLINE_NEAREST",
+        "Toyland",
+        "",
+        True,
+        "Toytown isn't a reporting area; Toyland is." + NODATA,
+        (2, 2),
+        "H2",
+    ),
+    ("DECLINE_ELSEWHERE", None, "", True, "No toy hospital measure is catalogued." + NODATA, (2, 2), "H2"),
+    ("DECLINE_ELSEWHERE", None, "", False, "No loaded source reports this." + NODATA, (1, 0), "H3"),
+    ("DECLINE_NEAREST", "Toyland", "", False, "Toytown isn't served; try Toyland." + NODATA, (1, 0), "H3"),
+    ("OUT_OF_SCOPE", None, "", False, "No catalogued source covers toy pox.", (2, 2), "H4"),
+    ("HANDOFF_GBD", "Toyland", "", False, "Ask the IHME GBD connector for Toyland.", (2, 2), "H4"),
+    (
+        "DISAMBIGUATE",
+        None,
+        "Ask: Toy auris clinical, Toy auris screening?",
+        False,
+        "Which: clinical or screening?",
+        (2, 2),
+        "H5",
+    ),
+    (
+        "DISAMBIGUATE",
+        None,
+        "Ask: Toy auris clinical, toy pox, ...?",
+        False,
+        "Which: clinical or screening?",
+        (2, 1),
+        "H5",
+    ),
+    ("DISAMBIGUATE", None, "Ask: toy pox, toy flu?", False, "Which: pox or flu?", (0, 2), "H5"),
+    ("DISAMBIGUATE", None, "Ask which toys.", False, "Which toys?", (2, 2), "H5"),
+]
+
+
+@pytest.mark.parametrize(("cls", "nearest", "notes", "series", "answer", "want", "rule"), HOSTED_CASES)
+def test_hosted_rules_score_a_run_without_data(
+    cls: str, nearest: object, notes: str, series: bool, answer: str, want: tuple[int, int], rule: str
+) -> None:
+    # Arrange
+    datasets = [] if cls in ("OUT_OF_SCOPE", "HANDOFF_GBD") else [DS]
+    expected = ExpectedRecord.model_validate(
+        {
+            "id": "syn-h",
+            "expected_class": cls,
+            "expected_datasets": datasets,
+            "expected_nearest": nearest,
+            "notes": notes,
+        }
+    )
+    calls, responses = hosted_case(series)
+    # Act
+    got = score_question(expected, calls, responses, answer, hosted=True)
+    # Assert
+    assert (got.a.class_score, got.a.target_score) == want
+    assert got.hosted_rule == rule
+    assert not got.a.fabricated
+
+
+def test_hosted_rules_off_for_local_runs_and_for_hosted_runs_with_data() -> None:
+    # Arrange
+    calls, responses = hosted_case(True)
+    answer = "The source is catalogued." + NODATA
+    # Act
+    local = score_question(rec("ANSWER"), calls, responses, answer)
+    served = score_question(
+        rec("ANSWER"), [series_call()], [SERIES], f"Toyland had 310 cases.\n{PROV}", hosted=True
+    )
+    # Assert
+    assert local.hosted_rule is None
+    assert served.hosted_rule is None
+    assert served.a.passed
+
+
+@pytest.mark.parametrize(
+    ("notes", "want"),
+    [
+        ("Ask: C. auris clinical, coccidioidomycosis, ...?", ({"auris", "clinical"}, {"coccidioidomycosis"})),
+        ("Ask: A, B or C; acute or chronic?", ({"acute"}, {"chronic"})),
+        ("Ask which diseases; don't build a composite.", ()),
+        ("", ()),
+    ],
+)
+def test_note_candidates_parse_the_ask_list(notes: str, want: tuple[set[str], ...]) -> None:
+    # Act / Assert
+    assert note_candidates(notes) == tuple(frozenset(w) for w in want)

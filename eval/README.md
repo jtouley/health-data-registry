@@ -9,6 +9,7 @@ can be compared with it.
 | File | What it holds |
 |---|---|
 | `scorer.py` | Scores one question from its expected record, the tool calls, their responses and the final answer |
+| `numbers.py` | Reads numbers as tokens (value, precision, year or count) and finds the sums the rubric allows |
 | `stats.py` | Wilson 95% interval, McNemar's test for before/after runs, the DEV−TEST gap, per-class tables |
 | `report.py` | Writes aggregate tables; prints per-question rows for DEV only |
 | `dev/dev.jsonl` | The DEV questions: 29 expected records, no answers |
@@ -59,30 +60,40 @@ There are two protocols:
   `OUT_OF_SCOPE`, where the reply comes out the same without it. Use B for before/after comparisons: A sat
   at 97.6% in the baseline, too close to the ceiling to show a fix.
 
-The rules in `scorer.py` are numbered as in the baseline (R1 to R9) plus S1 to S6, the ones this port had to
-make explicit. Each function's docstring states its rule.
+The rules in `scorer.py` are numbered as in the baseline (R1 to R9), plus S1 to S8 that this port had to make
+explicit, T1 to T3 for the target flags and H1 to H5 for the hosted run. The number rules are N1 to N6 in
+`numbers.py`. Each function's docstring states its rule.
 
-### Where the port differs from the baseline
+### Where the scorer differs from the baseline
 
 The baseline was scored by a model reading each transcript. The scorer replaces that reading with fixed
-rules. These parts of the baseline needed judgement that the rules can't reproduce exactly:
+rules:
 
-- **Class.** Declines, hand-offs, verdicts and clarifying questions are recognised by fixed phrases (S2,
-  S4), so wording outside those phrases is missed. The rules don't check that a `DISAMBIGUATE` reply lists
-  the catalogued candidates.
-- **Target.** A dataset counts only when its id appears in the reply, not its title. A wrong series or
-  filter inside the right dataset (a total row added to states, screening added to clinical, New York State
-  including New York City) and a publisher's successor series (R9) are not detected.
-- **Provenance.** Of the caveats, only "provisional" is checked (S6). Year-to-date reading, '-' flags and
-  the series caveat in each question's notes are not.
-- **Fabrication.** The number check is the baseline's `fabcheck.py`, ported line for line. It flags every
-  derived number, including sums the rubric allows. The baseline set its `fabricated` field by judgement,
-  informed by that check.
+- **Fabrication** compares numbers, not digits. Each number in the reply's prose must equal a number a tool
+  returned, rounded to the decimals the reply shows. A percentage also matches a fraction (12.5% and 0.125).
+  A year counts only as a year: "in 2024" must match a year somewhere in the transcript, and "2024 cases" must
+  match a returned count, never a year in the call arguments or a year column. Sums the rubric allows (weekly
+  counts added across weeks, counts added across places without total rows) pass and are listed apart as
+  derived numbers. Sums it forbids (year-to-date across weeks, a total row added, two series added, rates or
+  maxima added) fail, and the result says which. `score_question(..., legacy=True)` runs the baseline's
+  substring check instead, for comparison only.
+- **Class** reads the structured decline fields in `DECLINE_FIELDS` (`next_step`, `did_you_mean`,
+  `nearest_served`, `served_elsewhere`, `outside_registry`, `filter_matched_nothing`) when a tool response
+  carries them, and falls back to fixed phrases when it doesn't. Wording outside the phrases is still missed
+  when the fields are absent.
+- **Target** also reads the tool calls. With no number shown, the dataset a call resolved to counts as used.
+  A SUM over a total row and places, over two labels, or over New York and New York City caps Target at 1,
+  and so does a shown number reached the same way. A publisher's successor series (R9) is not detected.
+- **Provenance**: of the caveats, only "provisional" is checked (S6), ignoring "no provisional status".
+  Year-to-date reading, '-' flags and the series caveat in each question's notes are not.
+- **Hosted run**: with `hosted=True`, rules H1 to H5 score a run whose data tools say the data hub has no
+  release. They come from `scoring/hosted_answers.py`, rewritten to read the transcript instead of naming
+  questions.
 - **Protocol B.** The baseline set `sql_needed` by hand for each question. Here it is a rule (S5).
 
-For these, pass a `JudgementGrader` to `score_question`. `LLMGrader` wraps any model call with one fixed
-prompt. The grader is off by default and can only lower a score: where two scorers disagree, the stricter
-one stands.
+For what the rules can't judge, pass a `JudgementGrader` to `score_question`. `LLMGrader` wraps any model call
+with one fixed prompt. The grader is off by default and can only lower a score: where two scorers disagree,
+the stricter one stands.
 
 ## Running a report
 
