@@ -313,3 +313,10 @@ def test_fuzz_requirements_check_catches_drift(reqs: Any, tmp_path: Path) -> Non
         "sqlglot==2.0 in requirements.txt, but uv.lock has 1.0",
     ]
     assert reqs.main(["x", "bogus"]) == 2
+
+
+def test_raised_in_reads_through_mutmut_renamed_functions(load: Callable[[str], Any]) -> None:
+    h = load("fuzz_sql_guard")
+    assert h._MUTMUT_NAME.sub(r"\1", "x__require_single_select__mutmut_orig") == "_require_single_select"
+    assert h._MUTMUT_NAME.sub(r"\1", "x_guard_sql__mutmut_12") == "guard_sql"
+    assert h._MUTMUT_NAME.sub(r"\1", "guard_sql") == "guard_sql"

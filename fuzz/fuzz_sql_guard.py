@@ -285,11 +285,15 @@ def _raised_in(e: BaseException) -> str | None:
     """The innermost sql_guard function the exception passed through (not a comprehension or generator frame,
     which Python 3.11, the fuzz image's version, keeps and 3.12 partly inlines)."""
     names = [
-        f.name
+        # Under mutation tests, mutmut renames each function x_<name>__mutmut_orig (or _<n>); read the real name.
+        _MUTMUT_NAME.sub(r"\1", f.name)
         for f in traceback.extract_tb(e.__traceback__)
         if f.filename.endswith("sql_guard.py") and not f.name.startswith("<")
     ]
     return names[-1] if names else None
+
+
+_MUTMUT_NAME = re.compile(r"^x_(.+)__mutmut_(?:orig|\d+)$")
 
 
 def _is_utf8(text: str) -> bool:
