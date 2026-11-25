@@ -14,9 +14,10 @@ from health_data_registry.store import FetchLog, lake_root
 
 
 def _fetcher(registry: Registry, log: FetchLog | None = None):  # type: ignore[no-untyped-def]
-    from health_data_registry.crawl import fetcher
+    from health_data_registry.crawl import fetcher, shared_robots
 
-    return fetcher(registry, log)
+    # One access policy for the whole command: the pace and any block hold across every dataset it reads.
+    return fetcher(registry, log, robots=shared_robots(registry))
 
 
 def refresh(registry: Registry, ids: Sequence[str], *, max_rows: int | None, lake: Path) -> int:

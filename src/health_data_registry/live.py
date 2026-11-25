@@ -57,6 +57,7 @@ class LiveTable:
 def fetch_live(ds: Dataset, get: Any) -> LiveTable:
     """Page through the publisher in memory and describe the result; nothing touches the disk."""
     from health_data_registry.adapters import pages
+    from health_data_registry.crawl import override_notes
 
     fields = sorted({c.source_field for c in ds.contract.columns})
     records: list[dict[str, Any]] = []
@@ -84,7 +85,7 @@ def fetch_live(ds: Dataset, get: Any) -> LiveTable:
         redistribution=False,
         partial=False,
         origin="publisher",
-        notes=[attribution(ds)],
+        notes=[attribution(ds), *override_notes(get)],
         layouts=layouts,
     )
     return LiveTable(records=records, manifest=m, fetched=time.monotonic())

@@ -46,10 +46,13 @@ _SNAPSHOT_ID = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{12}$")
 class RawFetch:
     """One publisher response, as fetched."""
 
-    url: str
+    url: str  # the catalogued address the bytes answer (for a dashboard, the view, never a one-time session URL)
     content: bytes
     sha256: str
     retrieved_at: datetime
+    # Where the bytes were actually captured when that differs from ``url`` (a dashboard's data request); kept in
+    # the fetch log beside the source URL, never cited.
+    capture_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -125,7 +128,10 @@ class FetchLog:
         size: int | None = None,
         sha256: str | None = None,
         error: str | None = None,
+        note: str | None = None,
+        capture_url: str | None = None,
     ) -> dict[str, Any]:
+        """Append one attempt. ``note`` records an access-policy decision on it (e.g. a robots.txt override)."""
         row = {
             "source": self.source,
             "url": url,
@@ -135,6 +141,8 @@ class FetchLog:
             "bytes": size,
             "sha256": sha256,
             "error": None if ok else (error or "the fetch failed for an unknown reason"),
+            **({"note": note} if note else {}),
+            **({"capture_url": capture_url} if capture_url else {}),
         }
         target = self.path(when)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -213,6 +221,7 @@ def build_snapshot(
     *,
     partial: bool = False,
     layouts: dict[str, str] | None = None,
+    notes: Sequence[str] = (),
 ) -> Manifest:
     """Normalise newline-delimited JSON record files (publisher field names, raw values) into a snapshot."""
     if not fetches:
@@ -257,6 +266,7 @@ def build_snapshot(
             redistribution=ds.entry.licence.redistribution,
             partial=partial,
             layouts=dict(layouts or {}),
+            notes=list(notes),
         )
         (tmp / "manifest.json").write_text(json.dumps(asdict(manifest), indent=2) + "\n", encoding="utf-8")
         out.parent.mkdir(parents=True, exist_ok=True)

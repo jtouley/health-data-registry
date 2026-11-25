@@ -482,10 +482,11 @@ class Engine:
             return True
         if not self.fetch_at_run_time:
             return False
-        from health_data_registry.crawl import fetcher
+        from health_data_registry.crawl import fetcher, shared_robots
         from health_data_registry.live import fetch_live
 
-        get = self.getter or fetcher(self.registry, None)
+        # One access policy per server process: two live sources on one host keep its pace between them.
+        get = self.getter or fetcher(self.registry, None, robots=shared_robots(self.registry))
         try:
             self._live[ds.id] = fetch_live(ds, get)
         except Exception as e:  # noqa: BLE001 - any publisher failure becomes one plain refusal

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -127,6 +127,35 @@ class Tableau(_Strict):
     views: list[TableauView]
 
 
+# The reviewed list of what counts as a government host under the maintainer's access policy (robots.txt on such a
+# host does not stop the crawler; see crawl.Robots). One place in code: a catalog entry's `government_host: true`
+# is refused for any other host, so a typo or a copied entry can't switch robots.txt off for a commercial host.
+# Add a suffix or a domain only through review.
+GOVERNMENT_HOST_SUFFIXES: tuple[str, ...] = (
+    ".gov",  # US federal, state, county and city governments (.gov is restricted to US government bodies)
+    ".mil",
+    ".mi.us",  # Michigan state and local governments under the .us locality space
+    ".state.us",
+)
+# Government bodies whose own domain is not under one of the suffixes above: the named county domains of the
+# Detroit metropolitan area. michigan.gov and detroitmi.gov are listed for the record (they are .gov already).
+GOVERNMENT_DOMAINS: tuple[str, ...] = (
+    "michigan.gov",
+    "detroitmi.gov",
+    "waynecounty.com",  # Wayne County, Michigan
+    "oakgov.com",  # Oakland County, Michigan
+    "macombgov.org",  # Macomb County, Michigan
+)
+
+
+def is_government_host(host: str) -> bool:
+    """True when ``host`` is on the reviewed list of government suffixes and domains (see above)."""
+    h = host.lower().rstrip(".")
+    return h.endswith(GOVERNMENT_HOST_SUFFIXES) or any(
+        h == d or h.endswith("." + d) for d in GOVERNMENT_DOMAINS
+    )
+
+
 class Source(_Strict):
     portal: Literal["socrata", "who_gho", "https_csv", "tableau"]
     host: str
@@ -136,7 +165,7 @@ class Source(_Strict):
     encoding: str = "utf-8"  # https_csv only: the file's text encoding, from the publisher's documentation
     reshape: Reshape | None = None  # https_csv only
     tableau: Tableau | None = None  # tableau only: the views and worksheets read
-    # A government host (.gov, .mi.us, a county's or city's own domain, a state-run dashboard host): by the
+    # A government host (only a host on the reviewed list GOVERNMENT_HOST_SUFFIXES / GOVERNMENT_DOMAINS): by the
     # maintainer's access policy a robots.txt disallow there does not stop the crawler (the pacing, the honest
     # user agent and every other rule still apply). Default false: robots.txt is honoured in full.
     government_host: bool = False
@@ -164,6 +193,11 @@ class Source(_Strict):
         if (self.portal == "tableau") != (self.tableau is not None):
             raise ValueError(
                 "a tableau source lists its views (tableau.views), and only a tableau source does"
+            )
+        if self.government_host and not is_government_host(self.host):
+            raise ValueError(
+                f"government_host is accepted only for hosts on the reviewed list of government suffixes and "
+                f"domains (registry.GOVERNMENT_HOST_SUFFIXES, GOVERNMENT_DOMAINS); {self.host} is not on it"
             )
         if self.reshape is not None:
             try:
@@ -838,4 +872,22 @@ def load_registry(root: Path | None = None) -> Registry:
     for path in sorted(catalog_dir.glob("*.yaml")):
         ds = load_dataset(root, path)
         datasets[ds.id] = ds
+    _check_hosts_agree(datasets.values())
     return Registry(root=root, datasets=datasets)
+
+
+def _check_hosts_agree(datasets: Iterable[Dataset]) -> None:
+    """The access policy is per host (robots.txt, the pace, a block), so every entry on one host must state it alike.
+
+    crawl.py decides browser and portal per dataset (by its URLs), but whether robots.txt binds is a property of
+    the host: two entries on one host that disagree on `government_host` would leave it to file order.
+    """
+    seen: dict[str, tuple[str, bool]] = {}
+    for ds in datasets:
+        s = ds.entry.source
+        first = seen.setdefault(s.host, (ds.id, s.government_host))
+        if first[1] != s.government_host:
+            raise RegistryError(
+                f"{ds.id} and {first[0]} are both on {s.host} but disagree on government_host; the access policy "
+                "is per host, so they must agree"
+            )
