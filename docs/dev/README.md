@@ -114,12 +114,12 @@ A pull request's CI should pass the first time. So a commit is checked twice bef
 
 **The PR reuses the pre-pr mutation verdict.** The mutation shards are by far the dearest part of a CI run, and
 the account runs only a few jobs at once, so a PR does not mutate a commit the gate already mutated. On a
-`pull_request` event, the list job runs `scripts/mutation_reuse.py` (the copy on the base branch, so a PR can't
-change its own lookup). What it reuses is the pre-pr verdict for the PR's head SHA, and only when that head
-already contains the PR's base commit. A PR's CI tests the merge of its head into main; when the head already
-contains main's commit (`github.event.pull_request.base.sha` is an ancestor of the head SHA), that merge has the
-head's own tree, so the code, tests, `ci.yml` and `mutate_changed.py` are exactly what the pre-pr run mutated.
-The script then asks the Actions API, with the run's own read-only `GITHUB_TOKEN` (`actions: read` on that job
+`pull_request` event into main, the list job runs main's copy of `scripts/mutation_reuse.py`. What it reuses is
+the pre-pr verdict for the PR's head SHA, and only when the merge commit CI tests (`refs/pull/N/merge`, the
+checked-out `HEAD`) has exactly the head's tree. That holds when the branch already contains the main GitHub
+merged it with, and then the code, tests, `ci.yml` and `mutate_changed.py` are exactly what the pre-pr run
+mutated. The trees are compared directly, not the payload's base SHA, which can lag behind main. The script then
+asks the Actions API, with the run's own read-only `GITHUB_TOKEN` (`actions: read` on that job
 only), for a CI run that:
 
 - was triggered by a `push` to a `pre-pr/**` branch of this repository (not a fork), from `.github/workflows/ci.yml`
@@ -129,9 +129,16 @@ only), for a CI run that:
 
 and only when the PR's base is `main`, the branch a pre-pr run compares with. If one exists, the list job lists no
 modules, the shards are skipped, and "Mutation tests (changed modules)" passes on the PR with a log line naming the
-reused run. A branch behind main gets no reuse, nor does a failed, cancelled, skipped or still-running verdict, or
-one for another SHA. Any lookup error (the API, git, or the command itself failing) means no reuse, so the shards
-run as before; it never fails the check. Lint, types, tests, smoke, the kit, pre-commit and CodeQL still run on the
+reused run. A merge tree that differs from the head's gets no reuse, nor does a failed, cancelled, skipped or
+still-running verdict, or one for another SHA. Any lookup error (the API, git, or the command itself failing)
+means no reuse, so the shards run as before; it never fails the check. Because the step comes from the PR's
+`ci.yml` but the script from main, a PR that changes the script's arguments gets an "Argument mismatch" warning
+and runs its shards until it merges.
+
+This saves time; it is not a security boundary. A PR's own `ci.yml` and `scripts/mutate_changed.py` run on its
+`pull_request` event, so a PR can skip its shards by editing them; taking the lookup from main only closes the
+least visible way. What guards the check is review of those files (`.github/CODEOWNERS`, with a required
+code-owner review) and the ruleset that pins "Mutation tests (changed modules)" to GitHub Actions. Lint, types, tests, smoke, the kit, pre-commit and CodeQL still run on the
 PR, and every required check still reports. The pre-PR gate merges main before the pre-pr push, so a branch that
 is still up to date when the PR runs reuses the verdict. Push the green pre-pr commit unchanged: any new commit on
 the PR branch has no pre-pr verdict and runs the shards, and so does a PR whose main moved on in the meantime.

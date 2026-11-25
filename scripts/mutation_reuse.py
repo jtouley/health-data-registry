@@ -1,28 +1,36 @@
 """Find a green pre-pr mutation verdict for a pull request's head commit, so CI need not mutate it twice.
 
 Usage (CI, pull_request events only; see the mutation-list job in .github/workflows/ci.yml):
-  python scripts/mutation_reuse.py --repo OWNER/NAME --sha HEAD_SHA --base BASE_REF --base-sha BASE_SHA
+  python scripts/mutation_reuse.py --repo OWNER/NAME --sha HEAD_SHA --base BASE_REF --tested-commit TESTED_SHA
 
 The pre-PR gate (docs/dev/README.md#the-pre-pr-gate) runs CI on `pre-pr/<branch>` and then on the PR, for the same
 commit. The mutation shards are by far the dearest part of a run, so the PR's run reuses the pre-pr verdict when,
 and only when, all of these hold:
 
 - the PR targets main (a pre-pr run lists the modules changed since origin/main, so another base changes the list);
-- the PR's head commit already contains the PR's current base commit (BASE_SHA is an ancestor of HEAD_SHA in the
-  local git history). Then the merge commit a `pull_request` run tests has the head's own tree, so the code, the
-  tests, ci.yml and mutate_changed.py are exactly what the pre-pr run mutated. A branch behind main never reuses;
+- the commit this run actually tests (TESTED_SHA: `git rev-parse HEAD` after checkout, the merge commit
+  refs/pull/N/merge on a `pull_request` run) has exactly the same tree as HEAD_SHA. Then the code, the tests,
+  ci.yml and mutate_changed.py are exactly what the pre-pr run mutated. This compares the trees themselves, not
+  the payload's base SHA, which can lag behind the main commit GitHub merged with. A branch behind main, or one
+  whose main moved on, gives a different merge tree and never reuses;
 - a run of this repository's CI workflow (.github/workflows/ci.yml, matched by its workflow id and path) was
   triggered by a `push` to a `pre-pr/**` branch of this repository (not a fork), for exactly this head SHA;
 - in that run's latest attempt, the job "Mutation tests (changed modules)" completed with conclusion `success`.
 
-So what is reused is the pre-pr verdict for the head SHA, and only when the branch already contains its base. A
-failed, cancelled, skipped or still-running verdict never counts, nor does one for another SHA. It prints the
+So what is reused is the pre-pr verdict for the head SHA, and only when the tested merge commit has the head's own
+tree. A failed, cancelled, skipped or still-running verdict never counts, nor does one for another SHA. It prints the
 reused run's id, or nothing when there is none. Any API, git or parsing error prints nothing and a warning: the
 shards then run as usual, so an error can cost time but never skip a check.
 
-The head and base SHAs come from the event payload (github.event.pull_request.head.sha and .base.sha), never from
-a branch name, title or other text a contributor writes, and the token is the run's own GITHUB_TOKEN with
-`actions: read`. Standard library only, so the list job needs no project install.
+The head SHA comes from the event payload (github.event.pull_request.head.sha) and the tested SHA from the local
+checkout, never from a branch name, title or other text a contributor writes, and the token is the run's own
+GITHUB_TOKEN with `actions: read`. Standard library only, so the list job needs no project install.
+
+CI runs the base branch's copy of this script with the PR's own ci.yml. When the two disagree on arguments (a CLI
+change not yet merged), argparse exits 2, the step logs it as an argument mismatch, and the shards run: reuse is
+off on that PR, never wrongly on. This copy is not the security boundary: a PR can edit ci.yml or
+mutate_changed.py to skip its shards, so review of those files (CODEOWNERS) and the ruleset that pins the
+required check to GitHub Actions are what guard the check.
 """
 
 from __future__ import annotations
@@ -45,15 +53,15 @@ AGGREGATE_JOB = "Mutation tests (changed modules)"
 PRE_PR_PREFIX = "pre-pr/"
 REUSE_BASE = "main"
 SHA = re.compile(r"^[0-9a-f]{40}$")
-# Owner and name: no empty part, and no part that is or starts with a dot (so never `.` or `..`).
-REPO = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9_.-]*/[A-Za-z0-9_-][A-Za-z0-9_.-]*$")
+# Owner and name: GitHub's characters, never empty and never the dot segments `.` or `..` (`org/.github` is fine).
+REPO = re.compile(r"^(?!\.\.?/)[A-Za-z0-9_.-]+/(?!\.\.?$)[A-Za-z0-9_.-]+$")
 PER_PAGE = 100
 # A commit pushed to a handful of pre-pr branches has a handful of runs; stop paging long before anything absurd.
 MAX_PAGES = 5
 
 GetJson = Callable[[str], Any]
-# is_ancestor(ancestor, descendant): True when `ancestor` is in `descendant`'s history.
-IsAncestor = Callable[[str, str], bool]
+# same_tree(tested, head): True when both commits have exactly the same tree.
+SameTree = Callable[[str, str], bool]
 
 
 @dataclass(frozen=True)
@@ -66,20 +74,21 @@ class Reuse:
 
 
 def find_reusable(
-    get_json: GetJson, repo: str, sha: str, base: str, base_sha: str, is_ancestor: IsAncestor
+    get_json: GetJson, repo: str, sha: str, base: str, tested: str, same_tree: SameTree
 ) -> Reuse | None:
     """The newest green pre-pr mutation verdict for exactly `sha` in `repo`, or None.
 
-    None, without asking the API, unless the PR is into main and `sha` already contains `base_sha`.
+    None, without asking the API, unless the PR is into main and `tested` (the commit this run tests) has
+    exactly the tree of `sha`.
     get_json takes an API path with its query (`/repos/...`) and returns the decoded JSON body. Raises ValueError
     on bad arguments; API and git errors propagate to the caller.
     """
     if not REPO.fullmatch(repo):
         raise ValueError(f"not a repository name: {repo!r}")
-    for name, value in (("head", sha), ("base", base_sha)):
+    for name, value in (("head", sha), ("tested", tested)):
         if not SHA.fullmatch(value):
             raise ValueError(f"not a full lowercase {name} commit SHA: {value!r}")
-    if base != REUSE_BASE or not is_ancestor(base_sha, sha):
+    if base != REUSE_BASE or not same_tree(tested, sha):
         return None
     workflow_id = _workflow_id(get_json, repo)
     for run in _push_runs(get_json, repo, sha):
@@ -149,17 +158,25 @@ def _green_aggregate_job(get_json: GetJson, repo: str, run_id: int, sha: str) ->
     return None
 
 
-def git_is_ancestor(ancestor: str, descendant: str) -> bool:
-    """`git merge-base --is-ancestor` in the current checkout: True (exit 0), False (exit 1), else an error."""
-    done = subprocess.run(  # noqa: S603 (fixed argv; both SHAs are checked full hex SHAs)
-        ["git", "merge-base", "--is-ancestor", ancestor, descendant],  # noqa: S607 (git from PATH, as in CI)
+def _git_tree(commit: str) -> str:
+    """The tree id of `commit` in the current checkout; any git failure is an error (so: no reuse)."""
+    done = subprocess.run(  # noqa: S603 (fixed argv; the commit is a checked full hex SHA)
+        ["git", "rev-parse", "--verify", "--quiet", f"{commit}^{{tree}}"],  # noqa: S607 (git from PATH, as in CI)
         capture_output=True,
         text=True,
         check=False,
     )
-    if done.returncode in (0, 1):
-        return done.returncode == 0
-    raise RuntimeError(f"git merge-base failed ({done.returncode}): {done.stderr.strip()}")
+    tree = done.stdout.strip()
+    if done.returncode != 0 or not SHA.fullmatch(tree):
+        raise RuntimeError(
+            f"git rev-parse found no tree for {commit} ({done.returncode}): {done.stderr.strip()}"
+        )
+    return tree
+
+
+def git_same_tree(tested: str, head: str) -> bool:
+    """True when the two commits have exactly the same tree in the current checkout."""
+    return _git_tree(tested) == _git_tree(head)
 
 
 def github_get_json(api_url: str, token: str) -> GetJson:
@@ -184,14 +201,16 @@ def github_get_json(api_url: str, token: str) -> GetJson:
 
 
 def main(
-    argv: list[str] | None = None, get_json: GetJson | None = None, is_ancestor: IsAncestor = git_is_ancestor
+    argv: list[str] | None = None, get_json: GetJson | None = None, same_tree: SameTree = git_same_tree
 ) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--repo", required=True, help="OWNER/NAME of this repository (github.repository)")
     ap.add_argument("--sha", required=True, help="the PR's head SHA (github.event.pull_request.head.sha)")
     ap.add_argument("--base", required=True, help="the PR's base branch (github.base_ref)")
     ap.add_argument(
-        "--base-sha", required=True, help="the PR's base commit (github.event.pull_request.base.sha)"
+        "--tested-commit",
+        required=True,
+        help="the commit this run tests (`git rev-parse HEAD`: the merge commit on a pull_request run)",
     )
     a = ap.parse_args(argv)
     try:
@@ -200,7 +219,7 @@ def main(
             if not token:
                 raise ValueError("GITHUB_TOKEN is not set")
             get_json = github_get_json(os.environ.get("GITHUB_API_URL", "https://api.github.com"), token)
-        found = find_reusable(get_json, a.repo, a.sha, a.base, a.base_sha, is_ancestor)
+        found = find_reusable(get_json, a.repo, a.sha, a.base, a.tested_commit, same_tree)
     except Exception as e:  # noqa: BLE001 (any failure means: no reuse, run the shards)
         print(
             f"::warning::No pre-pr mutation verdict reused, so the shards run: {type(e).__name__}: {e}",
@@ -209,8 +228,9 @@ def main(
         return 0
     if found is None:
         print(
-            f"No reusable pre-pr '{AGGREGATE_JOB}' for {a.sha} (base {a.base} at {a.base_sha}: the PR is not"
-            f" into {REUSE_BASE}, the branch is behind its base, or no green pre-pr run); the shards run.",
+            f"No reusable pre-pr '{AGGREGATE_JOB}' for {a.sha} (tested {a.tested_commit}, base {a.base}: the PR"
+            f" is not into {REUSE_BASE}, the tested tree differs from the head's, or no green pre-pr run);"
+            " the shards run.",
             file=sys.stderr,
         )
         return 0

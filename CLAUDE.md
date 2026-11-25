@@ -46,10 +46,12 @@ One review round, one fix round, merge, then follow-ups. We don't get stuck in r
      on the pre-pr branch, run `make precheck` again, and push again.
    - Only then open the PR, or fast-forward the PR branch, to that exact green commit. The PR's CI then reuses the
      pre-pr mutation verdict for the PR's head SHA instead of running the shards again, but only when the PR is
-     into main and its head already contains the PR's base commit (the branch is up to date with main, so the
-     merge CI tests has the head's own tree), and only a completed, successful "Mutation tests (changed modules)"
-     from a push to `pre-pr/**` in this repository for that head SHA counts. A branch behind main, or any lookup
-     error, runs the shards as usual. Every other check still runs on the PR.
+     into main and the merge commit CI tests has exactly the head's tree (the branch already contains the main
+     it is merged with), and only a completed, successful "Mutation tests (changed modules)" from a push to
+     `pre-pr/**` in this repository for that head SHA counts. A different tree, an argument mismatch with main's
+     copy of the lookup, or any lookup error runs the shards as usual. Every other check still runs on the PR.
+     This saves time; it is not a security boundary: review of `ci.yml` and `scripts/` (CODEOWNERS) and the
+     ruleset that pins the required check to GitHub Actions guard the check.
    - Fix-round pushes follow the same path. Merging main into a branch is a change like any other: precheck, then
      pre-pr, then the PR branch.
 
