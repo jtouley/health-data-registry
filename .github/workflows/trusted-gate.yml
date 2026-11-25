@@ -5,17 +5,19 @@ name: Trusted gate
 # .github/ratchet-allowlist.txt, drops tests, removes or loosens a required check, touches eval/sealed/ or adds a
 # way around the git hooks. docs/dev/README.md#the-trusted-gate has the rules.
 #
-# Why pull_request_target. A `pull_request` run uses the pull request's own copy of this file, the Makefile and
-# scripts/, so a pull request could edit the gate and pass it. A `pull_request_target` run uses this file as it
-# is on main, and checks out main's code. A ruleset "required workflows" rule would pin it to main as well, but
-# that rule exists only for organisation rulesets, and this repository belongs to a user account.
+# Why main's copy. A `pull_request` run uses the pull request's own copy of this file, the Makefile and scripts/,
+# so a pull request could edit the gate and pass it. The preferred enforcement is a ruleset "required workflows"
+# rule pinning this file to refs/heads/main; GitHub offers it only in organisation rulesets. Until the repository
+# belongs to an organisation, `pull_request_target` gives the same property: GitHub uses this file as it is on
+# main, and the job checks out main's code. Either way the triggers below are the ones that run it.
 #
 # The sharp edge, and how this file stays off it. pull_request_target runs with the base repository's context,
 # so a workflow that checks out the pull request and runs it (make, pip install, pytest, a script from the PR)
 # hands that code whatever the job holds. Here:
 # - the token is read-only (contents: read, nothing else), and no secret is referenced anywhere;
-# - the only checkout is main's own commit (github.sha on pull_request_target; the queue's base_sha on
-#   merge_group), with credentials dropped;
+# - the only checkout is main's own commit, with credentials dropped: the pull request's base SHA from the event
+#   (never github.sha, which is the pull request's merge commit when a required-workflows rule runs this on
+#   pull_request), or the queue's base_sha on merge_group;
 # - the pull request's commit is fetched as git objects by its SHA from the event payload, and the ratchet reads
 #   it with `git cat-file` and `git diff --no-ext-diff --no-textconv`: nothing from it is checked out, imported,
 #   installed or executed, and the Python environment comes from main's uv.lock (hash-checked), with no cache;
@@ -51,7 +53,7 @@ jobs:
       - name: Check out main (never the pull request)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.sha }}
+          ref: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
@@ -62,7 +64,7 @@ jobs:
       # SHAs from the event payload only; refused unless they are 40 hex characters.
       - name: Fetch the pull request's commit as data
         env:
-          BASE_SHA: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.sha }}
+          BASE_SHA: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: |
           for sha in "${BASE_SHA}" "${HEAD_SHA}"; do

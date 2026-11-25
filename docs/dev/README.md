@@ -162,9 +162,14 @@ check runs code the pull request cannot change: **Trusted gate**
 checks out `main`'s commit, never the pull request's. It fetches the pull request's commit as git objects and reads
 it as text (`git cat-file`, `git diff`), parsing Python with `ast`, workflows with `yaml.safe_load` and TOML with
 `tomllib`: nothing from the pull request is imported, installed or run. The token is `contents: read`, no secret is
-used, the uv cache is off, and only SHAs from the event payload reach a shell. A ruleset "required workflows" rule
-would pin a workflow to `main` too, but GitHub offers it only to organisation rulesets, and this repository belongs
-to a user account.
+used, the uv cache is off, and only SHAs from the event payload reach a shell.
+
+The preferred enforcement is a ruleset "required workflows" rule that pins `trusted-gate.yml` and `ci.yml` to
+`refs/heads/main`: GitHub then runs main's copy on every pull request, whatever the pull request changes, and no
+other job can stand in for it. GitHub offers that rule only in organisation rulesets, so it needs the repository to
+belong to an organisation; until then the gate runs on `pull_request_target` and is a required status check. A
+status check is matched by name only, so the gate also fails a pull request that adds a second job reporting a
+required check's name.
 
 **What it fails.** `python -m health_data_registry.ratchet` compares the pull request with its merge base and fails
 when the change:
@@ -174,7 +179,7 @@ when the change:
 | threshold | lowers or removes a floor, fail-under or threshold in `pyproject.toml`, the Makefile, `scripts/`, the workflows or another tool config, or sets the coverage floor under 85 or the mutation floor under 70 anywhere there | no |
 | escape hatch | adds a skip, skipif or xfail mark, a test deselection, a no-cover or no-mutate pragma, a type-ignore or noqa comment, an inline mypy setting, a ruff, mypy, coverage or mutmut relaxation in TOML, a relaxing ruff or mypy flag, or a command whose failure is ignored | yes |
 | tests | leaves fewer collected tests (parametrized cases counted) in the test modules it touches; moving or renaming a test is fine | yes, per removed test |
-| required check | removes or renames a check the ruleset requires; changes the `if:` of a required job or a job it needs; drops a job from what a required job waits for; adds continue-on-error to one of them or their steps; adds an `if:` to one of their steps | `if:` only |
+| required check | removes or renames a check the ruleset requires, or adds another job reporting its name; changes the `if:` of a required job or a job it needs; drops a job from what a required job waits for; adds continue-on-error to one of them or their steps; adds an `if:` to one of their steps | `if:` only |
 | sealed sets | touches `eval/sealed/` | no |
 | hooks | adds the no-verify flag, the short commit flag or a hooks-path override (prose in Markdown may be allowlisted) | docs only |
 | allowlist, gate files | changes the allowlist with anything else; changes the gate's own files with anything but docs | no |

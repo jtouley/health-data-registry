@@ -724,13 +724,29 @@ def test_removing_or_renaming_a_required_check_fails() -> None:
     assert f.line == 9
 
 
-def test_a_required_check_moved_to_another_workflow_passes() -> None:
+def test_a_second_job_reporting_a_required_check_fails() -> None:
+    other = ".github/workflows/other.yml"
+    impostor = (
+        "jobs:\n  fake:\n    name: CI result\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n"
+    )
+    found = [f for f in check({CI: CI_YML}, {CI: CI_YML, other: impostor}, required=["CI result"])]
+    f = one(found)
+    assert (f.rule, f.path, f.line, f.allowlistable) == ("required check", other, 2, False)
+    assert f.message.startswith("adds job 'fake', which reports the required check 'CI result'")
+
+
+def test_moving_a_required_check_to_another_workflow_fails() -> None:
     other = ".github/workflows/other.yml"
     head = {
         CI: CI_YML.replace("name: CI result", "name: Other"),
         other: CI_YML.replace("name: Lint", "name: L2"),
     }
-    assert [f for f in check({CI: CI_YML}, head, required=["CI result"]) if f.rule == "required check"] == []
+    found = [f for f in check({CI: CI_YML}, head, required=["CI result"]) if f.rule == "required check"]
+    assert [f.path for f in found] == [other]
+
+
+def test_a_new_required_check_may_be_added() -> None:
+    assert required_findings(CI_YML, old="jobs: {}\n", required=["CI result"]) == []
 
 
 def test_making_a_required_job_conditional_fails_and_may_be_allowlisted() -> None:
@@ -1061,9 +1077,14 @@ def test_git_changes_detects_renames(repo: Path) -> None:
     (repo / "tests" / "test_x.py").rename(repo / "tests" / "test_z.py")
     (repo / "Makefile").unlink()
     (repo / "new.txt").write_text("n\n")
+    (repo / "caf\udce9.txt").write_text("latin-1 name\n")
     head = commit(repo, "move")
+    # Rename detection must come from -M, not the repository's config; and the commits, not the worktree, count.
+    git(repo, "config", "diff.renames", "false")
+    git(repo, "checkout", "-q", base)
     assert r.git_changes(repo, base, head) == [
         Change("Makefile", None),
+        Change(None, "caf�.txt"),
         Change(None, "new.txt"),
         Change("tests/test_x.py", "tests/test_z.py"),
     ]
@@ -1141,3 +1162,248 @@ def test_a_test_module_missing_on_one_side_counts_as_empty() -> None:
 
 def test_job_line_skips_blank_lines_in_a_block() -> None:
     assert r._job_line("jobs:\n  a:\n    name: x\n\n    if: y\n", "a", "if") == 5
+
+
+# Edges found by mutation testing ----------------------------------------------------------------------------
+
+
+def test_job_line_stops_at_the_next_job_and_matches_collapsed_spaces() -> None:
+    text = "jobs:\n  a:\n    name: x\n  b:\n    if: y\n"
+    assert r._job_line(text, "a", "if") == 2
+    steps = "jobs:\n  a:\n    steps:\n      - if: p\n      - if: a  ==  b\n"
+    assert r._job_line(steps, "a", "if", "a == b", step=True) == 5
+
+
+def test_items_sort_dict_keys() -> None:
+    assert r._items([{"b": 1, "a": 2}]) == ['{"a": 2, "b": 1}']
+
+
+def test_thresholds_keep_their_names() -> None:
+    assert set(r.thresholds("_PRIVATE_FLOOR = 3\nFLOOR_ = 4\n")) == {"_private_floor", "floor_"}
+
+
+def test_parse_size_limits_are_inclusive(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(r, "MAX_PARSE_BYTES", 10)
+    assert r._parse_toml("a = 1     ") == {"a": 1}
+    assert r._parse_toml("a = 1      ") == "too large to check"
+    assert r.load_workflow("w.yml", "jobs: {a: {}}"[:10]) is None
+    assert r.load_workflow("w.yml", "jobs: {a: {}}"[:10] + "x") is None
+    monkeypatch.setattr(r, "MAX_PARSE_BYTES", 13)
+    assert r.load_workflow("w.yml", "jobs: {a: {}}") is not None
+    assert r.load_workflow("w.yml", "jobs: {a: {}} ") is None
+    assert r.load_workflow("w.yml", None) is None
+
+
+def test_an_unreadable_toml_says_why() -> None:
+    f = one(toml_findings("[tool.ruff\n"))
+    assert "None" not in f.message
+    assert "line 1" in f.message
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "message"),
+    [
+        ("[lint]\n", '[lint]\nextend-select = ["B"]\n', None),
+        ('[lint]\nextend-select = ["B"]\n', "[lint]\n", "ruff extend-select no longer has B"),
+        ("", 'exclude = ["x"]\n', "ruff exclude gains x"),
+        ("", 'extend-exclude = ["y"]\n', "ruff extend-exclude gains y"),
+        ("", '[lint.extend-per-file-ignores]\n"a: b/*.py" = ["S1"]\n', "ruff extend-per-file-ignores gains a: b/*.py: S1"),
+    ],
+)  # fmt: skip
+def test_more_ruff_keys(old: str, new: str, message: str | None) -> None:
+    found = toml_findings(new, "ruff.toml", old)
+    assert [f.message.removeprefix("relaxes a check: ") for f in found] == ([message] if message else [])
+    if message and "per-file" in message:
+        assert found[0].line == 2
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "messages"),
+    [
+        ("ignore_errors = false", "ignore_errors = true", ["mypy ignore_errors turned on"]),
+        ("", 'follow_imports = "silent"', ["mypy follow_imports = silent"]),
+        ('follow_imports = "skip"', 'follow_imports = "skip"\ncache_dir = "skip"', []),
+        ('disable_error_code = ["a"]', 'disable_error_code = ["a", "b"]', ["mypy disable_error_code gains b"]),
+        ('enable_error_code = ["a", "b"]', 'enable_error_code = ["a"]', ["mypy enable_error_code no longer has b"]),
+        ('exclude = ["x"]', 'exclude = ["x", "y"]', ["mypy exclude gains y"]),
+    ],
+)  # fmt: skip
+def test_more_mypy_keys(old: str, new: str, messages: list[str]) -> None:
+    base = "[tool.mypy]\n" + old + "\n"
+    found = toml_findings("[tool.mypy]\n" + new + "\n", old=base)
+    assert [f.message.removeprefix("relaxes a check: ") for f in found] == messages
+    for f in found:
+        assert f.line > 1
+
+
+def test_overrides_name_their_modules_and_add_to_the_top_level() -> None:
+    new = PYPROJECT.replace("strict = true", "strict = false") + (
+        '\n[[tool.mypy.overrides]]\nmodule = ["a", "b"]\nignore_errors = true\n'
+        "\n[[tool.mypy.overrides]]\nignore_errors = true\n"
+    )
+    messages = sorted(f.message.removeprefix("relaxes a check: ") for f in toml_findings(new))
+    assert messages == [
+        "mypy override for ?: ignore_errors turned on",
+        "mypy override for a, b: ignore_errors turned on",
+        "mypy strict turned off",
+    ]
+
+
+def test_coverage_entries_already_there_are_not_reported() -> None:
+    old = PYPROJECT.replace('source = ["pkg"]', 'source = ["pkg"]\nomit = ["a"]')
+    assert toml_findings(old.replace('omit = ["a"]', 'omit = ["a"]\n'), old=old) == []
+    f = one(toml_findings(old.replace('omit = ["a"]', 'omit = ["a", "b"]'), old=old))
+    assert f.message == "relaxes a check: coverage run.omit gains b"
+
+
+def test_toml_checks_every_changed_config() -> None:
+    base = {"a.txt": "1", "pyproject.toml": "", "ruff.toml": "[broken\n"}
+    head = {"a.txt": "2", "pyproject.toml": "[x\n", "ruff.toml": 'ignore = ["E1"]\n'}
+    found = check(base, head, allow='ruff.toml :: ignore = ["E1"]')
+    assert [(f.path, f.message[:20]) for f in found] == [("pyproject.toml", "could not read it to")]
+    found = check(base, head)
+    assert sorted(f.path for f in found) == ["pyproject.toml", "ruff.toml"]
+
+
+def test_an_allowlisted_toml_line_does_not_hide_the_next() -> None:
+    new = PYPROJECT.replace('ignore = ["E501"]', 'ignore = ["E501", "B008", "B009"]')
+    found = toml_findings(new, allow='pyproject.toml :: select = ["E", "F", "S"]')
+    assert len(found) == 2
+
+
+def test_markers_check_every_changed_file() -> None:
+    line = f"x = 1  {NOQA}"
+    base = {"a.py": "", "b.py": "", "src/c.py": ""}
+    head = {"b.py": f"\0{line}", "src/c.py": f"{line}\n{line}\n", "src/d.py": f"{line}\n"}
+    found = check(base, head, allow=f"src/c.py :: {line}")
+    assert [f.path for f in found] == ["src/d.py"]
+
+
+def test_each_extra_copy_of_a_line_counts_once() -> None:
+    line = f"x = 1  {NOQA}"
+    found = check({"src/a.py": f"{line}\n{line}\n"}, {"src/a.py": f"{line}\n{line}\n{line}\n"})
+    assert [f.line for f in found] == [3]
+
+
+def test_thresholds_check_every_changed_file() -> None:
+    base = {"src/a.py": "1", "Makefile": "A_FLOOR = 5\nB_FLOOR = 5\n"}
+    head = {"src/a.py": "2", "Makefile": "\n", "scripts/x.sh": "C_FLOOR=1\n"}
+    found = check(base, head)
+    assert [(f.rule, f.path) for f in found] == [("threshold", "Makefile"), ("threshold", "Makefile")]
+
+
+def test_parametrize_edges() -> None:
+    source = """
+@other
+@pytest.mark.parametrize("a", [1, 2])
+def test_x(a): ...
+
+@pytest.mark.parametrize("b", argvalues=[1, 2, 3])
+def test_y(b): ...
+
+@pytest.mark.parametrize("c")
+def test_z(c): ...
+"""
+    assert {k: v[0] for k, v in r.collect_tests(source).items()} == {"test_x": 2, "test_y": 3, "test_z": 1}
+
+
+def test_test_classes_by_name_or_testcase_base() -> None:
+    source = """
+from unittest import TestCase
+class Checks(TestCase):
+    def test_a(self): ...
+class Typed(Generic[T]):
+    def test_b(self): ...
+class Plain(object):
+    def test_c(self): ...
+"""
+    assert set(r.collect_tests(source)) == {"Checks::test_a"}
+
+
+def test_closure_keeps_going_past_a_repeated_need() -> None:
+    wf = r.Workflow(CI, "", {"a": {"needs": ["b", "b", "c"]}, "b": {}, "c": {}})
+    assert r.closure(wf, "a") == ["a", "b", "c"]
+
+
+def test_parse_name_status_without_a_trailing_nul() -> None:
+    assert r.parse_name_status("M\0a.py") == [Change("a.py", "a.py")]
+
+
+def test_findings_name_the_workflow_path() -> None:
+    new = CI_YML.replace("needs: [lint, test]", "needs: [test]").replace(
+        "    runs-on: ubuntu-latest\n    steps:\n      - run: make lint",
+        "    runs-on: ubuntu-latest\n    continue-on-error: true\n    if: x\n    steps:\n      - run: make lint\n"
+        "        if: y",
+    )
+    found = required_findings(new, required=["Lint", "CI result"])
+    assert {f.path for f in found} == {CI}
+    assert len(found) == 4
+    assert any("was '(none)'" in f.message for f in found)
+
+
+def test_continue_on_error_already_there_passes() -> None:
+    old = CI_YML.replace(
+        "    runs-on: ubuntu-latest\n    steps:\n      - run: make lint",
+        "    runs-on: ubuntu-latest\n    continue-on-error: true\n    steps:\n      - run: make lint",
+    )
+    assert required_findings(old, old=old) == []
+
+
+def test_each_extra_copy_of_a_step_condition_counts_once() -> None:
+    old = CI_YML.replace(
+        "      - run: make test", "      - run: make test\n        if: x\n      - run: t2\n        if: x"
+    )
+    new = old + "      - run: t3\n        if: x\n"
+    new = old.replace(
+        "      - run: t2\n        if: x", "      - run: t2\n        if: x\n      - run: t3\n        if: x"
+    )
+    found = required_findings(new, old=old)
+    assert len(found) == 1
+
+
+def test_the_step_line_is_the_new_condition() -> None:
+    old = CI_YML.replace("      - run: make test", "      - run: make test\n        if: a")
+    new = old.replace("        if: a", "        if: a\n      - run: t2\n        if: b")
+    f = one(required_findings(new, old=old))
+    assert f.line == 20
+
+
+def test_a_job_gaining_a_new_needed_job_is_compared_safely() -> None:
+    new = CI_YML.replace("needs: [lint, test]", "needs: [lint, test, docs]") + (
+        "  docs:\n    name: Docs\n    if: false\n    runs-on: ubuntu-latest\n    steps:\n      - run: x\n"
+    )
+    assert required_findings(new) == []
+
+
+def test_several_required_checks_are_each_compared() -> None:
+    new = CI_YML.replace("name: Lint", "name: Lint2").replace("    if: always()\n", "")
+    found = required_findings(new, required=["Lint", "CI result"])
+    assert sorted(f.message[:30] for f in found) == [
+        "makes job 'result', which a re",
+        "removes or renames the require",
+    ]
+
+
+def test_the_matching_producer_is_compared_not_the_first() -> None:
+    other = ".github/workflows/a.yml"
+    old = {CI: CI_YML, other: CI_YML.replace("    if: always()\n", "    if: x\n")}
+    head = {CI: CI_YML, other: old[other]}
+    found = [f for f in check(old, head, required=["CI result"]) if f.rule == "required check"]
+    assert found == []
+
+
+def test_main_checks_required_checks_through_git(repo: Path, tmp_path: Path) -> None:
+    (repo / CI).write_text(CI_YML.replace("name: CI result", "name: CI summary"))
+    head = commit(repo, "rename")
+    required = tmp_path / "required.txt"
+    required.write_text("CI result\n")
+    code, out = run_main(
+        "--repo", str(repo), "--base", "main", "--head", head, "--required-checks", str(required)
+    )
+    assert code == 1
+    assert "removes or renames the required check 'CI result'" in out
+
+
+def test_check_sealed_message() -> None:
+    f = one(check({"eval/sealed/a": "1"}, {"eval/sealed/a": "2"}))
+    assert f.message == "changes the sealed blind sets in eval/sealed/; no pull request changes them"

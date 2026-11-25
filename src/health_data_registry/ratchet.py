@@ -163,7 +163,7 @@ def parse_allowlist(text: str | None) -> frozenset[tuple[str, str]]:
         if not line or line.startswith("#"):
             continue
         path, sep, rest = line.partition(" :: ")
-        if sep and path.strip() and rest.strip():
+        if sep:
             entries.add((path.strip(), rest.strip()))
     return frozenset(entries)
 
@@ -372,7 +372,7 @@ def in_threshold_scope(path: str) -> bool:
 
 
 def _norm(name: str) -> str:
-    return name.lower().replace("-", "_").lstrip("_")
+    return name.lower().replace("-", "_")
 
 
 def thresholds(text: str | None) -> dict[str, list[tuple[float, int, str]]]:
@@ -657,10 +657,7 @@ def _parametrize_count(decorators: list[ast.expr]) -> int:
 
 
 def _is_test_class(node: ast.ClassDef) -> bool:
-    bases = {
-        b.id if isinstance(b, ast.Name) else b.attr if isinstance(b, ast.Attribute) else ""
-        for b in node.bases
-    }
+    bases = {getattr(b, "id", None) or getattr(b, "attr", None) for b in node.bases}
     return node.name.startswith("Test") or "TestCase" in bases
 
 
@@ -791,12 +788,16 @@ def _scalar(value: Any) -> str:
 
 
 def matrix_combos(job: Mapping[str, Any]) -> list[dict[str, str]]:
+    """The matrix's combinations, as GitHub builds them: the product of the axes, less each exclude; an include
+    is added to every combination whose axis values it matches, or else becomes a combination of its own."""
     matrix = _table(job, "strategy", "matrix")
     axes = {k: v for k, v in matrix.items() if k not in ("include", "exclude") and isinstance(v, list)}
-    combos = [
-        dict(zip(axes, map(_scalar, values), strict=True)) for values in itertools.product(*axes.values())
-    ]
-    combos = combos if axes else []
+    names = list(axes)
+    combos = (
+        [{names[i]: _scalar(v) for i, v in enumerate(values)} for values in itertools.product(*axes.values())]
+        if axes
+        else []
+    )
     excludes = [e for e in _list(matrix.get("exclude")) if isinstance(e, dict)]
     combos = [
         c for c in combos if not any(all(c.get(k) == _scalar(v) for k, v in e.items()) for e in excludes)
@@ -807,7 +808,7 @@ def matrix_combos(job: Mapping[str, Any]) -> list[dict[str, str]]:
             continue
         entry = {k: _scalar(v) for k, v in inc.items()}
         matched = [c for c in combos if all(c.get(k) == v for k, v in entry.items() if k in axes)]
-        if axes and matched and any(k in axes for k in entry):
+        if matched:
             for c in matched:
                 c.update({k: v for k, v in entry.items() if k not in axes})
         else:
@@ -918,7 +919,7 @@ def _compare_job(
     if now != was and (wf.path, allow_text) not in allow:
         out.append(
             Finding(
-                "required check", wf.path, _job_line(wf.text, job_id, "if", now),
+                "required check", wf.path, _job_line(wf.text, job_id, "if"),
                 f"makes job '{job_id}', which a required check runs or waits for, conditional: if: was "
                 f"'{was or '(none)'}' at the merge base and is '{now or '(none)'}' now",
                 allow_text, True,
@@ -956,8 +957,20 @@ def check_required(
     out: list[Finding] = []
     before, after = producers(workflows(base)), producers(workflows(head))
     for check in required:
+        # A required check is matched by its name alone, so any second job reporting that name could stand in for
+        # the real one. Only the jobs that reported it at the merge base may report it.
+        known = {(w.path, j) for w, j in before.get(check, [])}
+        for wf_n, job_n in after.get(check, []) if known else []:
+            if (wf_n.path, job_n) not in known:
+                out.append(
+                    Finding(
+                        "required check", wf_n.path, _job_line(wf_n.text, job_n),
+                        f"adds job '{job_n}', which reports the required check '{check}' beside the job that "
+                        f"already does; a check is matched by name only, so it could stand in for the real one",
+                    )
+                )  # fmt: skip
         for wf_b, job_b in before.get(check, []):
-            now = after.get(check, [])
+            now = after.get(check)
             if not now:
                 out.append(
                     Finding(
@@ -976,9 +989,7 @@ def check_required(
                         f"the required check '{check}' no longer runs or waits for job '{lost}'",
                     )
                 )  # fmt: skip
-            pairs = [(job_b, job_h)] + [
-                (j, j) for j in jobs_h if j != job_h and j in wf_b.jobs and j in jobs_b
-            ]
+            pairs = [(job_b, job_h)] + [(j, j) for j in jobs_h if j != job_h and j in jobs_b]
             for jb, jh in pairs:
                 out += _compare_job(wf_b.jobs[jb], wf_h.jobs[jh], wf_h, jh, allow)
     return out
@@ -1015,14 +1026,15 @@ class GitError(RuntimeError):
 
 
 def _git(repo: Path, *args: str) -> bytes:
-    proc = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, check=False)
+    proc = subprocess.run(["git", "-C", str(repo), *args], capture_output=True)
     if proc.returncode != 0:
         raise GitError(f"git {args[0]} failed: {proc.stderr.decode('utf-8', 'replace').strip()[:300]}")
     return proc.stdout
 
 
 def _commit(repo: Path, ref: str) -> str:
-    return _git(repo, "rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}").decode().strip()
+    # The ^{commit} suffix means no ref, whatever it starts with, reads as an option.
+    return _git(repo, "rev-parse", "--verify", f"{ref}^{{commit}}").decode().strip()
 
 
 def git_snapshot(repo: Path, commit: str) -> Snapshot:
@@ -1043,7 +1055,7 @@ def parse_name_status(raw: str) -> list[Change]:
     i = 0
     while i < len(fields) and fields[i]:
         status = fields[i][0]
-        if status in "RC":
+        if status in ("R", "C"):
             old, new = fields[i + 1], fields[i + 2]
             out.append(Change(old if status == "R" else None, new))
             i += 3
@@ -1056,7 +1068,7 @@ def parse_name_status(raw: str) -> list[Change]:
 
 def git_changes(repo: Path, base: str, head: str) -> list[Change]:
     raw = _git(
-        repo, "-c", "core.quotepath=off", "diff", "--no-ext-diff", "--no-textconv", "--name-status", "-z", "-M",
+        repo, "diff", "--no-ext-diff", "--no-textconv", "--name-status", "-z", "-M",
         base, head, "--",
     )  # fmt: skip
     return parse_name_status(raw.decode("utf-8", "replace"))
