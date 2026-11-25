@@ -1,0 +1,619 @@
+# The sealed TEST set: run it on a commit of main, or list the TEST items a catalog change may have made stale.
+# Manual dispatch only, from main, at release milestones; never per pull request (hard rule 14, issue #47).
+#
+#   inputs       refuses, and fails the run, unless it was started on main with well-formed inputs and the eval
+#                environment still allows main only (it reads the environment's settings; no secrets).
+#   evaluate     (mode evaluate) in the GitHub environment `eval`: checks the commit is on main and the driver
+#                is here, builds the server at that commit (`uv sync --locked`), fetches the ciphertext and
+#                checks its hash, builds a fresh lake of the public sources from their publishers, checks that
+#                the driver can ask one DEV question through the server, and only then decrypts with
+#                EVAL_TEST_KEY. It hands the driver the questions alone (eval/drive.py, ANTHROPIC_API_KEY), scores
+#                the run with eval/scorer.py and writes the aggregate tables of eval/report.py to the job summary.
+#   label-check  (mode label-check) in `eval`: checks both commits are on main, base before commit, then
+#                decrypts the labels and lists the TEST item ids whose labels depend on catalog entries changed
+#                between base_commit and commit (eval/label_check.py), with a fixed reason per id. Nothing from
+#                either commit is run: their catalog files are read with git.
+#   use-log      whenever a run reached the decrypt step, even if decrypting then failed: one comment on the issue
+#                "Sealed TEST use log" (date, kind, wave, server and harness commits, actor, the ciphertext and
+#                label sha256s, the run attempt), and the label set's use counts.
+#
+# What it never does: print, upload, cache or commit the plaintext, a question, a label, an answer or a
+# per-question row. The plaintext is checked against its sha256 in memory and written (mode 0600) only to the
+# runner's temporary directory, which the last step removes; the driver's and the scorer's output goes to files
+# there too, never to the log. No artifacts and no caches (setup-uv's cache is off). The key reaches age on
+# standard input, never a file or a command line, and is set only on the decrypt step. The harness (eval/) is the
+# workflow's own commit on main; only the server is built at the commit under test, and that commit must be on
+# main, so every line of code that runs beside the plaintext was reviewed.
+#
+# Owner steps (docs/dev/automation.md): create the environment `eval` with deployment branches "main" only (the
+# inputs job refuses to run without it), add the maintainer as a required reviewer, and add EVAL_TEST_KEY (the age identity, one AGE-SECRET-KEY-1... line), ANTHROPIC_API_KEY and, for a source in the
+# ops dataset, EVAL_HF_TOKEN (read access to <owner>/health-data-registry-ops-eval). Docs: eval/README.md.
+name: Sealed TEST eval
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "evaluate: run and score the sealed TEST set on the commit. label-check: list the TEST items whose labels depend on catalog entries changed between base_commit and commit (no server run)."
+        type: choice
+        options: [evaluate, label-check]
+        default: evaluate
+      ciphertext:
+        description: "Where the encrypted TEST labels are: a path in the private ops dataset <owner>/health-data-registry-ops-eval, or release:<tag>/<asset> for an asset of one of this repository's releases."
+        required: true
+        type: string
+      commit:
+        description: "The full 40-character sha of the commit on main to evaluate (label-check: the newer catalog)."
+        required: true
+        type: string
+      base_commit:
+        description: "label-check only: the full sha of the older catalog on main, such as the commit the labels were audited against."
+        required: false
+        default: ""
+        type: string
+      wave:
+        description: "A short name for this run, such as v1-release-0.3 (letters, digits, '.', '_', '-' and spaces, up to 40)."
+        required: true
+        type: string
+      reaudited_labels:
+        description: "Blank for the frozen TEST v1. For a re-audited set: the sha256 of its ciphertext, which must already be listed in REAUDITED_TEST in eval/scorer.py."
+        required: false
+        default: ""
+        type: string
+
+permissions: {}
+
+# One sealed run at a time. A run in progress is never cancelled; GitHub keeps one waiting run per group, so a newer
+# dispatch replaces a waiting one, which has fetched and decrypted nothing.
+concurrency:
+  group: sealed-test
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  inputs:
+    name: Check the run and its inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: read # the eval environment's deployment-branch settings
+    steps:
+      - name: Check the run is on main and every input is well formed
+        env:
+          REF: ${{ github.ref }}
+          MODE: ${{ inputs.mode }}
+          CIPHERTEXT: ${{ inputs.ciphertext }}
+          COMMIT: ${{ inputs.commit }}
+          BASE: ${{ inputs.base_commit }}
+          WAVE: ${{ inputs.wave }}
+          REAUDITED: ${{ inputs.reaudited_labels }}
+        run: |
+          set +x
+          bad=0
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::The sealed TEST set runs only from main, so EVAL_TEST_KEY is never read on another branch. Start it from the Actions tab with the branch set to main."
+            bad=1
+          fi
+          if ! [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::commit must be a full 40-character commit sha (lower case), not a branch or tag name."
+            bad=1
+          fi
+          if [ "$MODE" = "label-check" ] && ! [[ "$BASE" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::label-check needs base_commit: the full 40-character sha of the older catalog."
+            bad=1
+          fi
+          if ! [[ "$WAVE" =~ ^[A-Za-z0-9][A-Za-z0-9._\ -]{0,39}$ ]]; then
+            echo "::error::wave must be 1 to 40 letters, digits, '.', '_', '-' or spaces, starting with a letter or digit."
+            bad=1
+          fi
+          if [ -n "$REAUDITED" ] && ! [[ "$REAUDITED" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::reaudited_labels must be blank, or the 64-character sha256 of the re-audited ciphertext."
+            bad=1
+          fi
+          name='[A-Za-z0-9][A-Za-z0-9._-]{0,199}'
+          if ! [[ "$CIPHERTEXT" =~ ^release:${name}/${name}$ || "$CIPHERTEXT" =~ ^${name}(/${name})*$ ]]; then
+            echo "::error::ciphertext must be a path in the ops dataset made of plain names (letters, digits, '.', '_', '-'), or release:<tag>/<asset>."
+            bad=1
+          fi
+          exit "$bad"
+
+      - name: Check the eval environment allows main only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +x
+          # The environment's deployment-branch rule is what keeps EVAL_TEST_KEY off other branches, and a new
+          # environment allows every branch. Refuse before any job reads a secret unless it is set to main only.
+          owner_step="Set Settings > Environments > eval > Deployment branches to \"Selected branches\" with main only (docs/dev/automation.md), then run again."
+          if ! custom=$(gh api "repos/$GITHUB_REPOSITORY/environments/eval" --jq '.deployment_branch_policy.custom_branch_policies // false' 2>/dev/null); then
+            echo "::error::The eval environment does not exist yet, or this run can't read it. $owner_step"
+            exit 1
+          fi
+          if [ "$custom" != "true" ]; then
+            echo "::error::The eval environment allows branches other than main. $owner_step"
+            exit 1
+          fi
+          if ! policies=$(gh api "repos/$GITHUB_REPOSITORY/environments/eval/deployment-branch-policies" \
+            --jq '[.branch_policies[] | "\(.type // "branch"):\(.name)"] | sort | join(",")' 2>/dev/null); then
+            echo "::error::This run can't read the eval environment's deployment branches. $owner_step"
+            exit 1
+          fi
+          if [ "$policies" != "branch:main" ]; then
+            echo "::error::The eval environment's deployment branches are not main alone. $owner_step"
+            exit 1
+          fi
+          echo "The eval environment allows main only."
+
+  evaluate:
+    name: Run and score the sealed TEST set
+    needs: inputs
+    # An early refusal, not a protection: only the eval environment's deployment-branch rule (main only) keeps
+    # its secrets off other branches.
+    if: github.ref == 'refs/heads/main' && inputs.mode == 'evaluate'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    environment: eval
+    permissions:
+      contents: read # checkout; gh release download for a release:<tag>/<asset> source
+    outputs:
+      decrypt_started: ${{ steps.mark.outputs.decrypt_started }}
+      ciphertext_sha256: ${{ steps.expect.outputs.ciphertext_sha256 }}
+      plaintext_sha256: ${{ steps.expect.outputs.plaintext_sha256 }}
+      prior_uses: ${{ steps.expect.outputs.prior_uses }}
+    steps:
+      - name: Check the eval environment's secrets are set
+        env:
+          EVAL_TEST_KEY: ${{ secrets.EVAL_TEST_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          EVAL_HF_TOKEN: ${{ secrets.EVAL_HF_TOKEN }}
+          CIPHERTEXT: ${{ inputs.ciphertext }}
+        run: |
+          set +x
+          bad=0
+          if [ -z "$EVAL_TEST_KEY" ]; then
+            echo "::error::The eval environment has no EVAL_TEST_KEY secret, or it is empty. Add the age identity (one AGE-SECRET-KEY-1... line) under Settings > Environments > eval."
+            bad=1
+          elif ! [[ "$EVAL_TEST_KEY" =~ ^AGE-SECRET-KEY-1[0-9A-Z]+$ ]]; then
+            echo "::error::EVAL_TEST_KEY in the eval environment is not one age identity line (AGE-SECRET-KEY-1...). Paste only that line, without comments or spaces."
+            bad=1
+          fi
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::The eval environment has no ANTHROPIC_API_KEY secret, or it is empty. The driver needs it to ask the questions; add it under Settings > Environments > eval."
+            bad=1
+          fi
+          if [[ "$CIPHERTEXT" != release:* ]] && [ -z "$EVAL_HF_TOKEN" ]; then
+            echo "::error::The eval environment has no EVAL_HF_TOKEN secret, which a ciphertext path in the ops dataset needs. Add a read token under Settings > Environments > eval, or use release:<tag>/<asset>."
+            bad=1
+          fi
+          exit "$bad"
+
+      - name: Check out the harness (this workflow's commit on main)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: harness
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check the commit is on main and the driver is here
+        working-directory: harness
+        env:
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          set +x
+          if ! git cat-file -e "${COMMIT}^{commit}" 2>/dev/null || ! git merge-base --is-ancestor "$COMMIT" HEAD; then
+            echo "::error::Commit $COMMIT is not on main. The sealed set is run only on reviewed code: pick a commit from main's history."
+            exit 1
+          fi
+          # The driver asks each question through the server with a pinned-model client and writes the
+          # transcript and answers (eval/README.md, "Running a report"). It is the evaluator's, and not in the
+          # repository yet; stop here, before anything is fetched or decrypted, so no use of TEST is spent.
+          if [ ! -f eval/drive.py ]; then
+            echo "::error::The question driver eval/drive.py is not on main yet, so the sealed set can't be asked. Nothing was fetched or decrypted. Add the driver in a reviewed pull request, then run again."
+            exit 1
+          fi
+          echo "Commit $COMMIT is on main; the driver is present."
+
+      - name: Check out the server at the commit under test
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          path: server
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+          enable-cache: false
+
+      - name: Install age and the locked dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends age
+          age --version | tee "$RUNNER_TEMP/age-version.txt"
+          (cd harness && uv sync --locked --no-dev)
+          (cd server && uv sync --locked --no-dev)
+
+      - name: Fetch the ciphertext
+        id: fetch
+        working-directory: harness
+        env:
+          CIPHERTEXT: ${{ inputs.ciphertext }}
+          EVAL_HF_TOKEN: ${{ secrets.EVAL_HF_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +x
+          umask 077
+          mkdir -p "$RUNNER_TEMP/sealed/download"
+          src=$(uv run --no-sync python -m eval.sealed_run source "$CIPHERTEXT") || { echo "$src"; exit 1; }
+          kind=$(sed -n 's/^kind=//p' <<<"$src")
+          tag=$(sed -n 's/^tag=//p' <<<"$src")
+          name=$(sed -n 's/^name=//p' <<<"$src")
+          if [ "$kind" = "release" ]; then
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$name" --dir "$RUNNER_TEMP/sealed/download"
+            got="$RUNNER_TEMP/sealed/download/$name"
+          else
+            out=$(uv run --no-sync python -m eval.sealed_run fetch-hf --path "$name" --out-dir "$RUNNER_TEMP/sealed/download") || { echo "$out"; exit 1; }
+            got=$(sed -n 's/^path=//p' <<<"$out")
+          fi
+          if [ ! -f "$got" ]; then
+            echo "::error::The ciphertext was not found at $CIPHERTEXT."
+            exit 1
+          fi
+          mv "$got" "$RUNNER_TEMP/sealed/test.age"
+
+      - name: Check which labels the ciphertext must hold
+        id: expect
+        working-directory: harness
+        env:
+          REAUDITED: ${{ inputs.reaudited_labels }}
+        run: |
+          sha=$(sha256sum "$RUNNER_TEMP/sealed/test.age" | cut -d' ' -f1)
+          out=$(uv run --no-sync python -m eval.sealed_run expect --ciphertext-sha "$sha" --reaudited "$REAUDITED") || { echo "$out"; exit 1; }
+          plain=$(sed -n 's/^plaintext_sha256=//p' <<<"$out")
+          prior=$(uv run --no-sync python -m eval.sealed_run prior-uses "$plain" | sed -n 's/^prior_uses=//p')
+          {
+            echo "ciphertext_sha256=$sha"
+            echo "plaintext_sha256=$plain"
+            echo "prior_uses=$prior"
+          } >> "$GITHUB_OUTPUT"
+          echo "Ciphertext sha256 $sha; the labels must have sha256 $plain."
+
+      - name: Build a fresh lake of the public sources at the commit
+        working-directory: server
+        run: |
+          mkdir -p "$RUNNER_TEMP/lake"
+          export HDR_LAKE="$RUNNER_TEMP/lake"
+          # getattr: a commit from before catalog entries had `hosting` serves every source as public.
+          ids=$(uv run --no-sync python -c 'from health_data_registry.registry import load_registry; print(" ".join(sorted(d.id for d in load_registry() if getattr(d.entry, "hosting", "public") == "public")))')
+          if [ -z "$ids" ]; then
+            echo "::error::The catalog at this commit lists no public source, so there is nothing to serve."
+            exit 1
+          fi
+          read -r -a sources <<<"$ids"
+          # Public data only: the snapshot lines go to the job summary so the run can be compared later.
+          if ! uv run --no-sync health-data-registry refresh "${sources[@]}" 2>&1 | tee "$RUNNER_TEMP/refresh.log"; then
+            echo "::error::A publisher could not be fetched (an outage or a slow source; the log above names it). Nothing was decrypted, so no use of TEST was spent: run again later."
+            exit 1
+          fi
+
+      - name: Check the driver can ask one DEV question through the server
+        working-directory: harness
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set +x
+          export HDR_LAKE="$RUNNER_TEMP/lake"
+          # A readiness check that touches no sealed data: a revoked API key, a model the account can't use or a
+          # server that doesn't start fails here, before a use of TEST is spent. DEV is public, so its log is shown.
+          if ! uv run --no-sync python -m eval.drive --check --server-dir "$GITHUB_WORKSPACE/server" \
+            --out "$RUNNER_TEMP/preflight" > "$RUNNER_TEMP/preflight.log" 2>&1; then
+            tail -n 50 "$RUNNER_TEMP/preflight.log"
+            echo "::error::The driver could not ask a DEV question through the server (log above). Nothing was decrypted, so no use of TEST was spent."
+            exit 1
+          fi
+          echo "The driver and the server answer."
+
+      - name: Record that the labels are about to be decrypted
+        id: mark
+        run: echo "decrypt_started=true" >> "$GITHUB_OUTPUT"
+
+      - name: Decrypt the labels into the runner's temporary directory
+        id: decrypt
+        working-directory: harness
+        env:
+          EVAL_TEST_KEY: ${{ secrets.EVAL_TEST_KEY }}
+          PLAIN_SHA: ${{ steps.expect.outputs.plaintext_sha256 }}
+        run: |
+          set +x
+          out=$(uv run --no-sync python -m eval.sealed_run decrypt --ciphertext "$RUNNER_TEMP/sealed/test.age" \
+            --out "$RUNNER_TEMP/sealed/test.jsonl" --expect-sha "$PLAIN_SHA") || { echo "$out"; exit 1; }
+          echo "Decrypted; the labels match sha256 $PLAIN_SHA."
+
+      - name: Write the questions alone for the driver
+        working-directory: harness
+        env:
+          PLAIN_SHA: ${{ steps.expect.outputs.plaintext_sha256 }}
+        run: |
+          set +x
+          # The driver gets ids and question text only, never the labels, so no answer reaches the model.
+          out=$(uv run --no-sync python -m eval.sealed_run questions --labels "$RUNNER_TEMP/sealed/test.jsonl" \
+            --out "$RUNNER_TEMP/sealed/questions.jsonl" --expect-sha "$PLAIN_SHA") || { echo "$out"; exit 1; }
+
+      - name: Ask every question through the server
+        working-directory: harness
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set +x
+          umask 077
+          mkdir -p "$RUNNER_TEMP/sealed/run"
+          export HDR_LAKE="$RUNNER_TEMP/lake"
+          # The driver's output can quote the questions, so it goes to a file that is never printed or uploaded.
+          rc=0
+          uv run --no-sync python -m eval.drive --questions "$RUNNER_TEMP/sealed/questions.jsonl" \
+            --server-dir "$GITHUB_WORKSPACE/server" --out "$RUNNER_TEMP/sealed/run" \
+            > "$RUNNER_TEMP/sealed/drive.log" 2>&1 || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::The driver stopped with exit code $rc. Its log is withheld because it can quote the questions; run it on DEV to see why."
+            exit 1
+          fi
+
+      - name: Score the run and write the aggregate tables
+        working-directory: harness
+        env:
+          COMMIT: ${{ inputs.commit }}
+          HARNESS: ${{ github.sha }}
+          WAVE: ${{ inputs.wave }}
+          PLAIN_SHA: ${{ steps.expect.outputs.plaintext_sha256 }}
+          CIPHER_SHA: ${{ steps.expect.outputs.ciphertext_sha256 }}
+        run: |
+          set +x
+          run="$RUNNER_TEMP/sealed/run"
+          out=$(uv run --no-sync python -m eval.sealed_run score --labels "$RUNNER_TEMP/sealed/test.jsonl" \
+            --transcript "$run/transcript.jsonl" --answers "$run/answers.jsonl" \
+            --results "$RUNNER_TEMP/sealed/results.jsonl" --expect-sha "$PLAIN_SHA") || { echo "$out"; exit 1; }
+          if ! uv run --no-sync python -m eval.report --split test --results "$RUNNER_TEMP/sealed/results.jsonl" \
+            --tag "$COMMIT" --out "$RUNNER_TEMP/sealed/report.md" > /dev/null 2>&1; then
+            echo "::error::eval.report could not read the scored rows; its message is withheld."
+            exit 1
+          fi
+          {
+            echo "### Sealed TEST: $WAVE"
+            echo
+            echo "- Commit evaluated (server): \`$COMMIT\`"
+            echo "- Harness and scorer commit (this workflow's main): \`$HARNESS\`"
+            echo "- Ciphertext sha256: \`$CIPHER_SHA\`"
+            echo "- Labels sha256: \`$PLAIN_SHA\`"
+            echo "- Decryptor: \`$(head -n 1 "$RUNNER_TEMP/age-version.txt")\`"
+            echo "- The use count is in the use-log job's summary."
+            echo
+            echo "Lake snapshots (public sources, fetched for this run):"
+            echo
+            echo '```text'
+            grep '^ok ' "$RUNNER_TEMP/refresh.log" || echo "(none listed)"
+            echo '```'
+            echo
+            cat "$RUNNER_TEMP/sealed/report.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Scored; the aggregate tables are in the job summary."
+
+      - name: Remove the plaintext and every file made from it
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/sealed"
+
+  label-check:
+    name: List the TEST items a catalog change touches
+    needs: inputs
+    if: github.ref == 'refs/heads/main' && inputs.mode == 'label-check'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: eval
+    permissions:
+      contents: read
+    outputs:
+      decrypt_started: ${{ steps.mark.outputs.decrypt_started }}
+      ciphertext_sha256: ${{ steps.expect.outputs.ciphertext_sha256 }}
+      plaintext_sha256: ${{ steps.expect.outputs.plaintext_sha256 }}
+      prior_uses: ${{ steps.expect.outputs.prior_uses }}
+    steps:
+      - name: Check the eval environment's secrets are set
+        env:
+          EVAL_TEST_KEY: ${{ secrets.EVAL_TEST_KEY }}
+          EVAL_HF_TOKEN: ${{ secrets.EVAL_HF_TOKEN }}
+          CIPHERTEXT: ${{ inputs.ciphertext }}
+        run: |
+          set +x
+          bad=0
+          if [ -z "$EVAL_TEST_KEY" ]; then
+            echo "::error::The eval environment has no EVAL_TEST_KEY secret, or it is empty. Add the age identity (one AGE-SECRET-KEY-1... line) under Settings > Environments > eval."
+            bad=1
+          elif ! [[ "$EVAL_TEST_KEY" =~ ^AGE-SECRET-KEY-1[0-9A-Z]+$ ]]; then
+            echo "::error::EVAL_TEST_KEY in the eval environment is not one age identity line (AGE-SECRET-KEY-1...). Paste only that line, without comments or spaces."
+            bad=1
+          fi
+          if [[ "$CIPHERTEXT" != release:* ]] && [ -z "$EVAL_HF_TOKEN" ]; then
+            echo "::error::The eval environment has no EVAL_HF_TOKEN secret, which a ciphertext path in the ops dataset needs. Add a read token under Settings > Environments > eval, or use release:<tag>/<asset>."
+            bad=1
+          fi
+          exit "$bad"
+
+      - name: Check out the harness and the history of both commits
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: harness
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check both commits are on main, base before commit
+        working-directory: harness
+        env:
+          BASE: ${{ inputs.base_commit }}
+          HEAD_COMMIT: ${{ inputs.commit }}
+        run: |
+          set +x
+          # Before anything is fetched or decrypted: a mistyped sha or a commit from an unreviewed branch would
+          # otherwise spend a decryption, and a diff nobody reviewed could probe the labels.
+          for c in "$BASE" "$HEAD_COMMIT"; do
+            if ! git cat-file -e "${c}^{commit}" 2>/dev/null || ! git merge-base --is-ancestor "$c" HEAD; then
+              echo "::error::Commit $c is not on main. label-check compares two commits from main's history; nothing was fetched or decrypted."
+              exit 1
+            fi
+          done
+          if ! git merge-base --is-ancestor "$BASE" "$HEAD_COMMIT"; then
+            echo "::error::base_commit $BASE is not an ancestor of commit $HEAD_COMMIT. Give the older catalog as base_commit; nothing was fetched or decrypted."
+            exit 1
+          fi
+          echo "Both commits are on main, base before commit."
+
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+          enable-cache: false
+
+      - name: Install age and the locked dependencies
+        working-directory: harness
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends age
+          age --version
+          uv sync --locked --no-dev
+
+      - name: Fetch the ciphertext
+        working-directory: harness
+        env:
+          CIPHERTEXT: ${{ inputs.ciphertext }}
+          EVAL_HF_TOKEN: ${{ secrets.EVAL_HF_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +x
+          umask 077
+          mkdir -p "$RUNNER_TEMP/sealed/download"
+          src=$(uv run --no-sync python -m eval.sealed_run source "$CIPHERTEXT") || { echo "$src"; exit 1; }
+          kind=$(sed -n 's/^kind=//p' <<<"$src")
+          tag=$(sed -n 's/^tag=//p' <<<"$src")
+          name=$(sed -n 's/^name=//p' <<<"$src")
+          if [ "$kind" = "release" ]; then
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$name" --dir "$RUNNER_TEMP/sealed/download"
+            got="$RUNNER_TEMP/sealed/download/$name"
+          else
+            out=$(uv run --no-sync python -m eval.sealed_run fetch-hf --path "$name" --out-dir "$RUNNER_TEMP/sealed/download") || { echo "$out"; exit 1; }
+            got=$(sed -n 's/^path=//p' <<<"$out")
+          fi
+          if [ ! -f "$got" ]; then
+            echo "::error::The ciphertext was not found at $CIPHERTEXT."
+            exit 1
+          fi
+          mv "$got" "$RUNNER_TEMP/sealed/test.age"
+
+      - name: Check which labels the ciphertext must hold
+        id: expect
+        working-directory: harness
+        env:
+          REAUDITED: ${{ inputs.reaudited_labels }}
+        run: |
+          sha=$(sha256sum "$RUNNER_TEMP/sealed/test.age" | cut -d' ' -f1)
+          out=$(uv run --no-sync python -m eval.sealed_run expect --ciphertext-sha "$sha" --reaudited "$REAUDITED") || { echo "$out"; exit 1; }
+          plain=$(sed -n 's/^plaintext_sha256=//p' <<<"$out")
+          prior=$(uv run --no-sync python -m eval.sealed_run prior-uses "$plain" | sed -n 's/^prior_uses=//p')
+          {
+            echo "ciphertext_sha256=$sha"
+            echo "plaintext_sha256=$plain"
+            echo "prior_uses=$prior"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Record that the labels are about to be decrypted
+        id: mark
+        run: echo "decrypt_started=true" >> "$GITHUB_OUTPUT"
+
+      - name: Decrypt the labels into the runner's temporary directory
+        id: decrypt
+        working-directory: harness
+        env:
+          EVAL_TEST_KEY: ${{ secrets.EVAL_TEST_KEY }}
+          PLAIN_SHA: ${{ steps.expect.outputs.plaintext_sha256 }}
+        run: |
+          set +x
+          out=$(uv run --no-sync python -m eval.sealed_run decrypt --ciphertext "$RUNNER_TEMP/sealed/test.age" \
+            --out "$RUNNER_TEMP/sealed/test.jsonl" --expect-sha "$PLAIN_SHA") || { echo "$out"; exit 1; }
+
+      - name: List the items whose labels depend on a changed catalog entry
+        working-directory: harness
+        env:
+          BASE: ${{ inputs.base_commit }}
+          HEAD_COMMIT: ${{ inputs.commit }}
+          PLAIN_SHA: ${{ steps.expect.outputs.plaintext_sha256 }}
+        run: |
+          set +x
+          if ! uv run --no-sync python -m eval.label_check --labels "$RUNNER_TEMP/sealed/test.jsonl" --split test \
+            --expect-sha "$PLAIN_SHA" --base "$BASE" --head "$HEAD_COMMIT" --repo . > "$RUNNER_TEMP/sealed/labels.md"; then
+            # Only lines this module wrote; it never quotes a label.
+            grep '^::error::' "$RUNNER_TEMP/sealed/labels.md" || echo "::error::The label check failed."
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/sealed/labels.md" >> "$GITHUB_STEP_SUMMARY"
+          echo "Done; the list is in the job summary."
+
+      - name: Remove the plaintext and every file made from it
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/sealed"
+
+  use-log:
+    name: Record the use of the sealed labels
+    needs: [evaluate, label-check]
+    # Every run that reached the decrypt step is logged, even if decrypting or a later step failed: the count can
+    # run high, never low.
+    if: always() && (needs.evaluate.outputs.decrypt_started == 'true' || needs.label-check.outputs.decrypt_started == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write # the comment on the use-log issue
+    steps:
+      - name: Add the entry and report the use count
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ inputs.mode }}
+          WAVE: ${{ inputs.wave }}
+          COMMIT: ${{ inputs.commit }}
+          HARNESS: ${{ github.sha }}
+          ACTOR: ${{ github.triggering_actor }}
+          CIPHER_SHA: ${{ needs.evaluate.outputs.ciphertext_sha256 || needs.label-check.outputs.ciphertext_sha256 }}
+          PLAIN_SHA: ${{ needs.evaluate.outputs.plaintext_sha256 || needs.label-check.outputs.plaintext_sha256 }}
+          PRIOR: ${{ needs.evaluate.outputs.prior_uses || needs.label-check.outputs.prior_uses || '0' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+        run: |
+          set +x
+          title="Sealed TEST use log"
+          bot="github-actions[bot]"
+          # The first match is taken in bash, not with head, so a closed pipe can't fail the step under pipefail.
+          found=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues?state=all&creator=${bot}&per_page=100" \
+            --jq ".[] | select(.title == \"$title\" and (.pull_request | not)) | .number")
+          issue=${found%%$'\n'*}
+          if [ -z "$issue" ]; then
+            issue=$(gh api "repos/$GITHUB_REPOSITORY/issues" -f title="$title" \
+              -f body="One comment per run of the sealed TEST workflow (sealed-test.yml) that reached the decrypt step. Written by the workflow; aggregate facts only, never a question or a label (hard rule 14)." \
+              --jq .number)
+          fi
+          date=$(date -u +%Y-%m-%d)
+          entry="sealed-test-use kind=$MODE labels=$PLAIN_SHA ciphertext=$CIPHER_SHA date=$date wave=\"$WAVE\" commit=$COMMIT harness=$HARNESS actor=$ACTOR run=$RUN_URL"
+          # The entry first, so a failed lock can't lose a use.
+          gh api "repos/$GITHUB_REPOSITORY/issues/$issue/comments" -f body="$entry" > /dev/null
+          # Locked, so only collaborators can comment; locked again whenever it is found unlocked.
+          if [ "$(gh api "repos/$GITHUB_REPOSITORY/issues/$issue" --jq .locked)" != "true" ]; then
+            gh api -X PUT "repos/$GITHUB_REPOSITORY/issues/$issue/lock" -f lock_reason=resolved > /dev/null
+          fi
+          bodies=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$issue/comments?per_page=100" \
+            --jq ".[] | select(.user.login == \"$bot\") | .body")
+          evaluated=$(grep -c "^sealed-test-use kind=evaluate labels=$PLAIN_SHA " <<<"$bodies" || true)
+          checked=$(grep -c "^sealed-test-use kind=label-check labels=$PLAIN_SHA " <<<"$bodies" || true)
+          uses=$((PRIOR + evaluated))
+          {
+            echo "### Sealed TEST use log"
+            echo
+            echo "- Logged on issue #$issue: \`$entry\`"
+            echo "- Evaluation runs of these labels (sha256 \`$PLAIN_SHA\`) that reached the decrypt step, this one included if it was an evaluation: **$uses** ($PRIOR before the log)."
+            echo "- label-check decryptions of these labels: **$checked**."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Use logged on issue #$issue; evaluation uses of these labels: $uses; label-check decryptions: $checked."
