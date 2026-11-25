@@ -379,6 +379,30 @@ def test_dimension_values_from_contract_and_cap(tmp_path: Path, monkeypatch: pyt
     )
 
 
+def test_contract_values_enum_then_examples_then_nothing() -> None:
+    reg = load_registry(ROOT)
+    resp = reg.get("cdc_respnet")
+    assert tools._contract_values(resp, "data_type") == (
+        ["Weekly Rate", "Cumulative Rate", "Admitted to Intensive Care Unit", "Invasive Mechanical Ventilation",
+         "In-Hospital Death", "≥1 Underlying Condition"],
+        "the contract's documented values",
+    )  # fmt: skip
+    assert tools._contract_values(resp, "state") == (
+        ["Michigan", "Overall", "FluSurv-NET"],
+        "examples from the contract, not the full list",
+    )
+    assert tools._contract_values(reg.get("cdc_nndss_weekly"), "states")[0] == [
+        "MICHIGAN", "Michigan", "US RESIDENTS", "U.S. Residents", "TOTAL",
+    ]  # fmt: skip
+    assert tools._contract_values(resp, "nope") == ([], "not listed (no copy loaded yet)")
+    nndss = tools.dimension_values(reg.get("cdc_nndss_weekly"), None)
+    assert nndss["reporting_area"] == {
+        "column": "states",
+        "values": ["MICHIGAN", "Michigan", "US RESIDENTS", "U.S. Residents", "TOTAL"],
+        "from": "examples from the contract, not the full list",
+    }
+
+
 def test_discovery_carries_provenance(vocab: tuple[Registry, Engine]) -> None:
     reg, eng = vocab
     s = _json(tools.search_datasets(reg, topic="tularemia", engine=eng, fmt="json"))
