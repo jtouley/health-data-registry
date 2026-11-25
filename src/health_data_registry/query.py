@@ -891,3 +891,6 @@ def envelope(
         if ds.entry.shape in ("surveillance_series", "frequency_table")
         else "Uncertainty bounds are shown only where the publisher gives them.",
     }
+
+
+# Exercise commit for the mutation shard split (never merged).

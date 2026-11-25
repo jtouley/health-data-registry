@@ -1060,3 +1060,6 @@ def _check_hosts_agree(datasets: Iterable[Dataset]) -> None:
                 f"{ds.id} and {first[0]} are both on {s.host} but disagree on government_host; the access policy "
                 "is per host, so they must agree"
             )
+
+
+# Exercise commit for the mutation shard split (never merged).
