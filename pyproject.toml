@@ -113,4 +113,6 @@ branch = true
 source_paths = ["src/health_data_registry/", "eval/"]
 also_copy = ["eval/dev/", "catalog/", "contracts/", "semantic/", "docs/", "licenses/", "template/", "plugin/", ".claude-plugin/", "scripts/", "tools/", "assets/", "fuzz/", "transform/", "tests/fixtures/", "pyproject.toml", "README.md", "CLAUDE.md"]
 pytest_add_cli_args = ["-m", "not network", "-x", "-q", "-p", "no:cacheprovider"]
-pytest_add_cli_args_test_selection = ["tests/", "--ignore=tests/integration", "--ignore=tests/test_metamorphic.py"]
+# tests/test_fuzz_harnesses.py is left out: the harnesses excuse known findings by the name of the function that
+# raised (e.g. _require_single_select), and mutmut renames every function, so its baseline fails in the sandbox.
+pytest_add_cli_args_test_selection = ["tests/", "--ignore=tests/integration", "--ignore=tests/test_metamorphic.py", "--ignore=tests/test_fuzz_harnesses.py"]
