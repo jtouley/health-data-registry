@@ -17,7 +17,7 @@ method. WHO's estimates come back exactly as WHO published them, with their unce
 It works next to the IHME GBD connector (modelled burden of disease) and the PubMed connector (papers): GBD tells
 you what is estimated, this tool tells you what was reported.
 
-**Status:** pre-alpha, a preview. Infectious disease only, five starter datasets, and every dataset's contract is
+**Status:** pre-alpha, a preview. Infectious disease only, six starter datasets, and every dataset's contract is
 still a draft awaiting review. Every answer says how its numbers were read; how it works is
 [further down](#how-it-works). "health-data-registry" is a working name.
 
@@ -164,7 +164,7 @@ came from: the source, fetch time, file fingerprint, version, review status, lic
 
 ## Data
 
-Infectious disease only, for now: five starter datasets, plus Census population as the denominator for rates.
+Infectious disease only, for now: six starter datasets, plus Census population as the denominator for rates.
 Each has an entry in [`catalog/`](catalog/):
 
 | Dataset | Publisher | What it covers | On the hub (coming) |
@@ -175,6 +175,7 @@ Each has an entry in [`catalog/`](catalog/):
 | `cdc_haicviz_cdi` | CDC (Emerging Infections Program) | C. difficile infection counts and rates in the program's surveillance areas (not by state), 2011–2022 | Hosted (US federal, public domain) |
 | `who_gho_tb_incidence` | WHO | Tuberculosis incidence per 100,000, by country, 2000 on | Fetched at run time (WHO's dataset terms); never published |
 | `census_county_pop` | US Census Bureau | Resident population estimates (July 1), nation, state and county, 2020–2025; used for `get_rate` | Hosted (US federal, public domain) |
+| `ahead_ehe_indicators` | HHS (AHEAD), from CDC data | The six Ending the HIV Epidemic indicators (diagnoses, incidence, knowledge of status, linkage to care, viral suppression, PrEP coverage) for each state and each EHE county, such as Wayne County, Michigan, 2017 on | Hosted (US federal; AHEAD states CC0) |
 
 [Data conventions](docs/data-conventions.md) explains how to read them: counts, rates, percents and estimates
 (never mixed); final and provisional years; when an empty cell is a zero (only where the codebook says so) and
@@ -266,8 +267,8 @@ technical name for the program behind a connector.
 
 ## Limitations
 
-- **Infectious disease only,** five starter datasets. County case counts, HIV, hepatitis, STI surveillance reports and
-  others are on the roadmap, not loaded.
+- **Infectious disease only,** six starter datasets. HIV is covered only by AHEAD's six EHE indicators for states and
+  EHE counties; county case counts, hepatitis, STI surveillance reports and others are on the roadmap, not loaded.
 - **Every contract is still a draft** that no maintainer has reviewed. Each answer says so
   (`contract_status: draft` in its provenance line), and `list_caveats` lists the facts not yet confirmed with
   the publisher.

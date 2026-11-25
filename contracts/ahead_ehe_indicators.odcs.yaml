@@ -1,0 +1,254 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: ahead_ehe_indicators
+name: "AHEAD: Ending the HIV Epidemic indicators, states and EHE counties"
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "The six Ending the HIV Epidemic (EHE) indicators as AHEAD publishes them for each state and each EHE county or jurisdiction, by year: HIV diagnoses, estimated incidence, knowledge of status, linkage to care, viral suppression and PrEP coverage, each with its denominator and, where published, its 95% interval."
+  usage: "Read one indicator for one place and one year as published. Pin the sheet (State totals or Jurisdiction totals), the place and the indicator; counts, rates and percentages are never added across places, years or indicators."
+  limitations: "Totals only (no age, sex, race or transmission strata). 2025 and 2026 are preliminary and 2026 is a part year. Empty cells are incomplete, not reported or suppressed, never zero. CDC advises against citing specific PrEP coverage points until updated estimates are published."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://ahead.hiv.gov/", description: "AHEAD dashboard; its 'Download All Data (XLSX/Excel)' button serves the workbook"}
+    - {type: businessDefinition, url: "https://ahead-files.hiv.gov/AHEAD_data_all_latest.xlsx", description: "The workbook; AHEAD's technical notes (I-XIV) are printed under the data on each sheet and are the codebook cited here"}
+    - {type: businessDefinition, url: "https://ahead.hiv.gov/about/methods", description: "AHEAD data methods pages"}
+    - {type: businessDefinition, url: "https://stacks.cdc.gov/view/cdc/260354", description: "CDC, Core Indicators for Monitoring the EHE Initiative, preliminary data through June 2026 (AHEAD's cited source for diagnoses and linkage)"}
+servers:
+  - id: ahead_files_hiv_gov
+    server: ahead-files.hiv.gov
+    type: https
+    location: https://ahead-files.hiv.gov/AHEAD_data_all_latest.xlsx
+schema:
+  - name: ahead_ehe_indicators
+    physicalName: ahead_ehe_indicators
+    physicalType: table
+    logicalType: object
+    description: "One row per sheet x place x year x indicator. The State totals sheet has one row per state (50 states, DC and Puerto Rico); the Jurisdiction totals sheet one row per EHE county or jurisdiction (e.g. Wayne County, Michigan). Each row holds one indicator's figures; AHEAD's technical notes after the data are not rows."
+    dataGranularityDescription: "sheet x state x county (Jurisdiction totals only) x year x indicator"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://ahead-files.hiv.gov/AHEAD_data_all_latest.xlsx"}
+    customProperties:
+      - property: totalRows
+        value: none
+        description: "No row is a total of other rows in these two sheets: each row is one place. A county's figures are part of its state's, which is why sheets are never combined (series pin the sheet)."
+      - {property: tableShape, value: estimate_table}
+      - property: idDimensions
+        value:
+          condition: indicator
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: null
+          period: year
+          provisionalFlag: null
+        description: "The condition is HIV throughout; indicator names which EHE measure the row holds. Period is the calendar year (2026: part year, see openQuestions). No provisional column: AHEAD's note I marks 2025 and 2026 preliminary."
+    properties:
+      - name: sheet
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Which of AHEAD's sheets the row comes from: 'State totals' (a whole state) or 'Jurisdiction totals' (one EHE county or jurisdiction). Pins the level of place, so a county is never read as, or added to, its state."
+        enum: [{value: "State totals"}, {value: "Jurisdiction totals"}]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: sheet}
+      - name: state
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "State, District of Columbia or Puerto Rico, by name. On a county row, the state the county is in."
+        examples: ["Michigan", "District of Columbia", "Puerto Rico"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: state}
+      - name: county
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "The EHE county or jurisdiction, as AHEAD names it (e.g. 'Wayne County'; 'Orange County (CA)' where a name repeats across states). Empty on state rows."
+        examples: ["Wayne County", "Orange County (CA)", "San Juan Municipio"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: county}
+      - name: year
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "Calendar year of the figures. 2025 and 2026 are preliminary; 2026 runs through June 2026 for diagnoses and through March 2026 for linkage to care (note I)."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: year}
+      - name: indicator
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Which EHE indicator the row holds: new HIV diagnoses, estimated new infections (incidence), the share of people with HIV who know their status, the share linked to care within a month of diagnosis, the share with a suppressed viral load, or the share of people with PrEP indications prescribed PrEP."
+        enum:
+          - {value: Diagnoses}
+          - {value: Incidence}
+          - {value: Knowledge of status}
+          - {value: Linkage to care}
+          - {value: Viral suppression}
+          - {value: PrEP coverage}
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: indicator}
+      - name: counted
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "What the count column counts for this indicator, in AHEAD's words: new diagnoses; estimated incidence; people living with diagnosed HIV; people with at least one CD4 or viral load test within a month of diagnosis (note III.a); people with a viral load below 200 copies/mL (note XI.b); people prescribed PrEP. One label per indicator."
+        enum:
+          - {value: New diagnoses}
+          - {value: Estimated incidence}
+          - {value: Living diagnosed}
+          - {value: At least one CD4 or VL test}
+          - {value: VL below 200 copies per milliliter}
+          - {value: Number prescribed PrEP}
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: metric}
+      - name: count
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "The number of people the row counts (see counted). For diagnoses, linkage and viral suppression a count from case surveillance; for incidence and knowledge of status a modelled estimate (incidence rounded to the nearest 10 or 100, note XII.b); for PrEP an estimate from pharmacy data (note XIV.b). Empty when incomplete, not reported or suppressed (note IX.a), never zero."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: count}
+          - {property: unit, value: "persons"}
+        quality:
+          - id: incidence_rounded_to_ten
+            type: sql
+            description: "Note XII.b: incidence estimates are rounded to the nearest 100 above 1,000 and to the nearest 10 at or below 1,000."
+            query: "SELECT COUNT(*) FROM {object} WHERE indicator = 'Incidence' AND count IS NOT NULL AND ((count <= 1000 AND count % 10 <> 0) OR (count > 1000 AND count % 100 <> 0))"
+            mustBe: 0
+          - id: diagnoses_count_filled
+            type: sql
+            description: "Fill rate: the diagnoses count is published for every state and EHE jurisdiction row (observed 2026-11-25); an all-empty column would otherwise pass every value check."
+            query: "SELECT COUNT(*) FROM {object} WHERE indicator = 'Diagnoses' AND count IS NULL"
+            mustBe: 0
+      - name: count_lower_95
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Lower bound of the 95% interval around the count. Published only for estimated incidence."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: count_lower_confidence_bound}
+          - {property: unit, value: "persons"}
+      - name: count_upper_95
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Upper bound of the 95% interval around the count. Published only for estimated incidence."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: count_upper_confidence_bound}
+          - {property: unit, value: "persons"}
+      - name: rate_per_100000
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "New diagnoses or estimated new infections per 100,000 people in the denominator column (population aged 13 and over, as AHEAD labels it 'Total persons alive'). Published for diagnoses and incidence only; empty for 2025 and 2026 diagnoses."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: rate_per_100000}
+          - {property: unit, value: "per 100,000"}
+      - name: percentage
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "The indicator as a percentage of its denominator: knowledge of status, linkage to care, viral suppression or PrEP coverage. PrEP coverage is people prescribed PrEP divided by the estimated number with PrEP indications (note XIV.d)."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: percentage}
+          - {property: unit, value: "%"}
+        quality:
+          - id: prep_percent_matches_counts
+            type: sql
+            description: "Note XIV.d: PrEP coverage is the number prescribed PrEP divided by the estimated number with PrEP indications. Tolerance 0.06 allows rounding to one decimal place."
+            query: "SELECT COUNT(*) FROM {object} WHERE indicator = 'PrEP coverage' AND percentage IS NOT NULL AND abs(percentage - 100.0 * count / denominator) > 0.06"
+            mustBe: 0
+          - id: percentage_only_for_share_indicators
+            type: sql
+            description: "Diagnoses and incidence are counts and rates; a percentage on those rows would mean the columns have moved."
+            query: "SELECT COUNT(*) FROM {object} WHERE indicator IN ('Diagnoses', 'Incidence') AND percentage IS NOT NULL"
+            mustBe: 0
+      - name: percentage_lower_95
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Lower bound of the published 95% interval. On knowledge of status rows it bounds the percentage. On incidence rows, where no percentage is published, it bounds the incidence rate per 100,000 (see openQuestions)."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: percentage_lower_confidence_bound}
+          - {property: unit, value: "% or per 100,000 (incidence rows)"}
+      - name: percentage_upper_95
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Upper bound of the published 95% interval: of the percentage on knowledge of status rows, of the incidence rate per 100,000 on incidence rows (see openQuestions). Some county bounds exceed 100%; they are kept as published."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: percentage_upper_confidence_bound}
+          - {property: unit, value: "% or per 100,000 (incidence rows)"}
+      - name: relative_standard_error
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Relative standard error of the estimate, in percent, for incidence and knowledge of status. Under 30% meets the standard of reliability; 30-50% should be used with caution; over 50% is not shown (note X.a)."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: relative_standard_error}
+          - {property: unit, value: "%"}
+        quality:
+          - id: nothing_shown_above_rse_50
+            type: sql
+            description: "Note X.a: estimates with a relative standard error over 50% are statistically unreliable and not displayed."
+            query: "SELECT COUNT(*) FROM {object} WHERE relative_standard_error > 50 AND (count IS NOT NULL OR percentage IS NOT NULL OR rate_per_100000 IS NOT NULL)"
+            mustBe: 0
+      - name: denominator
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "The number of people the rate or percentage is out of, as named in denominator_description: the population aged 13 and over (diagnoses and incidence), people living with diagnosed or undiagnosed HIV (knowledge of status, an estimate), people newly diagnosed (linkage), people living with diagnosed HIV (viral suppression), or people with PrEP indications (PrEP, an estimate rounded to the nearest 10, note XIV.c)."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: population}
+          - {property: unit, value: "persons"}
+      - name: denominator_description
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "AHEAD's own label for the denominator: 'Total persons alive', 'Living diagnosed or undiagnosed', 'Total diagnoses', 'Living diagnosed' or 'Number with PrEP indications'."
+        enum:
+          - {value: Total persons alive}
+          - {value: Living diagnosed or undiagnosed}
+          - {value: Total diagnoses}
+          - {value: Living diagnosed}
+          - {value: Number with PrEP indications}
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: population_description}
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: citation, value: "U.S. Department of Health and Human Services. America's HIV Epidemic Analysis Dashboard (AHEAD), 'Download All Data' workbook. https://ahead.hiv.gov/"}
+  - {property: refresh, value: annual}
+  - {property: geographyBasis, value: "unresolved: residence at diagnosis for diagnoses and linkage to care (notes VII.a, VII.b) and most recent known address at the end of the year for viral suppression (notes VII.c, XI.a); AHEAD does not say for incidence, knowledge of status or PrEP coverage"}
+  - {property: rateDenominator, value: "Diagnoses and incidence rates are per 100,000 of the population AHEAD labels 'Total persons alive', given in the denominator column (all indicators count people aged 13 and over, except PrEP at 16 and over, note V.a)."}
+  - {property: unreliableRule, value: {kind: publisher_suppressed, threshold: 50, description: "AHEAD: estimates with a relative standard error over 50% are statistically unreliable and not displayed; 30-50% are displayed but should be interpreted with caution (note X.a). Empty cells are 'data incomplete, not reported, or suppressed due to high level of uncertainty' (note IX.a)."}}
+  - property: openQuestions
+    value:
+      - "Suppression flag: AHEAD's workbook has no flag column; its only marker is the empty cell, which note IX.a defines as 'incomplete, not reported, or suppressed', three reasons the file can't tell apart. AHEAD's own JSON API (ahead-api.hiv.gov/v1/case-counts/stratified, used by the dashboard) returns suppressionCases and suppressionRate fields beside each value, undocumented. Maintainer to decide whether to read those as the flag."
+      - "Incidence interval: on incidence rows the percentage_*_confidence_bound columns are filled while percentage is empty, and they bracket rate_per_100000 in all 481 such rows (e.g. Wayne County 2017: rate 21.3, bounds 9.2-33.3; checked 2026-11-25). AHEAD's API returns the same numbers as lci/uci beside rate. The workbook doesn't say so; maintainer to confirm these are the rate's 95% interval. Until then they are returned with the rate, labelled as such, never dropped (hard rule 2)."
+      - "Part year: 2026 diagnoses are through June and linkage through March 2026 (note I), but no column marks a row as a part year. Should the series end at the last full year, or carry a part-year flag? No filter is applied until a maintainer decides."
+      - "Viral suppression denominator: 'Living diagnosed' on viral suppression rows (Michigan 2017: 14,894) is not the knowledge-of-status count of people living with diagnosed HIV (15,475), though both carry the same label. Which people (diagnosed by the end of the previous year? alive at year end? in places with complete lab reporting?) does the viral suppression denominator include? Not stated in notes XI."
+      - "Linkage and viral suppression percentages match 100 x count / denominator to one decimal in every row (955 and 753 rows, checked 2026-11-25), but the notes state the formula only for PrEP (XIV.d); no quality rule asserts it for the other two until a maintainer confirms it from CDC's technical notes."
+      - "Some values carry float noise as stored in the workbook (e.g. 87.09999999999999 for 87.1); they are kept as stored and read as DOUBLE. Round to one decimal on ingest?"
+      - "Rate denominator: AHEAD labels it 'Total persons alive'; its size (Michigan 2017: 8,441,967) fits people aged 13 and over, as note V.a implies, but the source of the population estimates (Census vintage) is not named."
+      - "Wayne County: does AHEAD's Wayne County include the City of Detroit? CDC's EHE jurisdiction list names Wayne County, Michigan; the workbook doesn't say. (MDHHS county figures elsewhere exclude Detroit, issue #45 item 6.)"
+      - "Knowledge of status bounds above 100% (e.g. 114.1 on a county row) and bounds capped at exactly 100 on others: kept as published; maintainer to confirm whether to show them as is."
+      - "PrEP numerators come from IQVIA pharmacy data (note XIV.b). AHEAD declares CC0 for its whole dataset; maintainer to confirm that covers re-publishing the PrEP counts."
+      - "GBD alignment: location_column is left empty because a county row's state column is not the county's own place. Maintainer to decide the place mapping for county rows (FIPS 26163 for Wayne County is in AHEAD's API, not the workbook)."
+      - "Dataset stability: the file name is 'latest' and is replaced in place; earlier releases aren't kept at a stable address, so the raw bytes kept in the lake are the only record of past releases."

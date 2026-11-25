@@ -53,6 +53,17 @@ inputPorts:
       - type: canonicalUrl
         url: https://www.census.gov/programs-surveys/popest.html
         description: Census Bureau Population Estimates Program.
+  - name: ahead-files-hiv-gov
+    tags: [hhs, ahead, xlsx]
+    customProperties:
+      - property: description
+        value: AHEAD's "Download All Data" workbook (XLSX over HTTPS), read when AHEAD updates it.
+      - property: license
+        value: public-domain-us-federal
+    authoritativeDefinitions:
+      - type: canonicalUrl
+        url: https://ahead.hiv.gov/
+        description: America's HIV Epidemic Analysis Dashboard (HHS); its Dataset record declares CC0 1.0.
   - name: who-gho
     tags: [who, odata]
     customProperties:
@@ -65,6 +76,13 @@ inputPorts:
         url: https://www.who.int/data/gho
         description: WHO Global Health Observatory.
 outputPorts:
+  - name: ahead_ehe_indicators
+    description: AHEAD's Ending the HIV Epidemic indicators for states and EHE counties (e.g. Wayne County, Michigan).
+    type: tables
+    version: 0.1.0
+    contractId: ahead_ehe_indicators
+    customProperties:
+      - {property: hosted, value: true}
   - name: cdc_haicviz_cdi
     description: HAICViz - CDI (Clostridioides difficile infection, Emerging Infections Program).
     type: tables

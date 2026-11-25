@@ -1,0 +1,98 @@
+dataset: ahead_ehe_indicators
+version: 0.1.0
+# Every metric reads one published cell (aggregation none): AHEAD's figures for a place, year and indicator are
+# never added up. A series pins the sheet, so a state is never mixed with the EHE counties inside it.
+dimensions:
+  - {name: sheet, column: sheet, type: categorical, description: "State totals (a whole state) or Jurisdiction totals (one EHE county or jurisdiction)."}
+  - {name: state, column: state, type: categorical, description: "State, DC or Puerto Rico; on county rows, the state the county is in."}
+  - {name: county, column: county, type: categorical, description: "EHE county or jurisdiction, e.g. Wayne County; empty on state rows."}
+  - {name: year, column: year, type: time, description: "Calendar year; 2025 and 2026 preliminary, 2026 a part year."}
+  - {name: indicator, column: indicator, type: categorical, description: "Which EHE indicator the row holds."}
+measures:
+  - {name: diagnoses, column: count, kind: count, unit: "persons", description: "New HIV diagnoses among people aged 13 and over in the year, by residence at diagnosis."}
+  - {name: incidence_estimate, column: count, kind: estimate, unit: "persons", description: "Estimated new HIV infections in the year (modelled, rounded to the nearest 10 or 100)."}
+  - {name: incidence_estimate_lower, column: count_lower_95, kind: lower_bound, unit: "persons", description: "Lower 95% bound of estimated new infections."}
+  - {name: incidence_estimate_upper, column: count_upper_95, kind: upper_bound, unit: "persons", description: "Upper 95% bound of estimated new infections."}
+  - {name: rate_per_100000, column: rate_per_100000, kind: rate, unit: "per 100,000", description: "Diagnoses or estimated new infections per 100,000 people aged 13 and over."}
+  - {name: rate_lower, column: percentage_lower_95, kind: lower_bound, unit: "per 100,000", description: "On incidence rows, the lower 95% bound of the incidence rate (see the contract's openQuestions)."}
+  - {name: rate_upper, column: percentage_upper_95, kind: upper_bound, unit: "per 100,000", description: "On incidence rows, the upper 95% bound of the incidence rate (see the contract's openQuestions)."}
+  - {name: percentage, column: percentage, kind: percent, unit: "%", description: "The indicator as a percentage of its denominator."}
+  - {name: percentage_lower, column: percentage_lower_95, kind: lower_bound, unit: "%", description: "Lower 95% bound of the percentage (knowledge of status only)."}
+  - {name: percentage_upper, column: percentage_upper_95, kind: upper_bound, unit: "%", description: "Upper 95% bound of the percentage (knowledge of status only)."}
+  - {name: denominator, column: denominator, kind: estimate, unit: "persons", description: "The people the rate or percentage is out of, as AHEAD names them in denominator_description."}
+metrics:
+  - name: hiv_diagnoses
+    description: "New HIV diagnoses in one place and year, as published (people aged 13 and over, residence at diagnosis). Never added across places or years."
+    measure: diagnoses
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["indicator = 'Diagnoses'"]
+  - name: hiv_diagnosis_rate
+    description: "New HIV diagnoses per 100,000 people aged 13 and over, as published. No interval is published."
+    measure: rate_per_100000
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["indicator = 'Diagnoses'"]
+  - name: hiv_incidence
+    description: "Estimated new HIV infections in the year, with its published 95% interval."
+    measure: incidence_estimate
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["indicator = 'Incidence'"]
+    uncertainty: {lower: incidence_estimate_lower, upper: incidence_estimate_upper}
+  - name: hiv_incidence_rate
+    description: "Estimated new HIV infections per 100,000 people aged 13 and over, with the 95% interval AHEAD publishes beside it."
+    measure: rate_per_100000
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["indicator = 'Incidence'"]
+    uncertainty: {lower: rate_lower, upper: rate_upper}
+  - name: knowledge_of_status
+    description: "Estimated percentage of people with HIV (diagnosed or not) who have been diagnosed, with its 95% interval."
+    measure: percentage
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["indicator = 'Knowledge of status'"]
+    uncertainty: {lower: percentage_lower, upper: percentage_upper}
+  - name: linkage_to_care
+    description: "Percentage of people newly diagnosed in the year with at least one CD4 or viral load test within one month of diagnosis. No interval is published."
+    measure: percentage
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["indicator = 'Linkage to care'"]
+  - name: viral_suppression
+    description: "Percentage of people living with diagnosed HIV whose most recent viral load in the year was below 200 copies/mL. No interval is published."
+    measure: percentage
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["indicator = 'Viral suppression'"]
+  - name: prep_coverage
+    description: "People prescribed PrEP as a percentage of the estimated number with PrEP indications (aged 16 and over). CDC advises against citing specific PrEP coverage points until updated estimates are published."
+    measure: percentage
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["indicator = 'PrEP coverage'"]
+  - name: indicator_denominator
+    description: "The denominator AHEAD publishes for one indicator, place and year (read with the indicator filter)."
+    measure: denominator
+    aggregation: none
+    exclude_total_rows: false
+series:
+  # States (State totals sheet), by state name.
+  - {condition: HIV, label: "New HIV diagnoses, by state (AHEAD)", metric: hiv_diagnoses, measure: cases, filters: {sheet: "State totals"}, location_dimension: state, time_dimension: year, case_definition: "Reported HIV infections among people aged 13 and over confirmed by laboratory or clinical evidence during the year (AHEAD note II.a)."}
+  - {condition: HIV, label: "HIV diagnosis rate per 100,000, by state (AHEAD)", metric: hiv_diagnosis_rate, measure: rate, filters: {sheet: "State totals"}, location_dimension: state, time_dimension: year}
+  - {condition: HIV, label: "Estimated new HIV infections (incidence), by state (AHEAD)", metric: hiv_incidence, measure: estimate, filters: {sheet: "State totals"}, location_dimension: state, time_dimension: year}
+  - {condition: HIV, label: "Estimated HIV incidence rate per 100,000, by state (AHEAD)", metric: hiv_incidence_rate, measure: rate, filters: {sheet: "State totals"}, location_dimension: state, time_dimension: year}
+  - {condition: HIV, label: "Knowledge of HIV status (%), by state (AHEAD)", metric: knowledge_of_status, measure: percent, filters: {sheet: "State totals"}, location_dimension: state, time_dimension: year}
+  - {condition: HIV, label: "Linkage to HIV care within one month (%), by state (AHEAD)", metric: linkage_to_care, measure: percent, filters: {sheet: "State totals"}, location_dimension: state, time_dimension: year}
+  - {condition: HIV, label: "HIV viral suppression (%), by state (AHEAD)", metric: viral_suppression, measure: percent, filters: {sheet: "State totals"}, location_dimension: state, time_dimension: year}
+  - {condition: HIV, label: "PrEP coverage (%), by state (AHEAD)", metric: prep_coverage, measure: percent, filters: {sheet: "State totals"}, location_dimension: state, time_dimension: year}
+  # EHE counties and jurisdictions (Jurisdiction totals sheet), by AHEAD's county name, e.g. Wayne County.
+  - {condition: HIV, label: "New HIV diagnoses, by EHE county (AHEAD)", metric: hiv_diagnoses, measure: cases, filters: {sheet: "Jurisdiction totals"}, location_dimension: county, time_dimension: year, case_definition: "Reported HIV infections among people aged 13 and over confirmed by laboratory or clinical evidence during the year (AHEAD note II.a)."}
+  - {condition: HIV, label: "HIV diagnosis rate per 100,000, by EHE county (AHEAD)", metric: hiv_diagnosis_rate, measure: rate, filters: {sheet: "Jurisdiction totals"}, location_dimension: county, time_dimension: year}
+  - {condition: HIV, label: "Estimated new HIV infections (incidence), by EHE county (AHEAD)", metric: hiv_incidence, measure: estimate, filters: {sheet: "Jurisdiction totals"}, location_dimension: county, time_dimension: year}
+  - {condition: HIV, label: "Estimated HIV incidence rate per 100,000, by EHE county (AHEAD)", metric: hiv_incidence_rate, measure: rate, filters: {sheet: "Jurisdiction totals"}, location_dimension: county, time_dimension: year}
+  - {condition: HIV, label: "Knowledge of HIV status (%), by EHE county (AHEAD)", metric: knowledge_of_status, measure: percent, filters: {sheet: "Jurisdiction totals"}, location_dimension: county, time_dimension: year}
+  - {condition: HIV, label: "Linkage to HIV care within one month (%), by EHE county (AHEAD)", metric: linkage_to_care, measure: percent, filters: {sheet: "Jurisdiction totals"}, location_dimension: county, time_dimension: year}
+  - {condition: HIV, label: "HIV viral suppression (%), by EHE county (AHEAD)", metric: viral_suppression, measure: percent, filters: {sheet: "Jurisdiction totals"}, location_dimension: county, time_dimension: year}
+  - {condition: HIV, label: "PrEP coverage (%), by EHE county (AHEAD)", metric: prep_coverage, measure: percent, filters: {sheet: "Jurisdiction totals"}, location_dimension: county, time_dimension: year}

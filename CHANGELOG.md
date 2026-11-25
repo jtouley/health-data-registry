@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `ahead_ehe_indicators`: AHEAD's six Ending the HIV Epidemic indicators (diagnoses, incidence, knowledge of
+  status, linkage to care, viral suppression, PrEP coverage) for every state and EHE county, such as Wayne County,
+  Michigan, read from AHEAD's "Download All Data" workbook. Draft contract; 95% intervals kept, empty cells never
+  read as zero. A new `https_xlsx` adapter reads named sheets of a published workbook with the standard library,
+  and a catalog entry may declare a larger byte cap (`max_bytes`) for a whole-file download.
 - Repository scaffolding under the Apache License 2.0, with a NOTICE for material adapted from the author's
   earlier MIT-licensed work.
 - SECURITY.md (private reporting through GitHub advisories, 14-day first response), CONTRIBUTING.md,

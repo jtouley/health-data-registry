@@ -116,6 +116,7 @@ def fetcher(
     from health_data_registry.fetch import FetchRefused, fetch
 
     hosts = registry.hosts
+    caps = registry.byte_caps  # a whole-file download's reviewed cap; every other URL keeps fetch's default
     policy = Robots(hosts, sleep=sleep) if robots is True else robots or None
 
     def get(url: str) -> RawFetch:
@@ -129,8 +130,13 @@ def fetcher(
         for attempt in range(RETRIES):
             when = datetime.now(UTC)
             try:
+                cap = {"max_bytes": caps[url]} if url in caps else {}
                 r = fetch(
-                    url, allowed_hosts=hosts, headers={"Accept": "application/json"}, timeout=FETCH_TIMEOUT_S
+                    url,
+                    allowed_hosts=hosts,
+                    headers={"Accept": "application/json"},
+                    timeout=FETCH_TIMEOUT_S,
+                    **cap,
                 )
             except FetchRefused as e:
                 if log is not None:

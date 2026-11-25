@@ -37,16 +37,22 @@ def pages(
         from health_data_registry.adapters import https_csv
 
         yield from https_csv.pages(entry, fetcher, max_rows=max_rows, fields=fields)
+    elif entry.source.portal == "https_xlsx":
+        from health_data_registry.adapters import https_xlsx
+
+        yield from https_xlsx.pages(entry, fetcher, max_rows=max_rows, fields=fields)
     else:  # pragma: no cover - the catalog model forbids other portals
         raise ValueError(f"no adapter for portal {entry.source.portal}")
 
 
 def publisher_fields(entry: CatalogEntry, fetcher: Fetcher) -> set[str]:
     """The field names the publisher serves today, for the contract drift check (any portal)."""
-    from health_data_registry.adapters import https_csv, socrata, who_gho
+    from health_data_registry.adapters import https_csv, https_xlsx, socrata, who_gho
 
     if entry.source.portal == "socrata":
         return socrata.publisher_fields(entry, fetcher)
     if entry.source.portal == "who_gho":
         return who_gho.publisher_fields(entry, fetcher)
+    if entry.source.portal == "https_xlsx":
+        return https_xlsx.publisher_fields(entry, fetcher)
     return https_csv.publisher_fields(entry, fetcher)

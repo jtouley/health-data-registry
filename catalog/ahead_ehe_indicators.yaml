@@ -1,0 +1,57 @@
+id: ahead_ehe_indicators
+title: "AHEAD: Ending the HIV Epidemic indicators, states and EHE counties (America's HIV Epidemic Analysis Dashboard)"
+agency: HHS
+publisher: "U.S. Department of Health and Human Services, Office of Infectious Disease and HIV/AIDS Policy (America's HIV Epidemic Analysis Dashboard, AHEAD), from CDC's National HIV Surveillance System and CDC's PrEP estimates"
+level: federal
+country: US
+research_areas: [infectious_disease]
+id_areas: [hiv]
+years: {start: 2017, end: 2026}
+geography: [state, county]
+shape: estimate_table
+grain: "One row is one state (State totals sheet) or one Ending the HIV Epidemic county or jurisdiction (Jurisdiction totals sheet), one year and one of the six EHE indicators (diagnoses, incidence, knowledge of status, linkage to care, viral suppression, PrEP coverage), with its count, rate or percentage, the denominator AHEAD names for it, and the 95% interval and relative standard error where AHEAD publishes them. All ages 13 and over (16 and over for PrEP), all sexes and races combined; AHEAD's stratified sheets are not read."
+refresh: annual
+licence:
+  id: public-domain-us-federal
+  redistribution: true
+  # AHEAD's own Dataset record (schema.org JSON-LD on https://ahead.hiv.gov/, checked 2026-11-25) declares
+  # "license": "https://creativecommons.org/publicdomain/zero/1.0/", creator U.S. Department of Health and Human
+  # Services (Office of Infectious Disease and HIV/AIDS Policy).
+  terms_url: https://creativecommons.org/publicdomain/zero/1.0/
+citation: "U.S. Department of Health and Human Services. America's HIV Epidemic Analysis Dashboard (AHEAD), 'Download All Data' workbook. https://ahead.hiv.gov/ (accessed <retrieved_at>)."
+source:
+  portal: https_xlsx
+  host: ahead-files.hiv.gov
+  dataset: AHEAD_data_all_latest
+  landing_url: https://ahead.hiv.gov/
+  # The "Download All Data (XLSX/Excel)" button on ahead.hiv.gov links here (the site's own script, checked
+  # 2026-11-25). 47.5 MB on 2026-11-25, close to the fetcher's 50 MB default, so the cap is declared.
+  api_url: https://ahead-files.hiv.gov/AHEAD_data_all_latest.xlsx
+  max_bytes: 120000000
+  workbook:
+    # Row 1 of each sheet is AHEAD's preliminary-data note; column names are on row 2. AHEAD's technical notes
+    # follow the data after a blank row and are not read as data.
+    sheets: ["State totals", "Jurisdiction totals"]
+    header_row: 2
+    sheet_field: sheet
+codebook_url: https://ahead.hiv.gov/about/methods
+caveats:
+  - "Notes cited below are AHEAD's technical notes, printed under the data on each sheet of the workbook."
+  - "Years 2025 and 2026 are preliminary (note I, '2025 and 2026 data', a). 2026 is a part year: diagnoses run through June 2026 and linkage to care through March 2026 (same note), so a 2026 count is not comparable with a full year's."
+  - "Data reported to the National HIV Surveillance System are preliminary until a 12-month reporting delay has passed and should not be used to assess trends or compare counts with previous years until then (note I, '2025 and 2026 data', b)."
+  - "2020 figures reflect the COVID-19 pandemic's disruption of testing and care; AHEAD discourages including 2020 in trend assessments (note I, '2020 data', a and b; note II.c)."
+  - "PrEP coverage: in 2024 CDC paused PrEP coverage reporting and advises against citing specific PrEP coverage data points until updated estimates are published, as historical estimates will be updated (note XIV.a). The denominator for 2018-2023 is the 2018 estimate of people with PrEP indications, so 2019-2023 PrEP coverage is preliminary (note XIV.c)."
+  - "An empty cell means 'data incomplete, not reported, or suppressed due to high level of uncertainty' (note IX.a); it is never a zero, and the three reasons can't be told apart from the file."
+  - "Estimates with a relative standard error of 30-50% are shown but should be used with caution; over 50% they are not shown (note X.a)."
+  - "Estimated incidence is rounded to the nearest 10 (estimates of 1,000 or less) or 100 (above 1,000) to reflect model uncertainty (note XII.b)."
+  - "Diagnoses and linkage to care are placed by residence at diagnosis; viral suppression by the most recent known address at the end of the year (notes VII.a, VII.b, VII.c and XI.a)."
+  - "Viral suppression is not shown for places without laws requiring reporting of all CD4 and viral load results (Idaho), or with a lapse in reporting (District of Columbia and South Carolina in 2024) (note XI.c)."
+  - "Counts, rates and percentages of different places or indicators are never added: a county is part of its state, and states and EHE counties are separate sheets."
+gbd:
+  location_column: null
+  causes:
+    - {condition: HIV, cause: "HIV/AIDS"}
+contract: contracts/ahead_ehe_indicators.odcs.yaml
+semantic_model: semantic/ahead_ehe_indicators.yaml
+status: draft
+hosting: public

@@ -87,14 +87,35 @@ class Reshape(_Strict):
     wide_to_long: WideToLong
 
 
+class Workbook(_Strict):
+    """Which sheets of a published XLSX workbook hold the data, and where (https_xlsx only).
+
+    Each named sheet has its column names on `header_row` (1-based) and data rows below it, up to the first
+    blank row; anything after that blank row (the publisher's notes) is not data. Rows from every sheet are
+    handed on together, each with `sheet_field` set to the sheet's name; a column one sheet lacks (e.g. a
+    county column on a state sheet) is empty for its rows. No value is changed, computed or dropped.
+    """
+
+    sheets: list[str] = Field(min_length=1)
+    header_row: int = Field(default=1, ge=1)
+    sheet_field: str = "sheet"
+
+
+# The fetcher's default byte cap (fetch.fetch) suits API pages; a whole-file download may declare a larger one.
+MAX_DECLARED_BYTES = 200_000_000
+
+
 class Source(_Strict):
-    portal: Literal["socrata", "who_gho", "https_csv"]
+    portal: Literal["socrata", "who_gho", "https_csv", "https_xlsx"]
     host: str
     dataset: str
     landing_url: str
     api_url: str
     encoding: str = "utf-8"  # https_csv only: the file's text encoding, from the publisher's documentation
     reshape: Reshape | None = None  # https_csv only
+    workbook: Workbook | None = None  # https_xlsx only, and required there
+    # https_csv and https_xlsx only: the largest file this source may send, when it is above the fetcher's default.
+    max_bytes: int | None = Field(default=None, gt=0, le=MAX_DECLARED_BYTES)
 
     @field_validator("host")
     @classmethod
@@ -114,6 +135,10 @@ class Source(_Strict):
     def _csv_only(self) -> Source:
         if self.portal != "https_csv" and (self.reshape is not None or self.encoding != "utf-8"):
             raise ValueError("encoding and reshape apply only to the https_csv portal")
+        if (self.portal == "https_xlsx") != (self.workbook is not None):
+            raise ValueError("the https_xlsx portal needs a workbook layout, and only it takes one")
+        if self.max_bytes is not None and self.portal not in ("https_csv", "https_xlsx"):
+            raise ValueError("max_bytes applies only to whole-file downloads (https_csv, https_xlsx)")
         if self.reshape is not None:
             try:
                 re.compile(self.reshape.wide_to_long.key_pattern)
@@ -688,6 +713,15 @@ class Registry:
     @property
     def hosts(self) -> frozenset[str]:
         return frozenset(d.entry.source.host for d in self.datasets.values())
+
+    @property
+    def byte_caps(self) -> Mapping[str, int]:
+        """The reviewed byte cap of each whole-file download that declares one, by its URL."""
+        return {
+            d.entry.source.api_url: d.entry.source.max_bytes
+            for d in self.datasets.values()
+            if d.entry.source.max_bytes is not None
+        }
 
 
 def default_root() -> Path:
