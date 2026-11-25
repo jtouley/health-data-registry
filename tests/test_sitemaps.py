@@ -704,7 +704,7 @@ def test_allowedHosts_catalogOrAdrExceptionOnly(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(sm, "ADR_0013_HOSTS", frozenset({"www.michigan.gov", "www.kentcountymi.gov"}))
     reg = load_registry()
     catalogued = sm.catalogued_hosts(reg)
-    assert "data.cdc.gov" in catalogued and "" not in catalogued
+    assert catalogued.issuperset({"data.cdc.gov"}) and all(catalogued)
     cdc = sm.Seed("cdc", "https://data.cdc.gov/sitemap.xml")
     assert sm.allowed_hosts((*sm.SEEDS, cdc, SEED), registry=reg) == {
         "www.michigan.gov",
