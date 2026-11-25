@@ -298,3 +298,27 @@ def test_an_unreadable_report_is_an_error_not_a_zero(mc: ModuleType, tmp_path: P
     (tmp_path / "a.json").write_text('{"modules": ["x"]}', encoding="utf-8")
     with pytest.raises(KeyError):
         mc.load_reports(tmp_path)
+
+
+# The eval scorer is mutated too ----------------------------------------------------------------------------
+
+
+def test_an_eval_module_is_listed_and_accepted(mc: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:
+    assert mc.list_json(["eval.scorer", "eval.__init__", "health_data_registry.tools"]) == (
+        '["eval.scorer","health_data_registry.tools"]'
+    )
+    assert mc._module("eval/numbers.py") == "eval.numbers"
+    assert mc._module("src/health_data_registry/tools.py") == "health_data_registry.tools"
+    assert mc.main(["--list", "--all"]) == 0
+    mods = json.loads(capsys.readouterr().out)
+    assert {"eval.scorer", "eval.numbers", "eval.report", "eval.stats"} <= set(mods)
+    r = mc.parse_results(
+        "eval.scorer.x_f__mutmut_1: killed\neval.scorerx.y__mutmut_1: killed", ["eval.scorer"]
+    )
+    assert (r.killed, r.survived) == (1, 0)
+
+
+@pytest.mark.parametrize("name", ["eval", "eval.Scorer", "eval.scorer;id", "evaluation.scorer"])
+def test_an_eval_name_that_is_not_a_plain_module_is_refused(mc: ModuleType, name: str) -> None:
+    with pytest.raises(ValueError, match="not a plain module name"):
+        mc.list_json([name])

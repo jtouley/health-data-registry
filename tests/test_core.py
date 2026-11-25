@@ -373,3 +373,24 @@ def test_redistribution_needs_a_reviewed_licence() -> None:
     assert not Licence(id="CC-BY-NC-SA-3.0-IGO", redistribution=False, terms_url="x").redistribution
     with pytest.raises(ValidationError, match="reviewed list"):
         Licence(id="CC-BY-NC-SA-3.0-IGO", redistribution=True, terms_url="x")
+
+
+def test_hosting_defaults_to_private_and_public_needs_redistribution(tmp_path: Path) -> None:
+    """A source reaches the open release only through an explicit `hosting: public` in its catalog entry."""
+    public = load_registry(write_registry(tmp_path / "public")).get("toy_cases").entry
+    assert public.hosting == "public" and public.hosted
+    unset = CATALOG.replace("hosting: public\n", "")
+    private = load_registry(write_registry(tmp_path / "unset", catalog=unset)).get("toy_cases").entry
+    assert private.hosting == "private" and not private.hosted
+    with pytest.raises(RegistryError, match="hosting"):
+        load_registry(write_registry(tmp_path / "other", catalog=unset + "hosting: maybe\n"))
+    restricted = CATALOG.replace(
+        "redistribution: true, terms_url", "redistribution: false, terms_url"
+    ).replace("public-domain-us-federal", "CC-BY-NC-SA-3.0-IGO")
+    with pytest.raises(RegistryError, match="hosting: public needs a licence"):
+        load_registry(write_registry(tmp_path / "restricted", catalog=restricted))
+
+
+def test_real_catalog_hosts_only_redistributable_sources() -> None:
+    for ds in load_registry():
+        assert ds.entry.hosted == ds.entry.licence.redistribution, ds.id

@@ -6,7 +6,7 @@ Usage:
   python scripts/mutate_changed.py --module M --report out.json                # CI: one shard
   python scripts/mutate_changed.py --aggregate DIR --expect '["m", ...]'       # CI: floor on the total
 
-Finds the Python modules under src/ changed since --base (merge-base), runs mutmut on just those modules,
+Finds the Python modules under src/ and eval/ changed since --base (merge-base), runs mutmut on just those modules,
 prints each mutant it did not kill, and fails when the share of killed mutants among all of them is below
 --floor. Every status but `killed` and `caught by type check` counts against the score: `no tests`, `skipped`
 and `timeout` are mutants nothing noticed.
@@ -32,12 +32,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PKG = ROOT / "src" / "health_data_registry"
+# Mutated packages: the server, and the eval scorer that decides release gates. Keep in step with
+# [tool.mutmut] source_paths in pyproject.toml.
+PACKAGES = (PKG, ROOT / "eval")
+PACKAGE_DIRS = ("src/health_data_registry", "eval")
 # Module names reach CI job names, artifact names and the mutmut command line: allow nothing else.
 # mutmut statuses (mutmut/stats.py). Killed ones raise the score; every other status lowers it.
 KILLED_STATUSES = frozenset({"killed", "caught by type check"})
 # A run that leaves any of these did not finish checking its mutants: the shard fails, whatever its score.
 INCOMPLETE_STATUSES = frozenset({"not checked", "check was interrupted by user", "segfault"})
-MODULE_NAME = re.compile(r"^health_data_registry(\.[a-z_][a-z0-9_]*)+$")
+MODULE_NAME = re.compile(r"^(?:health_data_registry|eval)(\.[a-z_][a-z0-9_]*)+$")
 
 
 @dataclass
@@ -69,11 +73,11 @@ def changed_modules(base: str) -> list[str]:
         or base
     )
     out = subprocess.run(
-        ["git", "diff", "--name-only", merge_base, "--", "src/health_data_registry"],
+        ["git", "diff", "--name-only", merge_base, "--", *PACKAGE_DIRS],
         cwd=ROOT, capture_output=True, text=True, check=True,
     ).stdout  # fmt: skip
     untracked = subprocess.run(
-        ["git", "ls-files", "--others", "--exclude-standard", "src/health_data_registry"],
+        ["git", "ls-files", "--others", "--exclude-standard", *PACKAGE_DIRS],
         cwd=ROOT, capture_output=True, text=True, check=True,
     ).stdout  # fmt: skip
     return sorted(
@@ -82,7 +86,10 @@ def changed_modules(base: str) -> list[str]:
 
 
 def _module(path: str) -> str:
-    rel = Path(path).relative_to("src").with_suffix("")
+    """src/health_data_registry/x.py -> health_data_registry.x; eval/x.py -> eval.x."""
+    rel = Path(path).with_suffix("")
+    if rel.parts[0] == "src":
+        rel = rel.relative_to("src")
     return ".".join(rel.parts)
 
 
@@ -241,7 +248,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if failure else 0
 
     mods = select_modules(
-        [_module(str(p.relative_to(ROOT))) for p in PKG.rglob("*.py")] if a.all else changed_modules(a.base)
+        [_module(str(p.relative_to(ROOT))) for pkg in PACKAGES for p in pkg.rglob("*.py")]
+        if a.all
+        else changed_modules(a.base)
     )
     if a.list:
         print(list_json(mods))

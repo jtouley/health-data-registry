@@ -27,6 +27,7 @@ shape: surveillance_series
 grain: One row per reporting area, condition and year.
 refresh: weekly
 licence: {id: public-domain-us-federal, redistribution: true, terms_url: "https://www.cdc.gov/other/agencymaterials.html"}
+hosting: public
 citation: "CDC. Toy table. https://data.cdc.gov/d/toy0-toy0"
 source:
   portal: socrata

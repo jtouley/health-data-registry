@@ -48,3 +48,4 @@ gbd:
 contract: contracts/cdc_nndss_weekly.odcs.yaml
 semantic_model: semantic/cdc_nndss_weekly.yaml
 status: draft
+hosting: public

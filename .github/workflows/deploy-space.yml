@@ -1,0 +1,109 @@
+# Deploy the hosted MCP server: sync space/ to the Hugging Face Space (free CPU hardware).
+#
+# Deploys ONLY from a release tag (vX.Y.Z) whose commit is on main and passed CI on main. Never on a push to a
+# branch, never from a pull request. The `verify` job checks both through the GitHub API before the deploy
+# job, which alone holds the Hugging Face token, starts. Re-deploying a tag: run this workflow by hand with
+# "Use workflow from" set to that tag; any other ref is refused.
+#
+# space/ comes from the HTTP-server work (branch wip/http-server). Until it is on main, the job skips with a
+# notice. The Space's files are replaced by space/ exactly: anything in the Space that is not in space/ is
+# deleted, so space/ must hold the Space's README.md (its config header).
+#
+# The deploy job runs in the GitHub environment `space`, whose deployment rule allows only v*.*.* tags
+# (docs/dev/automation.md); its secrets live there, so no other ref or workflow can read them. `verify` stays
+# as defence in depth.
+#
+# Secrets: HF_TOKEN (HF_SPACE_TOKEN, if set, overrides it with a token limited to the Space), set only on the
+# upload step. Variable: HDR_HF_OWNER owns the Space (default jtouley).
+name: Deploy Space
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Deploys never overlap; a newer tag waits for the running deploy, then replaces any older pending one.
+concurrency:
+  group: deploy-space
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Release tag on main that passed CI
+    if: github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read # read CI's runs for this commit
+      contents: read # compare the tagged commit with main
+    steps:
+      - name: Check the tag, main and CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::$TAG is not a release tag (vX.Y.Z). Nothing deployed."
+            exit 1
+          fi
+          # "identical" or "behind": the tagged commit is main's head or one of its ancestors.
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$GITHUB_SHA" --jq .status)
+          case "$status" in
+            identical|behind) ;;
+            *) echo "::error::$TAG ($GITHUB_SHA) is not on main (compare: $status). Nothing deployed."; exit 1 ;;
+          esac
+          passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&branch=main&event=push&status=success" \
+            --jq .total_count)
+          if [ "${passed:-0}" -lt 1 ]; then
+            echo "::error::CI has not passed on main for $GITHUB_SHA. Nothing deployed."
+            exit 1
+          fi
+          echo "$TAG ($GITHUB_SHA) is on main and passed CI."
+
+  deploy:
+    name: Sync space/ to the Space
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: space
+    env:
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      HDR_HF_OWNER: ${{ vars.HDR_HF_OWNER }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check space/ and the token
+        id: gate
+        env:
+          HAS_TOKEN: ${{ (secrets.HF_SPACE_TOKEN || secrets.HF_TOKEN) && 'true' || 'false' }}
+        run: |
+          if [ ! -f space/README.md ]; then
+            echo "::notice::No space/README.md at this tag yet (the HTTP server is on wip/http-server). Nothing deployed."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          elif [ "$HAS_TOKEN" != "true" ]; then
+            echo "::notice::No HF_TOKEN secret. Nothing deployed."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        if: steps.gate.outputs.go == 'true'
+        with:
+          python-version: "3.12"
+          enable-cache: false
+      - name: Install dependencies (locked)
+        if: steps.gate.outputs.go == 'true'
+        run: uv sync --locked --no-dev
+      - name: Upload space/ as one commit
+        if: steps.gate.outputs.go == 'true'
+        env:
+          HF_TOKEN: ${{ secrets.HF_SPACE_TOKEN || secrets.HF_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          space_repo=$(uv run --no-sync python -m health_data_registry.naming space)
+          uv run --no-sync hf upload "$space_repo" space . --repo-type space --delete "*" \
+            --commit-message "Deploy ${TAG} (${GITHUB_SHA})"

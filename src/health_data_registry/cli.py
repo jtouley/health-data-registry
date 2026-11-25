@@ -1,5 +1,5 @@
 """Command line: serve, refresh, fetch, export-public, check-contracts, validate, eval, publication-outlook,
-and the analysis tools."""
+sitemaps snapshot, and the analysis tools."""
 
 from __future__ import annotations
 
@@ -213,9 +213,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     po.add_argument("--condition", default=None)
     po.add_argument("--geography", default=None)
     po.add_argument("--json", action="store_true", help="JSON instead of CSV")
+    from health_data_registry import sitemaps
+
+    sm = sub.add_parser("sitemaps", help="publisher sitemaps the crawlers start from")
+    sm_sub = sm.add_subparsers(dest="sitemaps_cmd", required=True)
+    snap = sm_sub.add_parser(
+        "snapshot", help="take this week's copy of each seed sitemap and upload it to the private ops dataset"
+    )
+    sitemaps.add_arguments(snap)
     a = p.parse_args(argv)
     if a.cmd == "publication-outlook":  # reads only the packaged base rates, not the registry
         return publication_outlook(a)
+    if a.cmd == "sitemaps":  # reads only the seed list, not the registry
+        return sitemaps.snapshot(a, error=snap.error)
     try:
         registry = load_registry()
     except RegistryError as e:

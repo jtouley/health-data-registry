@@ -76,7 +76,8 @@ ignore = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src"]
+files = ["src", "eval"]
+exclude = ["^eval/sealed/"]
 strict = true
 ignore_missing_imports = true
 
@@ -86,12 +87,12 @@ addopts = "-q --strict-markers"
 markers = ["network: hits a live publisher (deselected in CI by default)"]
 
 [tool.coverage.run]
-source = ["health_data_registry"]
+source = ["health_data_registry", "eval"]
 branch = true
 
 [tool.mutmut]
 # Mutation tests run on the modules a change touches (scripts/mutate_changed.py, `make mutate`), not the whole tree.
-source_paths = ["src/health_data_registry/"]
-also_copy = ["catalog/", "contracts/", "semantic/", "docs/", "licenses/", "template/", "plugin/", ".claude-plugin/", "scripts/", "pyproject.toml", "README.md", "CLAUDE.md"]
+source_paths = ["src/health_data_registry/", "eval/"]
+also_copy = ["eval/dev/", "catalog/", "contracts/", "semantic/", "docs/", "licenses/", "template/", "plugin/", ".claude-plugin/", "scripts/", "pyproject.toml", "README.md", "CLAUDE.md"]
 pytest_add_cli_args = ["-m", "not network", "-x", "-q", "-p", "no:cacheprovider"]
 pytest_add_cli_args_test_selection = ["tests/", "--ignore=tests/integration", "--ignore=tests/test_metamorphic.py"]
