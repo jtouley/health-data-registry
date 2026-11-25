@@ -1,6 +1,6 @@
 # Developer and CI entry points. `make help` lists the targets.
 .DEFAULT_GOAL := help
-.PHONY: help install lint fmt typecheck test test-network mutate docs kit check refresh serve check-contracts eval hooks
+.PHONY: help install lint fmt typecheck test test-network smoke mutate docs kit check precheck refresh serve check-contracts eval hooks
 
 UV ?= uv
 COV_FLOOR ?= 85
@@ -34,6 +34,9 @@ test: ## Offline tests with coverage (fails under COV_FLOOR, default 85%)
 test-network: ## Tests that hit live publishers (network marker)
 	$(UV) run pytest -m network
 
+smoke: ## The C. auris in Michigan journey on a synthetic lake, scored with eval/scorer.py (smoke marker; offline)
+	$(UV) run pytest -m smoke tests/smoke -rxX
+
 mutate: ## Mutation tests on the modules changed since BASE (default origin/main); fails under MUTATION_FLOOR
 	$(UV) run python scripts/mutate_changed.py --base $(BASE) --floor $(MUTATION_FLOOR)
 
@@ -43,7 +46,10 @@ docs: ## Regenerate docs/helpers.md, the template's skills, the plugin and the t
 kit: ## Build the Claude Projects kit into KIT_DIR (default dist/projects-kit, not committed)
 	$(UV) run python scripts/write_template.py --kit $(KIT_DIR)
 
-check: lint typecheck test mutate ## Everything CI runs: lint, typecheck, test, mutation tests on changed modules
+check: lint typecheck test mutate ## The quick local loop (not all of CI): lint, typecheck, test, mutation tests on changed modules
+
+precheck: ## The pre-PR gate's local half: the CI checks plus docs drift (hooks, lint, types, tests, smoke, kit, docs drift, mutation shards); stops at the first failure
+	UV="$(UV)" MAKE="$(MAKE)" BASE="$(BASE)" COV_FLOOR="$(COV_FLOOR)" MUTATION_FLOOR="$(MUTATION_FLOOR)" bash scripts/precheck.sh
 
 refresh: ## Fetch every catalogued source into the local lake
 	$(UV) run health-data-registry refresh --all
