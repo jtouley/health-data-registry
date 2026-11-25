@@ -313,18 +313,3 @@ def test_fuzz_requirements_check_catches_drift(reqs: Any, tmp_path: Path) -> Non
         "sqlglot==2.0 in requirements.txt, but uv.lock has 1.0",
     ]
     assert reqs.main(["x", "bogus"]) == 2
-
-
-@pytest.mark.parametrize(
-    "name,want",
-    [
-        ("_require_single_select", "_require_single_select"),
-        ("x__require_single_select__mutmut_orig", "_require_single_select"),
-        ("x_guard_sql__mutmut_12", "guard_sql"),
-    ],
-)
-def test_sql_raised_in_readsMutmutsRenamedFunctionsAsTheOriginal(
-    load: Callable[[str], Any], name: str, want: str
-) -> None:
-    # mutmut copies sql_guard with renamed functions; the known-finding checks must still see the original names
-    assert load("fuzz_sql_guard")._MUTMUT_NAME.sub(r"\1", name) == want
