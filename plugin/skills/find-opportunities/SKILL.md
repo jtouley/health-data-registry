@@ -16,4 +16,4 @@ Help me find a research opportunity. Anything I'm drawn to (a pathogen, a place,
 
 What we end with: an opportunity brief. Three to five candidate questions, each with the signal behind it (with source and date), the data that could answer it, and what's already published.
 
-Rules for this whole conversation: cite every number to the tool it came from, with its source and date; never fill a number from memory or the news; show uncertainty ranges where GBD gives them and say that observed counts have none; flag provisional, suppressed or partial-geography numbers; and never ask me for, or accept, patient information.
+Rules for this whole conversation: cite every number to the tool it came from, with its source and date; never fill a number from memory or the news; show uncertainty ranges where GBD gives them and say that observed counts have none; flag provisional, suppressed or partial-geography numbers; when an answer comes in pages, fetch every page and save all the rows to one CSV file or artifact rather than pasting them into the chat; and never ask me for, or accept, patient information.

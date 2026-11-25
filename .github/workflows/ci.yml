@@ -139,11 +139,14 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # Mutation tests run in shards, one job per changed module, so a pull request that touches most modules
-  # (the first one added about 13,800 mutants) finishes; a single job did not within 120 minutes. The last job
-  # applies the floor (70%) to the summed counts and fails closed: every mutant not killed (no tests and
-  # skipped included) lowers the score, and a shard whose baseline failed, whose run left mutants unchecked, or
-  # that left no report fails the check. A clean shard with no mutable function has nothing to mutate.
+  # Mutation tests run in shards, so a pull request that touches most modules (the first one added about 13,800
+  # mutants) finishes; a single job did not within 120 minutes. Each changed module is one shard, or, when its
+  # estimated mutants exceed a shard's size, several (`<module>#<k>of<n>`, split by function, and a big function
+  # by the last digit of its mutant numbers; see scripts/mutate_changed.py). The last job applies the floor (70%)
+  # to the summed counts and fails closed: every mutant not killed (no tests and skipped included) lowers the
+  # score, and a shard whose baseline failed, whose run left mutants unchecked, whose module has a mutant no shard
+  # covers, or that left no report fails the check, as does a module only some of whose shards were expected. A
+  # clean shard with no mutable function has nothing to mutate.
   # They run on pull requests and on pushes to pre-pr/** (the gate must check what the PR will), not on main.
   mutation-list:
     name: Mutation tests (list changed modules)
@@ -157,8 +160,14 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      # Only the modules this change touches (spec: mutation tests on changed functions). The script uses the
-      # standard library only and rejects any name that is not a plain module name. A pull request compares with
+      # The same pinned Python as the shards: the split comes from ast, and each shard refuses a split hash that
+      # differs from the one listed here. The script needs only the standard library, so no project install.
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      # Only the modules this change touches (spec: mutation tests on changed functions), as shard ids. The script
+      # uses the standard library only (the split reads each module's source with ast) and rejects any name that
+      # is not a plain module name or `<module>#<k>of<n>@<split hash>`. A pull request compares with
       # its base branch; a push to pre-pr/** has no base_ref and compares with main, the branch its PR will
       # target. fetch-depth 0 above fetched every branch, so origin/<base> exists; fail if it does not.
       - name: List changed modules
@@ -170,8 +179,8 @@ jobs:
             echo "The base branch origin/${BASE_REF} was not fetched, so the changed modules are unknown. Failing."
             exit 1
           fi
-          modules="$(python3 scripts/mutate_changed.py --list --base "origin/${BASE_REF}")"
-          echo "Changed modules: ${modules}"
+          modules="$(uv run --no-project python scripts/mutate_changed.py --list --base "origin/${BASE_REF}")"
+          echo "Shards of the changed modules: ${modules}"
           echo "modules=${modules}" >> "$GITHUB_OUTPUT"
 
   mutation:
@@ -181,11 +190,13 @@ jobs:
       (github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pre-pr/'))
       && needs.mutation-list.outputs.modules != '[]'
     runs-on: ubuntu-latest
-    # Measured 25 Nov 2026 on 4 cores: the largest modules are analysis.py (2,022 mutants) and tools.py (1,723);
-    # query.py has 1,205 and helpers.py under 700. Setup took about 6 minutes and mutants ran at about 200 a
-    # minute, so the largest shard needs about 17 minutes; 60 leaves room for slower runners. A shard that hits
-    # the limit leaves no report and fails the check; split the module if that happens.
-    timeout-minutes: 60
+    # A shard holds about 500 estimated mutants (150 for registry.py, whose mutants run most of the suite each):
+    # measured 25 Nov 2026 (PR #49), setup took 3.5 to 6.5 minutes and mutants ran at 54 to 145 a minute (13 for
+    # registry.py), so a shard needs about 10 to 20 minutes. 40 is twice the slowest expected shard: it stops a
+    # hung baseline or stats run (mutmut gives those no timeout of its own) within 40 minutes instead of holding
+    # runners. A shard that hits it leaves no report and fails the check; lower its module's target in
+    # scripts/mutate_changed.py rather than raising this.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -199,7 +210,10 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies (locked)
         run: uv sync --locked
-      - name: Mutation tests on one module
+      # MODULE is a shard id (a module, or `<module>#<k>of<n>@<split hash>`); it is always quoted, and `#` and `@`
+      # are valid in the report's file name and the artifact's name. The shard refuses a split hash that differs
+      # from its own split of the source.
+      - name: Mutation tests on one shard
         env:
           MODULE: ${{ matrix.module }}
         run: uv run python scripts/mutate_changed.py --module "${MODULE}" --report "mutation-report/${MODULE}.json"

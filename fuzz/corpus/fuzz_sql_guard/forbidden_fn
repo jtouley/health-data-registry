@@ -1,0 +1,1 @@
+SELECT getenv('HOME'), current_setting('threads') FROM deaths

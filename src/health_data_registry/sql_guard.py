@@ -191,6 +191,7 @@ def guard_sql(
     declared_joins: frozenset[frozenset[str]] = frozenset(),
     max_rows: int = 5000,
     non_additive: Mapping[str, frozenset[str]] | None = None,
+    ordered: bool = False,
 ) -> GuardedQuery:
     """Check ``sql`` and return the SQL that may run.
 
@@ -203,6 +204,9 @@ def guard_sql(
         non_additive: catalogued table name -> the columns whose values overlap or count different things
             (the semantic model's non_additive dimensions). A sum over such a table must filter each of them
             to one value or group by it, the same rule the metric compiler applies (hard rule 2).
+        ordered: give the outer query a total order, so the rows and the rows the LIMIT keeps come in the same
+            order on every run (answers cut into pages need that): ``ORDER BY ALL`` when it has no ORDER BY, and
+            otherwise every output column after its own keys as tie-breakers.
 
     Raises:
         SqlRefused: anything outside the read-only shape, with a plain-language reason.
@@ -227,12 +231,40 @@ def guard_sql(
         _check_joins(scope, tables, joins)
         _check_sums(scope, tables, loose)
     limit = _apply_limit(tree, max_rows)
+    if ordered:
+        _total_order(tree)
 
     for node in tree.walk():
         node.comments = None  # the generated SQL carries no caller text outside literals and names
     generated = tree.sql(dialect=_DIALECT)
     _require_single_select(generated)
     return GuardedQuery(sql=generated, tables=frozenset(used), limit=limit)
+
+
+def _total_order(tree: exp.Query) -> None:
+    """Make the outer ORDER BY a total order, so ties never come back in a different order on another run.
+
+    No ORDER BY: ``ORDER BY ALL``. An ORDER BY of its own (which may have ties, e.g. ``ORDER BY year`` over many
+    places): its keys first, then every output column by position, or, when the select list has a star, every
+    input column (``COLUMNS(*)``), which decides every output column.
+    """
+    order = tree.args.get("order")
+    if order is None:
+        tree.set("order", exp.Order(expressions=[exp.Ordered(this=exp.var("ALL"), nulls_first=False)]))
+        return
+    if any(isinstance(o.this, exp.Var) and o.this.name.upper() == "ALL" for o in order.expressions):
+        return  # already total
+    selects = tree.selects
+    if any(
+        isinstance(e, exp.Star) or (isinstance(e, exp.Column) and isinstance(e.this, exp.Star))
+        for e in selects
+    ):
+        if isinstance(tree, exp.Select):
+            star = exp.Anonymous(this="COLUMNS", expressions=[exp.Star()])
+            order.append("expressions", exp.Ordered(this=star, nulls_first=False))
+        return  # a set operation over a star: its own order stands (its output columns can't be counted here)
+    for i in range(1, len(selects) + 1):
+        order.append("expressions", exp.Ordered(this=exp.Literal.number(i), nulls_first=False))
 
 
 def _parse(sql: str) -> exp.Query:
