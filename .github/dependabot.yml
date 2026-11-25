@@ -24,3 +24,13 @@ updates:
       python-major:
         applies-to: version-updates
         update-types: ["major"]
+
+  # The Space's base images (space/Dockerfile) are pinned by digest; Dependabot bumps tag and digest together.
+  - package-ecosystem: "docker"
+    directory: "/space"
+    schedule:
+      interval: "weekly"
+    groups:
+      docker:
+        applies-to: version-updates
+        patterns: ["*"]
