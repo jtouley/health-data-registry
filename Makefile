@@ -1,6 +1,6 @@
 # Developer and CI entry points. `make help` lists the targets.
 .DEFAULT_GOAL := help
-.PHONY: help install lint fmt typecheck test test-network mutate docs kit check refresh serve check-contracts eval hooks
+.PHONY: help install lint fmt typecheck test test-network mutate docs kit check refresh serve check-contracts eval hooks contracts transform
 
 UV ?= uv
 COV_FLOOR ?= 85
@@ -50,6 +50,14 @@ refresh: ## Fetch every catalogued source into the local lake
 
 serve: ## Run the MCP server locally
 	$(UV) run health-data-registry serve
+
+contracts: ## Regenerate transform/ staging models, raw sources and the MMWR calendar from contracts/
+	$(UV) run python -m health_data_registry.transform_gen
+
+transform: ## dbt build (staging, seeds, tests) on the synthetic fixtures in transform/fixtures, as CI runs it
+	$(UV) run python -m health_data_registry.transform_gen --check
+	HDR_RAW_RECORDS=fixtures/raw_records HDR_TRANSFORM_DB=target/ci.duckdb DBT_SEND_ANONYMOUS_USAGE_STATS=false \
+		$(UV) run --directory transform dbt build --profiles-dir . --project-dir .
 
 check-contracts: ## Check every source against its ODCS contract
 	$(UV) run health-data-registry check-contracts

@@ -1,29 +1,27 @@
-"""Contract-driven staging (silver): one generic step from raw publisher records to a typed table.
+"""Contract-driven staging: the one typed projection from raw publisher records, read only from the contract.
 
-The layers follow sources -> staging -> marts -> metrics:
+The layers follow sources -> staging -> intermediate -> marts (the dbt project in transform/):
 
-    raw      the publisher's bytes, kept by sha256 (store.write_raw); an adapter only fetches and parses them
-             into records keyed by the publisher's own field names, every value as published text
-    silver   this module: one table per dataset whose every column, type, code list and derived flag comes
-             from the dataset's ODCS contract and from nothing else. There is no staging code per source.
-    metrics  semantic/<id>.yaml, compiled by query.py over silver
+    raw           the publisher's bytes, kept by sha256 (store.write_raw); an adapter only fetches and parses them
+                  into records keyed by the publisher's own field names, every value as published text
+    staging       this module: rename, type, blank the codebook's missing codes. Nothing per source. The dbt
+                  staging models are generated from the same projection (transform_gen.py), so the lake, the
+                  live in-memory table and dbt type every column the same way
+    intermediate  business rules (total rows, renamed labels, partial places, conformed keys), in dbt
+    marts         dimensions and one fact per source, in dbt; metrics read them
 
 What staging applies, and the contract property each comes from:
 
-    column names           schema.properties[].name, read from customProperties.sourceField
-    logical, physical type  logicalType and physicalType (a count with a fraction stops the load)
-    missing-value codes    customProperties.missingCodes become NULL (never on a flag column: hard rule 4)
-    required columns       required: true; an empty value stops the load
-    code lists             customProperties.flagCodes; a code the contract doesn't list is reported, never changed
-    total rows             schema customProperties.totalRows becomes the boolean column is_total_row. Total rows
-                           stay in silver, because some metrics read the publisher's own margins; aggregation
-                           excludes them (hard rule 2)
-    renamedLabels          <column>__label: both names of a renamed label read as the contract's earlier label
-    partialPlaces          <column>__partial_note: the contract's note for a place that covers only part of the
-                           place it is named after, else empty
+    column names          schema.properties[].name, read from customProperties.sourceField
+    types                 physicalType, which must agree with logicalType (registry.LOGICAL_TYPES); a count with a
+                          fraction stops the load instead of becoming a different count
+    missing-value codes   customProperties.missingCodes become NULL (never on a flag column: hard rule 4)
+    required columns      required: true; an empty value stops the load
+    code lists            customProperties.flagCodes; a code the contract doesn't list is kept as published and
+                          reported, so every answer from the table says so
 
-Nothing else changes a value. The column descriptions and the contract's code lists travel with silver as
-DuckDB comments and as Parquet key-value metadata (SILVER_METADATA_KEY), so they reach the hub copy too.
+The column descriptions and code lists travel with the table as DuckDB comments and as Parquet key-value
+metadata (SILVER_METADATA_KEY), so the hub copy carries them too.
 """
 
 from __future__ import annotations
@@ -35,27 +33,21 @@ from typing import Any
 
 import duckdb
 
-from health_data_registry.registry import RESERVED_COLUMN, Column, Contract, label_key
+from health_data_registry.registry import Contract
 
-TOTAL_ROW = RESERVED_COLUMN
-LABEL_SUFFIX = "__label"
-PARTIAL_SUFFIX = "__partial_note"
 SILVER_METADATA_KEY = "health_data_registry.silver"
 SILVER_LAYOUT_VERSION = "1"
 
 
 @dataclass(frozen=True)
 class SilverColumn:
-    """One column of a silver table, every field read from the contract."""
+    """One typed column, every field read from the contract."""
 
     name: str
     physical_type: str
     logical_type: str
     description: str
-    # The contract property a derived column comes from (totalRows, renamedLabels, partialPlaces); None for a
-    # column the contract declares itself.
-    derived_from: str | None = None
-    source_column: str | None = None
+    source_field: str
     unit: str | None = None
     codes: tuple[str, ...] = ()
     missing_codes: tuple[str, ...] = ()
@@ -63,10 +55,9 @@ class SilverColumn:
 
 @dataclass(frozen=True)
 class StagingReport:
-    """What one staging run found: rows, total rows, and codes the contract doesn't list (column -> codes)."""
+    """What one staging run found: its rows, and codes the contract doesn't list (column -> codes)."""
 
     row_count: int
-    total_row_count: int
     unlisted_codes: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     def notes(self) -> list[str]:
@@ -82,7 +73,6 @@ class StagingReport:
         return {
             "layout_version": SILVER_LAYOUT_VERSION,
             "row_count": self.row_count,
-            "total_row_count": self.total_row_count,
             "unlisted_codes": {k: list(v) for k, v in sorted(self.unlisted_codes.items())},
         }
 
@@ -96,63 +86,20 @@ def _lit(value: str) -> str:
 
 
 def silver_schema(contract: Contract) -> tuple[SilverColumn, ...]:
-    """The silver table's columns in order: the contract's own, then those derived from its properties."""
-    cols = [
+    """The typed table's columns, in contract order."""
+    return tuple(
         SilverColumn(
             name=c.name,
             physical_type=c.physical_type,
             logical_type=c.logical_type,
             description=c.description,
+            source_field=c.source_field,
             unit=c.unit,
             codes=tuple(code for code, _meaning in c.flag_codes),
             missing_codes=c.missing_codes,
         )
         for c in contract.columns
-    ]
-    cols.append(
-        SilverColumn(
-            name=TOTAL_ROW,
-            physical_type="BOOLEAN",
-            logical_type="boolean",
-            description=(
-                "True on the publisher's total and summary rows (the contract's totalRows), which are never "
-                "added to the rows they sum."
-                if contract.total_rows
-                else "Always false: the contract declares that this table has no total rows."
-            ),
-            derived_from="totalRows",
-        )
     )
-    for c in contract.columns:
-        if c.renamed_labels:
-            cols.append(
-                SilverColumn(
-                    name=c.name + LABEL_SUFFIX,
-                    physical_type="VARCHAR",
-                    logical_type="string",
-                    description=f"{c.name} with each renamed label shown as the earlier label it continues "
-                    "(the contract's renamedLabels), so every year of that place or condition reads the same.",
-                    derived_from="renamedLabels",
-                    source_column=c.name,
-                )
-            )
-        if c.partial_places:
-            cols.append(
-                SilverColumn(
-                    name=c.name + PARTIAL_SUFFIX,
-                    physical_type="VARCHAR",
-                    logical_type="string",
-                    description=f"Why the {c.name} label covers only part of the place it is named after (the "
-                    "contract's partialPlaces); empty for a whole place.",
-                    derived_from="partialPlaces",
-                    source_column=c.name,
-                )
-            )
-    return tuple(cols)
-
-
-def silver_column_names(contract: Contract) -> tuple[str, ...]:
-    return tuple(c.name for c in silver_schema(contract))
 
 
 def typed_select(contract: Contract) -> str:
@@ -182,52 +129,16 @@ def typed_select(contract: Contract) -> str:
     return ",\n  ".join(parts)
 
 
-def _key_sql(col: str) -> str:
-    """SQL for registry.label_key: upper case, edge spaces trimmed, dots removed."""
-    return f"regexp_replace(upper(trim({_q(col)})), '[.]', '', 'g')"
-
-
-def _label_sql(c: Column) -> str:
-    names = {label_key(x): earlier for later, earlier in c.renamed_labels for x in (later, earlier)}
-    whens = " ".join(f"WHEN {_lit(k)} THEN {_lit(v)}" for k, v in names.items())
-    return f"CASE {_key_sql(c.name)} {whens} ELSE {_q(c.name)} END"
-
-
-def _partial_sql(c: Column) -> str:
-    notes = {label_key(k): v for k, v in c.partial_places}
-    other = _lit(notes.pop("*")) if "*" in notes else "NULL"
-    col = _q(c.name)
-    if not notes:
-        return f"CASE WHEN {col} IS NULL THEN NULL ELSE {other} END"
-    whens = " ".join(f"WHEN {_lit(k)} THEN {_lit(v)}" for k, v in notes.items())
-    return f"CASE WHEN {col} IS NULL THEN NULL ELSE CASE {_key_sql(c.name)} {whens} ELSE {other} END END"
-
-
-def stage_sql(contract: Contract, source: str) -> str:
-    """One SELECT that turns raw records (`source`, a relation of text fields) into the silver table."""
-    derived = [f"coalesce(({contract.total_rows}), false)" if contract.total_rows else "false"]
-    derived[0] += f" AS {_q(TOTAL_ROW)}"
-    for c in contract.columns:
-        if c.renamed_labels:
-            derived.append(f"{_label_sql(c)} AS {_q(c.name + LABEL_SUFFIX)}")
-        if c.partial_places:
-            derived.append(f"{_partial_sql(c)} AS {_q(c.name + PARTIAL_SUFFIX)}")
-    return (
-        f"WITH typed AS (SELECT\n  {typed_select(contract)}\nFROM {source})\n"  # noqa: S608 - quoted contract identifiers
-        f"SELECT typed.*, {', '.join(derived)} FROM typed"
-    )
-
-
 def stage(
     con: duckdb.DuckDBPyConnection, contract: Contract, source: str, *, table: str, temp: bool = False
 ) -> StagingReport:
-    """Build the silver table `table` from `source` and check it against the contract.
+    """Build the typed table `table` from `source` (a relation of text fields) and check it against the contract.
 
-    A required column with an empty value stops the load (the layout doesn't match the contract). A flag code
-    the contract doesn't list is kept as published and reported, so answers can say so.
+    A required column with an empty value stops the load: the layout doesn't match the contract. A flag code the
+    contract doesn't list is kept as published and reported.
     """
     kind = "TEMP TABLE" if temp else "TABLE"
-    con.execute(f"CREATE {kind} {_q(table)} AS {stage_sql(contract, source)}")
+    con.execute(f"CREATE {kind} {_q(table)} AS SELECT\n  {typed_select(contract)}\nFROM {source}")  # noqa: S608 - quoted contract identifiers
     for c in contract.columns:
         if c.required:
             row = con.execute(f"SELECT count(*) FROM {_q(table)} WHERE {_q(c.name)} IS NULL").fetchone()  # noqa: S608 - quoted contract identifiers
@@ -247,28 +158,24 @@ def stage(
         ).fetchall()
         if rows:
             unlisted[c.name] = tuple(str(r[0]) for r in rows)
-    counts = con.execute(
-        f"SELECT count(*), count(*) FILTER (WHERE {_q(TOTAL_ROW)}) FROM {_q(table)}"  # noqa: S608 - quoted identifiers
-    ).fetchone() or (0, 0)
+    row = con.execute(f"SELECT count(*) FROM {_q(table)}").fetchone()  # noqa: S608 - quoted identifier
     if not temp:
         _comment(con, contract, table)
-    return StagingReport(
-        row_count=int(counts[0]), total_row_count=int(counts[1] or 0), unlisted_codes=unlisted
-    )
+    return StagingReport(row_count=int(row[0]) if row else 0, unlisted_codes=unlisted)
 
 
 def _comment(con: duckdb.DuckDBPyConnection, contract: Contract, table: str) -> None:
-    """Carry the contract's descriptions into the DuckDB file, where `describe` tools and people can read them."""
+    """Carry the contract's descriptions into the DuckDB file, where tools and people can read them."""
     schema = (contract.raw.get("schema") or [{}])[0]
     desc = str(schema.get("description") or "").strip()
     if desc:
         con.execute(f"COMMENT ON TABLE {_q(table)} IS {_lit(desc)}")
-    for c in silver_schema(contract):
+    for c in contract.columns:
         con.execute(f"COMMENT ON COLUMN {_q(table)}.{_q(c.name)} IS {_lit(c.description)}")
 
 
 def silver_metadata(contract: Contract) -> str:
-    """The silver layout as JSON, written into the Parquet file so a hub copy carries its contract facts."""
+    """The typed layout as JSON, written into the Parquet file so a hub copy carries its contract facts."""
     return json.dumps(
         {
             "layout_version": SILVER_LAYOUT_VERSION,

@@ -40,6 +40,14 @@ dev = [
     "ruff>=0.6",
     "types-PyYAML>=6",
 ]
+# dbt on DuckDB for the transform/ project (raw -> staging -> intermediate -> marts). Not a server dependency:
+# the MCP server only reads what the build produces.
+transform = [
+    "dbt-duckdb>=1.9,<2",
+]
+
+[tool.uv]
+default-groups = ["dev", "transform"]
 
 [build-system]
 requires = ["hatchling"]

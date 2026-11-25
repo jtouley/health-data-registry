@@ -8,6 +8,9 @@ Layout under the lake root ($HDR_LAKE, default ./lake), partitioned by source an
         data.duckdb                      the same table, attached read-only by the server
         manifest.json                    provenance: URLs, retrieved_at, sha256s, contract version
     datasets/<id>/LATEST                 the snapshot_id the server reads
+    raw_records/<id>/<snapshot_id>.ndjson
+                                         the parsed publisher records (every value as published text) that the
+                                         dbt staging models in transform/ read; full loads only, never partial
     fetch_log/source=<id>/run_date=<YYYY-MM-DD>.jsonl
                                          one row per fetch attempt, ok or error: URL, time, status, bytes,
                                          sha256 and the error in plain words
@@ -16,10 +19,9 @@ A snapshot directory is never overwritten: its id is the fetch time plus a hash 
 contract and semantic versions, so the same id always means the same inputs. Snapshots written before the
 run-date partition (datasets/<id>/<snapshot_id>/) are still read.
 
-The snapshot table is the silver layer, built by the one generic, contract-driven staging step
-(staging.py): rename each publisher field to its column, turn the codebook's missing codes into NULL, cast
-to the declared type, mark total rows and carry renamed labels and partial places. Nothing else changes a
-value. Flag columns are never missing-coded (the registry refuses it): the publisher's flags are kept as
+The snapshot table is built by the one generic, contract-driven staging step (staging.py), the same
+projection the dbt staging models are generated from: rename each publisher field to its column, turn the
+codebook's missing codes into NULL, cast to the declared type. Nothing else changes a value. Flag columns are never missing-coded (the registry refuses it): the publisher's flags are kept as
 published.
 """
 
@@ -234,8 +236,25 @@ def build_snapshot(
     finally:
         if tmp.exists():
             shutil.rmtree(tmp, ignore_errors=True)
+    if not partial:
+        keep_raw_records(lake, ds.id, snapshot_id, records_files)
     _point_latest(lake, ds.id, snapshot_id)
     return manifest
+
+
+def keep_raw_records(lake: Path, dataset_id: str, snapshot_id: str, records_files: Sequence[Path]) -> Path:
+    """Keep one load's parsed records where the dbt staging models read them; written once, never rewritten."""
+    target = lake / "raw_records" / dataset_id / f"{snapshot_id}.ndjson"
+    if target.is_file():
+        return target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    with tmp.open("wb") as out:
+        for p in records_files:
+            with p.open("rb") as fh:
+                shutil.copyfileobj(fh, out)
+    os.replace(tmp, target)
+    return target
 
 
 def _point_latest(lake: Path, dataset_id: str, snapshot_id: str) -> None:

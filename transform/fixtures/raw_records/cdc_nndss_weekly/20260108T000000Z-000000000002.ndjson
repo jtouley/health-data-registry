@@ -1,0 +1,3 @@
+{"states": "MICHIGAN", "year": "2024", "week": "52", "label": "Legionellosis", "m1": "7.0", "m1_flag": null, "m2": "20", "m2_flag": null, "m3": "300", "m3_flag": null, "m4": "280", "m4_flag": null, "location1": "MICHIGAN", "location2": null, "sort_order": "1"}
+{"states": "Ohio", "year": "2025", "week": "53", "label": "Legionellosis", "m1": null, "m1_flag": "-", "m2": "15", "m2_flag": null, "m3": "410", "m3_flag": null, "m4": null, "m4_flag": "U", "location1": "Ohio", "location2": null, "sort_order": "2"}
+{"states": "US RESIDENTS", "year": "2024", "week": "52", "label": "Legionellosis", "m1": "7", "m1_flag": null, "m2": "20", "m2_flag": null, "m3": "300", "m3_flag": null, "m4": "280", "m4_flag": null, "location1": null, "location2": "US RESIDENTS", "sort_order": "3"}

@@ -1,0 +1,8 @@
+# One local DuckDB file; nothing here is a secret. HDR_TRANSFORM_DB moves it (default: target/transform.duckdb).
+health_data_registry:
+  target: local
+  outputs:
+    local:
+      type: duckdb
+      path: "{{ env_var('HDR_TRANSFORM_DB', 'target/transform.duckdb') }}"
+      threads: 4

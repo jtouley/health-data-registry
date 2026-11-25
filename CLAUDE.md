@@ -24,6 +24,8 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 | `make kit` | Build the Claude Projects kit into `dist/projects-kit/` ([docs/dev/distribution.md](docs/dev/distribution.md)) |
 | `make refresh` / `make serve` | Fetch every source into the lake / run the MCP server on stdio |
 | `make check-contracts` | Check each publisher still serves the fields its contract reads |
+| `make contracts` | Regenerate the dbt staging models, raw sources and MMWR calendar in `transform/` from `contracts/`; CI fails if the committed files differ |
+| `make transform` | `dbt build` (staging, seeds, tests) on the synthetic fixtures in `transform/fixtures/`, as CI runs it |
 | `make eval` | Verify the sealed sets; never run or read the held-out pool while developing |
 | `uv run health-data-registry refresh <id> [--max-rows N]` | One dataset; `--max-rows` marks the snapshot partial |
 | `uv run health-data-registry validate` | Cross-check every catalog entry, contract and semantic model |
@@ -86,7 +88,11 @@ src/health_data_registry/
   sql_guard.py    governed read-only SQL: one SELECT, allowlisted functions, declared joins only
   fetch.py        HTTPS-only fetcher to catalogued, publicly routable publisher hosts
   store.py        the lake ($HDR_LAKE, default ./lake): raw/<sha256>, datasets/<id>/run_date=<d>/<snapshot>/
-                  with data.parquet, data.duckdb and manifest.json, LATEST, fetch_log/
+                  with data.parquet, data.duckdb and manifest.json, LATEST, fetch_log/, and
+                  raw_records/<id>/<snapshot>.ndjson (parsed records that dbt staging reads)
+  staging.py      the one contract-driven typed projection (names, types, missing codes, required, code
+                  lists); the lake, the live read and the generated dbt staging models all use it
+  transform_gen.py  `make contracts`: writes transform/'s raw sources, staging models and MMWR calendar
   crawl.py        fetch one source into a lake (refresh, fetch, and run-time fetches)
   publish.py      export-public to the open data hub: cards, licence, manifest, pre-publish checks, tag
   hub.py          hosted read path: immutable hub release, sha256 and contract checks, bounded cache
@@ -99,6 +105,10 @@ catalog/          one reviewed YAML per dataset (6 sources: 5 infectious-disease
                   as the denominator; contracts all draft)
 contracts/        one ODCS v3.2.0 contract per dataset, and the ODPS data product
 semantic/         one dbt-style semantic model per dataset
+transform/        the dbt project on DuckDB (dbt-duckdb): models/staging/ generated from contracts/ (never edit),
+                  then intermediate (business rules, flag_* review queues) and marts (dims, one fact per
+                  source); seeds/ holds small reference code lists (FIPS, MMWR calendar), never data
+                  snapshots or owner decisions; fixtures/ holds synthetic raw records for CI
 eval/sealed/      held-out blind sets, hash-sealed, when present; don't read them while developing
 tests/            synthetic data only; tests/golden holds golden SQL; tests/integration the live `network` checks
 scripts/          mutate_changed.py, write_template.py (make docs, make kit)
@@ -213,6 +223,9 @@ Rules for every skill:
 Left out: DuckDB's duckdb-skills (rated 1; DuckDB's own docs are more useful), wshobson data-quality-frameworks
 (rated 2; the changes made with it were reverted), and HashiCorp terraform-style-guide (rated 1.5).
 
-Semantic models here are dbt-style YAML (MetricFlow concepts) without a dbt project, so the dbt skills apply to
-`semantic/`, to `registry.py`, which loads and cross-checks the models, and to `query.py`, which compiles their
-metrics to SQL.
+The transform layer is a real dbt project on DuckDB (`transform/`, owner decision of 25 Nov): raw → staging →
+intermediate → marts. Staging is generated from each ODCS contract (`make contracts`); it only types, dedupes on
+the contract's primary key and picks the latest raw load. Business rules live in intermediate models, and every
+contract quality rule becomes a named dbt test. The MCP server stays the read layer on top. The dbt skills apply
+to `transform/`, to `semantic/` (dbt-style metric YAML), to `registry.py`, which loads and cross-checks the
+models, and to `query.py`, which compiles their metrics to SQL.

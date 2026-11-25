@@ -75,6 +75,10 @@ flowchart LR
    `datasets/<id>/<snapshot_id>/`: `data.parquet`, `data.duckdb` and a `manifest.json` that lists the raw hashes, source URLs, `retrieved_at`, and the contract and semantic model versions. Snapshots live
    in the lake (`$HDR_LAKE`, default `./lake`, ignored by git) and, for redistributable sources, may be published to a public
    Hugging Face dataset ([ADR 0009](adr/0009-licences-decide-mirroring.md)).
+   The typed projection lives in one place (`staging.py`). The dbt project in `transform/` (dbt-duckdb) reads
+   the same full loads from `raw_records/<id>/<snapshot_id>.ndjson`: its staging models are generated from
+   the contracts by `make contracts` and only type, dedupe on the contract's primary key and keep the latest
+   load; business rules go in intermediate models and dimensions and one fact per source in marts.
 5. **DuckDB read-only views.** `store.py` builds views over the snapshot from the contract. Connections are
    read-only.
 6. **Tools.** `get_series`, `get_aligned_with_gbd` and the other tools compile semantic-model metrics to SQL over

@@ -88,6 +88,28 @@ jobs:
       - name: Tests with coverage
         run: make test
 
+  # The dbt project: staging models generated from contracts/ must be exactly what `make contracts` writes,
+  # then `dbt build` (models, seeds and tests) runs on the synthetic fixtures in transform/fixtures only.
+  transform:
+    name: Transform (dbt build on fixtures)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+      - name: Generated staging models reproduce from the contracts
+        run: |
+          make contracts
+          git diff --exit-code -- transform/
+      - name: dbt build on synthetic fixtures
+        run: make transform
+
   kit:
     name: Claude Projects kit
     runs-on: ubuntu-latest

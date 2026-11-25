@@ -1,0 +1,28 @@
+# The transform project: raw -> staging -> intermediate -> marts, on DuckDB (dbt-duckdb).
+# Staging is generated from contracts/ by `make contracts`; never edit models/staging/ by hand.
+name: health_data_registry
+version: "0.1.0"
+config-version: 2
+profile: health_data_registry
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+target-path: target
+clean-targets: [target, dbt_packages]
+
+# Raw records are read from HDR_RAW_RECORDS (default ../lake/raw_records: raw_records/<id>/<snapshot id>.ndjson);
+# CI points it at the synthetic fixtures in fixtures/raw_records.
+
+models:
+  health_data_registry:
+    # The contract's descriptions become DuckDB table and column comments, readable wherever the file goes.
+    +persist_docs: {relation: true, columns: true}
+    staging:
+      +materialized: table
+      +schema: staging
+
+seeds:
+  health_data_registry:
+    +schema: reference
