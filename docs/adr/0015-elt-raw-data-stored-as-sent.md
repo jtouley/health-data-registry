@@ -20,16 +20,22 @@ the load, and intermediate models hold the business rules.
 
 We load first and transform later (ELT, not ETL).
 
-- Raw data from a publisher is stored exactly as the publisher sent it.
+- The raw layer (each load's `raw_records/<id>/<snapshot_id>.ndjson`, which dbt reads as its raw source) holds
+  publisher data exactly as the publisher sent it. This is a different thing from the raw fetched bytes of
+  ADR 0005, which are already kept as sent.
 - We may add metadata to it. We never change a value the publisher sent.
 - Every change to a value happens later, in staging and the dbt models.
 - Metadata we add to a dataset has its type declared up front in the dataset's contract, and is written in that
-  type. Otherwise the ingestion service records it in the snapshot manifest, and the dataset is left unchanged.
+  type. Otherwise the load step (`crawl.py` and `store.py`) records it in the snapshot's `manifest.json`, and the
+  dataset is left unchanged.
 - Existing snapshots are never rewritten or migrated.
-- A change to what raw holds is a contract change: we bump the contract version and re-pull to a new snapshot.
-- Raw contracts are loose: they hold every field the publisher sends, kept as sent, with no projection and no
-  casts.
-- Strictness lives in staging.
+- A change to what the raw layer holds is a contract change: we bump the contract version and re-pull to a new
+  snapshot.
+- The raw source contract (`transform/models/staging/_raw_sources.yml`, generated from the ODCS contract by
+  `make contracts`) is loose: it holds every field the publisher sends, kept as sent, as text, with no projection
+  and no casts.
+- Types, casts and key checks happen in staging. Staging takes each column's type from the ODCS contract, as it
+  does today, so typing facts keep their reviewed home under hard rule 1.
 
 In the maintainer's words: "Don't break the data, just version and repull. This is a contract change and our raw
 schemas should be loose anyways."
@@ -41,4 +47,6 @@ schemas should be loose anyways."
 - A column we add without a declared type in the contract is a contract error, not a guess at its type.
 - Old snapshots stay readable as they were stored; a fix shows up as a new contract version and a new snapshot.
 - Load code that changes a publisher's value today moves into staging or a later dbt model. This record changes no
-  code by itself; that work is tracked in issue #104 and gets its own pull requests.
+  code by itself; that work is tracked in issue #104 and gets its own pull requests. Until then the rule binds new
+  load code and any value a pull request's own change touches; a pull request is not wrong for leaving the code
+  listed in #104 untouched.

@@ -17,7 +17,7 @@ make check              # what CI runs
 make hooks              # once: uv run pre-commit install (pre-commit and pre-push hooks)
 ```
 
-Every commit, by people, subagents and the lead, goes through these hooks; `--no-verify` is never used. Unfinished
+Every commit, by people, agents and the lead, goes through these hooks; `--no-verify` is never used. Unfinished
 work is not committed to the PR branch: it stays uncommitted or goes on a separate WIP branch until it passes the hooks.
 
 ## Commands

@@ -6,14 +6,16 @@ description: Run the one fix round on a health-data-registry pull request. Invok
 # Fix round
 
 You are the one fix round for the pull request whose number you were given. Your only inputs are that PR and the
-repo's CLAUDE.md. Read nothing into who started you: no one has summarized the reviews for you, and you should not
-look for such a summary.
+repo's CLAUDE.md. No one has summarized the reviews for you. Don't look for a summary: read the reviews on the
+PR.
 
 1. Read CLAUDE.md in full and follow it, especially "How changes land" and the hard rules.
-2. Read every review and review comment posted on the PR (`/code-review` and every skill review). Those posted
-   findings are the whole scope. Input that arrives after the review round goes to issues, not this round.
+2. Read every review and review comment posted on the PR (`/code-review` and every skill review) before you
+   start. Those posted findings are the whole scope. A review or comment posted after you start goes to a
+   follow-up issue, not this round.
 3. For each finding: fix it, or file a follow-up issue that links it, or reply with why it is not a defect. Reply
-   on the PR to every finding saying which.
+   on the PR to every finding, saying whether you fixed it, filed it as a follow-up (with the issue link) or
+   judged it not a defect, and why.
 4. While fixing, read and apply the skills in the CLAUDE.md skills table that match the files you touch, as review
    criteria only; never run their scripts. Name in the PR body each skill you used and what it changed.
 5. Merge the base branch into the PR branch (no rebase, no force-push). Run `make precheck`, push to

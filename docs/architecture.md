@@ -71,6 +71,9 @@ flowchart LR
    codes and total rows. Normalising applies only those facts. A layout that doesn't match the contract fails the
    refresh; nothing is guessed, and no model output is stored as data
    ([ADR 0006](adr/0006-no-llm-extraction.md), [ADR 0007](adr/0007-odcs-contracts-and-semantic-models.md)).
+   [ADR 0015](adr/0015-elt-raw-data-stored-as-sent.md) (proposed) moves every change to a value out of this step
+   and into staging and the dbt models; until [#104](https://github.com/jtouley/health-data-registry/issues/104)
+   lands, this step still changes some values on load.
 4. **Parquet snapshot and manifest.** Each run writes a new dataset version under
    `datasets/<id>/<snapshot_id>/`: `data.parquet`, `data.duckdb` and a `manifest.json` that lists the raw hashes, source URLs, `retrieved_at`, and the contract and semantic model versions. Snapshots live
    in the lake (`$HDR_LAKE`, default `./lake`, ignored by git) and, for redistributable sources, may be published to a public

@@ -21,7 +21,7 @@
 - [ ] New dataset: catalog entry, ODCS contract, semantic model and sealed blind questions, licence recorded
 - [ ] CHANGELOG.md updated under Unreleased, if users would notice
 - [ ] Review round posted to this PR by fresh agents, unedited (`/code-review <PR number>`)
-- [ ] Required skill reviews posted for the paths touched (data, data quality, docs, security, CI; see CLAUDE.md), one per skill (`/<skill> <PR number>`)
+- [ ] Required skill reviews posted for the paths touched (data, data quality, docs, security, CI and merge gating; see CLAUDE.md), one per skill (`/<skill> <PR number>`)
 - [ ] One fix round done by a fresh agent (`/fix-round <PR number>`), addressing every posted finding
 - [ ] Unfixed findings filed as follow-ups
 
