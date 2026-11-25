@@ -25,8 +25,9 @@ LIVE_TTL_S = 600.0  # how long parsed publisher records stay in memory; never wr
 
 
 def is_live(ds: Dataset) -> bool:
-    """A source whose terms forbid redistribution is served live only."""
-    return not ds.entry.licence.redistribution
+    """A source whose terms forbid redistribution is served live, unless it is kept in its own private store
+    (``hosting: private``, read through private.read_rows)."""
+    return ds.entry.tier == "live"
 
 
 def attribution(ds: Dataset) -> str:

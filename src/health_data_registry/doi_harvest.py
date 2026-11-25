@@ -12,12 +12,19 @@ Adding a conference is adding a catalog entry, its contract and semantic model; 
    structural filters), stopping early at ``--max-records``;
 2. looks the same DOIs up in OpenAlex and Europe PMC (unless ``--no-enrich``);
 3. merges the three answers into one row per DOI (adapters/doi_abstracts.merge), tags it with our fixed word
-   rules (research_tags.py), and upserts the rows into ``lake/private/<source>/year=<year>.jsonl``.
+   rules (research_tags.py), and writes the rows into ``lake/private/<source>/year=<year>.jsonl``: a run that
+   read the whole supplement replaces the year's rows (a DOI that left the supplement goes); a sample upserts.
+   When OpenAlex or Europe PMC couldn't be read, a stored row keeps what that API gave it on an earlier run
+   (a missing value never replaces a present one), so a degraded run never makes the store worse.
 
-Every response is kept hash-addressed in the lake (``raw/<sha256>``) and every attempt is a row in the fetch
-log (``fetch_log/source=<source>/``), so each row's ``raw_sha256`` and ``source_url`` lead back to the bytes it
-came from. robots.txt, each API's published rate limit and Retry-After are honoured (crawl.fetcher). Abstract
-text is stored only where its licence allows (``abstract_tier``); otherwise the row is metadata and a link.
+Every response is kept hash-addressed in the source's private area (``lake/private/<source>/raw/<sha256>``,
+owner-only, never the shared ``lake/raw/``: a response can carry text whose licence keeps it private), and every
+attempt is a row in the fetch log (``fetch_log/source=<source>/``). Each row records the provenance of every API
+that answered for it: ``source_url``/``raw_sha256``/``retrieved_at`` for the Crossref page that listed it, and
+``openalex_*`` and ``europepmc_*`` for the enriching answers, so each value leads back to the bytes it came from.
+robots.txt, each API's published rate limit and Retry-After are honoured (crawl.fetcher), and the time spent
+waiting out crawl delays is capped (CRAWL_DELAY_BUDGET_S). Abstract text is stored only where its licence allows
+(``abstract_tier``); otherwise the row is metadata and a link.
 
 It runs from the command line, the Python API or a workflow script, never inside the MCP server.
 """
@@ -41,9 +48,21 @@ from health_data_registry.registry import (
     Supplement,
     require_attribution,
 )
-from health_data_registry.store import FetchLog, RawFetch, write_raw
+from health_data_registry.store import FetchLog, RawFetch
 
 Getter = Callable[[str], RawFetch]
+# The most one harvest waits in total for crawl delays and rate limits: the largest catalogued supplement (about
+# 2,500 IDWeek abstracts) is about 100 Europe PMC batches at robots.txt's 10 s, plus Crossref's pages and OpenAlex
+# batches; an hour leaves room for that and stops a run that a huge Crawl-delay would otherwise stall.
+CRAWL_DELAY_BUDGET_S = 3600.0
+ENRICHERS: tuple[doi.ApiName, ...] = ("openalex", "europepmc")
+# Per enriching API, the row columns that record the answer a row's values came from (hard rule 8).
+PROVENANCE_COLUMNS: dict[str, tuple[str, str, str]] = {
+    api: (f"{api}_source_url", f"{api}_raw_sha256", f"{api}_retrieved_at") for api in ENRICHERS
+}
+# What a stored row keeps from an enriching API that couldn't be read this run.
+_TEXT_COLUMNS = ("abstract_text", "abstract_tier", "abstract_licence")
+_ID_COLUMNS = ("pubmed_pmid", "pmcid")
 # The columns every research-index row shares with the CROI index (croi_index.records on the CROI branch), so
 # all conferences land in one index: the abstract's id, year, title, authors as published, session, links and
 # our rule-based tags.
@@ -133,15 +152,15 @@ class HarvestSummary:
 
 
 class _Client:
-    """Wraps the getter: keeps every response's bytes in the lake and counts requests per API."""
+    """Wraps the getter: keeps every response's bytes in the source's private area and counts requests per API."""
 
-    def __init__(self, get: Getter, lake: Path, summary: HarvestSummary) -> None:
-        self.get, self.lake, self.summary = get, lake, summary
+    def __init__(self, get: Getter, lake: Path, ds: Dataset, summary: HarvestSummary) -> None:
+        self.get, self.lake, self.ds, self.summary = get, lake, ds, summary
 
     def __call__(self, api: str, url: str) -> tuple[bytes, Provenance]:
         self.summary.requests[api] = self.summary.requests.get(api, 0) + 1
         r = self.get(url)
-        write_raw(self.lake, [r])
+        private.write_raw_private(self.lake, self.ds, [r])
         when = r.retrieved_at.astimezone(UTC).isoformat(timespec="seconds")
         return r.content, Provenance(url=r.url, sha256=r.sha256, retrieved_at=when)
 
@@ -151,8 +170,18 @@ def _batches(items: Sequence[str], size: int) -> Iterable[list[str]]:
         yield list(items[i : i + size])
 
 
-def row(a: doi.Abstract, *, sup: Supplement, prov: Provenance, conference_name: str) -> dict[str, Any]:
+def row(
+    a: doi.Abstract,
+    *,
+    sup: Supplement,
+    prov: Provenance,
+    conference_name: str,
+    enriched: dict[str, Provenance] | None = None,
+) -> dict[str, Any]:
     """The research-index row for one merged abstract (the contract's columns, nothing else).
+
+    ``prov`` is the Crossref page that listed the DOI; ``enriched`` the OpenAlex and Europe PMC answers that gave
+    a record for it, each recorded in its own provenance columns.
 
     A CC BY or CC0 abstract is public only with full attribution (registry.require_attribution); one that lacks
     any attribution field is refused the public tier and its text stays private.
@@ -191,11 +220,46 @@ def row(a: doi.Abstract, *, sup: Supplement, prov: Provenance, conference_name: 
         "raw_sha256": prov.sha256,
         "retrieved_at": prov.retrieved_at,
     }
+    for api, (url_col, sha_col, when_col) in PROVENANCE_COLUMNS.items():
+        got = (enriched or {}).get(api) if api in a.apis else None
+        out[url_col] = got.url if got else None
+        out[sha_col] = got.sha256 if got else None
+        out[when_col] = got.retrieved_at if got else None
     if tier == "public":
         try:
             require_attribution(out, ROW_ATTRIBUTION)
         except AttributionMissing:
             out["abstract_tier"] = "private"
+    return out
+
+
+def keep_stored(
+    new: dict[str, Any], old: dict[str, Any] | None, *, sup: Supplement, missed: set[str]
+) -> dict[str, Any]:
+    """A new row, with what an API that couldn't be read this run (``missed``) gave the stored row kept: its
+    provenance, the PubMed ids and, unless the year is link only, the text with its tier and licence (taken
+    together, never mixed). A value the new row has always wins."""
+    if old is None or not missed:
+        return new
+    out = dict(new)
+    kept = [api for api in ENRICHERS if api in missed and old.get(PROVENANCE_COLUMNS[api][0])]
+    for api in kept:
+        for c in PROVENANCE_COLUMNS[api]:
+            out[c] = out.get(c) or old.get(c)
+    for c in _ID_COLUMNS:
+        out[c] = out.get(c) or old.get(c)
+    if (
+        out.get("abstract_text") is None
+        and old.get("abstract_text")
+        and sup.text_policy != "link_only"
+        and old.get("abstract_tier") in ("public", "private")
+    ):
+        for c in _TEXT_COLUMNS:
+            out[c] = old.get(c)
+        out.update(research_tags.tag_record(str(out["title"]), str(out["abstract_text"])))
+    apis = [a for a in doi.API_ORDER if a in str(out.get("metadata_sources") or "").split("; ") or a in kept]
+    out["metadata_sources"] = "; ".join(apis)
+    out["metadata_terms"] = "; ".join(doi.METADATA_TERMS[a] for a in apis)
     return out
 
 
@@ -221,9 +285,11 @@ def harvest(
         max_records = 1  # an unverified route is checked with one record, never harvested in full
     summary = HarvestSummary(source=ds.id, year=sup.year)
     if get is None:
-        robots = Robots(registry.hosts, budget_s=float("inf"), min_interval_s=doi.MIN_INTERVAL_S)
-        get = fetcher(registry, FetchLog(lake, ds.id), robots=robots)
-    client = _Client(get, lake, summary)
+        # Only this source's hosts: OpenAlex and Europe PMC are reachable from this fetcher alone.
+        hosts = ds.entry.source.hosts
+        robots = Robots(hosts, budget_s=CRAWL_DELAY_BUDGET_S, min_interval_s=doi.MIN_INTERVAL_S)
+        get = fetcher(registry, FetchLog(lake, ds.id), robots=robots, hosts=hosts)
+    client = _Client(get, lake, ds, summary)
 
     # 1. Crossref lists the supplement.
     listed: list[doi.ApiRecord] = []
@@ -250,6 +316,8 @@ def harvest(
 
     # 2. OpenAlex and Europe PMC for the same DOIs.
     found: list[doi.ApiRecord] = list(listed)
+    enriched: dict[str, dict[str, Provenance]] = {}  # DOI -> API -> the answer that gave its record
+    missed: set[str] = set() if enrich else set(ENRICHERS)
     if enrich and dois:
         # Crossref alone makes a row; an API that adds to it and can't be read now is noted, not fatal.
         enrichers = (
@@ -259,21 +327,40 @@ def harvest(
         for api, label, size, url_of, parse in enrichers:
             try:
                 for batch in _batches(dois, size):
-                    content, _ = client(api, url_of(batch))
-                    found += [r for r in parse(content) if r.doi in origin]
-            except (FetchRefused, RuntimeError) as e:
+                    content, prov = client(api, url_of(batch))
+                    for r in parse(content):
+                        if r.doi in origin:
+                            found.append(r)
+                            enriched.setdefault(r.doi, {})[api] = prov
+            except (FetchRefused, RuntimeError, doi.ApiLayoutError) as e:
                 why = e.message if isinstance(e, FetchRefused) else str(e)
-                summary.skipped.append(f"{label} could not be read ({why}); its fields are missing this run")
+                missed.add(api)
+                summary.skipped.append(
+                    f"{label} could not be read ({why}); stored rows keep what it gave them before"
+                )
 
     # 3. One row per DOI, into the private store.
     merged = doi.merge(found)
     name = ds.entry.source.conference_name or ds.entry.title
-    out = [row(a, sup=sup, prov=origin[d], conference_name=name) for d, a in merged.items()]
-    for r in out:
-        summary.tiers[r["abstract_tier"]] = summary.tiers.get(r["abstract_tier"], 0) + 1
-        lic = r["abstract_licence"] or "none given"
+    partition = f"year={sup.year}"
+    stored = private.stored_rows(lake, ds, partition) if missed else {}
+    out = [
+        keep_stored(
+            row(a, sup=sup, prov=origin[d], conference_name=name, enriched=enriched.get(d)),
+            stored.get((d,)),
+            sup=sup,
+            missed=missed,
+        )
+        for d, a in merged.items()
+    ]
+    for written in out:
+        summary.tiers[written["abstract_tier"]] = summary.tiers.get(written["abstract_tier"], 0) + 1
+        lic = written["abstract_licence"] or "none given"
         summary.licences[lic] = summary.licences.get(lic, 0) + 1
     summary.rows = len(out)
     if out:
-        summary.stored_rows = private.write_rows(lake, ds, f"year={sup.year}", out)
+        # A run that read the whole supplement replaces the year's rows; a sample only upserts.
+        summary.stored_rows = private.write_rows(
+            lake, ds, partition, out, complete=summary.complete, replace=summary.complete
+        )
     return summary

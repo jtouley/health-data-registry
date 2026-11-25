@@ -196,6 +196,35 @@ class Supplement(_Strict):
         return v
 
 
+# The reviewed list of what counts as a government host under the maintainer's access policy (robots.txt on such a
+# host does not stop the crawler; see crawl.Robots). One place in code: a catalog entry's `government_host: true`
+# is refused for any other host, so a typo or a copied entry can't switch robots.txt off for a commercial host.
+# Add a suffix or a domain only through review. (The same list as PR #19's registry, so the two merge as one.)
+GOVERNMENT_HOST_SUFFIXES: tuple[str, ...] = (
+    ".gov",  # US federal, state, county and city governments (.gov is restricted to US government bodies)
+    ".mil",
+    ".mi.us",  # Michigan state and local governments under the .us locality space
+    ".state.us",
+)
+# Government bodies whose own domain is not under one of the suffixes above: the named county domains of the
+# Detroit metropolitan area. michigan.gov and detroitmi.gov are listed for the record (they are .gov already).
+GOVERNMENT_DOMAINS: tuple[str, ...] = (
+    "michigan.gov",
+    "detroitmi.gov",
+    "waynecounty.com",  # Wayne County, Michigan
+    "oakgov.com",  # Oakland County, Michigan
+    "macombgov.org",  # Macomb County, Michigan
+)
+
+
+def is_government_host(host: str) -> bool:
+    """True when ``host`` is on the reviewed list of government suffixes and domains (see above)."""
+    h = host.lower().rstrip(".")
+    return h.endswith(GOVERNMENT_HOST_SUFFIXES) or any(
+        h == d or h.endswith("." + d) for d in GOVERNMENT_DOMAINS
+    )
+
+
 class Source(_Strict):
     portal: Literal["socrata", "who_gho", "https_csv", "croi", "doi"]
     host: str
@@ -211,6 +240,11 @@ class Source(_Strict):
     # doi only: the conference's short key (``harvest-doi <conference>``) and its name on every row.
     conference: str | None = None
     conference_name: str | None = None
+    # A government host (only a host on the reviewed list GOVERNMENT_HOST_SUFFIXES / GOVERNMENT_DOMAINS): by the
+    # maintainer's access policy a 401, 403 or 429 on its robots.txt does not stop the crawler (owner decision,
+    # 25 Nov 2026): the fetch goes ahead with the honest user agent and at least 10 s between requests, and the
+    # override is recorded. Default false: such an answer blocks the host for the run.
+    government_host: bool = False
 
     @field_validator("host")
     @classmethod
@@ -218,6 +252,11 @@ class Source(_Strict):
         if not re.fullmatch(r"[a-z0-9.-]+", v):
             raise ValueError("host must be a bare lower-case DNS name")
         return v
+
+    @property
+    def hosts(self) -> frozenset[str]:
+        """The hosts this one source is fetched from: its publisher host and, for a doi source, its enrich hosts."""
+        return frozenset((self.host, *self.enrich_hosts))
 
     @field_validator("enrich_hosts")
     @classmethod
@@ -238,6 +277,11 @@ class Source(_Strict):
     def _csv_only(self) -> Source:
         if self.portal != "https_csv" and (self.reshape is not None or self.encoding != "utf-8"):
             raise ValueError("encoding and reshape apply only to the https_csv portal")
+        if self.government_host and not is_government_host(self.host):
+            raise ValueError(
+                f"government_host is accepted only for hosts on the reviewed list of government suffixes and "
+                f"domains (registry.GOVERNMENT_HOST_SUFFIXES, GOVERNMENT_DOMAINS); {self.host} is not on it"
+            )
         doi_only = (self.supplements, self.enrich_hosts, self.conference, self.conference_name)
         if self.portal != "doi" and any(doi_only):
             raise ValueError("supplements, enrich_hosts and conference apply only to the doi portal")
@@ -833,9 +877,9 @@ class Registry:
 
     @property
     def hosts(self) -> frozenset[str]:
-        return frozenset(
-            h for d in self.datasets.values() for h in (d.entry.source.host, *d.entry.source.enrich_hosts)
-        )
+        """Every source's own publisher host: the allowlist of every fetcher but a DOI harvest's. A doi source's
+        enrich_hosts are left out, so they are reachable only from that harvest's fetcher (Source.hosts)."""
+        return frozenset(d.entry.source.host for d in self.datasets.values())
 
 
 def default_root() -> Path:

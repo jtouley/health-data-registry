@@ -505,7 +505,7 @@ def retry_after_seconds(value: str | None, *, now: datetime | None = None) -> fl
     if value is None:
         return None
     text = value.strip()
-    if text.isdigit():
+    if text.isascii() and text.isdigit():  # "²" or "٣" are digits to isdigit() but not to float()
         return float(text)
     try:
         when = parsedate_to_datetime(text)

@@ -113,9 +113,9 @@ def test_robots_statuses_raised_by_the_real_fetcher(monkeypatch: pytest.MonkeyPa
     rb = crawl.Robots(HOSTS)
     rb.wait_turn("https://data.cdc.gov/anything")  # 404: no rules
     with pytest.raises(fetch_mod.FetchRefused) as e:
-        rb.wait_turn("https://www2.census.gov/x.csv")  # 401: nothing allowed
-    assert e.value.code == "robots_disallowed"
-    for busy in (429, 503):
+        rb.wait_turn("https://www2.census.gov/x.csv")  # 401: the host is blocked for the run
+    assert e.value.code == "blocked" and e.value.status == 401
+    for busy in (503, 502):
         seen = fake(monkeypatch, {"data.cdc.gov": fetch_mod.FetchRefused("http_error", "busy", status=busy)})
         rb2 = crawl.Robots(HOSTS)
         rb2.wait_turn("https://data.cdc.gov/a")

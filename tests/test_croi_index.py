@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -141,7 +142,12 @@ def stored(lake: Path) -> dict[str, str]:
     out = {}
     for p in sorted((lake / "private").rglob("*")) + [croi_index.checkpoint_path(lake, YEAR)]:
         if p.is_file():
-            out[str(p.relative_to(lake))] = p.read_text(encoding="utf-8")
+            text = p.read_text(encoding="utf-8")
+            if p.name.endswith(
+                private.MANIFEST_SUFFIX
+            ):  # the write time differs between runs; the rest must not
+                text = re.sub(r'"written_at": "[^"]*"', '"written_at": "-"', text)
+            out[str(p.relative_to(lake))] = text
     return out
 
 
