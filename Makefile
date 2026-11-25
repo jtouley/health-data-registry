@@ -1,6 +1,6 @@
 # Developer and CI entry points. `make help` lists the targets.
 .DEFAULT_GOAL := help
-.PHONY: help install lint fmt typecheck test test-network smoke mutate docs kit fuzz-requirements check precheck refresh serve check-contracts eval hooks serve-http contracts transform
+.PHONY: help install lint fmt typecheck test test-network smoke mutate docs kit fuzz-requirements check precheck refresh serve check-contracts eval hooks serve-http contracts transform ratchet
 
 UV ?= uv
 COV_FLOOR ?= 85
@@ -48,6 +48,9 @@ kit: ## Build the Claude Projects kit into KIT_DIR (default dist/projects-kit, n
 
 fuzz-requirements: ## Regenerate fuzz/requirements.txt from uv.lock (hash-pinned, for the fuzz image's Python 3.11); needs PyPI
 	$(UV) run python scripts/fuzz_requirements.py write
+
+ratchet: ## The Trusted gate's ratchet on HEAD against BASE (default origin/main); required checks are checked in CI only
+	$(UV) run python -m health_data_registry.ratchet --base $(BASE) --head HEAD
 
 check: lint typecheck test mutate ## The quick local loop (not all of CI): lint, typecheck, test, mutation tests on changed modules
 

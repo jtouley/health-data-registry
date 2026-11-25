@@ -1,0 +1,14 @@
+# The trusted gate's allowlist (src/health_data_registry/ratchet.py; docs/dev/README.md#the-trusted-gate).
+#
+# A pull request that adds a skip, skipif or xfail mark, a test deselection, a no-cover or no-mutate pragma, a
+# mutmut exclusion, a type-ignore or noqa comment, an inline mypy setting, a ruff, mypy or coverage relaxation, a
+# new condition on a required job or step, or that removes a test, fails the Trusted gate unless the exact line is
+# listed here first. The gate's failure message prints the line to add.
+#
+# This file changes only in a pull request that changes nothing else, and the gate reads it from main: an entry
+# counts only once its own pull request has been through the review round and merged.
+#
+# One entry per line: <path> :: <the line, stripped of leading and trailing spaces>
+# A removed test is listed as: <path at the merge base> :: def <test name>
+# A new condition on a required job or step is listed as: <workflow path> :: if: <condition, spaces collapsed>
+# Say why in a comment above each entry.

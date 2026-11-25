@@ -50,6 +50,16 @@ One review round, one fix round, merge, then follow-ups. We don't get stuck in r
      main, counts; anything else runs the shards as usual. Every other check still runs on the PR.
    - Fix-round pushes follow the same path. Merging main into a branch is a change like any other: precheck, then
      pre-pr, then the PR branch.
+   - This can't be skipped. On GitHub, the PR-branch ruleset (`feat/**`, `fix/**`, `ci/**`, `docs/**`,
+     `transform/**`) requires the "CI result" check on a commit before any push may move such a branch to it, so a
+     red or unrun commit is refused; that server rule is the one that counts. Locally, the `pre-push` hook
+     (`make hooks`, `scripts/pre_push_gate.py`) refuses the same push early, and runs ruff, mypy and the changed
+     modules' tests before a pre-pr push.
+   - Every PR into main also has to pass the **Trusted gate**, run from main's copy, never the PR's: it fails a PR
+     that lowers a coverage or mutation floor, adds a skip, pragma, type-ignore, noqa or lint relaxation not in
+     `.github/ratchet-allowlist.txt`, drops tests, loosens a required check, touches `eval/sealed/` or bypasses the
+     hooks ([docs/dev/README.md](docs/dev/README.md#the-trusted-gate)). An allowlist entry lands first, in a PR
+     that changes nothing else.
 
    Every commit carries the required trailers, and the PR body names the skills used and what each changed.
    Every commit, by people, subagents and the lead, goes through the pre-commit hooks (`make hooks`); `--no-verify`
