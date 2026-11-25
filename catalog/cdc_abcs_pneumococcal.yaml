@@ -54,5 +54,4 @@ conditions:
 contract: contracts/cdc_abcs_pneumococcal.odcs.yaml
 semantic_model: semantic/cdc_abcs_pneumococcal.yaml
 status: draft
-# Private until a maintainer's reviewed catalog change says public.
-hosting: private
+hosting: public

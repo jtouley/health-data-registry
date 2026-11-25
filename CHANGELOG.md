@@ -41,7 +41,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
-- New source, draft and not yet hosted: `cdc_abcs_pneumococcal`, CDC's Active Bacterial Core surveillance figures
+- New source, draft (contract not yet reviewed): `cdc_abcs_pneumococcal`, CDC's Active Bacterial Core surveillance figures
   for invasive Streptococcus pneumoniae disease since 1997 (case and death rates, vaccine serotype-group rates,
   counts, syndromes and antibiotic resistance; data.cdc.gov en3s-hzsr), on the existing Socrata adapter. Every
   figure is for the ABCs surveillance areas, never called a national or state figure, and nothing is added.
