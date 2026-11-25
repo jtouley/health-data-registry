@@ -3,8 +3,11 @@
 -- Reporting areas only (summary rows such as TOTAL and the census divisions are left out), matched across years
 -- on states_key, so 'MINNESOTA' (through 2024) and 'Minnesota' (from 2025) are one area. A week with neither a
 -- count nor a flag is not '-' (coalesce), so it keeps the pair out of the queue.
+-- The area is shown as spelled in its latest published week; when one week has two spellings of the same area,
+-- the alphabetically last is shown. A total order, so two builds from the same snapshot give the same rows.
 select
-    arg_max(states, year) as states,
+    first(states order by year desc, week desc, states desc) as states,
+
     label,
     min(year) as first_year,
     max(year) as last_year,
