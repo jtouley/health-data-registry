@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Abstract questions (#166): `query_sql` now allows `SUM(CASE WHEN ... THEN 1 ELSE 0 END)` wherever it allows
+  `count_if`, since both count rows and add up no published value; a refused sum says so and names both. The
+  first question in a session no longer takes about a minute: a private or live table now loads into memory in
+  one statement instead of one per row (a 4,000-row conference year: 10 s to under half a second). Each caveat
+  line is printed once; a private source's caveats were printed twice.
 - A summed count never adds up labels that overlap or count different things (hard rule 2). Semantic-model
   dimensions say `non_additive: true` or `false`, and each `true` says why in plain words
   (`non_additive_reason`), which the refusal and `describe_dataset` show. A metric or series that neither picks

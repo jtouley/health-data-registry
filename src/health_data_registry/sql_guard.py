@@ -595,6 +595,32 @@ def _is_sum(node: exp.Expr) -> bool:
     )
 
 
+def _is_one_or_zero(node: exp.Expr | None) -> bool:
+    """A literal 1 or 0 (or NULL, or no ELSE): what a row adds to a count of the rows that match."""
+    if node is None or isinstance(node, exp.Null):
+        return True
+    return isinstance(node, exp.Literal) and not node.is_string and node.name in ("0", "1")
+
+
+def _counts_rows(node: exp.Expr) -> bool:
+    """Is this sum a count of rows, as count_if is: SUM(CASE WHEN ... THEN 1 ELSE 0 END) or SUM(IF(..., 1, 0))?
+
+    Every row adds 1 or 0, never a value from the table, so no published value is added to another. Hard rule 2
+    is about adding values up (a Total row's cases beside its parts); counting rows is what count(*) and count_if
+    already do on every table.
+    """
+    arg = node.this
+    while isinstance(arg, exp.Paren):
+        arg = arg.this
+    if isinstance(arg, exp.Case):  # CASE x WHEN ... too: only the branches' results are added
+        return all(
+            _is_one_or_zero(i.args.get("true")) for i in arg.args.get("ifs") or []
+        ) and _is_one_or_zero(arg.args.get("default"))
+    if isinstance(arg, exp.If):
+        return _is_one_or_zero(arg.args.get("true")) and _is_one_or_zero(arg.args.get("false"))
+    return False
+
+
 def _grouped_columns(select: exp.Select) -> set[tuple[str, str]]:
     """(qualifier, column) pairs a SELECT groups by: by column, output alias, position or GROUP BY ALL."""
     group = select.args.get("group")
@@ -633,7 +659,9 @@ def _check_sums(
     if not isinstance(select, exp.Select) or not loose:
         return
     sums = [
-        n for n in select.walk() if _is_sum(n) and n.find_ancestor(exp.Select, exp.SetOperation) is select
+        n
+        for n in select.walk()
+        if _is_sum(n) and n.find_ancestor(exp.Select, exp.SetOperation) is select and not _counts_rows(n)
     ]
     if not sums:
         return
@@ -667,7 +695,9 @@ def _check_sums(
                     f"This query adds up {source.name} across {', '.join(missing)}, whose values overlap or "
                     "count different things (a Total row beside its parts, or different conditions), so the "
                     "sum would count the same cases twice or mix different things. Filter each of them to one "
-                    "value in WHERE, or add it to GROUP BY to get one row per value.",
+                    "value in WHERE, or add it to GROUP BY to get one row per value. To count the rows that "
+                    "match a condition, use count_if(condition) or SUM(CASE WHEN condition THEN 1 ELSE 0 END): "
+                    "each counts rows and adds up no value, so either is allowed.",
                 )
 
 

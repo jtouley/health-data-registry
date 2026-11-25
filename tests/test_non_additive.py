@@ -422,6 +422,43 @@ def test_query_sql_refuses_a_sum_it_cant_trace(sql: str) -> None:
     assert e.value.code == "non_additive"
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT count_if(m1 > 0) FROM t",
+        "SELECT sum(CASE WHEN m1 > 0 THEN 1 ELSE 0 END) FROM t",
+        "SELECT sum(CASE WHEN m1 > 0 THEN 1 END) FROM t",
+        "SELECT sum(CASE WHEN m1 > 0 THEN 1 WHEN m1 < 0 THEN 0 ELSE NULL END) FROM t",
+        "SELECT sum((CASE WHEN m1 > 0 THEN 1 ELSE 0 END)) FROM t",
+        "SELECT sum(IF(m1 > 0, 1, 0)) FROM t",
+        "SELECT year, sum(CASE WHEN label = 'a' THEN 1 ELSE 0 END) FROM t GROUP BY year",
+        "SELECT sum(CASE WHEN m1 > 0 THEN 1 ELSE 0 END) OVER (PARTITION BY year) FROM t",
+    ],
+)
+def test_query_sql_counts_rows_with_a_sum_of_ones_as_it_does_with_count_if(sql: str) -> None:
+    """A sum of 1 or 0 per row counts rows, as count_if does: it adds up no value the publisher sent (#166)."""
+    assert _guard(sql)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT sum(CASE WHEN m1 > 0 THEN m1 ELSE 0 END) FROM t",
+        "SELECT sum(CASE WHEN m1 > 0 THEN 1 ELSE m1 END) FROM t",
+        "SELECT sum(CASE WHEN m1 > 0 THEN 2 ELSE 0 END) FROM t",
+        "SELECT sum(CASE WHEN m1 > 0 THEN 1 ELSE 0 END * m1) FROM t",
+        "SELECT sum(IF(m1 > 0, m1, 0)) FROM t",
+        "SELECT sum(CASE WHEN m1 > 0 THEN '1' ELSE '0' END) FROM t",
+    ],
+)
+def test_query_sql_still_refuses_a_conditional_sum_of_values(sql: str) -> None:
+    with pytest.raises(SqlRefused) as e:
+        _guard(sql)
+    assert e.value.code == "non_additive"
+    # The refusal says why counting rows is different, so count_if passing isn't a surprise (#166).
+    assert "count_if" in e.value.message and "counts rows" in e.value.message
+
+
 def test_query_sql_without_flags_is_unchanged() -> None:
     assert guard_sql("SELECT sum(m1) FROM t", allowed_tables=TABLES).sql
 

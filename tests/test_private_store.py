@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from health_data_registry import doi_harvest, naming, private, research_tags
+from health_data_registry import doi_harvest, naming, private, research_tags, tools
 from health_data_registry.adapters import doi_abstracts as doi
 from health_data_registry.query import Engine, QueryRefused
 from health_data_registry.registry import Registry, load_registry
@@ -314,6 +314,88 @@ def test_the_read_path_serves_private_sources_from_their_store(reg: Registry, tm
     assert out["rows"] == [[DOI_A, "2025"]] or out["rows"] == [[DOI_A, 2025]]
     assert any("Licence:" in c for c in out["caveats"])
     assert eng.provenance(ds.id)["data_from"].startswith("the source's private store, version private-")
+
+
+def _store(reg: Registry, lake: Path, source: str = "idweek_abstracts", n: int = 3) -> Engine:
+    ds = reg.get(source)
+    rows = [
+        a_row(f"10.1093/ofid/ofaf695.{i:03d}", condition_tags="sepsis" if i % 2 else "") for i in range(n)
+    ]
+    private.write_rows(lake, ds, "year=2025", rows, complete=True)
+    return Engine(registry=reg, lake=lake, hub=None, fetch_at_run_time=False)
+
+
+def test_a_sum_of_ones_and_count_if_give_the_same_count_on_an_abstract_table(
+    reg: Registry, tmp_path: Path
+) -> None:
+    """One row per DOI: counting rows that match is the same answer either way, so the guard allows both (#166)."""
+    eng = _store(reg, tmp_path / "lake", n=5)
+    by_count_if = eng.query_sql("SELECT count_if(condition_tags = 'sepsis') AS n FROM idweek_abstracts")
+    by_sum = eng.query_sql(
+        "SELECT sum(CASE WHEN condition_tags = 'sepsis' THEN 1 ELSE 0 END) AS n FROM idweek_abstracts"
+    )
+    assert by_count_if["rows"] == by_sum["rows"] == [[2]]
+
+
+def test_each_caveat_line_is_printed_once(reg: Registry, tmp_path: Path) -> None:
+    """A private source's notes already carry the catalog's caveats; the answer never repeats them (#166)."""
+    lake = tmp_path / "lake"
+    eng = _store(reg, lake)
+    _store(reg, lake, "shea_abstracts")
+    for sql in (
+        "SELECT doi FROM idweek_abstracts",
+        "SELECT doi FROM idweek_abstracts UNION ALL SELECT doi FROM shea_abstracts",
+    ):
+        text = tools.query_sql(eng, sql)
+        assert isinstance(text, str)
+        lines = [x.removeprefix("# ") for x in text.splitlines() if x.startswith("# ")]
+        for source in ("idweek_abstracts", "shea_abstracts")[: 1 + ("shea" in sql)]:
+            for caveat in reg.get(source).entry.caveats:
+                said = [x for x in lines if x.endswith(caveat)]
+                assert len(said) == 1, (caveat, said)
+
+
+class _Counting:
+    """A DuckDB connection that counts the statements sent to it."""
+
+    def __init__(self, con: Any) -> None:
+        self.con, self.statements = con, 0
+
+    def execute(self, *a: Any, **kw: Any) -> Any:
+        self.statements += 1
+        return self.con.execute(*a, **kw)
+
+    def executemany(self, sql: str, rows: list[Any]) -> Any:
+        self.statements += len(rows)  # DuckDB runs an executemany one row at a time
+        return self.con.executemany(sql, rows)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.con, name)
+
+
+def test_loading_a_private_store_takes_the_same_statements_for_ten_rows_or_a_thousand(
+    reg: Registry, tmp_path: Path
+) -> None:
+    """The first question in a session loads each abstract table into memory; one statement per row made that take
+    over a minute for a full conference year (#166). The load is one bulk insert whatever the row count."""
+    import duckdb
+
+    from health_data_registry.live import load_live
+
+    ds = reg.get("idweek_abstracts")
+    counts = []
+    for n in (10, 1000):
+        lake = tmp_path / str(n)
+        private.write_rows(lake, ds, "year=2025", [a_row(f"10.1093/ofid/ofaf695.{i:04d}") for i in range(n)])
+        got = private.read_rows(lake, ds)
+        assert got is not None
+        records = [{k: (None if v is None else str(v)) for k, v in r.items()} for r in got.rows]
+        con = _Counting(duckdb.connect(":memory:"))
+        staged = load_live(con, ds, records)  # type: ignore[arg-type]
+        assert staged.staging.row_count == n
+        assert con.execute(f"SELECT count(DISTINCT doi), count(*) FROM {ds.id}").fetchone() == (n, n)
+        counts.append(con.statements)
+    assert counts[0] == counts[1]
 
 
 def test_the_read_path_refuses_an_unsafe_store_in_plain_words(

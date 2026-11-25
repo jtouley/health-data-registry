@@ -148,10 +148,14 @@ def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[st
     con.execute(f"CREATE TEMP TABLE {q(raw)} ({', '.join(q(f) + ' VARCHAR' for f in fields)})")
     try:
         if records:
-            marks = ", ".join("?" for _ in fields)
-            con.executemany(
-                f"INSERT INTO {q(raw)} VALUES ({marks})",  # noqa: S608 - quoted contract identifiers, bound values
-                [[r.get(f) for f in fields] for r in records],
+            # One statement for the whole table: each field's values go in as one bound list, and the lists are
+            # unnested side by side, row i from position i of each. An executemany runs one INSERT per row, which
+            # made the first question on a full conference year of abstracts take over a minute (#166). Values
+            # are text or NULL, as both callers give them, so the VARCHAR lists keep them exactly as sent.
+            cols = ", ".join(f"unnest(${i}::VARCHAR[])" for i in range(1, len(fields) + 1))
+            con.execute(
+                f"INSERT INTO {q(raw)} SELECT {cols}",  # noqa: S608 - quoted contract identifiers, bound values
+                [[r.get(f) for r in records] for f in fields],
             )
         present = {k for r in records for k in r} or None
         return stage_checked(con, ds.contract, q(raw), table=ds.id, temp=True, present=present)

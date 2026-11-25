@@ -1013,7 +1013,7 @@ class Engine:
                 caveats.append(
                     f"{i}: this dataset's contract is a draft that no maintainer has reviewed yet."
                 )
-            caveats += [f"{i}: {c}" for c in ds.entry.caveats]
+            caveats += [f"{i}: {c}" for c in _caveats_not_in_notes(ds, self.manifests[i])]
         return {
             "columns": cols,
             "rows": [list(r) for r in rows],
@@ -1026,6 +1026,13 @@ class Engine:
     def _tables(self) -> dict[str, frozenset[str]]:
         self.connect()
         return {i: self.registry.get(i).contract.column_names for i in self.manifests}
+
+
+def _caveats_not_in_notes(ds: Dataset, m: Manifest) -> list[str]:
+    """The catalog's caveats a manifest's notes don't already say. A private source's notes carry each one as
+    "Note: <caveat>" (private.notes), so adding the catalog's list again printed every caveat twice (#166)."""
+    said = {n.removeprefix("Note: ") for n in m.notes}
+    return [c for c in ds.entry.caveats if c not in said]
 
 
 def _source(ds: Dataset, m: Manifest) -> dict[str, Any]:
@@ -1064,7 +1071,7 @@ def envelope(
 ) -> dict[str, Any]:
     truncated = len(rows) > MAX_ROWS
     out = [list(r) for r in rows[:MAX_ROWS]]
-    notes = list(ds.entry.caveats)
+    notes = _caveats_not_in_notes(ds, m)
     if m.catalog_status != "reviewed":
         notes.insert(0, "This dataset's contract is a draft that no maintainer has reviewed yet.")
     if m.partial:
