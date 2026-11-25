@@ -168,34 +168,51 @@ def _lit(value: Any) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def measure(con: duckdb.DuckDBPyConnection, table: str, rule: Rule) -> tuple[float, int | None]:
-    """The number a rule compares, and how many rows it affects where that means something."""
-    t = _q(table)
+def measure_sql(rule: Rule, relation: str) -> str:
+    """One SELECT returning the single number a rule compares, over `relation` (a quoted name or a dbt ref).
+
+    The read path runs it on a snapshot or live table; the generated dbt test runs the same text on the model.
+    """
     if rule.kind == "sql":
-        row = con.execute(str(rule.query).replace("{object}", t)).fetchone()
-        value = float(row[0]) if row and row[0] is not None else 0.0
-        return value, int(value) if rule.comparator == "mustBe" and rule.bound == 0 else None
+        return str(rule.query).replace("{object}", relation)
     if rule.metric == "rowCount":
-        row = con.execute(f"SELECT count(*) FROM {t}").fetchone()  # noqa: S608 - quoted identifier
-        return float(row[0] if row else 0), None
+        return f"SELECT count(*) FROM {relation}"  # noqa: S608 - quoted contract identifiers, literal codes
     c = _q(str(rule.column))
-    if rule.metric in ("nullValues", EMPTY_SHARE):
-        # Rows with no value (blank text counts as empty). nullValues compares the count (ODCS); the fill-rate
-        # check compares the share, where 1.0 means the column is entirely empty.
-        row = con.execute(
-            f"SELECT count(*), count(*) FILTER (WHERE {c} IS NULL OR trim(CAST({c} AS VARCHAR)) = '') FROM {t}"  # noqa: S608 - quoted identifiers
-        ).fetchone()
-        total, empty = (int(row[0]), int(row[1])) if row else (0, 0)
-        if rule.metric == "nullValues":
-            return float(empty), empty
-        return (empty / total if total else 0.0), empty
+    empty = f"({c} IS NULL OR trim(CAST({c} AS VARCHAR)) = '')"
+    if rule.metric == "nullValues":  # ODCS: how many rows have no value (blank text counts as empty)
+        return f"SELECT count(*) FILTER (WHERE {empty}) FROM {relation}"  # noqa: S608 - quoted contract identifiers, literal codes
+    if rule.metric == EMPTY_SHARE:  # the fill-rate check: the share of rows with no value; 1 means all empty
+        return f"SELECT CASE WHEN count(*) = 0 THEN 0.0 ELSE count(*) FILTER (WHERE {empty}) / count(*) END FROM {relation}"  # noqa: S608 - quoted contract identifiers, literal codes
     listed = ", ".join(_lit(v) for v in rule.valid_values)
-    row = con.execute(
-        f"SELECT count(*) FROM {t} WHERE {c} IS NOT NULL AND trim(CAST({c} AS VARCHAR)) <> '' "  # noqa: S608 - quoted identifiers, literal code list
-        f"AND {c} NOT IN ({listed})"
-    ).fetchone()
-    n = int(row[0]) if row else 0
-    return float(n), n
+    return f"SELECT count(*) FROM {relation} WHERE NOT {empty} AND {c} NOT IN ({listed})"  # noqa: S608 - quoted contract identifiers, literal codes
+
+
+def condition_sql(rule: Rule, value: str) -> str:
+    """SQL that is true when `value` (the measured number) meets the rule's bound; the dbt test's pass condition."""
+    b = rule.bound
+    ops = {
+        "mustBe": "=",
+        "mustNotBe": "<>",
+        "mustBeGreaterThan": ">",
+        "mustBeGreaterOrEqualTo": ">=",
+        "mustBeLessThan": "<",
+        "mustBeLessOrEqualTo": "<=",
+    }
+    if rule.comparator == "mustBeBetween":
+        return f"{value} BETWEEN {_lit(b[0])} AND {_lit(b[1])}"
+    if rule.comparator == "mustNotBeBetween":
+        return f"{value} NOT BETWEEN {_lit(b[0])} AND {_lit(b[1])}"
+    return f"{value} {ops[rule.comparator]} {_lit(b)}"
+
+
+def measure(con: duckdb.DuckDBPyConnection, table: str, rule: Rule) -> tuple[float, int | None]:
+    """The number a rule compares, and how many rows it affects where the number is a row count."""
+    row = con.execute(measure_sql(rule, _q(table))).fetchone()
+    value = float(row[0]) if row and row[0] is not None else 0.0
+    counts = rule.metric in ("invalidValues", "nullValues") or (
+        rule.kind == "sql" and rule.comparator == "mustBe" and rule.bound == 0
+    )
+    return value, int(value) if counts else None
 
 
 @dataclass(frozen=True)

@@ -19,6 +19,10 @@ vars:
   # The MMWR years the calendar covers (contracts/models/mmwr_calendar.odcs.yaml).
   mmwr_first_year: 2015
   mmwr_last_year: 2030
+  # What the near-zero review queue looks at (contracts/models/flag_near_zero_running_totals.odcs.yaml): never a
+  # number in an answer.
+  near_zero_ytd_max: 1
+  near_zero_prior_year_min: 10
 
 models:
   health_data_registry:
@@ -27,6 +31,13 @@ models:
     staging:
       +materialized: table
       +schema: staging
+    intermediate:
+      +materialized: table
+      +schema: intermediate
     reference:
       +materialized: table
       +schema: reference
+    # Review queues: each flag_* model lists rows a maintainer should look at and removes nothing.
+    flag:
+      +materialized: table
+      +schema: flag

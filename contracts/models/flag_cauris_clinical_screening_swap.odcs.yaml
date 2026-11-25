@@ -1,0 +1,63 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: flag_cauris_clinical_screening_swap
+name: Review queue - C. auris clinical and screening counts that look swapped
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Lists NNDSS area-years where the year-to-date count for 'Candida auris, clinical' is larger than for 'Candida auris, screening' at the year's latest week, the pattern issue #16 reported, so a maintainer can check it against CDC."
+  usage: "A review queue for maintainers. It removes and changes nothing: the published counts stay as they are, and a confirmed finding becomes an open question and a caveat in contracts/cdc_nndss_weekly.odcs.yaml."
+  limitations: "A heuristic, not a fact: nothing in the codebook says screening counts must be the larger. A row here is a question for review, never a correction."
+schema:
+  - name: flag_cauris_clinical_screening_swap
+    physicalName: flag_cauris_clinical_screening_swap
+    physicalType: table
+    logicalType: object
+    description: "One row per reporting area and MMWR year whose clinical year-to-date exceeds its screening year-to-date at the latest week published for that year."
+    customProperties:
+      - {property: layer, value: flag}
+      - {property: totalRows, value: none}
+      - {property: tableShape, value: registry}
+    properties:
+      - name: states
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Reporting area, as NNDSS publishes it."
+        customProperties: [{property: role, value: dimension}]
+      - name: year
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "MMWR year."
+        customProperties: [{property: role, value: dimension}]
+      - name: latest_week
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "The latest MMWR week published for that area and year, where both year-to-date counts are read."
+        customProperties: [{property: role, value: attribute}]
+      - name: clinical_ytd
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Year-to-date count for 'Candida auris, clinical' at that week, as published."
+        customProperties: [{property: role, value: attribute}]
+      - name: screening_ytd
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Year-to-date count for 'Candida auris, screening' at that week, as published (empty when the publisher left it empty)."
+        customProperties: [{property: role, value: attribute}]
+      - name: reason
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Why the row is in the queue, in plain words."
+        customProperties: [{property: role, value: attribute}]
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None: a review queue, not published numbers."}}
+  - property: openQuestions
+    value:
+      - "Issue #16: which state did the eval researcher see, and does CDC's C. auris tracking page confirm the swap? Until answered this queue only lists candidates."

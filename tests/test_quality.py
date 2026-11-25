@@ -169,7 +169,7 @@ def test_fill_rate_flags_only_an_entirely_empty_optional_column() -> None:
     ]
     assert [r["status"] for r in q.run_rules(table([(" ", 1), (None, 2)]), "t", rules).results] == ["warn"]
     some = q.run_rules(table([(None, 1), ("-", 2)]), "t", rules).results[0]
-    assert (some["status"], some["observed"], some["rows_affected"]) == ("pass", 0.5, 1)
+    assert (some["status"], some["observed"], some["rows_affected"]) == ("pass", 0.5, None)
     assert q.run_rules(table([]), "t", rules).results[0]["status"] == "pass"  # nothing to measure
 
 
