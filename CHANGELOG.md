@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Every hub release carries `build.json`, the build manifest of the transform build behind it: the snapshot ids
+  and raw file hashes it read, the contract and semantic model versions and hashes, the code commit, the dbt and
+  DuckDB versions, the dbt settings, and the quality checks it passed. The same inputs always give the same file,
+  byte for byte. `get_provenance` names the build and the file's fingerprint (ADR 0017).
+
 ### Fixed
 
 - A summed count never adds up labels that overlap or count different things (hard rule 2). Semantic-model

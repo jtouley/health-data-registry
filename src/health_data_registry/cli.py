@@ -69,6 +69,14 @@ def validate(registry: Registry, lake: Path) -> int:
     return 1 if failed else 0
 
 
+def _code_state(registry: Registry, commit: str | None) -> dict[str, Any]:
+    """The checkout's commit, uv.lock and uncommitted changes, read with the Trusted gate's git helper."""
+    from health_data_registry.build_manifest import code_state
+    from health_data_registry.ratchet import _git
+
+    return code_state(registry.root, git=_git, commit=commit)
+
+
 def pin_build(a: Any) -> int:
     """Before dbt runs: resolve each stored source's LATEST once and write the build's pinned part, which the
     dbt_raw plugin then reads instead of LATEST (HDR_BUILD_PIN). Prints the build id."""
@@ -78,7 +86,9 @@ def pin_build(a: Any) -> int:
 
     try:
         registry = load_registry()
-        pinned = bm.pin(registry, lake_root(), commit=a.commit or os.environ.get("GITHUB_SHA"))
+        pinned = bm.pin(
+            registry, lake_root(), code=_code_state(registry, a.commit or os.environ.get("GITHUB_SHA"))
+        )
         build_id = bm.write_pin(a.out, pinned)
     except (RegistryError, bm.BuildManifestError) as e:
         print(f"The build was not pinned: {e}.", file=sys.stderr)
@@ -119,7 +129,7 @@ def gate(a: Any) -> int:
         here = bm.pin(
             registry,
             lake,
-            commit=a.commit or os.environ.get("GITHUB_SHA"),
+            code=_code_state(registry, a.commit or os.environ.get("GITHUB_SHA")),
             engine_versions=pinned["engines"],
         )
     except bm.BuildManifestError as e:

@@ -381,7 +381,7 @@ def test_missing_run_record_holds_and_the_cli_checks_then_confirms(
     monkeypatch.setenv("HDR_REGISTRY", str(reg.root))
     monkeypatch.setenv("HDR_LAKE", str(lake))
     monkeypatch.setattr(rg, "expected_from", lambda registry: TOY)
-    monkeypatch.setattr(bm, "code_state", lambda root, commit=None: dict(TEST_CODE))
+    monkeypatch.setattr(bm, "code_state", lambda root, **kw: dict(TEST_CODE))
     monkeypatch.setattr(bm, "engines", lambda: dict(TEST_ENGINES))
     ops = tmp_path / "ops"
     passed, message = rg.run(tmp_path / "no-target", ops)

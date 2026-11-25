@@ -42,7 +42,7 @@ import json
 import os
 import platform
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from importlib import metadata
 from pathlib import Path
 from typing import Any
@@ -194,22 +194,20 @@ def dbt_vars(root: Path) -> dict[str, Any]:
     return dict(doc.get("vars") or {})
 
 
-def code_state(root: Path, *, commit: str | None = None) -> dict[str, Any]:
+def code_state(root: Path, *, git: Callable[..., bytes], commit: str | None = None) -> dict[str, Any]:
     """The code a build ran: the git commit, uv.lock's hash, and a hash of any uncommitted change.
 
-    `commit`, when given (--commit, or $GITHUB_SHA in CI), must be the checkout's HEAD. git runs as the Trusted
-    gate runs it (ratchet._git: fixed arguments, git's own environment variables left out, so a hook's GIT_DIR
-    can't point it at another repository)."""
-    from health_data_registry.ratchet import GitError
-    from health_data_registry.ratchet import _git as git
-
+    `commit`, when given (--commit, or $GITHUB_SHA in CI), must be the checkout's HEAD. `git(root, *args)` returns
+    git's output and raises on failure; the CLI passes the Trusted gate's (ratchet._git: fixed arguments, git's own
+    environment variables left out, so a hook's GIT_DIR can't point it at another repository). It is passed in
+    rather than imported so the dbt plugin, which imports this module, doesn't depend on the gate."""
     try:
         head = git(root, "rev-parse", "HEAD").decode().strip()
         diff = git(root, "diff", "HEAD", "--binary", "--no-ext-diff", "--no-textconv")
         untracked = sorted(
             p for p in git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0") if p
         )
-    except (OSError, GitError) as e:
+    except (OSError, RuntimeError) as e:
         raise BuildManifestError(
             f"the code's commit can't be read: {root} is not a git checkout git can read ({type(e).__name__})"
         ) from e
@@ -245,12 +243,11 @@ def pin(
     registry: Any,
     lake: Path,
     *,
-    commit: str | None = None,
-    code: Mapping[str, Any] | None = None,
+    code: Mapping[str, Any],
     engine_versions: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The build's pinned part. `code` and `engine_versions` replace what this machine reports (the gate takes the
-    engines from the pin made where dbt ran)."""
+    """The build's pinned part. `code` is code_state's record of the checkout; `engine_versions` replaces what this
+    machine reports (the gate takes the engines from the pin made where dbt ran)."""
     import yaml
 
     root = registry.root
@@ -262,7 +259,7 @@ def pin(
             "contracts": contract_files(registry),
             "semantic": semantic_files(registry),
             "transform": transform_files(root),
-            "code": dict(code) if code is not None else code_state(root, commit=commit),
+            "code": dict(code),
             "engines": dict(engine_versions) if engine_versions is not None else engines(),
             "vars": dbt_vars(root),
         }

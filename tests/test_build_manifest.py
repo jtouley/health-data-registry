@@ -226,25 +226,25 @@ def test_the_code_state_is_the_commit_lock_and_any_uncommitted_change(tmp_path: 
     (repo / "uv.lock").write_text("lock\n")
     git("add", ".")
     git("commit", "-qm", "c")
-    clean = bm.code_state(repo)
+    clean = bm.code_state(repo, git=_git)
     assert clean["uncommitted_sha256"] is None and len(clean["commit"]) == 40
     assert clean["uv_lock_sha256"] == bm.sha256_file(repo / "uv.lock")
-    assert bm.code_state(repo, commit=clean["commit"]) == clean
+    assert bm.code_state(repo, git=_git, commit=clean["commit"]) == clean
     with pytest.raises(bm.BuildManifestError, match="not .*the commit this build names"):
-        bm.code_state(repo, commit="e" * 40)
+        bm.code_state(repo, git=_git, commit="e" * 40)
     (repo / "lake").mkdir()
     (repo / "lake" / "x").write_text("ignored")
-    assert bm.code_state(repo) == clean  # ignored files are not code
+    assert bm.code_state(repo, git=_git) == clean  # ignored files are not code
     (repo / "new.py").write_text("x = 1\n")
-    untracked = bm.code_state(repo)["uncommitted_sha256"]
+    untracked = bm.code_state(repo, git=_git)["uncommitted_sha256"]
     (repo / "new.py").write_text("x = 2\n")
-    assert untracked and bm.code_state(repo)["uncommitted_sha256"] not in (None, untracked)
+    assert untracked and bm.code_state(repo, git=_git)["uncommitted_sha256"] not in (None, untracked)
     (repo / "new.py").unlink()
     (repo / "uv.lock").write_text("lock 2\n")
-    edited = bm.code_state(repo)
+    edited = bm.code_state(repo, git=_git)
     assert edited["uncommitted_sha256"] and edited["commit"] == clean["commit"]
     with pytest.raises(bm.BuildManifestError, match="not a git checkout"):
-        bm.code_state(tmp_path / "nowhere")
+        bm.code_state(tmp_path / "nowhere", git=_git)
 
 
 def test_differences_name_what_the_build_read_otherwise(toy: tuple[Registry, Path], tmp_path: Path) -> None:
