@@ -20,9 +20,9 @@
 - [ ] No data, secrets or patient information committed
 - [ ] New dataset: catalog entry, ODCS contract, semantic model and sealed blind questions, licence recorded
 - [ ] CHANGELOG.md updated under Unreleased, if users would notice
-- [ ] Review round posted to this PR (`/code-review <PR number>`)
-- [ ] Required skill reviews posted for the paths touched (data, data quality, docs, security; see CLAUDE.md), one per skill
-- [ ] One fix round done, addressing every posted finding
+- [ ] Review round posted to this PR by fresh agents, unedited (`/code-review <PR number>`)
+- [ ] Required skill reviews posted for the paths touched (data, data quality, docs, security, CI and merge gating; see CLAUDE.md), one per skill (`/<skill> <PR number>`)
+- [ ] One fix round done by a fresh agent (`/fix-round <PR number>`), addressing every posted finding
 - [ ] Unfixed findings filed as follow-ups
 
 **Owner steps**
