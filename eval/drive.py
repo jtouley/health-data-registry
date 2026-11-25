@@ -598,12 +598,17 @@ Connect = Callable[
 ]
 
 
+# Opens the read and write streams to a server process from its launch parameters (mcp's `stdio_client`).
+Transport = Callable[..., AbstractAsyncContextManager[tuple[Any, Any]]]
+
+
 @asynccontextmanager
 async def stdio_connect(
-    server_dir: Path, env: Mapping[str, str], errlog: TextIO
-) -> AsyncIterator[tuple[ToolSession, str, str | None]]:  # pragma: no cover - a real server process
+    server_dir: Path, env: Mapping[str, str], errlog: TextIO, *, transport: Transport | None = None
+) -> AsyncIterator[tuple[ToolSession, str, str | None]]:
     """Start `uv run --no-sync health-data-registry serve` in `server_dir`; yield the session, the server's name
-    and its instructions. The server's stderr goes to `errlog`."""
+    and its instructions. The server's stderr goes to `errlog`. `transport` is mcp's `stdio_client` unless a test
+    passes its own."""
     from mcp import ClientSession
     from mcp.client.stdio import StdioServerParameters, stdio_client
 
@@ -613,7 +618,8 @@ async def stdio_connect(
         cwd=server_dir,
         env=dict(env),
     )
-    async with stdio_client(params, errlog=errlog) as (read, write), ClientSession(read, write) as session:
+    open_streams = stdio_client if transport is None else transport
+    async with open_streams(params, errlog=errlog) as (read, write), ClientSession(read, write) as session:
         init = await session.initialize()
         yield session, init.server_info.name, init.instructions
 
@@ -807,5 +813,5 @@ def main(
     return 0
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     raise SystemExit(main())

@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import io
 import json
+import runpy
 import subprocess
-from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+import sys
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -207,21 +211,30 @@ def git(path: Path, *args: str) -> str:
     return proc.stdout.strip()
 
 
-@pytest.fixture
-def connect(registry: Registry, lake: Path) -> drive.Connect:
-    """A `connect` for drive.run/main that serves the real server in memory, and keeps the env it was given."""
+@dataclass
+class RecordingConnect:
+    """A `connect` for drive.run/main that serves the real server in memory, and keeps what it was given."""
+
+    registry: Registry
+    lake: Path
+    env: dict[str, str] = field(default_factory=dict)
+    server_dir: Path | None = None
+    errlog: str | None = None
 
     @asynccontextmanager
-    async def _connect(
-        server_dir: Path, env: Any, errlog: TextIO
+    async def __call__(
+        self, server_dir: Path, env: Mapping[str, str], errlog: TextIO
     ) -> AsyncIterator[tuple[ClientSession, str, str | None]]:
-        _connect.env = dict(env)  # type: ignore[attr-defined]
-        _connect.server_dir = server_dir  # type: ignore[attr-defined]
-        _connect.errlog = errlog.name  # type: ignore[attr-defined]
-        async with memory_session(registry, lake) as got:
+        self.env = dict(env)
+        self.server_dir = server_dir
+        self.errlog = errlog.name
+        async with memory_session(self.registry, self.lake) as got:
             yield got
 
-    return _connect
+
+@pytest.fixture
+def connect(registry: Registry, lake: Path) -> RecordingConnect:
+    return RecordingConnect(registry, lake)
 
 
 @pytest.fixture
@@ -879,7 +892,7 @@ def test_explain_never_quotes_a_library_message(error: Exception, says: str) -> 
 def run_main(
     tmp_path: Path,
     env: dict[str, str],
-    connect: drive.Connect,
+    connect: RecordingConnect,
     api: ScriptedAPI,
     questions: Sequence[dict[str, Any]],
     *extra: str,
@@ -900,7 +913,7 @@ def answer_from_series(request: dict[str, Any]) -> Message:
 
 
 def test_a_run_round_trips_through_the_scorer(
-    tmp_path: Path, run_env: dict[str, str], connect: drive.Connect
+    tmp_path: Path, run_env: dict[str, str], connect: RecordingConnect
 ) -> None:
     # Arrange
     api = ScriptedAPI(
@@ -937,7 +950,9 @@ def test_a_run_round_trips_through_the_scorer(
     assert invented.a.fabricated is True and invented.unmatched_numbers == ("317",)
 
 
-def test_the_header_records_the_run(tmp_path: Path, run_env: dict[str, str], connect: drive.Connect) -> None:
+def test_the_header_records_the_run(
+    tmp_path: Path, run_env: dict[str, str], connect: RecordingConnect
+) -> None:
     # Arrange
     api = ScriptedAPI(message(block_text("x")))
     # Act
@@ -971,11 +986,11 @@ def test_the_header_records_the_run(tmp_path: Path, run_env: dict[str, str], con
     system = api.requests[0]["system"]
     assert system.startswith(drive.read_prompt()[0].rstrip()) and INSTRUCTIONS.strip() in system
     assert "\n## health-data-registry\n" in system
-    assert connect.env == {"HDR_LAKE": run_env["HDR_LAKE"], "HTTPS_PROXY": "http://p:1"}  # type: ignore[attr-defined]
+    assert connect.env == {"HDR_LAKE": run_env["HDR_LAKE"], "HTTPS_PROXY": "http://p:1"}
 
 
 def test_no_question_or_answer_reaches_stdout_or_stderr(
-    tmp_path: Path, run_env: dict[str, str], connect: drive.Connect, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, run_env: dict[str, str], connect: RecordingConnect, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # Arrange
     api = ScriptedAPI(
@@ -1007,7 +1022,7 @@ def test_no_question_or_answer_reaches_stdout_or_stderr(
 
 
 def test_a_failure_mid_run_prints_a_plain_message_only(
-    tmp_path: Path, run_env: dict[str, str], connect: drive.Connect, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, run_env: dict[str, str], connect: RecordingConnect, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # Arrange
     api = ScriptedAPI(ValueError("SENTINEL-QUESTION leaked"))
@@ -1027,7 +1042,7 @@ def test_a_failure_mid_run_prints_a_plain_message_only(
 def test_missing_eval_model_fails_with_a_plain_message(
     tmp_path: Path,
     run_env: dict[str, str],
-    connect: drive.Connect,
+    connect: RecordingConnect,
     capsys: pytest.CaptureFixture[str],
     model: str | None,
 ) -> None:
@@ -1048,7 +1063,7 @@ def test_missing_eval_model_fails_with_a_plain_message(
 
 
 def test_main_refuses_bad_inputs_before_starting(
-    tmp_path: Path, run_env: dict[str, str], connect: drive.Connect, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, run_env: dict[str, str], connect: RecordingConnect, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # Arrange
     env = {**run_env, "HDR_LAKE": str(tmp_path / "missing")}
@@ -1061,7 +1076,7 @@ def test_main_refuses_bad_inputs_before_starting(
 
 
 def test_main_refuses_an_out_directory_with_a_run(
-    tmp_path: Path, run_env: dict[str, str], connect: drive.Connect, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, run_env: dict[str, str], connect: RecordingConnect, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # Arrange
     (tmp_path / "out").mkdir()
@@ -1076,7 +1091,7 @@ def test_main_refuses_an_out_directory_with_a_run(
 
 
 def test_main_leaves_logging_as_it_found_it(
-    tmp_path: Path, run_env: dict[str, str], connect: drive.Connect
+    tmp_path: Path, run_env: dict[str, str], connect: RecordingConnect
 ) -> None:
     # Arrange
     import logging
@@ -1308,7 +1323,7 @@ def test_drive_passes_its_clock_and_sleep_and_hashes_absent_instructions(tmp_pat
             run_info={},
             progress=Progress(),
             clock=lambda: 0.0,
-            sleep=sleep,  # type: ignore[arg-type]
+            sleep=sleep,
         )
 
     # Act
@@ -1340,8 +1355,8 @@ def test_drive_uses_its_clock_for_the_deadline(tmp_path: Path) -> None:
             limits=Limits(question_timeout_s=10),
             out_dir=tmp_path,
             run_info={},
-            progress=open(tmp_path / "progress.txt", "w"),
-            clock=lambda: float(next(ticks)),  # noqa: SIM115
+            progress=io.StringIO(),
+            clock=lambda: float(next(ticks)),
         )
 
     # Act
@@ -1461,7 +1476,7 @@ def test_parser_requires_each_path(missing: str) -> None:
 def test_main_maps_every_limit_flag_and_sums_statuses(
     tmp_path: Path,
     run_env: dict[str, str],
-    connect: drive.Connect,
+    connect: RecordingConnect,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1498,8 +1513,8 @@ def test_main_maps_every_limit_flag_and_sums_statuses(
     }
     assert head["started_at"] == "2026-01-02T03:04:05Z"
     assert capsys.readouterr().out.splitlines()[-1] == "drive: answered 1, turn_cap 1"
-    assert connect.server_dir == (tmp_path / "server").resolve()  # type: ignore[attr-defined]
-    assert connect.errlog == str(out / "server.log")  # type: ignore[attr-defined]
+    assert connect.server_dir == (tmp_path / "server").resolve()
+    assert connect.errlog == str(out / "server.log")
 
 
 def test_main_reads_the_process_environment_by_default(
@@ -1513,8 +1528,55 @@ def test_main_reads_the_process_environment_by_default(
     assert code == 2 and "EVAL_MODEL is not set" in capsys.readouterr().err
 
 
+def test_running_the_module_calls_main_and_exits_with_its_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Arrange: `python -m eval.drive` with no EVAL_MODEL, so main returns 2 before it starts anything
+    monkeypatch.delenv("EVAL_MODEL", raising=False)
+    argv = ["drive", "--questions", "q", "--server-dir", ".", "--out", str(tmp_path / "o")]
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.delitem(sys.modules, "eval.drive")
+    # Act
+    with pytest.raises(SystemExit) as exited:
+        runpy.run_module("eval.drive", run_name="__main__")
+    # Assert
+    assert exited.value.code == 2 and "EVAL_MODEL is not set" in capsys.readouterr().err
+
+
+def test_stdio_connect_launches_the_server_with_uv_in_the_server_dir(
+    tmp_path: Path, registry: Registry, lake: Path
+) -> None:
+    # Arrange: a transport that records the launch parameters and serves the real server in memory
+    launched: list[tuple[Any, Any]] = []
+
+    @asynccontextmanager
+    async def transport(params: Any, errlog: TextIO) -> AsyncIterator[tuple[Any, Any]]:
+        launched.append((params, errlog))
+        async with InMemoryTransport(build_server(registry, Engine(registry=registry, lake=lake))) as streams:
+            yield streams
+
+    async def go() -> tuple[str, str | None, list[str]]:
+        with (tmp_path / "server.log").open("w", encoding="utf-8") as errlog:
+            async with drive.stdio_connect(
+                tmp_path, {"HDR_LAKE": str(lake)}, errlog, transport=transport
+            ) as (session, name, instructions):
+                tools = await drive.list_all_tools(session)
+                return name, instructions, [t.name for t in tools]
+
+    # Act
+    name, instructions, tools = anyio.run(go)
+    # Assert
+    from health_data_registry.server import INSTRUCTIONS
+
+    [(params, errlog)] = launched
+    assert params.command == "uv" and params.args == ["run", "--no-sync", "health-data-registry", "serve"]
+    assert Path(params.cwd) == tmp_path and params.env == {"HDR_LAKE": str(lake)}
+    assert errlog.name == str(tmp_path / "server.log")
+    assert name == "health-data-registry" and instructions == INSTRUCTIONS and "get_series" in tools
+
+
 def test_main_builds_the_sdk_client_with_its_own_retries_off(
-    tmp_path: Path, run_env: dict[str, str], connect: drive.Connect, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, run_env: dict[str, str], connect: RecordingConnect, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Arrange
     built: list[dict[str, Any]] = []
@@ -1582,7 +1644,7 @@ def test_the_smallest_limits_are_allowed() -> None:
 def test_main_refuses_a_limit_that_would_end_every_question(
     tmp_path: Path,
     run_env: dict[str, str],
-    connect: drive.Connect,
+    connect: RecordingConnect,
     capsys: pytest.CaptureFixture[str],
     flags: list[str],
 ) -> None:
@@ -1616,7 +1678,7 @@ def test_a_retryable_error_at_the_deadline_ends_the_question() -> None:
 
 @pytest.mark.filterwarnings("always")
 def test_library_warnings_go_to_drive_log_not_stderr(
-    tmp_path: Path, run_env: dict[str, str], connect: drive.Connect, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, run_env: dict[str, str], connect: RecordingConnect, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # Arrange: the API client warns with text that could quote a question
     import logging
@@ -1641,7 +1703,7 @@ def test_library_warnings_go_to_drive_log_not_stderr(
 def check_main(
     tmp_path: Path,
     env: dict[str, str],
-    connect: drive.Connect,
+    connect: RecordingConnect,
     api: ScriptedAPI,
     monkeypatch: pytest.MonkeyPatch,
     *extra: str,
@@ -1660,7 +1722,7 @@ def check_main(
 def test_check_asks_the_first_dev_question_alone_and_passes_when_answered(
     tmp_path: Path,
     run_env: dict[str, str],
-    connect: drive.Connect,
+    connect: RecordingConnect,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1687,7 +1749,7 @@ def test_check_asks_the_first_dev_question_alone_and_passes_when_answered(
 def test_check_fails_unless_the_dev_question_was_answered(
     tmp_path: Path,
     run_env: dict[str, str],
-    connect: drive.Connect,
+    connect: RecordingConnect,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
     step: Message,
