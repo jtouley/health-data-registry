@@ -16,11 +16,18 @@ latest as (
     group by states_key, label, year
 ),
 
+-- One row per area, condition and year, whatever the spellings: an area published under two spellings in its latest
+-- week is shown once, as the alphabetically last spelling with that spelling's count (a total order, so every build
+-- gives the same rows).
 cur as (
     select n.states, n.states_key, n.label, n.year, l.latest_week, n.m3, n.m3_flag
     from nndss as n
     inner join latest as l
         on n.states_key = l.states_key and n.label = l.label and n.year = l.year and n.week = l.latest_week
+    qualify row_number() over (
+        partition by n.states_key, n.label, n.year
+        order by n.states desc, n.m3 desc nulls last, n.m3_flag desc nulls last
+    ) = 1
 ),
 
 -- The prior year's week to compare with: the same week, or its last published week before it (a 53-week year
@@ -38,6 +45,10 @@ prior as (
     from prior_week as w
     inner join nndss as p
         on p.states_key = w.states_key and p.label = w.label and p.year = w.year - 1 and p.week = w.week
+    -- Two spellings in that week: the same rule as cur, so one prior count per area.
+    qualify row_number() over (
+        partition by w.states_key, w.label, w.year order by p.states desc, p.m3 desc nulls last
+    ) = 1
 )
 
 select

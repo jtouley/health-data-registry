@@ -308,6 +308,8 @@ def test_the_read_path_serves_private_sources_from_their_store(reg: Registry, tm
     assert m.source_urls == ["https://api.crossref.org/x", "https://api.openalex.org/w"]
     assert m.raw_sha256 == ["0" * 64, "2" * 64] and m.row_count == 1
     assert m.notes[0].startswith("These rows come from a sample harvest")
+    # The contract's data checks ran on the store's rows, and their record is kept, as for a live table.
+    assert m.quality["tool"] == "contract-rules" and m.quality["results"]
     out = eng.query_sql(f"SELECT doi, year FROM {ds.id}")
     assert out["rows"] == [[DOI_A, "2025"]] or out["rows"] == [[DOI_A, 2025]]
     assert any("Licence:" in c for c in out["caveats"])

@@ -94,7 +94,6 @@ schema:
             mustBe: 2
             description: "Both C. auris labels the review queue flag_cauris_clinical_screening_swap reads by name are still published (they were in the live data on 2026-11-24); if CDC renames one, the queue would go quiet without this warning."
       - name: m1
-
         physicalType: BIGINT
         logicalType: integer
         required: false

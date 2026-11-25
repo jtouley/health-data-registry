@@ -372,8 +372,14 @@ def blocked_message(dataset: str, quality: Mapping[str, Any] | None) -> str | No
     Three kinds, named apart: a failed error-severity rule (a data failure), an error-severity value rule with
     no values to judge (not evaluated), and a rule that could not run (a metric error). Each leaves the copy
     unchecked or failing: it is kept for inspection, but LATEST stays where it was and export-public refuses it.
+    A missing record, or one no contract-rules run wrote, blocks too: no check ran, so nothing says it passed.
     """
     q = quality or {}
+    if q.get("tool") != "contract-rules":
+        return (
+            f"{dataset}: no data checks have run on this copy, so it is not served or published and the copy "
+            "before it stays. Refresh it, or have a maintainer check the contract."
+        )
     results = q.get("results") or []
     report = QualityReport(tuple(results), tuple(q.get("rule_errors") or ()))
     if not report.blocking:  # the one definition of what blocks, for a fresh build and a rerun alike

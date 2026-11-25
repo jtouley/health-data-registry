@@ -138,6 +138,35 @@ def test_not_evaluated_and_metric_errors_block_under_their_own_labels(tmp_path: 
     assert broken.reason() == "1 check(s) could not run"
 
 
+NOTHING_TO_JUDGE = (
+    "Database Error in test {}\n  Invalid Input Error: Not evaluated: no row has a value in this column, so there "
+    "was nothing to check."
+)
+
+
+def _not_evaluated(tmp_path: Path, results: list[tuple[str, str, Any]], index: int, invocation: str) -> Path:
+    t = target(tmp_path, results, invocation=invocation)
+    run = json.loads((t / "run_results.json").read_text())
+    run["results"][index]["message"] = NOTHING_TO_JUDGE.format(results[index][0].split(".")[2])
+    (t / "run_results.json").write_text(json.dumps(run))
+    return t
+
+
+def test_a_warn_rule_not_evaluated_warns_as_on_the_read_path(tmp_path: Path) -> None:
+    """QualityReport.blocking holds a not-evaluated rule only when it is error-severity; the gate agrees, and
+    takes the severity from the contracts, so a run that downgraded an error rule's config still holds."""
+    warn = rg.read_build(
+        _not_evaluated(tmp_path, [*GOOD[:2], ("test.p.fill_a.2", "error", "warn"), GOOD[3]], 2, "w"),
+        expected=TOY,
+    )
+    assert warn.servable and not warn.not_evaluated and [w["test"] for w in warn.warnings] == ["fill_a"]
+    downgraded = rg.read_build(
+        _not_evaluated(tmp_path, [GOOD[0], ("test.p.codes_a.1", "error", "warn"), *GOOD[2:]], 1, "d"),
+        expected=TOY,
+    )
+    assert not downgraded.servable and [n["test"] for n in downgraded.not_evaluated] == ["codes_a"]
+
+
 def test_the_run_record_and_manifest_must_be_from_one_run(tmp_path: Path) -> None:
 
     mixed = rg.read_build(target(tmp_path, GOOD, manifest_invocation="inv-other"))
@@ -166,6 +195,11 @@ def test_the_build_id_is_a_content_hash_of_its_inputs(tmp_path: Path) -> None:
     from tests.conftest import RECORDS, raw_fetch, write_registry
 
     reg = load_registry(write_registry(tmp_path / "reg"))
+    project = reg.root / rg.DBT_PROJECT
+    with pytest.raises(rg.GateInputMissing, match="could not be read"):  # no dbt project: nothing was built
+        rg.build_inputs(reg, tmp_path, "c1")
+    project.parent.mkdir(parents=True, exist_ok=True)
+    project.write_text("name: toy\nvars:\n  near_zero_ytd_max: 0\n")
     page = tmp_path / "p.ndjson"
     write_ndjson(page, RECORDS)
     lake = tmp_path / "lake"
@@ -176,7 +210,7 @@ def test_the_build_id_is_a_content_hash_of_its_inputs(tmp_path: Path) -> None:
     assert first == rg.build_inputs(reg, lake, "c1")
     (ds,) = first["datasets"].values()
     assert ds["raw_sha256"] and ds["contract_version"] == "0.1.0" and len(ds["contract_sha256"]) == 64
-    assert "snapshot_id" not in ds and first["dbt_vars"] == {}  # the toy registry has no dbt project
+    assert "snapshot_id" not in ds and first["dbt_vars"] == {"near_zero_ytd_max": 0}
     # The same bytes fetched again a day later: a new snapshot id (it carries the retrieval time), the same id.
     later = replace(fetch, retrieved_at=fetch.retrieved_at + timedelta(days=1))
     assert build_snapshot(lake, reg.get("toy_cases"), [later], [page]).snapshot_id != first_snapshot
@@ -191,6 +225,8 @@ def test_the_build_id_is_a_content_hash_of_its_inputs(tmp_path: Path) -> None:
         (reg.root / reg.get("toy_cases").entry.contract).read_text() + "# edited\n"
     )
     assert rg.build_id_of(rg.build_inputs(reg, lake, "c1")) != one.build_id  # the contract's bytes changed
+    project.write_text("name: toy\nvars:\n  near_zero_ytd_max: 1\n")
+    assert rg.build_id_of(rg.build_inputs(reg, lake, "c1")) != one.build_id  # a dbt var changed
 
 
 def test_the_expected_set_comes_from_the_real_contracts() -> None:
@@ -216,9 +252,9 @@ def test_a_clean_build_passes_and_is_served_only_once_confirmed(tmp_path: Path) 
         {"test": "fill_a", "type": "test", "severity": "warn", "dimension": "conformity", "failures": 3}
     ]
     assert build.build_id.startswith("build-") and len(build.build_id) == 18
-    row = rg.decide(ops, build, now=T0)
+    row = rg.decide(ops, build, now=T0, run_date="2026-11-25")
     assert row == {"at": "2026-11-25T12:00:00+00:00", "action": "pass", "build_id": build.build_id,
-                   "serving": None, "warnings": 1, "invocation_id": "inv-1", "run_date": None}  # fmt: skip
+                   "serving": None, "warnings": 1, "invocation_id": "inv-1", "run_date": "2026-11-25"}  # fmt: skip
     assert rg.serving(ops) is None  # a pass is not served: nothing has been uploaded yet
     served = rg.confirm(ops, build, "release-2026-11-25.2", now=T1)
     assert served == {"at": "2026-11-25T13:00:00+00:00", "action": "serve", "release_ref": "release-2026-11-25.2",
@@ -255,7 +291,7 @@ def test_a_blocking_build_is_held_and_the_previous_release_stays_served(
 ) -> None:
     ops = tmp_path / "ops"
     first = rg.read_build(target(tmp_path, GOOD))
-    rg.decide(ops, first, now=T0)
+    rg.decide(ops, first, now=T0, run_date="2026-11-18")
     rg.confirm(ops, first, "release-2026-11-18", now=T0)
     held = rg.read_build(target(tmp_path, [*GOOD, bad], invocation="inv-2"))
     assert not held.servable and held.reason() == reason
@@ -305,7 +341,10 @@ def test_confirm_takes_only_a_release_tag_of_a_build_that_passed(tmp_path: Path)
     build = rg.read_build(target(tmp_path, GOOD))
     with pytest.raises(ValueError, match="has no recorded pass"):
         rg.confirm(ops, build, "release-2026-11-25")
-    rg.decide(ops, build, now=T0)
+    rg.decide(ops, build, now=T0)  # a pass with no run date matches no tag, so it is never served
+    with pytest.raises(ValueError, match="passed without a run date"):
+        rg.confirm(ops, build, "release-2026-01-01")
+    rg.decide(ops, build, now=T0, run_date="2026-11-25")
     for bad in ("release-2026-11-25.1", "release-2026-11-25.x", "v1", "release-26-11-25"):
         with pytest.raises(ValueError, match="is not a release tag"):
             rg.confirm(ops, build, bad)
@@ -321,7 +360,7 @@ def test_unreadable_ops_state_holds_in_plain_words(tmp_path: Path) -> None:
     (ops / rg.SERVING).write_text("{not json")
     with pytest.raises(rg.GateStateUnreadable, match="the release served now is unknown"):
         rg.serving(ops)
-    passed, message = rg.run(good, ops)
+    passed, message = rg.run(good, ops, run_date="2026-11-25")
     assert not passed and message.startswith("The release is held:") and "Restore the file" in message
     (ops / rg.SERVING).write_text('["x"]')
     with pytest.raises(rg.GateStateUnreadable, match="does not name a release"):

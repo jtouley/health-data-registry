@@ -14,7 +14,7 @@ schema:
     physicalName: flag_all_dash_areas
     physicalType: table
     logicalType: object
-    description: "One row per reporting area (summary rows such as TOTAL and the census divisions left out) and condition whose current-week count is empty and flagged '-' in every published week; an area is matched across years ignoring case, edge spaces and dots, with renamed labels joined."
+    description: "One row per reporting area (summary rows such as TOTAL and the census divisions left out) and condition whose current-week count is empty and flagged '-' in every published week; an area is matched across years ignoring case, edge spaces and dots, and a renamed area (the NNDSS contract's renamedLabels on states) is joined to its earlier name; conditions are compared exactly as published."
     customProperties:
       - {property: layer, value: flag}
       - {property: totalRows, value: none}
@@ -24,7 +24,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "Reporting area, as NNDSS publishes it in the latest year listed."
+        description: "Reporting area, as NNDSS spells it in the latest year listed; two spellings in that year: the alphabetically last."
         customProperties: [{property: role, value: dimension}]
       - name: label
         physicalType: VARCHAR

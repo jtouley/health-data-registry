@@ -34,14 +34,14 @@ import re
 import shutil
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import duckdb
 
-from health_data_registry.quality import QualityBlocked, blocked_message
+from health_data_registry.quality import QualityBlocked, QualityReport, blocked_message
 from health_data_registry.registry import Dataset
 from health_data_registry.staging import Staged, check_snapshot, stage, write_parquet
 
@@ -223,7 +223,9 @@ def build_snapshot(
     if (out / "manifest.json").is_file():  # the same inputs were snapshotted already: never overwrite
         keep()  # a load kept before its metadata was recorded gets it now
         existing = Manifest.read(out / "manifest.json")
-        _promote(lake, ds.id, existing)
+        # The stored verdict may be missing (a snapshot from before the rules) or stale (rules edited since):
+        # the contract's current rules run again on the kept file, which is never rewritten.
+        _promote(lake, ds.id, replace(existing, quality=judge_snapshot(out, ds)))
         return existing
     tmp = Path(tempfile.mkdtemp(prefix=f".{ds.id}-", dir=lake))
     try:
@@ -339,9 +341,27 @@ def keep_raw_records(
     meta = target.with_name(f"{snapshot_id}.meta.json")
     if metadata is not None and not meta.is_file():
         tmp_meta = meta.with_name(f".{meta.name}.{os.getpid()}.tmp")
-        tmp_meta.write_text(json.dumps(dict(metadata), indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        os.replace(tmp_meta, meta)
+        try:
+            tmp_meta.write_text(json.dumps(dict(metadata), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            os.replace(tmp_meta, meta)
+        finally:
+            tmp_meta.unlink(missing_ok=True)
     return target
+
+
+def judge_snapshot(snapshot: Path, ds: Dataset) -> dict[str, Any]:
+    """The contract's current quality rules, run again read-only on a kept snapshot's data.duckdb, as a manifest's
+    `quality` record. Promotion and export-public decide from this, never from the record stored at build time,
+    which a snapshot from before the rules lacks and which a later rule edit leaves stale. A file that is missing
+    or can't be opened is a check that could not run, so it blocks (fail closed)."""
+    db = snapshot / "data.duckdb"
+    try:
+        if not db.is_file():
+            raise FileNotFoundError(f"{db.name} is missing from the snapshot")
+        return check_snapshot(str(db), ds.contract, ds.id).as_dict()
+    except (OSError, duckdb.Error) as e:
+        error = {"test": "contract-rules", "error": (str(e).splitlines() or [type(e).__name__])[0]}
+        return QualityReport((), (error,)).as_dict()
 
 
 def _promote(lake: Path, dataset_id: str, manifest: Manifest) -> None:

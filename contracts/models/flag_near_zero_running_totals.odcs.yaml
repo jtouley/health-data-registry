@@ -14,7 +14,7 @@ schema:
     physicalName: flag_near_zero_running_totals
     physicalType: table
     logicalType: object
-    description: "One row per reporting area (summary rows such as TOTAL and the census divisions left out), condition and MMWR year flagged as above; an area is matched across years ignoring case, edge spaces and dots, with renamed labels joined."
+    description: "One row per reporting area (summary rows such as TOTAL and the census divisions left out), condition and MMWR year whose year-to-date count at the year's latest published week is at or below near_zero_ytd_max, after the year before had reached near_zero_prior_year_min by the same MMWR week (or its last published week before it); the two thresholds are dbt variables. An area is matched across years ignoring case, edge spaces and dots, and a renamed area (the NNDSS contract's renamedLabels on states) is joined to its earlier name; conditions are compared exactly as published."
     customProperties:
       - {property: layer, value: flag}
       - {property: totalRows, value: none}
@@ -24,7 +24,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "Reporting area, as NNDSS publishes it in that year."
+        description: "Reporting area, as NNDSS spells it in that year's latest week; two spellings in that week: the alphabetically last, with that spelling's counts."
         customProperties: [{property: role, value: dimension}]
       - name: label
         physicalType: VARCHAR
@@ -42,7 +42,7 @@ schema:
         physicalType: BIGINT
         logicalType: integer
         required: true
-        description: "The latest MMWR week published for that year, where the running total is read."
+        description: "The latest MMWR week published for this area, condition and year, where the running total is read."
         customProperties: [{property: role, value: attribute}]
       - name: ytd
         physicalType: BIGINT

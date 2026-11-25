@@ -546,11 +546,16 @@ class Engine:
                 if held is None:
                     continue  # read from its private store (private.read_rows) when first asked
                 try:
-                    load_live(con, ds, held[0])  # in memory only, like a live table
+                    staged = load_live(con, ds, held[0])  # in memory only, like a live table
                 except Exception:  # noqa: BLE001 - one bad store must not break the other sources
                     del self._private[ds.id]
                     continue
-                manifest = held[1]
+                manifest = replace(  # its data checks reach answers as caveats, as a live table's do
+                    held[1],
+                    notes=[*held[1].notes, *staged.notes()],
+                    silver=staged.staging.as_dict(),
+                    quality=staged.quality.as_dict(),
+                )
             elif not ds.entry.licence.redistribution:
                 table = self._live.get(ds.id)
                 if table is None:

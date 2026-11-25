@@ -98,11 +98,13 @@ flowchart LR
    logs.
    Each contract's quality rules run on every snapshot and live read (`quality.py`) and, as named dbt tests,
    in the transform build. Contract SQL passes the same single-SELECT guard as `query_sql` when the contract
-   loads, and snapshots are checked on a read-only connection. A failed data check is a caveat on answers; a
-   rule that can't run, or returns no number, is kept apart for maintainers. The weekly refresh publishes a
-   hub release only when the release gate (`release_gate.py`) finds a complete build (every model, seed and
-   snapshot built, at least one test run) with no failed or skipped node, no check that couldn't run and no
-   failed error-severity test or unit test; otherwise the release already served stays. The gate's state
+   loads, and snapshots are checked on a read-only connection. A failed warn-severity check is a caveat on
+   answers. A failed error-severity check, an error-severity value rule with no values to judge, or a rule that
+   can't run keeps `LATEST` where it is and stops export-public (`QualityBlocked`); a rule that can't run is kept
+   apart for maintainers. A kept snapshot is judged again by the contract's current rules on every refresh and
+   export. The weekly refresh publishes a hub release only when the release gate (`release_gate.py`) finds a
+   complete build (every model built, at least one test run) with no failed or skipped node, no check that
+   couldn't run and no failed error-severity test or unit test; otherwise the release already served stays. The gate's state
    (`SERVING`, `builds.jsonl`, `serving_log.jsonl`) is kept between runs in the private ops dataset
    `<owner>/health-data-registry-ops-release-gate` (docs/dev/automation.md).
 5. **DuckDB read-only views.** `store.py` builds views over the snapshot from the contract. Connections are

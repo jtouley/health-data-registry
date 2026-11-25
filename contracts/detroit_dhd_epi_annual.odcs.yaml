@@ -134,7 +134,6 @@ schema:
       - id: detroit_and_michigan_each_year
         dimension: coverage
         severity: warn
-
         type: sql
         description: "Each chart has one Detroit row and one Michigan row for every year it shows (12 or 14 rows per chart, 2 per year, on 2026-11-24)."
         query: "SELECT COUNT(*) FROM (SELECT worksheet, year FROM {object} GROUP BY worksheet, year HAVING COUNT(*) <> 2)"

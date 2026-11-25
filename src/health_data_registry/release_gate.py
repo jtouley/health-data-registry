@@ -99,7 +99,8 @@ def build_inputs(registry: Any, lake: Path, commit: str) -> dict[str, Any]:
     when the lake has none) and its contract's version and file hash; each model contract's file hash; and the dbt
     project's vars. Not the snapshot id or retrieval time: fetching identical bytes again gives the same id (the
     snapshot id stays in each row and manifest as provenance). Not dbt's run id, thread count or the clock.
-    Raises GateInputMissing when a snapshot, contract or the dbt project can't be read."""
+    Vars passed on dbt's command line (--vars) are not read: the workflow passes none, so a run that adds some
+    must add them here too. Raises GateInputMissing when a snapshot, contract or the dbt project can't be read."""
     import yaml
 
     from health_data_registry.store import latest_snapshot
@@ -116,11 +117,8 @@ def build_inputs(registry: Any, lake: Path, commit: str) -> dict[str, Any]:
             }
         models = {c.id: _sha256(registry.root / p) for p, c in model_contracts(registry.root)}
         project = registry.root / DBT_PROJECT
-        dbt_vars = (
-            (yaml.safe_load(project.read_text(encoding="utf-8")) or {}).get("vars") or {}
-            if project.is_file()
-            else {}
-        )
+        # A missing project can't have built anything: read_text raises, and the release is held.
+        dbt_vars = (yaml.safe_load(project.read_text(encoding="utf-8")) or {}).get("vars") or {}
     except (OSError, ValueError, yaml.YAMLError) as e:
         raise GateInputMissing(f"the build's inputs could not be read ({e}); the release is held") from e
     return {"commit": commit, "datasets": datasets, "model_contracts": models, "dbt_vars": dbt_vars}
@@ -251,7 +249,14 @@ def read_build(
             elif status == "fail":
                 failures.append(item)
             elif status == "error" and NOT_EVALUATED in message.lower():
-                unjudged.append({"test": name, "type": kind, "error": message})
+                # As the read path (QualityReport.blocking): not evaluated holds the build for an error-severity
+                # rule and is a warning for a warn-severity one. The contracts' severity decides when the test
+                # is expected, so a run whose config downgraded the rule can't turn a hold into a warning.
+                severity = (expected.tests.get(name) if expected else None) or item["severity"]
+                if severity == "warn":
+                    warnings.append({**item, "error": message})
+                else:
+                    unjudged.append({"test": name, "type": kind, "error": message})
             else:  # error, or a status this gate does not know: the check did not run
                 rule_errors.append({"test": name, "type": kind, "error": message or status})
         elif status != "success":  # any other resource type: fail closed on anything but success
@@ -419,7 +424,12 @@ def confirm(ops: Path, build: Build, release_ref: str, *, now: datetime | None =
             f"{build.invocation_id}; only the run that was judged can be served"
         )
     run_date = last.get("run_date")
-    if run_date and not release_ref.startswith(f"release-{run_date}"):
+    if not run_date:  # a pass with no run date could be served under any date's tag
+        raise ValueError(
+            f"build {build.build_id} passed without a run date, so no release tag can be matched to it; run the "
+            "gate check again with --run-date"
+        )
+    if not release_ref.startswith(f"release-{run_date}"):
         raise ValueError(
             f"{release_ref} is not a release of run date {run_date}, the run build {build.build_id} passed for"
         )

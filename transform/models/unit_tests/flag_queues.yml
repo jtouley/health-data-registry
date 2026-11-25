@@ -2,7 +2,8 @@
 # `dbt build` (make transform, CI's Transform job and the weekly refresh), and the release gate holds a build in
 # which one fails. Each covers what a queue gets wrong without it: summary rows (TOTAL) never listed as areas, an
 # area matched across the 2024 upper case / 2025 title case change, weeks with neither a count nor a flag, an
-# early-year week compared with the same week a year before, and a missing screening row.
+# early-year week compared with the same week a year before, a missing screening row, and two spellings of one
+# area in one week (shown once, under a fixed spelling).
 version: 2
 
 unit_tests:
@@ -23,6 +24,24 @@ unit_tests:
       rows:
         - {states: Minnesota, label: Anthrax, first_year: 2024, last_year: 2025, weeks: 2}
 
+  - name: flag_all_dash_areas_shows_the_latest_years_spelling
+    model: flag_all_dash_areas
+    given:
+      - input: ref('int_cdc_nndss_weekly')
+        rows:
+          # The latest year's spelling wins even when it sorts first (a key of spelling alone would pick 'Minnesota').
+          - {states: Minnesota, states_key: MINNESOTA, is_total_row: false, year: 2024, week: 1, label: Anthrax, m1: null, m1_flag: "-"}
+          - {states: MINNESOTA, states_key: MINNESOTA, is_total_row: false, year: 2025, week: 1, label: Anthrax, m1: null, m1_flag: "-"}
+          # Two spellings in the latest year: the alphabetically last in byte order ('Idaho' > 'IDAHO'), and a week
+          # published under both spellings counts once.
+          - {states: Idaho, states_key: IDAHO, is_total_row: false, year: 2025, week: 1, label: Anthrax, m1: null, m1_flag: "-"}
+          - {states: IDAHO, states_key: IDAHO, is_total_row: false, year: 2025, week: 1, label: Anthrax, m1: null, m1_flag: "-"}
+          - {states: IDAHO, states_key: IDAHO, is_total_row: false, year: 2025, week: 2, label: Anthrax, m1: null, m1_flag: "-"}
+    expect:
+      rows:
+        - {states: MINNESOTA, label: Anthrax, first_year: 2024, last_year: 2025, weeks: 2}
+        - {states: Idaho, label: Anthrax, first_year: 2025, last_year: 2025, weeks: 2}
+
   - name: flag_near_zero_running_totals_compares_the_same_week
     model: flag_near_zero_running_totals
     given:
@@ -42,6 +61,21 @@ unit_tests:
       rows:
         - {states: Minnesota, label: "Candida auris, clinical", year: 2025, latest_week: 53, ytd: null, ytd_flag: "-", prior_year_ytd: 12}
 
+  - name: flag_near_zero_running_totals_lists_an_area_once
+    model: flag_near_zero_running_totals
+    given:
+      - input: ref('int_cdc_nndss_weekly')
+        rows:
+          # Two spellings of one area in both compared weeks: one row, under the alphabetically last spelling with
+          # that spelling's counts (without the collapse this is 4 rows).
+          - {states: IDAHO, states_key: IDAHO, is_total_row: false, year: 2024, week: 5, label: "Candida auris, clinical", m3: 20, m3_flag: null}
+          - {states: Idaho, states_key: IDAHO, is_total_row: false, year: 2024, week: 5, label: "Candida auris, clinical", m3: 21, m3_flag: null}
+          - {states: IDAHO, states_key: IDAHO, is_total_row: false, year: 2025, week: 5, label: "Candida auris, clinical", m3: 0, m3_flag: null}
+          - {states: Idaho, states_key: IDAHO, is_total_row: false, year: 2025, week: 5, label: "Candida auris, clinical", m3: null, m3_flag: "-"}
+    expect:
+      rows:
+        - {states: Idaho, label: "Candida auris, clinical", year: 2025, latest_week: 5, ytd: null, ytd_flag: "-", prior_year_ytd: 21}
+
   - name: flag_cauris_clinical_screening_swap_lists_reporting_areas_only
     model: flag_cauris_clinical_screening_swap
     given:
@@ -52,6 +86,9 @@ unit_tests:
           - {states: GEORGIA, states_key: GEORGIA, is_total_row: false, year: 2024, week: 52, label: "Candida auris, screening", m3: 365}
           - {states: OHIO, states_key: OHIO, is_total_row: false, year: 2024, week: 52, label: "Candida auris, clinical", m3: 10}
           - {states: OHIO, states_key: OHIO, is_total_row: false, year: 2024, week: 52, label: "Candida auris, screening", m3: 40}
+          # A second spelling of Ohio in the latest week: shown as the alphabetically last ('Ohio' > 'OHIO'), and
+          # each count is the larger of the two spellings' (99 > 10), so Ohio is listed.
+          - {states: Ohio, states_key: OHIO, is_total_row: false, year: 2024, week: 52, label: "Candida auris, clinical", m3: 99}
           # No screening row at the latest week: listed, screening empty.
           - {states: MINNESOTA, states_key: MINNESOTA, is_total_row: false, year: 2024, week: 52, label: "Candida auris, clinical", m3: 12}
           # The same swap again in a summary row is not another area.
@@ -61,3 +98,4 @@ unit_tests:
       rows:
         - {states: GEORGIA, year: 2024, latest_week: 52, clinical_ytd: 651, screening_ytd: 365}
         - {states: MINNESOTA, year: 2024, latest_week: 52, clinical_ytd: 12, screening_ytd: null}
+        - {states: Ohio, year: 2024, latest_week: 52, clinical_ytd: 99, screening_ytd: 40}

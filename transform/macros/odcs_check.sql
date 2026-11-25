@@ -5,7 +5,8 @@
   A measurement that comes back empty (NULL) raises an error, so dbt records the test as one that could not run
   (a rule error), exactly as quality.run_rules does; it is never a pass and never a data failure. With
   `nothing_to_judge` (a value rule, whose NULL means the column has no values), the error starts "Not evaluated",
-  so the release gate reports it apart from a metric error; both hold the build.
+  so the release gate reports it apart from a metric error. A metric error always holds the build; not evaluated
+  holds it for an error-severity rule and is a warning for a warn-severity one, as on the read path.
   Both strings are generated from the contract by `make contracts`; nothing here is per source.
 #}
 {% test odcs_check(model, measure_sql, condition, nothing_to_judge=false) %}

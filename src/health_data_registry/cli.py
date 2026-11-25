@@ -86,7 +86,10 @@ def gate(a: Any) -> int:
     try:
         registry = load_registry()
         expected = expected_from(registry)
-        inputs = build_inputs(registry, lake_root(), a.commit or os.environ.get("GITHUB_SHA") or "unknown")
+        commit = a.commit or os.environ.get("GITHUB_SHA")
+        if not commit:  # without the code's commit, builds of different code would share one build id
+            raise ValueError("no commit was given (--commit, or GITHUB_SHA in CI)")
+        inputs = build_inputs(registry, lake_root(), commit)
     except (RegistryError, GateInputMissing, ValueError) as e:
         print(f"The release is held: the contracts or the lake could not be read ({e}).", file=sys.stderr)
         return 1

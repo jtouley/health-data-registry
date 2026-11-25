@@ -19,10 +19,9 @@ ytd as (
         c.states_key,
         c.year,
         l.latest_week,
-        -- Two spellings of one area in the latest week: the alphabetically last (a total order), so every build
-        -- shows the same.
-        arg_max(c.states, (c.year, c.states)) as states,
-
+        -- Two spellings of one area in the latest week: the alphabetically last (year is fixed by the grouping),
+        -- so every build shows the same. Each count is the larger of the spellings' counts.
+        max(c.states) as states,
         max(c.m3) filter (where c.label = 'Candida auris, clinical') as clinical_ytd,
         max(c.m3) filter (where c.label = 'Candida auris, screening') as screening_ytd
     from cauris as c

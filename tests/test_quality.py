@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +12,7 @@ import pytest
 from health_data_registry import quality as q
 from health_data_registry.registry import Column, RegistryError, load_registry
 from health_data_registry.staging import stage_checked
-from health_data_registry.store import Manifest, build_snapshot, latest_snapshot, write_ndjson
+from health_data_registry.store import Manifest, build_snapshot, judge_snapshot, latest_snapshot, write_ndjson
 from tests.conftest import CONTRACT, RECORDS, raw_fetch, write_registry
 
 REPO = Path(__file__).resolve().parents[1]
@@ -409,11 +410,63 @@ def test_a_failed_error_rule_blocks_latest_and_publishing(tmp_path: Path) -> Non
     ):
         export_public(load_registry(tmp_path / "reg"), lake, str(tmp_path / "out"), run_date="2026-11-25")
 
-    assert q.blocked_message("x", {"results": [], "rule_errors": [{"test": "a"}, {"test": "b"}]}) == (
+    record = {"tool": "contract-rules", "results": [], "rule_errors": [{"test": "a"}, {"test": "b"}]}
+    assert q.blocked_message("x", record) == (
         "x: the checks a, b could not run, so this copy is not served or published and the copy before it stays. "
         "Compare the data with the publisher's page, then refresh, or have a maintainer fix the contract."
     )
-    assert q.blocked_message("x", None) is None
+    assert q.blocked_message("x", {"tool": "contract-rules", "results": [], "rule_errors": []}) is None
+    # No record at all, or one no contract-rules run wrote, is not a pass: nothing was checked (fail closed).
+    unchecked = (
+        "x: no data checks have run on this copy, so it is not served or published and the copy before it "
+        "stays. Refresh it, or have a maintainer check the contract."
+    )
+    assert q.blocked_message("x", None) == unchecked
+    assert q.blocked_message("x", {}) == unchecked
+    assert q.blocked_message("x", {"results": [], "rule_errors": []}) == unchecked
+
+
+def test_a_kept_snapshot_is_judged_by_the_current_rules_not_its_stored_record(tmp_path: Path) -> None:
+    """A snapshot built before the rules (no quality record), or before a rule was tightened, takes the rerun path
+    on a refresh with the same bytes: promotion and export-public run the contract's rules on it again."""
+    loose = load_registry(
+        write_registry(tmp_path / "loose", contract=RULED.replace("severity: error", "severity: warn"))
+    ).get("toy_cases")
+    page = tmp_path / "p.ndjson"
+    write_ndjson(page, RECORDS)
+    lake = tmp_path / "lake"
+    lake.mkdir()
+    fetch = raw_fetch("https://data.cdc.gov/resource/a.json", RECORDS)
+    m = build_snapshot(lake, loose, [fetch], [page])
+    (manifest_path,) = (lake / "datasets" / "toy_cases").rglob("manifest.json")
+    stored = json.loads(manifest_path.read_text())
+    stored["quality"] = {}  # as every manifest written before the rules existed
+    manifest_path.write_text(json.dumps(stored))
+    latest = lake / "datasets" / "toy_cases" / "LATEST"
+    latest.write_text("20261101T000000Z-good\n")
+    strict = load_registry(write_registry(tmp_path / "reg", contract=RULED))
+    with pytest.raises(q.QualityBlocked, match="cases_under_5000 failed"):
+        build_snapshot(lake, strict.get("toy_cases"), [fetch], [page])
+    assert latest.read_text() == "20261101T000000Z-good\n"  # LATEST never moved to the unchecked copy
+    assert Manifest.read(manifest_path).quality == {}  # the kept snapshot is never rewritten
+    latest.write_text(m.snapshot_id + "\n")
+    from health_data_registry.publish import PublishCheckFailed, export_public
+
+    with pytest.raises(
+        PublishCheckFailed, match="toy_cases: the error-severity check cases_under_5000 failed"
+    ):
+        export_public(strict, lake, str(tmp_path / "out"), run_date="2026-11-25")
+    # A snapshot whose file is gone can't be checked, so it blocks.
+    (manifest_path.parent / "data.duckdb").unlink()
+    judged = judge_snapshot(manifest_path.parent, strict.get("toy_cases"))
+    assert judged["rule_errors"] == [
+        {"test": "contract-rules", "error": "data.duckdb is missing from the snapshot"}
+    ]
+    assert q.blocked_message("toy_cases", judged) == (
+        "toy_cases: the check contract-rules could not run, so this copy is not served or published and the copy "
+        "before it stays. Compare the data with the publisher's page, then refresh, or have a maintainer fix the "
+        "contract."
+    )
 
 
 def test_a_warn_rule_does_not_block_latest(tmp_path: Path) -> None:
