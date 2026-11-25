@@ -18,7 +18,7 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 | `make check` | lint, typecheck, test, mutate: the quick local loop, not all of CI |
 | `make precheck` | The pre-PR gate's local half: the CI checks plus a docs-drift check, stopping at the first failure; run before every pre-pr push |
 | `make hooks` | Install the pre-commit hooks (`uv run pre-commit install`); once per checkout |
-| `make test` | Offline tests with coverage (floor 85%) |
+| `make test` | Offline tests with coverage, one worker per core (pytest-xdist; floor 85%) |
 | `make test-network` | Live publisher checks in `tests/integration` (marker `network`) |
 | `make smoke` | The C. auris in Michigan journey through the MCP server on a synthetic lake, scored with `eval/scorer.py` (marker `smoke`; [docs/dev/README.md](docs/dev/README.md#smoke-journey)) |
 | `make mutate` | Mutation tests on the functions changed since `BASE` (`scripts/mutate_changed.py`, floor 70%) |

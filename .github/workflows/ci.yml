@@ -230,7 +230,7 @@ jobs:
       # and compares with main, the branch its PR will target. fetch-depth 0 above fetched every branch, so
       # origin/<base> exists; fail if it does not. The merge base is resolved once, here, and handed to every
       # shard, so a shard scopes to the same functions even if main moves while the run waits.
-      - name: List changed modules
+      - name: List changed functions
         id: list
         env:
           BASE_REF: ${{ github.base_ref || 'main' }}
@@ -245,7 +245,9 @@ jobs:
             echo "The base branch origin/${BASE_REF} was not fetched, so the changed modules are unknown. Failing."
             exit 1
           fi
-          merge_base="$(git merge-base "origin/${BASE_REF}" HEAD)"
+          # `|| merge_base=""`: under bash -e a failing command substitution would end the step before the
+          # message below.
+          merge_base="$(git merge-base "origin/${BASE_REF}" HEAD)" || merge_base=""
           if ! [[ "${merge_base}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "No merge base with origin/${BASE_REF}, so the changed functions are unknown. Failing."
             exit 1
@@ -262,16 +264,20 @@ jobs:
       (github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pre-pr/'))
       && needs.mutation-list.outputs.modules != '[]'
     runs-on: ubuntu-latest
-    # Shards are sized from the mutant estimate to about 3 minutes each (SHARD_TARGET in scripts/mutate_changed.py,
-    # with the measurements behind it). 8 minutes stops a hung baseline or stats run (mutmut gives those no timeout
-    # of its own) before it holds a runner for long. A shard that hits it leaves no report and fails the check;
+    # Shards are sized from the mutant estimate to about 3 minutes of mutants each (SHARD_TARGET in
+    # scripts/mutate_changed.py, with the measurements behind it); setup (checkout, install, generating the module's
+    # mutants, the stats run) adds about 3 to 4 minutes, and the estimate can be 1.3 times low. 15 minutes is about
+    # twice that worst case: it stops a hung baseline or stats run (mutmut gives those no timeout of its own) without
+    # cutting off a slow honest shard. A shard that hits it leaves no report, so the aggregate below fails with
+    # "no shard report (the shard was cancelled, timed out or never ran)" and the shard's own job shows the timeout;
     # lower its module's target in scripts/mutate_changed.py rather than raising this.
-    timeout-minutes: 8
+    timeout-minutes: 15
     strategy:
       fail-fast: false
-      # At most 6 shards of one run at a time: the account has about 20 runners, so one run never takes more than
-      # about a third of them, and main's and other PRs' runs still start. A newer push to the same branch cancels
-      # this run (concurrency, above), queued shards included.
+      # At most 6 shards of this run at a time, so one run takes at most 6 of the account's runners (about 20). The
+      # cap is per run, not per account: several mutation runs at once (other PRs, a pre-pr branch) can still hold
+      # more between them. A newer push to the same branch cancels this run (concurrency, above), queued shards
+      # included.
       max-parallel: 6
       matrix:
         module: ${{ fromJSON(needs.mutation-list.outputs.modules) }}

@@ -49,7 +49,7 @@ kit: ## Build the Claude Projects kit into KIT_DIR (default dist/projects-kit, n
 fuzz-requirements: ## Regenerate fuzz/requirements.txt from uv.lock (hash-pinned, for the fuzz image's Python 3.11); needs PyPI
 	$(UV) run python scripts/fuzz_requirements.py write
 
-check: lint typecheck test mutate ## The quick local loop (not all of CI): lint, typecheck, test, mutation tests on changed modules
+check: lint typecheck test mutate ## The quick local loop (not all of CI): lint, typecheck, test, mutation tests on changed functions
 
 precheck: ## The pre-PR gate's local half: the CI checks plus docs drift (hooks, lint, types, tests, smoke, kit, docs drift, mutation shards); stops at the first failure
 	UV="$(UV)" MAKE="$(MAKE)" BASE="$(BASE)" COV_FLOOR="$(COV_FLOOR)" MUTATION_FLOOR="$(MUTATION_FLOOR)" bash scripts/precheck.sh

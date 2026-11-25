@@ -7,6 +7,7 @@ import fnmatch
 import importlib.util
 import json
 import os
+import signal
 import subprocess
 import sys
 from dataclasses import asdict
@@ -244,7 +245,7 @@ def test_no_mutant_checked_anywhere_fails(mc: ModuleType) -> None:
 def test_no_changed_module_passes(mc: ModuleType) -> None:
     ok, lines = mc.aggregate([], 70.0, [])
     assert ok
-    assert lines == ["No changed modules to mutate."]
+    assert lines == ["No changed functions to mutate."]
 
 
 def test_expected_modules_with_no_reports_fail(mc: ModuleType) -> None:
@@ -787,7 +788,7 @@ def test_shards_scope_to_the_lists_merge_base_and_stay_small() -> None:
     assert '--list --base "${merge_base}"' in list_job
     assert "merge_base: ${{ steps.list.outputs.merge_base }}" in list_job
     assert '--base "${MERGE_BASE}"' in shard_job and "fetch-depth: 0" in shard_job
-    assert "timeout-minutes: 8\n" in shard_job and "max-parallel: 6\n" in shard_job
+    assert "timeout-minutes: 15\n" in shard_job and "max-parallel: 6\n" in shard_job
 
 
 # Diff scope: only the functions a change touches -----------------------------------------------------------
@@ -830,10 +831,105 @@ def test_only_functions_holding_a_changed_line_are_in_scope(mc: ModuleType) -> N
     assert mc.changed_functions(SCOPED_SRC, {16}) == {"x_edited"}
     assert mc.changed_functions(SCOPED_SRC, {10}) == {"x_decorated"}  # the decorator line is the function's
     assert mc.changed_functions(SCOPED_SRC, {24}) == {m}
-    # Imports, constants and class attributes make no mutant, so a change there scopes nothing.
-    assert mc.changed_functions(SCOPED_SRC, {1, 3, 21}) == frozenset()
+    # An import or a constant no function reads makes no mutant and scopes nothing; a class attribute scopes the
+    # class's methods, which can read it through self.
+    assert mc.changed_functions(SCOPED_SRC, {1, 3}) == frozenset()
+    assert mc.changed_functions(SCOPED_SRC, {21}) == {m, n}
     assert mc.changed_functions(SCOPED_SRC, set()) == frozenset()
     assert mc.changed_functions(SCOPED_SRC, None) == frozenset(spans)  # a new file: every function
+
+
+MODULE_LEVEL_SRC = '''"""A module docstring."""
+
+import re
+
+_FUNCTIONS = frozenset({
+    "lower",
+    "upper",
+})
+_STRUCTURE = frozenset({"select"})
+_ALLOWED = _STRUCTURE | _FUNCTIONS  # built from _FUNCTIONS
+PATTERN = re.compile("x")
+
+
+def allowed(name):
+    return name in _ALLOWED
+
+
+def functions_only(name):
+    return name in _FUNCTIONS
+
+
+def structure_only(name):
+    return name in _STRUCTURE
+
+
+def unrelated():
+    return 1
+
+
+class Guard:
+    words = _ALLOWED
+
+    def check(self, w):
+        return w in self.words
+
+
+def uses_pattern(s):
+    return PATTERN.match(s)
+
+
+register(allowed)
+'''
+
+
+def test_a_change_to_a_module_level_value_scopes_the_functions_that_read_it(mc: ModuleType) -> None:
+    """sql_guard's allowlists and fetch's limits are module-level values: a change there must be mutation-tested
+    through the functions that read them, never pass with no mutant."""
+    lines = MODULE_LEVEL_SRC.splitlines()
+    at = {text.strip(): i + 1 for i, text in enumerate(lines)}
+    check = f"x{mc.SEP}Guard{mc.SEP}check"
+    # An entry inside the allowlist: its readers, through _ALLOWED and the class built from it too.
+    assert mc.changed_functions(MODULE_LEVEL_SRC, {at['"upper",']}) == {
+        "x_allowed", "x_functions_only", check
+    }  # fmt: skip
+    assert mc.changed_functions(MODULE_LEVEL_SRC, {at['_STRUCTURE = frozenset({"select"})']}) == {
+        "x_allowed", "x_structure_only", check
+    }  # fmt: skip
+    # An import reaches the functions through the names built from it.
+    assert mc.changed_functions(MODULE_LEVEL_SRC, {at["import re"]}) == {"x_uses_pattern"}
+    # A docstring, a comment-only or blank line: nothing to mutate.
+    assert mc.changed_functions(MODULE_LEVEL_SRC, {1, 2}) == frozenset()
+    # A top-level statement that defines nothing (a registration call) may change anything: every function.
+    every = mc.changed_functions(MODULE_LEVEL_SRC, None)
+    assert mc.changed_functions(MODULE_LEVEL_SRC, {at["register(allowed)"]}) == every
+    # A changed line inside a function still scopes only that function.
+    assert mc.changed_functions(MODULE_LEVEL_SRC, {at["return 1"]}) == {"x_unrelated"}
+
+
+def test_a_changed_module_with_no_function_to_mutate_is_named(
+    mc: ModuleType, repo: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base = _git(repo, "rev-parse", "HEAD").strip()
+    (repo / "m.py").write_text(SCOPED_SRC.replace("LIMIT = 3", "LIMIT = 4"), encoding="utf-8")
+    monkeypatch.setattr(mc, "module_path", lambda module: repo / "m.py")
+    mc.set_scope([A], base)
+    assert mc.SCOPE[A] == frozenset()
+    err = capsys.readouterr().err
+    assert f"{A} changed, but no function holds or reads the change" in err
+
+
+def test_no_merge_base_is_an_error_not_the_tip_of_the_base(
+    mc: ModuleType, repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    head = _git(repo, "rev-parse", "HEAD").strip()
+    assert mc.merge_base(head) == head
+    _git(repo, "checkout", "-q", "--orphan", "other")
+    _git(repo, "commit", "-q", "-m", "unrelated")
+    with pytest.raises(ValueError, match="No merge base of main and HEAD"):
+        mc.merge_base("main")
+    assert mc.main(["--list", "--base", "main"]) == 1
+    assert "No merge base of main and HEAD" in capsys.readouterr().err
 
 
 def test_a_scoped_split_holds_only_the_changed_functions(mc: ModuleType) -> None:
@@ -973,10 +1069,56 @@ def test_mutmut_scope_is_set_for_the_run_and_taken_out(
         pass
 
 
+def test_mutmut_scope_restores_the_file_when_the_run_is_terminated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mc = _fresh(monkeypatch)
+    monkeypatch.setattr(mc, "ROOT", tmp_path)
+    text = '[tool.mutmut]\npytest_add_cli_args_test_selection = ["tests/"]\n'
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(text, encoding="utf-8")
+    before = signal.getsignal(signal.SIGTERM)
+    with pytest.raises(SystemExit) as stop, mc.mutmut_scope(["src/a.py"], ["tests/test_a.py"]):
+        assert "only_mutate" in pyproject.read_text(encoding="utf-8")
+        os.kill(os.getpid(), signal.SIGTERM)
+    assert stop.value.code == 128 + signal.SIGTERM
+    assert pyproject.read_text(encoding="utf-8") == text
+    assert signal.getsignal(signal.SIGTERM) == before
+    pyproject.write_text(text.replace("\n", '\nonly_mutate = ["b"]\n', 1), encoding="utf-8")
+    with pytest.raises(ValueError, match="interrupted run") as refused, mc.mutmut_scope(["src/a.py"], []):
+        pass
+    assert "git checkout -- pyproject.toml" in str(refused.value)
+
+
+# Under mutmut, mutmut_scope has written only_mutate and the narrowed selection into the pyproject.toml copied to
+# mutants/, so this reads the real file only outside mutmut.
+@reads_real_sources
 def test_the_real_pyproject_has_what_mutmut_scope_edits() -> None:
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert text.count("[tool.mutmut]\n") == 1 and "\nonly_mutate" not in text
     assert text.count("\npytest_add_cli_args_test_selection = ") == 1
+
+
+@reads_real_sources  # see test_the_real_pyproject_has_what_mutmut_scope_edits
+def test_the_skipped_tests_match_the_ignores_mutmut_scope_replaces(mc: ModuleType) -> None:
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    line = mc.TEST_SELECTION_LINE.search(text)
+    assert line is not None
+    selection = json.loads(line.group(0).partition(" = ")[2])
+    ignores = [a.removeprefix("--ignore=") for a in selection if a.startswith("--ignore=")]
+    assert sorted(i + "/" if (ROOT / i).is_dir() else i for i in ignores) == sorted(mc.MUTMUT_SKIPPED_TESTS)
+
+
+@reads_real_sources
+def test_the_scope_and_the_split_name_every_function_alike(mc: ModuleType) -> None:
+    """The diff scope (function_spans) and the split (mutated_functions) must agree on every key, or a changed
+    function would drop out of the split unnoticed."""
+    for pkg in mc.PACKAGES:
+        for path in sorted(pkg.rglob("*.py")):
+            if "sealed" in path.parts:
+                continue
+            src = path.read_text(encoding="utf-8")
+            assert set(mc.function_spans(src)) == {k for k, _ in mc.mutated_functions(src)}, path
 
 
 def test_tests_reaching_follows_imports_indirectly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1007,3 +1149,24 @@ def test_tests_reaching_follows_imports_indirectly(tmp_path: Path, monkeypatch: 
     # test_other reaches nothing of leaf; test_metamorphic is one mutmut never runs.
     assert got == ["tests/sub/test_any.py", "tests/test_lazy.py", "tests/test_mid.py", "tests/test_string.py"]
     assert mc.tests_reaching(["health_data_registry.other"], tmp_path) == ["tests/test_other.py"]
+
+
+def test_tests_reaching_follows_files_loaded_by_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    mc = _fresh(monkeypatch)
+    files = {
+        "src/health_data_registry/__init__.py": "",
+        "src/health_data_registry/naming.py": "X = 1\n",
+        "src/health_data_registry/other.py": "Y = 2\n",
+        "scripts/crawl.py": "from health_data_registry import naming\n",
+        "tools/gen/gen.py": "import health_data_registry.naming\n",
+        "tests/__init__.py": "",
+        "tests/test_script.py": 'import importlib.util\nSCRIPT = ROOT / "scripts" / "crawl.py"\n',
+        "tests/test_gen.py": 'P = "tools/gen/gen.py"\n',
+        "tests/test_init.py": 'P = "src/health_data_registry/__init__.py"\n',
+    }
+    for rel, src in files.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(src, encoding="utf-8")
+    got = mc.tests_reaching(["health_data_registry.naming"], tmp_path)
+    assert got == ["tests/test_gen.py", "tests/test_script.py"]
+    assert mc.tests_reaching(["health_data_registry.other"], tmp_path) == []
