@@ -11,7 +11,6 @@ import hashlib
 import io
 import json
 import runpy
-import subprocess
 import sys
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -30,6 +29,7 @@ from mcp.shared.exceptions import MCPError
 
 from eval import drive
 from eval.drive import DriveError, Limits, Outcome, Question, Setup
+from eval.label_check import run_git
 from eval.scorer import (
     DRIVE_HEADER_KEY,
     ExpectedRecord,
@@ -207,8 +207,7 @@ def git_checkout(path: Path) -> Path:
 
 
 def git(path: Path, *args: str) -> str:
-    proc = subprocess.run(["git", "-C", str(path), *args], check=True, capture_output=True, text=True)  # noqa: S603, S607
-    return proc.stdout.strip()
+    return run_git(path, *args).strip()
 
 
 @dataclass

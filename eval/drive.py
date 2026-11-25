@@ -43,7 +43,6 @@ import json
 import logging
 import math
 import os
-import subprocess
 import sys
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
@@ -54,6 +53,7 @@ from typing import Any, Literal, Protocol, TextIO
 
 import anyio
 
+from .label_check import LabelCheckError, run_git
 from .scorer import DRIVE_HEADER_KEY as HEADER_KEY
 
 DRIVER_VERSION = "1"
@@ -242,18 +242,14 @@ def lake_snapshots(lake: Path) -> dict[str, str]:
 def server_commit(server_dir: Path) -> tuple[str, bool]:
     """The server checkout's HEAD, and whether its tree has uncommitted changes."""
 
-    def git(*args: str) -> str:
-        proc = subprocess.run(  # noqa: S603 - fixed arguments, no shell
-            ["git", "-C", str(server_dir), *args],  # noqa: S607 - git from PATH, as every script here
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if proc.returncode != 0:
-            raise DriveError(f"{server_dir} is not a git checkout, so the server commit can't be recorded.")
-        return proc.stdout.strip()
-
-    return git("rev-parse", "HEAD"), bool(git("status", "--porcelain"))
+    try:
+        head = run_git(server_dir, "rev-parse", "HEAD").strip()
+        dirty = bool(run_git(server_dir, "status", "--porcelain").strip())
+    except LabelCheckError:
+        raise DriveError(
+            f"{server_dir} is not a git checkout, so the server commit can't be recorded."
+        ) from None
+    return head, dirty
 
 
 def server_env(env: Mapping[str, str]) -> dict[str, str]:
