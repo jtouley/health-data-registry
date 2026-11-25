@@ -327,6 +327,32 @@ class QualityReport:
         return any(r["status"] == "fail" for r in self.results) or bool(self.rule_errors)
 
 
+class QualityBlocked(ValueError):
+    """A snapshot failed an error-severity rule, or a rule could not run: it is never served or published."""
+
+
+def blocked_message(dataset: str, quality: Mapping[str, Any] | None) -> str | None:
+    """Why a snapshot's quality record (a manifest's `quality`) blocks it, in plain words; None when it doesn't.
+
+    A failed error-severity rule is a data failure; a rule that could not run leaves the copy unchecked. Either
+    way the copy is kept for inspection, but LATEST stays where it was and export-public refuses it.
+    """
+    q = quality or {}
+    failed = [str(r.get("test")) for r in q.get("results") or [] if r.get("status") == "fail"]
+    broken = [str(e.get("test")) for e in q.get("rule_errors") or []]
+    if not failed and not broken:
+        return None
+    parts = []
+    if failed:
+        parts.append(f"the error-severity check{'s' if len(failed) > 1 else ''} {', '.join(failed)} failed")
+    if broken:
+        parts.append(f"the check{'s' if len(broken) > 1 else ''} {', '.join(broken)} could not run")
+    return (
+        f"{dataset}: {' and '.join(parts)}, so this copy is not served or published and the copy before it "
+        "stays. Compare the data with the publisher's page, then refresh, or have a maintainer fix the contract."
+    )
+
+
 def rules_for(contract: Any) -> tuple[Rule, ...]:
     """The volume check, the contract's own quality rules, then the fill-rate checks (fill_rate_rules)."""
     return (has_rows_rule(), *contract.quality, *fill_rate_rules(contract.columns))
