@@ -58,6 +58,8 @@ SQL_KNOWN = {
     "#71 current_date(x)": ("KNOWN_REWRITES", "SELECT current_date(state) FROM deaths"),
     "#71 current_timestamp(x, y)": ("KNOWN_REWRITES", "SELECT current_timestamp(state, NULL) FROM deaths"),
     "#72 initcap()": ("KNOWN_GENERATE_PARSE_ERROR", "SELECT initcap() FROM deaths"),
+    "#77 minus tilde": ("KNOWN_MINUS_TILDE", "SELECT -~9PysLRECURSIVEsS"),
+    "#77 minus tilde tilde": ("KNOWN_MINUS_TILDE", "SELECT - ~ ~state FROM deaths"),
 }
 
 

@@ -44,6 +44,11 @@ KNOWN_LONE_SURROGATE = True  # issue #56
 KNOWN_OPTIMIZE_ERROR = True  # issue #57
 KNOWN_REWRITES = True  # issue #71
 KNOWN_GENERATE_PARSE_ERROR = True  # issue #72
+KNOWN_MINUS_TILDE = True  # issue #77
+
+# Issue #77: sqlglot writes "- ~x" as "-~x", which DuckDB lexes as one operator "-~" (or "-~~", ...). Excused only
+# when the caller's text has a "~".
+_MINUS_TILDE = frozenset("-" + "~" * k for k in range(1, 9))
 
 # Issue #71: functions the guard accepts by name that sqlglot rewrites, when it writes DuckDB SQL, into functions
 # (and a lambda) nobody allowlisted. Each pattern is matched against the caller's text; the rewritten names are
@@ -238,7 +243,7 @@ def _check_limit(root: dict[str, Any]) -> None:
 def check_accepted(
     sql: str, extra_functions: frozenset[str] = frozenset(), extra_classes: frozenset[str] = frozenset()
 ) -> None:
-    """The independent re-parse of SQL the guard accepted (the extras are for issue #71 only)."""
+    """The independent re-parse of SQL the guard accepted (the extras are for issues #71 and #77 only)."""
     statements = duckdb.extract_statements(sql)
     if len(statements) != 1 or statements[0].type != duckdb.StatementType.SELECT:
         raise Finding("accepted SQL is not exactly one SELECT")
@@ -316,10 +321,10 @@ def known_guard_error(sql: str, e: Exception) -> bool:
 
 
 def known_rewrites(sql: str) -> tuple[frozenset[str], frozenset[str]] | None:
-    """Issue #71: the extra functions and classes the caller's text can produce through sqlglot's rewrites."""
-    if not KNOWN_REWRITES:
-        return None
-    hits = [(fns, classes) for pattern, fns, classes in _REWRITES if pattern.search(sql)]
+    """Issues #71 and #77: the extra functions and classes the caller's text can produce through sqlglot's output."""
+    hits = [(fns, classes) for pattern, fns, classes in _REWRITES if KNOWN_REWRITES and pattern.search(sql)]
+    if KNOWN_MINUS_TILDE and "~" in sql:
+        hits.append((_MINUS_TILDE, frozenset()))
     if not hits:
         return None
     return frozenset().union(*(f for f, _ in hits)), frozenset().union(*(c for _, c in hits))
@@ -347,7 +352,7 @@ def TestOneInput(data: bytes) -> None:
         extras = known_rewrites(sql)
         if extras is None:
             raise
-        # Only issue #71's rewritten functions are excused; anything else in the same query still fails.
+        # Only issues #71 and #77's names are excused; anything else in the same query still fails.
         check_accepted(q.sql, *extras)
 
 
