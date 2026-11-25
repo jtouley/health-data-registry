@@ -21,13 +21,45 @@ schema:
   physicalType: table
   logicalType: object
   description: One row per abstract with text held under a restrictive licence.
-  dataGranularityDescription: conference x year x abstract
+  dataGranularityDescription: conference x year x abstract, keyed by abstract_key
   customProperties:
   - property: totalRows
     value: none
   - property: tableShape
     value: registry
   properties:
+  - name: abstract_key
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 1
+    description: One abstract, once. Its DOI where it has one, else conference:year:abstract number, so an
+      abstract found both through its DOI and on the conference's own site is still one row.
+    customProperties:
+    - property: role
+      value: dimension
+    - property: tier
+      value: public
+    quality:
+    - name: abstract_key_not_null
+      description: Every abstract has its key.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+    - name: abstract_key_unique
+      description: No abstract appears twice.
+      type: library
+      metric: duplicateValues
+      mustBe: 0
+      dimension: uniqueness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: unique}
   - name: conference
     physicalType: VARCHAR
     logicalType: string
@@ -36,9 +68,11 @@ schema:
     customProperties:
     - property: role
       value: dimension
+    - property: tier
+      value: public
     quality:
     - name: conference_not_null
-      description: Every row has a conference.
+      description: Every abstract names the conference it was presented at.
       type: library
       metric: nullValues
       mustBe: 0
@@ -54,11 +88,13 @@ schema:
     customProperties:
     - property: role
       value: dimension
+    - property: tier
+      value: public
     - property: conformedKey
       value: {dimension: dim_time, grain: year}
     quality:
     - name: year_not_null
-      description: Every row has a year.
+      description: Every abstract has its conference year.
       type: library
       metric: nullValues
       mustBe: 0
@@ -75,9 +111,11 @@ schema:
     customProperties:
     - property: role
       value: dimension
+    - property: tier
+      value: public
     quality:
     - name: route_not_null
-      description: Every row has a route.
+      description: Every row says how the record was found.
       type: library
       metric: nullValues
       mustBe: 0
@@ -86,7 +124,7 @@ schema:
       customProperties:
       - {property: dbtTest, value: not_null}
     - name: route_accepted_values
-      description: 'route is one of doi, site.'
+      description: How the record was found is doi or site.
       type: library
       metric: invalidValues
       arguments: {validValues: [doi, site]}
@@ -103,9 +141,11 @@ schema:
     customProperties:
     - property: role
       value: dimension
+    - property: tier
+      value: public
     quality:
     - name: source_dataset_not_null
-      description: Every row has a source dataset.
+      description: Every row names the catalogued source it came from.
       type: library
       metric: nullValues
       mustBe: 0
@@ -121,6 +161,8 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - property: tier
+      value: public
   - name: doi
     physicalType: VARCHAR
     logicalType: string
@@ -129,6 +171,8 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - property: tier
+      value: public
   - name: abstract_text
     physicalType: VARCHAR
     logicalType: string
@@ -141,7 +185,7 @@ schema:
       value: private
     quality:
     - name: abstract_text_not_null
-      description: Every row has a abstract text.
+      description: Every abstract has its text.
       type: library
       metric: nullValues
       mustBe: 0
@@ -158,9 +202,11 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - property: tier
+      value: public
     quality:
     - name: abstract_licence_not_null
-      description: Every row has a abstract licence.
+      description: Every abstract records the licence its text is held under.
       type: library
       metric: nullValues
       mustBe: 0
@@ -176,9 +222,11 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - property: tier
+      value: public
     quality:
     - name: link_url_not_null
-      description: Every row has a link url.
+      description: Every abstract has a link to read it at its source.
       type: library
       metric: nullValues
       mustBe: 0
@@ -194,9 +242,11 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - property: tier
+      value: public
     quality:
     - name: source_url_not_null
-      description: Every row has a source url.
+      description: Every row records the address it was read from.
       type: library
       metric: nullValues
       mustBe: 0
@@ -212,9 +262,11 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - property: tier
+      value: public
     quality:
     - name: raw_sha256_not_null
-      description: Every row has a raw sha256.
+      description: Every row records the fingerprint (sha256) of the file it was read from.
       type: library
       metric: nullValues
       mustBe: 0
@@ -230,9 +282,11 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - property: tier
+      value: public
     quality:
     - name: retrieved_at_not_null
-      description: Every row has a retrieved at.
+      description: Every row records when it was read from the publisher.
       type: library
       metric: nullValues
       mustBe: 0
@@ -249,10 +303,11 @@ customProperties:
     description: 'None: abstract text holds no rates or counts, so no value is marked unreliable.'
 - property: fingerprints
   value:
-  - {version: 0.1.0, interface: 36736fd6dfdc3f7bbef35d486aed14142d6a89424cd7f006288534d4b7bd12a3, docs: b58ba579e4460806cbbe9f1abeab3c6470498ea3da07fe452e3bc5b59a93bc5b}
+  - {version: 0.1.0, interface: af258d6ae587f2afef9f3f1e53005f5a62e1b5dd712e629c7be1226e699e1e72, docs: 3ee4b0823ed3036021d9e84b57be8a06064814354950a28992f04a689740332b}
 - property: openQuestions
   value:
   - 'Fills from PR #30 (croi_abstracts_text) and from the private-tier rows of PR #29''s DOI sources (abstract_tier
     private) once they merge; ESCMID and other conferences join as they are catalogued.'
   - 'Which private Hugging Face dataset holds each conference''s text (PR #30 names
     health-data-registry-private-croi-abstracts-text for CROI) is confirmed when the datasets are created.'
+  - 'Hosting: storing the text in a private Hugging Face dataset needs a maintainer to record that each source''s licence allows a stored copy (product.PRIVATE_COPY_LICENCES); until then it is hosting none.'

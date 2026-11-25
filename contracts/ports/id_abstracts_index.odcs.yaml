@@ -1,10 +1,10 @@
-# Output port contract: the public index of ID conference abstracts (product id-conference-abstracts).
-# A draft stub: its sources are on unmerged pull requests (#29 DOI harvest, #30 CROI), and whether their metadata
-# may be published is an open question below. Nothing is hosted until a maintainer answers it.
+# Output port contract: the index of ID conference abstracts (product id-conference-abstracts). Private tier
+# until a maintainer records that its sources' metadata may be published (the open question below); only
+# then does it become public. A draft stub: its sources are on unmerged pull requests (#29, #30).
 apiVersion: v3.2.0
 kind: DataContract
 id: id_abstracts_index
-name: ID conference abstracts, public index
+name: ID conference abstracts, index
 version: 0.1.0
 status: draft
 domain: research_landscape
@@ -23,14 +23,46 @@ schema:
   logicalType: object
   description: One row per abstract, conference and conference year. Rows from different conferences are listed
     side by side, never combined into counts.
-  dataGranularityDescription: conference x year x abstract (DOI where there is one, else the conference's own
-    abstract number)
+  dataGranularityDescription: conference x year x abstract, keyed by abstract_key (DOI where there is one, else
+    the conference's own abstract number)
   customProperties:
   - property: totalRows
     value: none
   - property: tableShape
     value: registry
   properties:
+  - name: abstract_key
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 1
+    description: One abstract, once. Its DOI where it has one, else conference:year:abstract number, so an
+      abstract found both through its DOI and on the conference's own site is still one row.
+    customProperties:
+    - property: role
+      value: dimension
+    - property: tier
+      value: public
+    quality:
+    - name: abstract_key_not_null
+      description: Every abstract has its key.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+    - name: abstract_key_unique
+      description: No abstract appears twice.
+      type: library
+      metric: duplicateValues
+      mustBe: 0
+      dimension: uniqueness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: unique}
   - name: conference
     physicalType: VARCHAR
     logicalType: string
@@ -40,9 +72,11 @@ schema:
     customProperties:
     - property: role
       value: dimension
+    - property: tier
+      value: public
     quality:
     - name: conference_not_null
-      description: Every row has a conference.
+      description: Every abstract names the conference it was presented at.
       type: library
       metric: nullValues
       mustBe: 0
@@ -58,11 +92,13 @@ schema:
     customProperties:
     - property: role
       value: dimension
+    - property: tier
+      value: public
     - property: conformedKey
       value: {dimension: dim_time, grain: year}
     quality:
     - name: year_not_null
-      description: Every row has a year.
+      description: Every abstract has its conference year.
       type: library
       metric: nullValues
       mustBe: 0
@@ -80,9 +116,11 @@ schema:
     customProperties:
     - property: role
       value: dimension
+    - property: tier
+      value: public
     quality:
     - name: route_not_null
-      description: Every row has a route.
+      description: Every row says how the record was found.
       type: library
       metric: nullValues
       mustBe: 0
@@ -91,7 +129,7 @@ schema:
       customProperties:
       - {property: dbtTest, value: not_null}
     - name: route_accepted_values
-      description: 'route is one of doi, site.'
+      description: How the record was found is doi or site.
       type: library
       metric: invalidValues
       arguments: {validValues: [doi, site]}
@@ -109,9 +147,11 @@ schema:
     customProperties:
     - property: role
       value: dimension
+    - property: tier
+      value: public
     quality:
     - name: source_dataset_not_null
-      description: Every row has a source dataset.
+      description: Every row names the catalogued source it came from.
       type: library
       metric: nullValues
       mustBe: 0
@@ -128,6 +168,8 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - property: tier
+      value: public
   - name: title
     physicalType: VARCHAR
     logicalType: string
@@ -136,9 +178,11 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - property: tier
+      value: public
     quality:
     - name: title_not_null
-      description: Every row has a title.
+      description: Every abstract has its title.
       type: library
       metric: nullValues
       mustBe: 0
@@ -154,6 +198,8 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - property: tier
+      value: public
   - name: doi
     physicalType: VARCHAR
     logicalType: string
@@ -163,6 +209,20 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - property: tier
+      value: public
+    quality:
+    - name: doi_fill_rate
+      description: Some rows have a DOI; a column left empty on every row means the matching failed.
+        The real fill rate to expect is an open question until rows are seen.
+      type: library
+      metric: nullValues
+      unit: percent
+      mustBeLessThan: 100
+      dimension: completeness
+      severity: warn
+      customProperties:
+      - {property: dbtTest, value: dbt_utils.not_null_proportion}
   - name: link_url
     physicalType: VARCHAR
     logicalType: string
@@ -171,9 +231,11 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - property: tier
+      value: public
     quality:
     - name: link_url_not_null
-      description: Every row has a link url.
+      description: Every abstract has a link to read it at its source.
       type: library
       metric: nullValues
       mustBe: 0
@@ -190,9 +252,23 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - property: tier
+      value: public
     - property: conformedKey
       value: {dimension: dim_concept, vocabulary: MeSH, assignment: dictionary_proposed,
               reviewStateColumn: concept_tag_state}
+    quality:
+    - name: condition_concept_ids_fill_rate
+      description: Some rows have a condition tag; a column left empty on every row means the matching failed.
+        The real fill rate to expect is an open question until rows are seen.
+      type: library
+      metric: nullValues
+      unit: percent
+      mustBeLessThan: 100
+      dimension: completeness
+      severity: warn
+      customProperties:
+      - {property: dbtTest, value: dbt_utils.not_null_proportion}
   - name: organism_taxon_ids
     physicalType: VARCHAR
     logicalType: string
@@ -202,9 +278,23 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - property: tier
+      value: public
     - property: conformedKey
       value: {dimension: dim_concept, vocabulary: NCBI Taxonomy, assignment: dictionary_proposed,
               reviewStateColumn: concept_tag_state}
+    quality:
+    - name: organism_taxon_ids_fill_rate
+      description: Some rows have an organism tag; a column left empty on every row means the matching failed.
+        The real fill rate to expect is an open question until rows are seen.
+      type: library
+      metric: nullValues
+      unit: percent
+      mustBeLessThan: 100
+      dimension: completeness
+      severity: warn
+      customProperties:
+      - {property: dbtTest, value: dbt_utils.not_null_proportion}
   - name: place_keys
     physicalType: VARCHAR
     logicalType: string
@@ -214,21 +304,38 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - property: tier
+      value: public
     - property: conformedKey
       value: {dimension: dim_place, vocabulary: FIPS/ISO3, assignment: dictionary_proposed,
               reviewStateColumn: place_tag_state}
+    quality:
+    - name: place_keys_fill_rate
+      description: Some rows have a place tag; a column left empty on every row means the matching failed.
+        The real fill rate to expect is an open question until rows are seen.
+      type: library
+      metric: nullValues
+      unit: percent
+      mustBeLessThan: 100
+      dimension: completeness
+      severity: warn
+      customProperties:
+      - {property: dbtTest, value: dbt_utils.not_null_proportion}
   - name: concept_tag_state
     physicalType: VARCHAR
     logicalType: string
     required: true
-    description: 'Review state of the condition and organism tags: proposed (dictionary match, not reviewed),
-      accepted or rejected (by a maintainer). Only accepted tags are answered as facts.'
+    description: 'One review state for all of the row''s condition and organism tags together: proposed
+      (dictionary match, not reviewed), accepted or rejected (by a maintainer). A maintainer accepts or rejects
+      them as a set, not tag by tag; only a row whose state is accepted has its tags answered as facts.'
     customProperties:
     - property: role
       value: attribute
+    - property: tier
+      value: public
     quality:
     - name: concept_tag_state_not_null
-      description: Every row has a concept tag state.
+      description: Every row records whether its condition and organism tags were reviewed.
       type: library
       metric: nullValues
       mustBe: 0
@@ -237,7 +344,7 @@ schema:
       customProperties:
       - {property: dbtTest, value: not_null}
     - name: concept_tag_state_accepted_values
-      description: 'concept tag state is one of proposed, accepted, rejected.'
+      description: The condition and organism tags' review state is proposed, accepted or rejected.
       type: library
       metric: invalidValues
       arguments: {validValues: [proposed, accepted, rejected]}
@@ -254,9 +361,11 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - property: tier
+      value: public
     quality:
     - name: place_tag_state_not_null
-      description: Every row has a place tag state.
+      description: Every row records whether its place tags were reviewed.
       type: library
       metric: nullValues
       mustBe: 0
@@ -265,7 +374,7 @@ schema:
       customProperties:
       - {property: dbtTest, value: not_null}
     - name: place_tag_state_accepted_values
-      description: 'place tag state is one of proposed, accepted, rejected.'
+      description: The place tags' review state is proposed, accepted or rejected.
       type: library
       metric: invalidValues
       arguments: {validValues: [proposed, accepted, rejected]}
@@ -282,9 +391,11 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - property: tier
+      value: public
     quality:
     - name: source_url_not_null
-      description: Every row has a source url.
+      description: Every row records the address it was read from.
       type: library
       metric: nullValues
       mustBe: 0
@@ -300,9 +411,11 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - property: tier
+      value: public
     quality:
     - name: raw_sha256_not_null
-      description: Every row has a raw sha256.
+      description: Every row records the fingerprint (sha256) of the file it was read from.
       type: library
       metric: nullValues
       mustBe: 0
@@ -318,9 +431,11 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - property: tier
+      value: public
     quality:
     - name: retrieved_at_not_null
-      description: Every row has a retrieved at.
+      description: Every row records when it was read from the publisher.
       type: library
       metric: nullValues
       mustBe: 0
@@ -330,14 +445,14 @@ schema:
       - {property: dbtTest, value: not_null}
 customProperties:
 - property: tier
-  value: public
+  value: private
 - property: unreliableRule
   value:
     kind: none
     description: 'None: an index of abstracts holds no rates or counts, so no value is marked unreliable.'
 - property: fingerprints
   value:
-  - {version: 0.1.0, interface: 8a5607e6eabdde8400e4fa9f12e8356b4301cdc3808e1815a273424b37421f29, docs: 2612d10f829f138d9c4a414cb7593ae7b9644a690bf303819b8f980eb1301098}
+  - {version: 0.1.0, interface: e81f59526f0142309383e42b1247d19aefe937731e0922532751f0d4cedf1a22, docs: f5e8e55b18a46c54a943de5417964c13dca7765d632b0908f70195e455e3c70d}
 - property: openQuestions
   value:
   - 'May the index (titles, authors, links, DOIs) be published? The DOI sources record their metadata as from
@@ -348,3 +463,6 @@ customProperties:
     (croi_abstracts_index) once they merge; ESCMID and other conferences join as they are catalogued.'
   - The concept and place dimensions (dim_concept, dim_place, dim_time) come from the silver stage on
     feat/contract-silver; confirm their names when that lands.
+  - 'Tier: private until a maintainer records that every source''s licence allows a public copy of titles, authors, links and DOIs (validate refuses a public port with any other licence); then tier public.'
+  - 'Tags: the condition, organism and place lists share one review state per row and are separated by ''; ''. A bridge table (one row per abstract and tag, each with its own review state) is a follow-up.'
+  - 'Fill rates: the share of rows expected to have a DOI and each kind of tag is set once real rows are seen; until then the warn rules only catch a column left empty on every row.'

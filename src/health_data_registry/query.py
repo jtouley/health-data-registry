@@ -44,6 +44,8 @@ NEXT_STEPS: dict[str, str] = {
     "publisher_unreachable": "Try again in a few minutes.",
     "publisher_bad_table": "Try again later; if it keeps happening, run the Something's wrong helper.",
     "needs_single_value": "Ask for the year's total, or for one week.",
+    "port_conflict": "Ask about the numbers as usual, and run the Something's wrong helper so a maintainer can "
+    "fix the data product file.",
     "not_a_human_count": "Use get_series to read these counts as published; they are not cases in people, so "
     "there is no rate per 100,000 people.",
 }
@@ -577,6 +579,12 @@ class Engine:
         self.connect()
         m = self.manifests.get(dataset_id)
         port = load_ports(self.registry.root).get(ds.contract.id)
+        if port is not None and port.conflict:
+            raise QueryRefused(
+                "port_conflict",
+                f"Where {ds.entry.title} comes from can't be shown right now: {port.conflict}. Its numbers are "
+                "unaffected, and every other source's provenance still works.",
+            )
         if m is not None:
             origin = {
                 "lake": "the local lake (a maintainer's copy)",

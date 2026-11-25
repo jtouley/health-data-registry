@@ -20,7 +20,8 @@ description:
   limitations: >-
     Grouped, never merged: figures from different ports are never added, averaged or reconciled into one number.
     Ryan White and EHE figures are programme data about people served, not surveillance. Detroit and Out-Wayne
-    stay apart wherever the publisher splits them. AIDSVu is private tier.
+    stay apart wherever the publisher splits them. Every port is private tier until its publisher's terms are read
+    and allow a public copy; AIDSVu stays private tier whatever its terms say.
 tags: [infectious-disease, hiv, stis, michigan, detroit]
 context:
   instructions: >-
@@ -45,7 +46,7 @@ outputPorts:
       constraints:
         - constraint: "Detroit and Out-Wayne stay separate series wherever the publisher splits them; never add them together."
     customProperties:
-      - {property: tier, value: public}
+      - {property: tier, value: private}
       - {property: hosting, value: none}
       - {property: stub, value: true}
       - {property: dataKind, value: surveillance}
@@ -76,7 +77,7 @@ outputPorts:
         - constraint: "Detroit and Out-Wayne stay separate series wherever the publisher splits them; never add them together."
         - constraint: "Programme data, not surveillance: never present it as the number of people diagnosed."
     customProperties:
-      - {property: tier, value: public}
+      - {property: tier, value: private}
       - {property: hosting, value: none}
       - {property: stub, value: true}
       - {property: dataKind, value: programme}
@@ -107,7 +108,7 @@ outputPorts:
         - constraint: "Detroit and Out-Wayne stay separate series wherever the publisher splits them; never add them together."
         - constraint: "Programme data, not surveillance: never present it as the number of people diagnosed."
     customProperties:
-      - {property: tier, value: public}
+      - {property: tier, value: private}
       - {property: hosting, value: none}
       - {property: stub, value: true}
       - {property: dataKind, value: programme}
@@ -137,7 +138,7 @@ outputPorts:
       constraints:
         - constraint: "Detroit and Out-Wayne stay separate series wherever the publisher splits them; never add them together."
     customProperties:
-      - {property: tier, value: public}
+      - {property: tier, value: private}
       - {property: hosting, value: none}
       - {property: stub, value: true}
       - {property: dataKind, value: unresolved}
@@ -203,7 +204,7 @@ outputPorts:
       - {property: tier, value: private}
       - {property: hosting, value: none}
       - {property: stub, value: true}
-      - {property: dataKind, value: surveillance}
+      - {property: dataKind, value: "unresolved: surveillance for the chlamydia and syphilis charts; the HIV charts, not read yet, may hold Ryan White programme data"}
       - {property: countedUnit, value: "unresolved: from the publisher's codebook once catalogued"}
       - {property: releaseTag, value: "release-<run date>"}
       - property: sla

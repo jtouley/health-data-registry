@@ -402,13 +402,17 @@ def label_key(text: str) -> str:
 
 
 UNRELIABLE_KINDS = ("none", "min_count", "max_relative_ci_width", "publisher_suppressed")
+# Only a draft port contract may say its publisher's rule hasn't been read yet: an open question that keeps the
+# port a stub and unserved, never an assumption that nothing is suppressed (hard rules 1 and 4).
+UNRESOLVED_RULE = "unresolved"
 
 
 @dataclass(frozen=True)
 class UnreliableSpec:
     """The publisher's own rule for unreliable or suppressed values (contract property unreliableRule).
 
-    kind none: the publisher states no rule. min_count: a rate from fewer than `threshold` cases is unreliable.
+    kind none: the publisher states no rule. unresolved (port contracts only): the rule hasn't been read yet, so
+    the port stays an unserved stub. min_count: a rate from fewer than `threshold` cases is unreliable.
     max_relative_ci_width: a rate whose 95% interval is wider than `threshold` times the rate is unreliable.
     publisher_suppressed: the publisher itself blanks cells below `threshold` (e.g. NHSN: fewer than 20 isolates
     tested), so an empty cell there is suppressed, never zero. The threshold comes only from the codebook.
@@ -419,22 +423,23 @@ class UnreliableSpec:
     threshold: float | None = None
 
 
-def _unreliable(value: Any, where: str) -> UnreliableSpec:
+def _unreliable(value: Any, where: str, *, allow_unresolved: bool = False) -> UnreliableSpec:
     if not isinstance(value, Mapping):
         raise RegistryError(
             f"{where}: customProperties must declare unreliableRule as {{kind, description[, threshold]}}; kind is "
             f"one of {', '.join(UNRELIABLE_KINDS)} (none when the publisher states no rule)"
         )
     kind, desc = str(value.get("kind", "")), str(value.get("description") or "").strip()
-    if kind not in UNRELIABLE_KINDS or not desc:
+    kinds = UNRELIABLE_KINDS + ((UNRESOLVED_RULE,) if allow_unresolved else ())
+    if kind not in kinds or not desc:
         raise RegistryError(
-            f"{where}: unreliableRule needs a kind ({', '.join(UNRELIABLE_KINDS)}) and a description quoting the "
+            f"{where}: unreliableRule needs a kind ({', '.join(kinds)}) and a description quoting the "
             "publisher"
         )
     threshold = value.get("threshold")
-    if kind == "none":
+    if kind in ("none", UNRESOLVED_RULE):
         if threshold is not None:
-            raise RegistryError(f"{where}: unreliableRule kind none takes no threshold")
+            raise RegistryError(f"{where}: unreliableRule kind {kind} takes no threshold")
         return UnreliableSpec(kind, desc)
     try:
         t = float(str(threshold))
@@ -510,7 +515,9 @@ def _pairs(value: Any, where: str) -> tuple[tuple[str, str], ...]:
     return tuple((str(k), str(v)) for k, v in value.items())
 
 
-def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
+def parse_contract(doc: Mapping[str, Any], *, expected_id: str, port: bool = False) -> Contract:
+    """An ODCS contract as the server reads it. `port` (contracts/ports/ only) also accepts an unresolved
+    unreliableRule, which product.py keeps unserved; a catalogued source's contract never may."""
     if doc.get("kind") != "DataContract":
         raise RegistryError(f"{expected_id}: contract kind must be DataContract")
     if not str(doc.get("apiVersion", "")).startswith("v3."):
@@ -602,7 +609,7 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
         table_shape=str(obj_custom.get("tableShape", "")),
         open_questions=tuple(str(q) for q in oq),
         raw=doc,
-        unreliable=_unreliable(top_custom.get("unreliableRule"), expected_id),
+        unreliable=_unreliable(top_custom.get("unreliableRule"), expected_id, allow_unresolved=port),
         geography_basis=_text(top_custom.get("geographyBasis")),
         rate_denominator=_text(top_custom.get("rateDenominator")),
     )

@@ -20,9 +20,12 @@ the silver stage can generate them as dbt tests; a port is served only when its 
   channel (the contract-finding issue form);
 - a port inherits its sources' licences: the licences it declares must be exactly its sources' licences, and its
   answers carry its sources' caveats (`inherited_context`);
-- no public port exposes private-tier data: a public port is put on the public hub only when every source's
-  licence allows a public copy, never reads a private-tier port, and its contract has no private-tier column;
-- a private-tier port is never on the public hub (hard rule 10);
+- no public port exposes private-tier data: whatever its hosting, every source of a public port is licensed for a
+  public copy (a restricted or unresolved licence, or a source read live only, fails), it never reads a
+  private-tier port, and every column of its contract declares its tier, none of them private;
+- a private-tier port is never on the public hub (hard rule 10), and is stored in a private Hugging Face dataset
+  only when every source's licence allows a stored copy (a source read live only never does);
+- a port refreshes no more often than its slowest source (`sla.refresh`; irregular always fits);
 - a port whose sources aren't catalogued yet is a draft stub: not hosted, with open questions, never a guess.
 """
 
@@ -32,7 +35,7 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -95,7 +98,12 @@ TIERS = ("public", "private")
 HOSTINGS = ("public-hub", "private-hf", "live", "none")
 RELEASE_TAG = "release-<run date>"
 SLA_KEYS = ("refresh", "release", "support")
+# From most to least frequent; a port promises no more than its slowest source.
 REFRESH = ("daily", "weekly", "monthly", "quarterly", "annual", "irregular")
+# Licence ids a maintainer has reviewed as allowing a stored copy in a private Hugging Face dataset. A source
+# read live only (its licence forbids redistribution, live.is_live) is never stored, whatever its id.
+PRIVATE_COPY_LICENCES = REDISTRIBUTABLE_LICENCES
+DATA_KINDS = ("surveillance", "programme")
 UNRESOLVED = "unresolved"
 _PORT_NAME = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
 
@@ -108,6 +116,8 @@ class Port:
     contract_id: str
     version: str
     hosted: bool
+    # Set when two hub ports serve this contract: the plain-words reason its product and port can't be named.
+    conflict: str = ""
 
 
 @dataclass(frozen=True)
@@ -173,7 +183,9 @@ def _read(path: Path) -> dict[str, Any]:
 def load_ports(root: Path) -> dict[str, Port]:
     """The hub's output ports by contract id; empty when the registry has no hub file (e.g. a test registry).
 
-    Only the hub's ports: the other products' ports are never published by `export-public`.
+    Only the hub's ports: the other products' ports are never published by `export-public`. A contract served by
+    two ports is kept with `conflict` set, so provenance and export refuse that one source in plain words and
+    every other source still works; `validate` reports it. A `hosted` that isn't exactly true counts as false.
     """
     path = root / PRODUCT_FILE
     if not path.is_file():
@@ -193,10 +205,12 @@ def load_ports(root: Path) -> dict[str, Port]:
             version=str(p.get("version", "")),
             hosted=hosted is True,
         )
-        if port.contract_id in ports:
-            raise ValueError(
-                f"{path}: ports {ports[port.contract_id].name} and {port.name} both serve contract "
-                f"{port.contract_id}; each contract has one port"
+        first = ports.get(port.contract_id)
+        if first is not None:
+            port = replace(
+                first,
+                conflict=f"two output ports of the data product, {first.name} and {port.name}, both claim this "
+                "source, so which one it belongs to can't be said",
             )
         ports[port.contract_id] = port
     return ports
@@ -274,6 +288,8 @@ def _port(product_id: str, p: Mapping[str, Any]) -> OutputPort:
         raise RegistryError(f"{where}: customProperties.sla needs {', '.join(SLA_KEYS)}")
     inputs = tuple(str(i.get("id", "")) for i in p.get("inputContracts") or [] if isinstance(i, Mapping))
     context = p.get("context") or {}
+    if not isinstance(context, Mapping):
+        raise RegistryError(f"{where}: context must be a mapping (instructions, constraints)")
     constraints = tuple(
         str(c.get("constraint", "")) for c in context.get("constraints") or [] if isinstance(c, Mapping)
     )
@@ -333,19 +349,31 @@ def port_contract(root: Path, registry: Registry, contract_id: str) -> Contract:
             f"port contract {contract_id} is neither a catalogued source's contract nor "
             f"{PORT_CONTRACTS}/{contract_id}.odcs.yaml"
         )
-    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(doc, Mapping) or doc.get("id") != contract_id:
+    doc = _read(path)
+    if doc.get("id") != contract_id:
         raise RegistryError(f"{path.name}: contract id must be {contract_id}")
-    return parse_contract(doc, expected_id=contract_id)
+    return parse_contract(doc, expected_id=contract_id, port=True)
 
 
-def private_columns(contract: Contract) -> list[str]:
-    """Columns the contract marks private tier (e.g. abstract text under a restrictive licence)."""
-    out: list[str] = []
-    for obj in contract.raw.get("schema") or []:
-        for prop in obj.get("properties") or []:
-            if _custom(prop.get("customProperties")).get("tier") == "private":
-                out.append(str(prop.get("name")))
+def _columns(doc: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    return [
+        prop
+        for obj in doc.get("schema") or []
+        if isinstance(obj, Mapping)
+        for prop in obj.get("properties") or []
+        if isinstance(prop, Mapping)
+    ]
+
+
+def private_columns(contract: Contract, *, untiered_is_private: bool = True) -> list[str]:
+    """Columns not cleared for a public port: marked private tier (e.g. abstract text under a restrictive
+    licence) or, in a port contract, declaring no tier at all: such a column is private until a reviewed change
+    says public. A catalogued source's own contract is cleared by its licence, so only `tier: private` counts."""
+    out = []
+    for prop in _columns(contract.raw):
+        tier = _custom(prop.get("customProperties")).get("tier")
+        if tier == "private" or (untiered_is_private and tier != "public"):
+            out.append(str(prop.get("name")))
     return out
 
 
@@ -465,9 +493,13 @@ def quality_rules(doc: Mapping[str, Any]) -> list[QualityRule]:
     """Every quality rule in the contract, table-level and column-level, as the silver builder generates them."""
     rules: list[QualityRule] = []
     for obj in doc.get("schema") or []:
-        holders = [(None, obj)] + [(str(p.get("name")), p) for p in obj.get("properties") or []]
+        if not isinstance(obj, Mapping):
+            continue
+        holders = [(None, obj)] + [(str(p.get("name")), p) for p in _columns({"schema": [obj]})]
         for column, holder in holders:
             for q in holder.get("quality") or []:
+                if not isinstance(q, Mapping):
+                    raise RegistryError(f"quality rules on {column or 'the table'} must each be a mapping")
                 rules.append(
                     QualityRule(
                         name=str(q.get("name") or ""),
@@ -483,6 +515,10 @@ def quality_rules(doc: Mapping[str, Any]) -> list[QualityRule]:
 def quality_errors(doc: Mapping[str, Any], where: str) -> list[str]:
     rules = quality_rules(doc)
     errs = [] if rules else [f"{where}: a port contract declares its quality rules"]
+    if rules and not any(r.severity == "error" for r in rules):
+        errs.append(
+            f"{where}: a port contract needs at least one error-severity rule; it is served only when they pass"
+        )
     names = [r.name for r in rules]
     for r in rules:
         if not r.name or not r.dbt_test or not r.dimension or r.severity not in SEVERITIES:
@@ -497,17 +533,35 @@ def quality_errors(doc: Mapping[str, Any], where: str) -> list[str]:
     return errs
 
 
-def servable(doc: Mapping[str, Any], results: Mapping[str, bool]) -> bool:
-    """A port is served only when every error-severity rule ran and passed; a rule with no result fails closed."""
+# One quality rule's outcome. failed: the data broke the rule (a contract finding about the publisher's data).
+# error: the rule itself couldn't run, e.g. a renamed column (a code fix). not_run: no result was recorded.
+OUTCOMES = ("passed", "failed", "error", "not_run")
+
+
+def rule_report(doc: Mapping[str, Any], results: Mapping[str, str]) -> dict[str, list[str]]:
+    """Each rule's name under its outcome, so a data failure is never confused with a rule that couldn't run.
+
+    A rule with no result, or an outcome outside OUTCOMES, is reported as not_run.
+    """
+    report: dict[str, list[str]] = {o: [] for o in OUTCOMES}
+    for r in quality_rules(doc):
+        outcome = results.get(r.name)
+        report[outcome if outcome in OUTCOMES else "not_run"].append(r.name)
+    return report
+
+
+def servable(doc: Mapping[str, Any], results: Mapping[str, str]) -> bool:
+    """A port is served only when every error-severity rule ran and passed; failed, error and not_run all fail
+    closed. A contract with no error-severity rule is never served, and `quality_errors` refuses it."""
     errors = [r.name for r in quality_rules(doc) if r.severity == "error"]
-    return bool(errors) and all(results.get(n) is True for n in errors)
+    return bool(errors) and all(results.get(n) == "passed" for n in errors)
 
 
 def conformed_key_errors(doc: Mapping[str, Any], where: str) -> list[str]:
     """Conformed keys name a silver dimension; a dictionary-proposed tag carries its own review state."""
     errs: list[str] = []
     for obj in doc.get("schema") or []:
-        props = {str(p.get("name")): p for p in obj.get("properties") or []}
+        props = {str(p.get("name")): p for p in _columns({"schema": [obj]})}
         for name, p in props.items():
             key = _custom(p.get("customProperties")).get("conformedKey")
             if key is None:
@@ -520,9 +574,9 @@ def conformed_key_errors(doc: Mapping[str, Any], where: str) -> list[str]:
             if key.get("assignment") == "dictionary_proposed":
                 state = str(key.get("reviewStateColumn") or "")
                 allowed = [
-                    q.get("arguments", {}).get("validValues")
+                    (q.get("arguments") or {}).get("validValues")
                     for q in (props.get(state) or {}).get("quality") or []
-                    if q.get("metric") == "invalidValues"
+                    if isinstance(q, Mapping) and q.get("metric") == "invalidValues"
                 ]
                 if state not in props or list(TAG_STATES) not in allowed:
                     errs.append(
@@ -536,9 +590,32 @@ def port_contract_errors(path: Path) -> list[str]:
     """The rules every file in contracts/ports/ follows beyond the ODCS schema."""
     doc = _read(path)
     where = path.name
-    errs = fingerprint_errors(doc, where) + quality_errors(doc, where) + conformed_key_errors(doc, where)
-    if _custom(doc.get("customProperties")).get("tier") not in TIERS:
+    try:
+        errs = fingerprint_errors(doc, where) + quality_errors(doc, where) + conformed_key_errors(doc, where)
+    except RegistryError as e:
+        return [f"{where}: {e}"]
+    except (AttributeError, TypeError, ValueError) as e:
+        return [f"{where}: a field has the wrong type or is empty where a value is needed ({e})"]
+    custom = _custom(doc.get("customProperties"))
+    if custom.get("tier") not in TIERS:
         errs.append(f"{where}: customProperties.tier must be one of {', '.join(TIERS)}")
+    untiered = [
+        str(c.get("name"))
+        for c in _columns(doc)
+        if _custom(c.get("customProperties")).get("tier") not in TIERS
+    ]
+    if untiered:
+        errs.append(
+            f"{where}: every column declares its tier (public or private); missing on {', '.join(untiered)}"
+        )
+    rule = custom.get("unreliableRule")
+    if isinstance(rule, Mapping) and rule.get("kind") == UNRESOLVED:
+        if doc.get("status") != "draft":
+            errs.append(f"{where}: an unresolved unreliableRule keeps the contract draft")
+        if not any("suppress" in str(q).lower() for q in custom.get("openQuestions") or []):
+            errs.append(
+                f"{where}: an unresolved unreliableRule is listed in openQuestions (the suppression rule)"
+            )
     return errs
 
 
@@ -568,7 +645,9 @@ def _port_errors(root: Path, registry: Registry, port: OutputPort, private_ports
         errs.append(f"{where}: every port needs a releaseTag")
     if port.sla["refresh"] not in REFRESH:
         errs.append(f"{where}: sla.refresh must be one of {', '.join(REFRESH)}")
-    if "hosted" in port.custom and (port.custom["hosted"] is True) != (port.hosting == "public-hub"):
+    if "hosted" in port.custom and not isinstance(port.custom["hosted"], bool):
+        errs.append(f"{where}: hosted must be true or false, not {port.custom['hosted']!r}")
+    elif "hosted" in port.custom and port.custom["hosted"] != (port.hosting == "public-hub"):
         errs.append(f"{where}: hosted must be true exactly when hosting is public-hub")
 
     # Sources: catalogued now, or pending with the pull request that fills them; never anything else.
@@ -586,13 +665,15 @@ def _port_errors(root: Path, registry: Registry, port: OutputPort, private_ports
             errs.append(f"{where}: a stub port is not hosted (hosting: none)")
         if not port.open_questions:
             errs.append(f"{where}: a stub port lists its openQuestions")
-    for i in port.inputs:
-        if i in registry.datasets:
-            refresh = registry.get(i).entry.refresh
-            if port.sla["refresh"] != refresh:
-                errs.append(
-                    f"{where}: sla.refresh {port.sla['refresh']} differs from {i}'s refresh {refresh}"
-                )
+    if port.sla["refresh"] in REFRESH:
+        for i in port.inputs:
+            if i in registry.datasets:
+                refresh = registry.get(i).entry.refresh
+                if REFRESH.index(port.sla["refresh"]) < REFRESH.index(refresh):
+                    errs.append(
+                        f"{where}: sla.refresh {port.sla['refresh']} promises more often than {i} refreshes "
+                        f"({refresh}); a port refreshes no more often than its slowest source"
+                    )
 
     # Licences are inherited, never declared freely.
     inherited = inherited_licences(port, registry)
@@ -612,28 +693,55 @@ def _port_errors(root: Path, registry: Registry, port: OutputPort, private_ports
             errs.append(f"{where}: version {port.version} differs from contract version {contract.version}")
         if port.stub and contract.status != "draft":
             errs.append(f"{where}: a stub port's contract stays draft")
+        if contract.unreliable.kind == UNRESOLVED and not port.stub:
+            errs.append(f"{where}: its suppression rule is unresolved, so it stays a stub and is not served")
+        contract_tier = _custom(contract.raw.get("customProperties")).get("tier")
+        if port.contract_id not in registry.datasets and contract_tier != port.tier:
+            errs.append(f"{where}: tier {port.tier} differs from its contract's tier {contract_tier}")
 
     # Public versus private (hard rule 10).
     if port.tier == "private" and port.hosting == "public-hub":
         errs.append(f"{where}: a private-tier port is never on the public hub")
+    live_only = [
+        i for i in port.inputs if i in registry.datasets and not registry.get(i).entry.licence.redistribution
+    ]
     if port.is_public:
         read_private = [i for i in port.inputs if i in private_ports]
         if read_private:
             errs.append(f"{where}: a public port may not read private-tier ports ({', '.join(read_private)})")
-        if contract is not None and private_columns(contract):
+        hidden = (
+            private_columns(contract, untiered_is_private=port.contract_id not in registry.datasets)
+            if contract is not None
+            else []
+        )
+        if hidden:
             errs.append(
-                f"{where}: a public port's contract has private-tier columns ({', '.join(private_columns(contract))})"
+                f"{where}: a public port's contract has columns not cleared as public tier ({', '.join(hidden)})"
+            )
+        # Whatever its hosting (none and live included): a public port reads only sources licensed for a public
+        # copy, so restricted terms (CROI, ESCMID, AIDSVu, WHO, no terms stated) never sit behind a public tier.
+        closed = [x for x in inherited if x not in REDISTRIBUTABLE_LICENCES or x.startswith(UNRESOLVED)]
+        if closed or live_only:
+            errs.append(
+                f"{where}: a public port reads only sources licensed for a public copy; make it private tier "
+                f"(restricted or unresolved: {', '.join(sorted(set(closed) | set(live_only)))})"
             )
         if port.hosting == "public-hub":
-            closed = [x for x in inherited if x not in REDISTRIBUTABLE_LICENCES or x.startswith(UNRESOLVED)]
             not_public = [
                 i for i in port.inputs if i in registry.datasets and not registry.get(i).entry.hosted
             ]
-            if closed or not_public or port.pending:
+            if not_public or port.pending:
                 errs.append(
-                    f"{where}: on the public hub only when every source is catalogued, hosting: public and "
-                    f"licensed for a public copy (not: {', '.join(closed + not_public) or 'pending sources'})"
+                    f"{where}: on the public hub only when every source is catalogued with hosting: public "
+                    f"(its catalog entry's hosted is true) (not: {', '.join(not_public) or 'pending sources'})"
                 )
+    if port.hosting == "private-hf":
+        no_copy = [x for x in inherited if x not in PRIVATE_COPY_LICENCES or x.startswith(UNRESOLVED)]
+        if no_copy or live_only:
+            errs.append(
+                f"{where}: stored in a private Hugging Face dataset only when every source's licence allows a "
+                f"stored copy; use hosting live or none (not: {', '.join(sorted(set(no_copy) | set(live_only)))})"
+            )
     return errs
 
 
@@ -655,14 +763,41 @@ def _product_errors(product: Product) -> list[str]:
                 errs.append(f"{where}/{p.name}: in a grouped product each port reads exactly one source")
             if not str(p.custom.get("countedUnit") or "").strip():
                 errs.append(f"{where}/{p.name}: in a grouped product each port declares its countedUnit")
+            kind = str(p.custom.get("dataKind") or "")
+            if kind not in DATA_KINDS and not kind.startswith(UNRESOLVED):
+                errs.append(
+                    f"{where}/{p.name}: in a grouped product each port declares its dataKind "
+                    f"({', '.join(DATA_KINDS)}, or unresolved: ...)"
+                )
     return errs
+
+
+def _data_kind_errors(root: Path, registry: Registry, port: OutputPort) -> list[str]:
+    """A port's dataKind and its contract's dataKind say the same (both unresolved counts as the same)."""
+    if "dataKind" not in port.custom or port.contract_id in registry.datasets:
+        return []
+    try:
+        contract = port_contract(root, registry, port.contract_id)
+    except RegistryError:
+        return []  # _port_errors reports it
+    ours = str(port.custom.get("dataKind") or "")
+    theirs = str(_custom(contract.raw.get("customProperties")).get("dataKind") or "")
+    if ours == theirs or (ours.startswith(UNRESOLVED) and theirs.startswith(UNRESOLVED)):
+        return []
+    return [
+        f"{port.product_id}/{port.name}: dataKind {ours!r} differs from its contract's dataKind {theirs!r}"
+    ]
 
 
 def validate_contracts(root: Path, schema: Mapping[str, Any] | None = None) -> list[str]:
     """Every ODCS contract against the official ODCS schema, and every port contract against this project's
     port rules (fingerprints and version rule, quality rules for dbt, conformed keys, tier)."""
-    schema = schema or odcs_schema()
     errs: list[str] = []
+    if schema is None:
+        try:
+            schema = odcs_schema()
+        except RegistryError as e:
+            errs.append(str(e))
     for path in contract_files(root):
         try:
             doc = _read(path)
@@ -671,7 +806,8 @@ def validate_contracts(root: Path, schema: Mapping[str, Any] | None = None) -> l
             continue
         if doc.get("apiVersion") != ODCS_API_VERSION:
             errs.append(f"{path.name}: apiVersion must be {ODCS_API_VERSION}, the vendored schema's version")
-        errs.extend(f"{path.name}: {m}" for m in schema_errors(doc, schema))
+        if schema is not None:
+            errs.extend(f"{path.name}: {m}" for m in schema_errors(doc, schema))
         if path.parent.name == PORT_CONTRACTS.name:
             errs.extend(port_contract_errors(path))
     return errs
@@ -680,7 +816,11 @@ def validate_contracts(root: Path, schema: Mapping[str, Any] | None = None) -> l
 def validate_products(root: Path, registry: Registry, schema: Mapping[str, Any] | None = None) -> list[str]:
     """Every problem with every product file and contract, as lines; empty when all pass."""
     errs = validate_contracts(root)
-    schema = schema or odps_schema()
+    if schema is None:
+        try:
+            schema = odps_schema()
+        except RegistryError as e:
+            errs.append(str(e))
     products: list[Product] = []
     for path in product_files(root):
         try:
@@ -688,11 +828,14 @@ def validate_products(root: Path, registry: Registry, schema: Mapping[str, Any] 
         except RegistryError as e:
             errs.append(str(e))
             continue
-        errs.extend(f"{path.name}: {m}" for m in schema_errors(doc, schema))
+        if schema is not None:
+            errs.extend(f"{path.name}: {m}" for m in schema_errors(doc, schema))
         try:
             products.append(load_product(path))
         except RegistryError as e:
             errs.append(str(e))
+        except (AttributeError, TypeError, ValueError) as e:
+            errs.append(f"{path.name}: a field has the wrong type or is empty where a value is needed ({e})")
     ids = [p.id for p in products]
     errs.extend(
         f"product id {i} is used by more than one file" for i in sorted({i for i in ids if ids.count(i) > 1})
@@ -712,7 +855,14 @@ def validate_products(root: Path, registry: Registry, schema: Mapping[str, Any] 
     for prod in products:
         errs.extend(_product_errors(prod))
         for port in prod.ports:
-            errs.extend(_port_errors(root, registry, port, private_ports))
+            try:
+                errs.extend(_port_errors(root, registry, port, private_ports))
+                errs.extend(_data_kind_errors(root, registry, port))
+            except (AttributeError, TypeError, ValueError) as e:
+                errs.append(
+                    f"{prod.path.name} ({port.name}): a field has the wrong type or is empty where a value is "
+                    f"needed ({e})"
+                )
     return errs
 
 

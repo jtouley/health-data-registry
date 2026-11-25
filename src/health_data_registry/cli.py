@@ -73,8 +73,12 @@ def validate(registry: Registry, lake: Path) -> int:
 def validate_products_cli(registry: Registry) -> int:
     """Every *.odps.yaml and *.odcs.yaml against Bitol's vendored schemas and the port rules; the count of problems."""
     from health_data_registry.product import load_products, summary, validate_products
+    from health_data_registry.registry import RegistryError
 
-    problems = validate_products(registry.root, registry)
+    try:
+        problems = validate_products(registry.root, registry)
+    except RegistryError as e:  # e.g. a vendored schema missing or altered: one FAIL line, never a traceback
+        problems = [str(e)]
     for line in problems:
         print(f"FAIL {line}", file=sys.stderr)
     if not problems:
