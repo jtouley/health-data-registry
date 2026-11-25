@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Release blockers from #173, where the served path returned wrong numbers. NNDSS's `-` (no reported cases)
+  now comes back empty with its flag, never as 0 and never as a rate: `get_rate` gives no rate,
+  `compare_rates` refuses, `get_trend` leaves the year out, `check_signal` refuses and names the flag, and a
+  `query_sql` sum that meets an empty value stops. Weekly counts, or year-to-date counts, are never added
+  across weeks into a year (late reports reach only the year-to-date count), in the metric compiler and in
+  `query_sql`. A `query_sql` sum across places leaves the publisher's total rows out and says so. *C. auris*
+  screening (colonisation) gets no rate per 100,000 people, from the NNDSS contract's new `notIncidence`
+  declaration; its counts are still returned. `refresh` exits non-zero when a development sample
+  (`--max-rows`) fails a blocking data check.
 - A summed count never adds up labels that overlap or count different things (hard rule 2). Semantic-model
   dimensions say `non_additive: true` or `false`, and each `true` says why in plain words
   (`non_additive_reason`), which the refusal and `describe_dataset` show. A metric or series that neither picks
