@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from health_data_registry.query import Engine, QueryRefused
+from health_data_registry.query import Engine, QueryRefused, compile_metric
 from health_data_registry.registry import Registry, load_registry
 from health_data_registry.store import build_snapshot, write_ndjson
 from tests.conftest import raw_fetch
@@ -91,3 +91,47 @@ def test_nndss_no_reported_cases_reads_as_zero_with_its_flag(real: tuple[Registr
     )
     assert out["rows"] == [[0, 0, None]]  # 0 cases, no empty values: '-' is not a gap
     assert "'-' as no reported cases" in out["method"]
+
+
+CAURIS = ["Candida auris, clinical", "Candida auris, screening"]
+
+
+@pytest.mark.parametrize(
+    "metric", ["weekly_cases", "year_to_date_cases", "annual_cases", "us_resident_annual_cases"]
+)
+@pytest.mark.parametrize(
+    ("filters", "group_by"),
+    [
+        pytest.param({"condition": CAURIS, "mmwr_week": 52}, [], id="clinical-plus-screening"),
+        pytest.param({"mmwr_week": 52}, [], id="every-condition"),
+        pytest.param({"condition": "Candida auris, clinical", "mmwr_week": 52}, ["condition"], id="grouped"),
+    ],
+)
+def test_nndss_cauris_clinicalAndScreening_neverAddedTogether(
+    metric: str, filters: dict[str, Any], group_by: list[str]
+) -> None:
+    ds = load_registry(ROOT).get("cdc_nndss_weekly")
+    with pytest.raises(QueryRefused) as e:
+        compile_metric(ds, metric, filters=filters, group_by=group_by)
+    assert e.value.code == "needs_single_value"
+    assert "one condition" in str(e.value)
+
+
+def test_nndss_cauris_series_oneLabelEach_caseStatusCited() -> None:
+    ds = load_registry(ROOT).get("cdc_nndss_weekly")
+    series = [s for s in ds.semantic.series if s.condition.startswith("Candida auris")]
+    assert {s.filters["condition"] for s in series} == set(CAURIS)
+    assert all(s.filters["condition"] == s.condition for s in series)
+    assert all("22-ID-05" in (s.case_status or "") and s.case_definition for s in series)
+    assert (ds.contract.geography_basis or "").startswith("reporting jurisdiction by usual residence")
+    assert ds.entry.licence.id == "public-domain-us-federal"
+
+
+def test_needsSingleValue_message_runningTotalOnlyForItsOrderDimension() -> None:
+    ds = load_registry(ROOT).get("cdc_nndss_weekly")
+    with pytest.raises(QueryRefused) as e:
+        compile_metric(ds, "weekly_cases", filters={"condition": CAURIS})
+    assert str(e.value).startswith("weekly_cases is read at one condition")
+    with pytest.raises(QueryRefused) as e:
+        compile_metric(ds, "year_to_date_cases", filters={"condition": "Legionellosis"})
+    assert str(e.value).startswith("year_to_date_cases is a running total, so it is read at one mmwr_week")

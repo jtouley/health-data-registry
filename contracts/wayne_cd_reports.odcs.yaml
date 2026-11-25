@@ -1,0 +1,227 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: wayne_cd_reports
+name: Wayne County (Out-Wayne) select communicable disease case counts
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Case counts of select reportable communicable diseases for Wayne County, Michigan, excluding the City of Detroit (Out-Wayne), by disease group, disease and report column, as printed in the county's quarterly, annual and 5-year PDF reports (2021 onward)."
+  usage: "Read one report and one column: a quarter, a year to date, a year, a multi-year total or the 5-year average. Add counts across diseases only within one report and one column, never across reports or columns. Keep '*' as printed (1 to 5 cases)."
+  limitations: "Excludes Detroit. Preliminary counts (confirmed and probable, MDSS) that change between reports; counts of 1 to 5 suppressed from 2025; conditions with no recent cases are left out of a report; no rates, no age or sex breakdown. No stated terms of use: read live, never stored."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://www.waynecountymi.gov/Government/Departments/Health-Human-Veterans-Services/Public-Health/Statistics-Reports", description: "Publisher's Statistics & Reports page listing the PDF reports (read 2026-11-24)"}
+    - {type: implementation, url: "docs/sources/wayne-county-reports.md", description: "What the reports state about their numbers, and how the parser proves each table against its own totals"}
+servers:
+  - id: waynecountymi_gov
+    server: www.waynecountymi.gov
+    type: custom
+    location: https://www.waynecountymi.gov/Government/Departments/Health-Human-Veterans-Services/Public-Health/Statistics-Reports
+    description: "HTML index of PDF reports; adapters/wayne_county.py reads the in-scope PDFs' tables from word positions and cell borders (adapters/pdf_tables.py). At least 10 s between requests."
+schema:
+  - name: wayne_cd_reports
+    physicalName: wayne_cd_reports
+    physicalType: table
+    logicalType: object
+    description: "One row per printed cell: report x disease x report column."
+    dataGranularityDescription: "report x disease group x disease x report column"
+    customProperties:
+      - property: totalRows
+        value: "is_total_row"
+        description: "Structural: subtotal rows and the grand-total line are labelled Total, Subtotal or Totals in the report (wayne_county.TOTAL_LABEL); publisher_inconsistencies() checks them against their rows."
+      - {property: tableShape, value: frequency_table}
+      - property: idDimensions
+        value:
+          condition: disease
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: null
+          period: [period_label]
+          provisionalFlag: data_retrieved_on
+        description: "Condition is the report's own disease label. Case status is stated once per report (confirmed and probable), not per row. Period is the printed column; period_kind and period_year say what it counts."
+    quality:
+      - id: one_value_per_cell
+        type: text
+        dimension: consistency
+        description: "cases is empty only where the report prints '*' (suppressed is true) or the column is the multi-year average; any other empty count is a parse error and the report is refused."
+    properties:
+      - name: report_url
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Link to the PDF report the count is printed in. Each report is its own table; the same quarter can differ between reports."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: report_url}
+        quality:
+          - {id: report_url_filled, type: library, metric: nullValues, mustBe: 0, description: "Every row names its report."}
+      - name: area
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The place the count covers, on every row: Wayne County, Michigan, excluding the City of Detroit (Out-Wayne). Never all of Wayne County."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: area}
+          - property: partialPlaces
+            value: {"*": "Wayne County excluding the City of Detroit (Out-Wayne), not the whole county: Detroit has its own health department and reports separately"}
+        quality:
+          - {id: area_filled, type: library, metric: nullValues, mustBe: 0, description: "Fill-rate: the Excludes Detroit framing is on every row."}
+      - name: excludes_detroit
+        physicalType: BOOLEAN
+        logicalType: boolean
+        required: false
+        description: "True when the report itself says 'excluding Detroit' or 'Out-Wayne'; empty when the report is silent (the 5-year report). Never set from anything but the report's own words."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: excludes_detroit}
+      - name: data_retrieved_on
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "The date the report says its data were pulled from MDSS (e.g. 07/21/2026), as printed; empty when the report doesn't print one. Counts are preliminary as of this date."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: data_retrieved_on}
+      - name: page
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "Page of the report the row is printed on, for checking a number against the PDF."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: page}
+      - name: disease_group
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "The report's disease group (e.g. Foodborne, STI, Vaccine Preventable); empty on the grand-total line."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: disease_group}
+      - name: disease
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The condition exactly as printed, e.g. 'Chlamydia (Genital)', 'Candida auris'. Names are not mapped to case definitions."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: disease}
+        quality:
+          - {id: disease_filled, type: library, metric: nullValues, mustBe: 0, description: "The parser refuses a row of values without a label."}
+      - name: period_label
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The report column's header as printed, e.g. 'Q2_2026', 'YTD 2026', 'Q1-Q4 2024 Total', '2021- 2025 Total', '5-Year Average'."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: column}
+      - name: period_kind
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "What the column counts: one quarter, the year to date through the report's quarter, a calendar year, a multi-year total, or the multi-year average."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: period_kind}
+        quality:
+          - id: period_kind_values
+            type: library
+            metric: invalidValues
+            arguments: {validValues: [quarter, year_to_date, year, multi_year_total, multi_year_average]}
+            mustBe: 0
+            description: "Structural: wayne_county.parse_period refuses any other header."
+      - name: period_year
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "Year of the column; the first year of a multi-year column. Taken from the report title when the header has none (e.g. 'Q1 (1/1-3/31)')."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: period_year}
+      - name: period_quarter
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Quarter 1-4 for a quarter column; empty otherwise."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: period_quarter}
+      - name: period_end_year
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Last year of a multi-year total or average; empty otherwise."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: period_end_year}
+      - name: printed
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The cell exactly as printed: a number, or '*' for a suppressed count of 1 to 5. Kept as published; a '*' is never filled in."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: printed}
+          - {property: flagFor, value: cases}
+          - {property: flagCodes, value: {"*": "suppressed by the publisher: 1 to 5 cases"}}
+      - name: cases
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Confirmed and probable cases reported to MDSS in the column's period, for Wayne County excluding Detroit; empty where the cell is '*' and on the multi-year average column."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: count}
+          - {property: unit, value: "1"}
+      - name: average
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "The 5-year report's average cases per year, as printed (its own rounding); empty on every other column. Never added up."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: average}
+          - {property: unit, value: "1/a"}
+      - name: suppressed
+        physicalType: BOOLEAN
+        logicalType: boolean
+        required: true
+        description: "True where the report prints '*' (1 to 5 cases, reports from 2025 on)."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: suppressed}
+      - name: is_total_row
+        physicalType: BOOLEAN
+        logicalType: boolean
+        required: true
+        description: "True on a subtotal row or the grand-total line; these are left out of every sum."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: is_total_row}
+      - name: failed_checks
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "The row's own printed totals that don't add up (a publisher slip, kept and flagged); empty when the row reconciles. More than two such rows refuse the whole report."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: failed_checks}
+customProperties:
+  - {property: licence, value: no-stated-terms}
+  - {property: citation, value: "Wayne County Department of Health, Human & Veterans Services. Select reportable communicable disease case counts (quarterly and 5-year reports). https://www.waynecountymi.gov/Government/Departments/Health-Human-Veterans-Services/Public-Health/Statistics-Reports"}
+  - {property: refresh, value: quarterly}
+  - {property: accessPolicy, value: "Government host: honest user agent (fetch.USER_AGENT), at least 10 s between requests (catalog source.min_interval_s), robots.txt honoured, aggregate tables only, fetched at run time and never stored."}
+  - {property: geographyBasis, value: "unresolved: the reports do not say whether a case is placed by residence or by where it was reported; the area is Wayne County excluding Detroit"}
+  - property: unreliableRule
+    value: {kind: publisher_suppressed, threshold: 6, description: "Reports from 2025 on print counts of 1 to 5 as '*' (stated in the reports); kept as printed, never filled in. 2021-2024 reports print every count."}
+  - property: openQuestions
+    value:
+      - "Area of the 5-year report: it does not say 'excluding Detroit'. The area column states Out-Wayne on every row because the department's jurisdiction excludes Detroit and its other reports say so; excludes_detroit stays empty for that report. Maintainer to confirm from the county."
+      - "Case status: confirmed plus probable, as the quarterly and annual reports state. Does the 5-year report count the same? Not stated in it."
+      - "Is a case placed by residence or by the reporting jurisdiction in MDSS? Not stated; geographyBasis stays unresolved, which blocks comparisons with GBD by place."
+      - "Terms of use: none stated. Ask the county before anything beyond run-time reading."
+      - "Disease labels are as printed; mapping them to GBD causes and to national case definitions (e.g. 'Candida auris' here vs CDC's clinical and screening series) needs a reviewer. gbd.causes is empty until then."
+      - "Robots and access: on 2026-11-24 the county's CDN answered 403 (Access Denied) for robots.txt and the index page to a request from the build environment with an honest user agent; the cause (address or agent) is unknown. crawl.Robots reads a 403 robots.txt as 'disallow everything', so live reads are refused wherever that happens; nothing works around it. Check from a clinician's machine before review."
+      - "Should reports with the 2014-2020 layouts be read? Out of scope until their layouts are checked."

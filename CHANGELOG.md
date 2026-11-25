@@ -8,6 +8,21 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Wayne County (Out-Wayne, excluding Detroit) communicable disease case counts from the county's quarterly,
+  annual and 5-year PDF reports (`wayne_cd_reports`, draft): read at run time, never stored, every row labelled
+  as excluding Detroit, and `*` (1 to 5 cases) kept as printed. A PDF table parser that rebuilds tables from
+  word positions and cell borders and refuses what it can't settle, including a row below the grand total.
+- Draft contracts for CDC's Tracking C. auris page and the AR Lab Network C. auris isolates
+  (`docs/sources/c-auris/`), kept apart from the NNDSS clinical and screening counts.
+- A per-host minimum gap between requests (`source.min_interval_s`, 10 s for the county's site).
+
+### Changed
+
+- NNDSS weekly: C. auris counts are described as confirmed only from 2023 (CSTE 22-ID-05), and cases as
+  assigned to the reporting jurisdiction by country of usual residence, each cited to CDC's Notice to Data
+  Users and Readers' Guide. Counts can no longer be added across conditions, so C. auris clinical and
+  screening are never summed.
+
 - Repository scaffolding under the Apache License 2.0, with a NOTICE for material adapted from the author's
   earlier MIT-licensed work.
 - SECURITY.md (private reporting through GitHub advisories, 14-day first response), CONTRIBUTING.md,

@@ -1,0 +1,140 @@
+# ODCS v3.1.0 contract fragment: CDC "Tracking C. auris" clinical case counts
+# Evidence: the authoritativeDefinitions below (primary sources, read 2026-11-24). Draft: review before moving into contracts/
+apiVersion: v3.1.0
+kind: DataContract
+id: cdc-cauris-tracking-clinical
+name: CDC Tracking C. auris - clinical cases by state and year
+version: 0.1.0
+status: draft
+domain: healthcare-associated-infections
+dataProduct: candida-auris
+tags: [candida-auris, case-surveillance, cdc]
+description:
+  purpose: >-
+    Annual counts of new clinical C. auris cases reported to CDC by state and local health
+    departments, by year and location of specimen collection, as shown on the CDC Tracking C. auris page.
+  limitations: >-
+    Clinical cases only; screening (colonization) cases are excluded from the map and timeline and
+    appear only as national totals in legend text. State counts 1-9 are shown as the string "1 to 10".
+    No documented API or data.cdc.gov dataset; data are embedded in page-module JSON files whose
+    URLs are not a published interface and may change without notice. Counts are not finalized
+    and can change between page updates.
+  usage: >-
+    Use for state-level clinical case burden by specimen-collection year. Do not add to NNDSS
+    counts or ARLN isolate counts.
+  authoritativeDefinitions:
+    - type: businessDefinition
+      url: https://ndc.services.cdc.gov/case-definitions/candida-auris-2023/
+      description: CSTE 22-ID-05 (2023) case definition, linked from the page's About the data section.
+    - type: businessDefinition
+      url: https://www.cdc.gov/candida-auris/tracking-c-auris/index.html
+      description: Source page; "How CDC counts cases" states date and location of specimen collection.
+    - type: implementation
+      url: https://www.cdc.gov/mmwr/volumes/75/ss/ss7504a1.htm
+      description: >-
+        MMWR SS 75(4), 2026. Describes CDC case-based C. auris surveillance (REDCap/DCIPHER,
+        first specimen per patient per case type). Same program; the page itself does not name its system.
+  customProperties:
+    - property: conditionCode
+      value: candida-auris
+    - property: countedUnit
+      value: person-case
+      description: One patient counted once as a clinical case (CSTE 22-ID-05 new-case rule).
+    - property: caseSubtype
+      value: clinical
+    - property: caseStatus
+      value: [confirmed]
+      description: The 2023 definition has only a confirmed classification. 2016-2022 years may include probable/suspect under earlier definitions (UNVERIFIED).
+    - property: dateBasis
+      value: specimenCollectionDate
+    - property: periodGranularity
+      value: calendarYear
+    - property: geographyBasis
+      value: specimenCollectionLocation
+    - property: dedupRule
+      value: >-
+        Patient counted once as a clinical case ever; patients with an earlier screening case
+        can also be counted as clinical (CSTE 22-ID-05). Applying this rule to the page data is UNVERIFIED.
+    - property: sourceSystem
+      value: CDC C. auris case-based surveillance (UNVERIFIED for this page; MMWR SS names REDCap/DCIPHER)
+    - property: revisionPolicy
+      value: rolling; no provisional/final flag; counts change between page updates
+    - property: suppressionRule
+      value: state-year counts 1-9 published as the string "1 to 10"
+    - property: comparableWith
+      value:
+        - target: cdc_nndss_weekly (Candida auris rows; contracts/cdc_nndss_weekly.odcs.yaml)
+          comparable: false
+          reason: NNDSS assigns a case to the reporting jurisdiction that submits it by the country of usual residence algorithm (Notice to Data Users, 2020 annual data; Readers' Guide rev. 12/10/2024 p. 8) and to the jurisdiction's MMWR week, not to the specimen collection date and place; NNDSS weekly figures are provisional (Readers' Guide p. 2).
+        - target: cdc-arpsp-arln-cauris
+          comparable: false
+          reason: ARLN counts isolates tested by public health labs (a convenience sample of clinical, surveillance and outbreak specimens), not unique patients.
+schema:
+  - name: clinical_cases_by_state_year
+    physicalName: cauris-tracking-map.json#data
+    logicalType: object
+    physicalType: json-array
+    dataGranularityDescription: one row per Location x Year (2013-2025 plus "All Years"); Location includes "All States"
+    properties:
+      - name: Location
+        logicalType: string
+        description: State name, "DC", or "All States" (national row). No territories.
+        required: true
+      - name: Year
+        logicalType: string
+        description: Specimen collection year 2013-2025, or "All Years".
+        required: true
+      - name: Clinical Cases
+        logicalType: string
+        description: Count of new clinical cases; string because suppressed cells hold "1 to 10".
+        required: true
+      - name: Clinical Counts Category
+        logicalType: string
+        description: Map legend bin.
+        quality:
+          - type: library
+            metric: invalidValues
+            arguments:
+              validValues: ["No new clinical cases", "1 to 10", "11 to 50", "51 to 100", "101 to 500", "501 to 1000", "Greater than 1000"]
+            mustBe: 0
+    quality:
+      - type: text
+        dimension: conformity
+        description: Clinical Cases is numeric except the literal "1 to 10"; consumers must parse it as an interval, not a number.
+      - type: text
+        dimension: consistency
+        description: The "All States" row for a year equals the national timeline value (2024 = 6370, 2025 = 8780 at the 2026-11-13 page update).
+  - name: national_clinical_cases_by_year
+    physicalName: c-auris-yearly-timeline.json#data
+    logicalType: object
+    properties:
+      - name: Year
+        logicalType: string
+      - name: Clinical Cases
+        logicalType: string
+servers:
+  - server: cdc-tracking-page-module
+    type: custom
+    description: Undocumented page-module JSON behind the CDC page. Not a supported API.
+    customProperties:
+      - property: urls
+        value:
+          - https://www.cdc.gov/candida-auris/tracking-c-auris/modules/cauris-tracking-map.json
+          - https://www.cdc.gov/candida-auris/tracking-c-auris/modules/c-auris-yearly-timeline.json
+customProperties:
+  - property: licence
+    value: public-domain-us-federal
+    description: "CDC states that most information on its website 'is in the public domain, and may be freely used or reproduced without obtaining copyright permission' (https://www.cdc.gov/other/agencymaterials.html, read 2026-11-24). No dataset-level licence is stated."
+  - property: neverSumWith
+    value: [cdc_nndss_weekly (Candida auris, clinical), cdc_nndss_weekly (Candida auris, screening), cdc-arpsp-arln-cauris]
+    description: Clinical, screening, tracking-page and AR Lab Network counts are four different counts. Each is returned on its own, labelled; none is ever added to another.
+  - property: citation
+    value: "Centers for Disease Control and Prevention. Tracking C. auris. Updated November 13, 2026. https://www.cdc.gov/candida-auris/tracking-c-auris/index.html"
+  - property: updateCadence
+    value: irregular page updates (published 2024-05-15, updated 2026-11-13); cadence UNVERIFIED
+  - property: openQuestions
+    value:
+      - "Which surveillance system feeds the tracking page? The page does not name it; MMWR SS 75(4) describes CDC case-based surveillance (REDCap/DCIPHER) for the same program."
+      - "Do the 2016-2022 years include probable or suspect cases under the 2019 and earlier definitions? The 2023 definition (CSTE 22-ID-05) has only Confirmed."
+      - "Is the CSTE 22-ID-05 new-case rule (a patient counted once as a clinical case) applied to the page's counts? Not stated on the page."
+      - "Update cadence: irregular page updates; no schedule stated."

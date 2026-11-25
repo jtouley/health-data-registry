@@ -104,12 +104,48 @@ class Robots:
         self.last[host] = self.clock()
 
 
+class Pacer:
+    """The least time between two requests to one host, as each source's catalog entry declares
+    (source.min_interval_s; 10 s for the county and federal report pages read here). Applied to every request,
+    retries included, whether or not robots.txt asks for a delay."""
+
+    def __init__(
+        self,
+        intervals: dict[str, float],
+        *,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.intervals, self.sleep, self.clock = intervals, sleep, clock
+        self.last: dict[str, float] = {}
+
+    @classmethod
+    def for_registry(cls, registry: Registry, *, sleep: Callable[[float], None] = time.sleep) -> Pacer:
+        intervals: dict[str, float] = {}
+        for ds in registry:
+            host = ds.entry.source.host
+            intervals[host] = max(intervals.get(host, 0.0), ds.entry.source.min_interval_s)
+        return cls({h: s for h, s in intervals.items() if s > 0}, sleep=sleep)
+
+    def wait(self, url: str) -> None:
+        host = (urlsplit(url).hostname or "").lower()
+        gap = self.intervals.get(host)
+        if gap is None:
+            return
+        if host in self.last:
+            due = self.last[host] + gap - self.clock()
+            if due > 0:
+                self.sleep(due)
+        self.last[host] = self.clock()
+
+
 def fetcher(
     registry: Registry,
     log: FetchLog | None = None,
     *,
     sleep: Callable[[float], None] = time.sleep,
     robots: Robots | None | bool = True,
+    pacer: Pacer | None = None,
 ) -> Getter:
     """A getter for catalogued publisher URLs that honours robots.txt, retries slow publishers and logs every
     attempt. `robots=True` (the default) reads each host's robots.txt; tests pass False or their own Robots."""
@@ -117,6 +153,7 @@ def fetcher(
 
     hosts = registry.hosts
     policy = Robots(hosts, sleep=sleep) if robots is True else robots or None
+    pace = pacer if pacer is not None else Pacer.for_registry(registry, sleep=sleep)
 
     def get(url: str) -> RawFetch:
         if policy is not None:
@@ -127,6 +164,7 @@ def fetcher(
                     log.record(url, ok=False, when=datetime.now(UTC), error=str(e))
                 raise
         for attempt in range(RETRIES):
+            pace.wait(url)
             when = datetime.now(UTC)
             try:
                 r = fetch(

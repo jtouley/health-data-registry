@@ -13,7 +13,7 @@ from typing import Any
 
 import duckdb
 
-from health_data_registry.registry import Column, Dataset, Metric, Registry, label_key
+from health_data_registry.registry import Column, Dataset, Metric, Registry, SemanticModel, label_key
 from health_data_registry.sql_guard import GuardedQuery, guard_sql, harden, run_guarded
 from health_data_registry.store import Manifest, latest_snapshot
 
@@ -48,6 +48,10 @@ class CompiledMetric:
     method: str
 
 
+def _time_dims(sem: SemanticModel) -> tuple[str, ...]:
+    return tuple(d.name for d in sem.dimensions if d.type == "time")
+
+
 def compile_metric(
     ds: Dataset,
     metric_name: str,
@@ -68,12 +72,19 @@ def compile_metric(
     dims = {d.name: d for d in sem.dimensions}
     for d in metric.single_value_of:
         if d in group_by or not _single((filters or {}).get(d)):
-            raise QueryRefused(
-                "needs_single_value",
-                f"{metric.name} is a running total, so it is read at one {d}: filter {d} to a single value "
-                f"(normally the latest) and don't group by it. Adding up the running totals of several {d}s would "
-                "count the same cases many times.",
-            )
+            if measure.kind == "running_count" and d in (metric.order_by, *_time_dims(sem)):
+                why = (
+                    f"{metric.name} is a running total, so it is read at one {d}: filter {d} to a single value "
+                    f"(normally the latest) and don't group by it. Adding up the running totals of several {d}s "
+                    "would count the same cases many times."
+                )
+            else:
+                why = (
+                    f"{metric.name} is read at one {d}: filter {d} to a single value and don't group by it. "
+                    f"Different {d}s are different counts (another condition, or another report that overlaps "
+                    "this one), so adding them up would mix them or count the same cases twice."
+                )
+            raise QueryRefused("needs_single_value", why)
 
     def dim(name: str) -> str:
         if name not in dims:

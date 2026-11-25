@@ -88,13 +88,17 @@ class Reshape(_Strict):
 
 
 class Source(_Strict):
-    portal: Literal["socrata", "who_gho", "https_csv"]
+    # pdf_report: a publisher's index page of PDF reports (Wayne County), read by adapters/wayne_county.py.
+    portal: Literal["socrata", "who_gho", "https_csv", "pdf_report"]
     host: str
     dataset: str
     landing_url: str
     api_url: str
     encoding: str = "utf-8"  # https_csv only: the file's text encoding, from the publisher's documentation
     reshape: Reshape | None = None  # https_csv only
+    # The least time between two requests to this host, in seconds, as the access policy for the source asks
+    # (government hosts: 10). Enforced by crawl.fetcher on top of any robots.txt crawl delay.
+    min_interval_s: float = Field(default=0.0, ge=0.0, le=60.0)
 
     @field_validator("host")
     @classmethod

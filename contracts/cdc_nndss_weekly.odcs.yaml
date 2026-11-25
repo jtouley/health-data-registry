@@ -8,13 +8,15 @@ domain: infectious_disease
 description:
   purpose: "Weekly provisional case counts of selected nationally notifiable infectious diseases reported by US states, New York City, the District of Columbia and territories to CDC's National Notifiable Diseases Surveillance System, 2022 onward."
   usage: "Read the latest MMWR week of a year for year-to-date counts by state and condition; sum weekly counts across weeks or reporting areas only after excluding total rows."
-  limitations: "Provisional counts that are revised in later weeks; counts by jurisdiction of residence; no rates, no age or sex breakdown, no county."
+  limitations: "Provisional counts that are revised in later weeks; counts by reporting jurisdiction (country-of-usual-residence algorithm); no rates, no age or sex breakdown, no county."
   authoritativeDefinitions:
     - {type: canonicalUrl, url: "https://data.cdc.gov/d/x9gk-5huc", description: "Publisher dataset page"}
     - {type: businessDefinition, url: "https://data.cdc.gov/api/views/x9gk-5huc.json", description: "Socrata metadata: column names, notes and flag definitions (dataset description)"}
     - {type: businessDefinition, url: "https://www.cdc.gov/nndss/docs/Readers-Guide-WONDER-Tables-20210421-508.pdf", description: "Reader's guide to NNDSS tables, cited by the publisher"}
     - {type: businessDefinition, url: "https://www.cdc.gov/nndss/infectious-disease/notice-to-data-users.html", description: "Notices and errata, cited by the publisher"}
     - {type: businessDefinition, url: "https://ndc.services.cdc.gov/", description: "National surveillance case definitions, cited by the publisher"}
+    - {type: businessDefinition, url: "https://ndc.services.cdc.gov/case-definitions/candida-auris-2023/", description: "Candida auris 2023 case definition, CSTE position statement 22-ID-05: clinical and screening, Confirmed is the only classification; a patient is counted once as a clinical case and once as a screening case (read 2026-11-24)"}
+    - {type: businessDefinition, url: "https://www.cdc.gov/other/agencymaterials.html", description: "CDC: most information on its website 'is in the public domain, and may be freely used or reproduced without obtaining copyright permission' (read 2026-11-24)"}
 servers:
   - id: data_cdc_gov
     server: data.cdc.gov
@@ -49,7 +51,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "Reporting area: the US total, a census division, a state, New York City, a territory, US territories combined, or non-US residents. Cases are counted where the patient usually lives. New York excludes New York City (structural check against US RESIDENTS, 2024). Upper case through 2024, title case from 2025 (source: live data, https://data.cdc.gov/resource/x9gk-5huc.json)."
+        description: "Reporting area: the US total, a census division, a state, New York City, a territory, US territories combined, or non-US residents. A case is counted in the jurisdiction that submits it, by the country of usual residence (COUR) algorithm; cases whose country of usual residence is outside the US and territories go to Non-U.S. Residents (Readers' Guide rev. 12/10/2024, pp. 8 and 10; Notice to Data Users, 2020 annual data). New York excludes New York City (structural check against US RESIDENTS, 2024). Upper case through 2024, title case from 2025 (source: live data, https://data.cdc.gov/resource/x9gk-5huc.json)."
         examples: ["MICHIGAN", "Michigan", "US RESIDENTS", "U.S. Residents", "TOTAL"]
         customProperties:
           - {property: role, value: dimension}
@@ -196,23 +198,32 @@ schema:
           - {property: role, value: attribute}
           - {property: sourceField, value: sort_order}
 customProperties:
-  - {property: licence, value: public-domain-us-federal}
+  - property: licence
+    value: public-domain-us-federal
+    description: "CDC states that most information on its website 'is in the public domain, and may be freely used or reproduced without obtaining copyright permission' (https://www.cdc.gov/other/agencymaterials.html, read 2026-11-24). The Socrata metadata has no licence field."
   - {property: citation, value: "Centers for Disease Control and Prevention. National Notifiable Diseases Surveillance System (NNDSS). NNDSS Weekly Data. https://data.cdc.gov/d/x9gk-5huc"}
   - {property: refresh, value: weekly}
-  - {property: geographyBasis, value: "patient residence: cases are assigned to the jurisdiction where the patient usually lives (dataset notes)"}
+  - property: geographyBasis
+    value: "reporting jurisdiction by usual residence: a case is assigned to the reporting jurisdiction that submits it, by the country of usual residence (COUR) algorithm; a case whose country of usual residence is outside the US and its territories is counted under Non-U.S. Residents, not in any jurisdiction"
+    description: "Readers' Guide rev. 12/10/2024 (https://www.cdc.gov/nndss/docs/Readers-Guide-WONDER-Tables-20210421-508.pdf), p. 8: non-U.S. residents' data 'represent illness that occurred in the United States in individuals whose country of usual residence is outside the United States or U.S. territories'; p. 10: these cases 'are not included in the U.S. Residents or U.S. Territories sections'. Notice to Data Users (https://www.cdc.gov/nndss/infectious-disease/notice-to-data-users.html), 2020 annual data: 'Based on the country of usual residence (COUR) algorithm, cases are assigned to the reporting jurisdiction'. Read 2026-11-24."
+  - property: caseStatusByCondition
+    value: {"Candida auris, clinical": "confirmed only from MMWR year 2023; confirmed and probable before 2023", "Candida auris, screening": "confirmed only (notifiable from 2023)"}
+    description: "Notice to Data Users (https://www.cdc.gov/nndss/infectious-disease/notice-to-data-users.html), 2023 annual data: 'confirmed cases of Candida auris clinical are published to align with the approved CSTE position statement 22-ID-05', whereas in previous years 'confirmed and probable case classification statuses were published'; 'Beginning in 2023, Candida auris screening was added as a nationally notifiable condition' and confirmed cases are published. The 2023 case definition (https://ndc.services.cdc.gov/case-definitions/candida-auris-2023/) lists only Confirmed for both. Read 2026-11-24."
   - {property: unreliableRule, value: {kind: none, description: "None: the publisher marks no counts as unreliable and publishes no rates. Empty counts carry a flag ('-' no reported cases; U, N, NN, NP, NC)."}}
   - property: openQuestions
     value:
       - "Is next year's prior-year year-to-date (m4) a like-for-like restatement of a year's own year-to-date (m3)? Nothing in the codebook says so, and for Candida auris, clinical they differ widely (m3 at the year's last week vs next year's m4 at its last week, live data 2026-11-24: California 2023 1275 vs 551; Georgia 2023 390 vs 191; Georgia 2024 651 vs 365; Michigan 2023 103 vs 110). Until a domain reviewer answers (semantic resolution_policy: require_domain_review), both are returned as separate observations (year_end_ytd, provisional; subsequent_year_restatement, unverified_restatement) and neither is called final."
       - "Supporting evidence for the reviewer on the m3/m4 question, not a verification: for Michigan 2024, CDC's C. auris tracking page shows 184 clinical cases; NNDSS clinical is 174 at year end (m3) and 184 in the next year's table (m4); NNDSS screening is 643 at year end and 689 restated (spec research, branch claude/cauris-source-contracts, commit 1e4740c, docs/sources/c-auris/; not in this branch, not re-checked here). One matching state-year does not show the two count the same thing, and the California 2023 gap (1275 vs 551) is unexplained, so resolution_policy stays require_domain_review."
-      - "Case definition for Candida auris: the same research reports CSTE position statement 22-ID-05. Add it as an authoritativeDefinitions link once a maintainer confirms the URL from that research file."
       - "A year-to-date that had a number and later weeks show only '-' (e.g. Minnesota, Candida auris, clinical, 2025: 1 through week 38, '-' for weeks 39-53): withdrawn, reset or missing? Reported as incomplete until answered."
-      - "Licence: the Socrata metadata has no licence field for this dataset; public-domain-us-federal is assumed from its being a CDC work. Maintainer to confirm."
       - "An empty m1, m3 or m4 with flag '-' stays stored as published (empty, with the flag). At query time it is read as 0 and labelled no reported cases, from the codebook's definition of '-' (noCasesCode); a year whose running total is empty in every week reads as 0 only when every one of those weeks is flagged '-'. Maintainer to confirm on review."
       - "The provisional footnote names reporting years 2024 and 2025; the provisional status of 2026 and the finalization date of earlier years are not stated in the dataset metadata."
       - "Should the adapter normalize the 2025+ title-case reporting-area names to the 2022-2024 upper-case form, or the reverse? Filters on states are case-sensitive today."
       - "Mapping Candida auris screening (colonization) to GBD Candida spp. / Other infectious diseases is a coarse pairing; colonization is not disease. Keep, or map screening to no GBD cause?"
       - "Earlier NNDSS weekly years (before 2022) sit in separate per-table Socrata datasets; not covered by this contract."
       - "Case definitions: which CSTE position statement and effective year applies to each condition and MMWR year (e.g. Candida auris clinical vs screening, Legionellosis, syphilis stages, TB)? Not in the data; list them as a caseDefinitions customProperty from https://ndc.services.cdc.gov/ after a maintainer reads it."
-      - "Case status: do these weekly counts include confirmed and probable cases together (per each condition's case definition)? The dataset does not say; until answered, counts must be described as 'reported cases' with status unspecified."
+      - "Case status for conditions other than Candida auris: do these weekly counts include confirmed and probable cases together (per each condition's case definition)? The dataset does not say; until answered, counts must be described as 'reported cases' with status unspecified."
+      - "Candida auris case status in the weekly tables: the confirmed-only statement is in the Notice to Data Users under 2023 annual data; the 2023 weekly notices name screening as new and the new case definition but do not restate it. Applied to the weekly series from 2023 on the case definition's own classification (Confirmed only); a reviewer to confirm that 2022 weekly clinical rows include probable cases, as the annual notice says for earlier years."
+      - "Country of usual residence: the Readers' Guide (p. 8) says the element 'is currently not reported by all jurisdictions or for all conditions'. How a case with an unknown or empty country of usual residence is assigned (the C. auris research says to the submitting jurisdiction) is not stated in either primary source read on 2026-11-24."
+      - "Regions: the Readers' Guide (p. 8) says Table 1 is summarized by HHS Regions, while the reporting-area labels read like census divisions (e.g. EAST NORTH CENTRAL). Which grouping does this dataset use? Structural sums are unaffected (totalRows)."
+      - "Finalized counts: the Readers' Guide (p. 2) says data 'are finalized approximately 10 months after the end of the year and are published as final annual data in CDC WONDER', and 'final case counts do not match the cumulative provisional case counts'. Those annual tables are not this dataset; the weekly figures here are never called final."
       - "Is a provisional/final indicator published anywhere for this dataset (e.g. a finalized annual table)? Not a column here."

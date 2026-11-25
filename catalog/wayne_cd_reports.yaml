@@ -1,0 +1,46 @@
+id: wayne_cd_reports
+title: Wayne County (Out-Wayne) select communicable disease case counts, quarterly and 5-year reports
+agency: Wayne County HHVS
+publisher: Wayne County Department of Health, Human & Veterans Services, Public Health (Michigan)
+level: county
+country: US
+research_areas: [infectious_disease]
+id_areas: [stis, hepatitis, enteric, vaccine_preventable, respiratory, vector_borne, hais_amr, tb]
+years: {start: 2021, end: null}
+geography: [county]
+shape: frequency_table
+grain: "One row is one printed cell of one report: a disease (in its disease group) in one report column (a quarter, a year to date, a year, a multi-year total or a multi-year average), for Wayne County excluding the City of Detroit, as printed in that report."
+refresh: quarterly
+licence:
+  # The county states no terms of use on the Statistics & Reports page (read 2026-11-24), and local-government
+  # works are not US federal public domain. Not on the reviewed list: fetched at run time, held in memory, never
+  # mirrored or published (ADR 0009). This is the private tier: listed on the hub, never hosted there.
+  id: no-stated-terms
+  redistribution: false
+  terms_url: https://www.waynecountymi.gov/Government/Departments/Health-Human-Veterans-Services/Public-Health/Statistics-Reports
+citation: "Wayne County Department of Health, Human & Veterans Services. Select reportable communicable disease case counts (quarterly and 5-year reports). https://www.waynecountymi.gov/Government/Departments/Health-Human-Veterans-Services/Public-Health/Statistics-Reports (accessed <retrieved_at>)."
+source:
+  portal: pdf_report
+  host: www.waynecountymi.gov
+  dataset: statistics-reports
+  landing_url: https://www.waynecountymi.gov/Government/Departments/Health-Human-Veterans-Services/Public-Health/Statistics-Reports
+  api_url: https://www.waynecountymi.gov/Government/Departments/Health-Human-Veterans-Services/Public-Health/Statistics-Reports
+  # Access policy for government hosts: at least 10 s between requests, on top of any robots.txt crawl delay.
+  min_interval_s: 10
+codebook_url: https://www.waynecountymi.gov/Government/Departments/Health-Human-Veterans-Services/Public-Health/Statistics-Reports
+caveats:
+  - "Excludes Detroit: every count covers Wayne County outside the City of Detroit (Out-Wayne), which has its own health department. The quarterly and annual reports say so; the 5-year report does not, and its rows carry excludes_detroit empty (see the contract's open questions). Never read these counts as all of Wayne County."
+  - "Counts of 1 to 5 are printed as '*' in reports from 2025 on. A '*' is kept exactly as printed and is never filled in, guessed or counted as zero; a sum that would include one has no total."
+  - "Counts include confirmed and probable cases from the Michigan Disease Surveillance System (MDSS), as the reports state, and are preliminary: newer reports print the date the data were retrieved (data_retrieved_on), and the same quarter can differ between reports."
+  - "Each report is its own table. Reports overlap (rolling five quarters, year to date, annual, 5-year), so counts are never added across reports or across a report's columns: read one report and one column."
+  - "A condition with 0 or suppressed counts in each of the previous five quarters is left out of a report, so a missing row is not a zero."
+  - "'YTD' runs through the report's own quarter in every year shown: 'YTD 2025' in the Q1 2026 report is Q1 2025 alone."
+  - "Subtotal rows and the grand-total line are publisher totals and are left out of sums. Where a printed total disagrees with its parts, the row keeps a failed_checks note."
+  - "No terms of use are stated, so these reports are read from the county at run time, held in memory only and never stored or published."
+  - "Only the 2021-onward layouts are read: the 2021-2024 annual reports, the 2025-onward quarterly reports and the 2021-2025 5-year report. Reports from 2014-2020 are listed on the page but not read."
+gbd:
+  location_column: null
+  causes: []
+contract: contracts/wayne_cd_reports.odcs.yaml
+semantic_model: semantic/wayne_cd_reports.yaml
+status: draft

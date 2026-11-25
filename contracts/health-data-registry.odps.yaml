@@ -107,6 +107,13 @@ outputPorts:
     contractId: who_gho_tb_incidence
     customProperties:
       - {property: hosted, value: false}
+  - name: wayne_cd_reports
+    description: Wayne County (Out-Wayne, excluding Detroit) communicable disease case counts from the county's PDF reports. Listed, not hosted (no stated terms; read at run time).
+    type: tables
+    version: 0.1.0
+    contractId: wayne_cd_reports
+    customProperties:
+      - {property: hosted, value: false}
 customProperties:
   - property: hub
     value: One Hugging Face dataset; each source in its own folder (<source>/data/<source>.parquet) with its card.

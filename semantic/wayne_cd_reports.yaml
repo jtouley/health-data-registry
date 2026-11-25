@@ -1,0 +1,26 @@
+dataset: wayne_cd_reports
+version: 0.1.0
+dimensions:
+  - {name: report, column: report_url, type: categorical, description: "The report the count is printed in (its link). Reports overlap, so one report is read at a time."}
+  - {name: period_column, column: period_label, type: categorical, description: "The report column as printed, e.g. 'Q2_2026', 'YTD 2026', '2024', '2021- 2025 Total'."}
+  - {name: period_kind, column: period_kind, type: categorical, description: "What the column counts: quarter, year_to_date, year, multi_year_total or multi_year_average."}
+  - {name: year, column: period_year, type: time, description: "The year of the column (the first year of a multi-year column)."}
+  - {name: disease_group, column: disease_group, type: categorical, description: "The report's disease group, e.g. Foodborne, STI, Vaccine Preventable."}
+  - {name: disease, column: disease, type: categorical, description: "The condition as printed in the report."}
+measures:
+  - {name: cases, column: cases, kind: count, unit: "cases", description: "Confirmed and probable cases reported to MDSS in the column's period, Wayne County excluding Detroit; empty where the report prints '*' (1 to 5 cases)."}
+  - {name: average_cases, column: average, kind: estimate, unit: "cases per year", description: "The 5-year report's own average cases per year, as printed; never added up."}
+metrics:
+  - name: reported_cases
+    description: "Cases in one report column for Wayne County excluding Detroit, added across diseases only. The compiler requires one report and one column, so overlapping reports and columns are never added; a disease printed '*' leaves its group with no total."
+    measure: cases
+    aggregation: sum
+    exclude_total_rows: true
+    single_value_of: [report, period_column]
+    filters: []
+  - name: multi_year_average_cases
+    description: "The 5-year report's printed average cases per year for one disease; read as printed, never added."
+    measure: average_cases
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["period_kind = 'multi_year_average'"]
