@@ -1,21 +1,25 @@
 # Branch hygiene (issue #67; how it works and how to restore a branch: docs/dev/branch-hygiene.md).
+# Every decision is made by scripts/branch_hygiene.py, from the GitHub API and config/branch_keep.yaml.
 #
-#   sweep       daily, live: every branch whose last commit is more than 7 days old, and every wip/* backup whose
-#               pull request has merged, gets the annotated tag archive/<branch>/<YYYY-MM-DD> at its head; the
-#               tag is checked to resolve to that same commit, and only then is the branch deleted. A tag that
-#               can't be created or verified leaves the branch in place and is reported. Branches on the purge
-#               list in config/branch_keep.yaml are deleted with no tag. Never touched: the default branch,
-#               protected branches, branches with an open pull request (head or base), dependabot/* and the
-#               keep list. contents: write on this job only.
-#   preview     workflow_dispatch with dry_run: the same decisions, nothing changed; contents: read.
-#   report      posts the run's list (archived, purged, not deleted, with the restore command) to the tracking
-#               issue: the body is updated in place, and a comment records each run that changed or would
-#               change anything. issues: write on this job only.
-#   tag-merged  on a merged pull request from this repository: tags its head archive/<branch>/<date>, so the
-#               branch GitHub auto-deletes keeps an archive tag. Never deletes. Runs the script from the default
-#               branch, never the pull request's copy.
+#   sweep       daily, live from the first run. Archives CI probe branches, pre-pr/* and wip/* branches whose
+#               pull requests are all closed (merged or abandoned), and any branch with no push or commit for 7
+#               days; purges the purge list (no tag). Archiving = annotated tag archive/<branch>/<YYYY-MM-DD> at
+#               the head, the tag read back and checked against the head, the branch re-read (still at that
+#               commit, not protected, no ruleset forbidding deletion), then deleted. Any failure keeps the
+#               branch and reports it. Never touched: the default branch, protected branches (checked through the
+#               API for each branch), open pull requests' heads and bases and their pre-pr/ twins, dependabot/*,
+#               the keep list, and anything pushed to or committed to in the last 24 hours.
+#   preview     workflow_dispatch with dry_run: the same decisions with a read-only token; nothing changes.
+#   report      the sweep's list (archived, purged, not deleted, with restore commands) to the tracking issue:
+#               the body is replaced, and a comment records each run that changed anything.
+#   pr-closed   when a pull request from this repository closes: tags its head if it merged (GitHub then
+#               auto-deletes the branch), and archives its pre-pr/<branch> twin if the twin holds only that
+#               pull request's commits and is more than 24 hours old (a younger twin is left to the sweep).
 #
-# No pull_request_target. Branch names and pull request fields reach the shell only through env, quoted.
+# Every job writes its list to the job summary. Top-level token: no permissions; contents: write only on the
+# jobs that tag and delete. No pull_request_target. Event values (branch names, SHAs, PR numbers) reach the
+# script only through env, quoted, as --opt="$VAR", and the script checks them (plain branch name, 40-hex SHA).
+# The pr-closed job runs the default branch's reviewed script, never the pull request's copy.
 name: Branch hygiene
 
 on:
@@ -35,17 +39,20 @@ permissions: {}
 
 concurrency:
   group: branch-hygiene-${{ github.event.pull_request.number || 'sweep' }}
+  # A sweep or a delete half done is never cancelled; a newer run waits.
   cancel-in-progress: false
 
 jobs:
   sweep:
-    name: Archive or purge inactive branches
-    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && !inputs.dry_run }}
+    name: Archive or purge finished and inactive branches
+    if: >-
+      ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+      && github.ref == 'refs/heads/main' && !inputs.dry_run }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: write # create archive tags and delete branches
-      pull-requests: read # find branches with an open pull request
+      pull-requests: read # find open pull requests, and the pull requests a branch's head belongs to
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -60,9 +67,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: >-
-          uv run --no-sync python scripts/branch_hygiene.py run --repo "$GITHUB_REPOSITORY"
-          --report report.md --changes changes.md --run-url "$RUN_URL"
+        run: |
+          uv run --no-sync python scripts/branch_hygiene.py run --repo="$GITHUB_REPOSITORY" \
+            --report=report.md --changes=changes.md --run-url="$RUN_URL"
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
       - name: Keep the report for the issue
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -78,10 +86,10 @@ jobs:
     name: Preview (dry run, nothing changed)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: read # read the branches and their commits
-      pull-requests: read # find branches with an open pull request
+      pull-requests: read # find open pull requests, and the pull requests a branch's head belongs to
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -96,9 +104,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: >-
-          uv run --no-sync python scripts/branch_hygiene.py run --dry-run --repo "$GITHUB_REPOSITORY"
-          --report report.md --changes changes.md --run-url "$RUN_URL"
+        run: |
+          uv run --no-sync python scripts/branch_hygiene.py run --dry-run --repo="$GITHUB_REPOSITORY" \
+            --report=report.md --changes=changes.md --run-url="$RUN_URL"
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
       - name: Keep the report for the issue
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -114,7 +123,7 @@ jobs:
     name: Update the tracking issue
     needs: [sweep, preview]
     if: >-
-      ${{ always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+      ${{ always() && github.ref == 'refs/heads/main'
       && (needs.sweep.result != 'skipped' || needs.preview.result != 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -131,8 +140,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TITLE: "Branch hygiene: archived and deleted branches"
-        # The report is written by scripts/branch_hygiene.py, which limits branch names to [A-Za-z0-9._/-]
-        # and strips backticks, @ and angle brackets from free text, so it can't mention anyone.
+        # The report comes from scripts/branch_hygiene.py, which limits branch names to [A-Za-z0-9._/-] and
+        # strips backticks, @ and angle brackets from free text, so it can't mention anyone.
         run: |
           if [ -s out/report.md ]; then
             cp out/report.md body.md
@@ -155,16 +164,17 @@ jobs:
             gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body-file body.md
           fi
 
-  tag-merged:
-    name: Tag the merged branch
+  pr-closed:
+    name: Tag the merged branch and archive its pre-pr twin
     if: >-
-      ${{ github.event_name == 'pull_request' && github.event.pull_request.merged == true
+      ${{ github.event_name == 'pull_request'
       && github.event.pull_request.head.repo.full_name == github.repository
       && !startsWith(github.event.pull_request.head.ref, 'dependabot/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: write # create the archive tag
+      contents: write # create archive tags and delete the pre-pr twin
+      pull-requests: read # check no open pull request still uses the twin
     steps:
       # The default branch's reviewed script, not the pull request's copy.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -177,12 +187,18 @@ jobs:
           enable-cache: false
       - name: Install dependencies (locked)
         run: uv sync --locked --no-dev
-      - name: Tag the pull request's head
+      - name: Tag and clean up
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.event.pull_request.head.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: >-
-          uv run --no-sync python scripts/branch_hygiene.py tag-merged --repo "$GITHUB_REPOSITORY"
-          --branch="$BRANCH" --sha="$HEAD_SHA" --pr="$PR_NUMBER"
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+        run: |
+          merged_flag=()
+          if [ "$PR_MERGED" = "true" ]; then merged_flag=(--merged); fi
+          status=0
+          uv run --no-sync python scripts/branch_hygiene.py pr-closed --repo="$GITHUB_REPOSITORY" \
+            --branch="$BRANCH" --sha="$HEAD_SHA" --pr="$PR_NUMBER" "${merged_flag[@]}" --report=report.md || status=$?
+          if [ -f report.md ]; then cat report.md >> "$GITHUB_STEP_SUMMARY"; fi
+          exit "$status"
