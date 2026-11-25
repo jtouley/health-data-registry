@@ -31,7 +31,7 @@ caveats:
   - "The previous 52-week maximum and year-to-date counts cover only the period when the condition was reportable in that jurisdiction, so they can be incomplete."
   - "Year-to-date counts are cumulative: read the latest week of a year, never sum year-to-date values across weeks."
   - "Candida auris clinical cases and screening (colonization) cases are separate series and are not added together."
-  - "Case status (confirmed, probable) is not published: each count may combine statuses as each condition's case definition allows, and cannot be split."
+  - "Case status is not a column, but for some conditions CDC puts it in the condition name: 14 names end in 'Confirmed' and 11 end in 'Probable', each its own series (for example Listeriosis, Confirmed and Listeriosis, Probable), and 5 end in 'Total' (Coccidioidomycosis, spelled two ways, and Novel Influenza A beside their Confirmed and Probable series; Q fever beside Acute and Chronic; CPO with no parts published). Never add a Total to its parts, or Confirmed to Probable. Every other condition name doesn't say which case statuses its count includes: read it as reported cases, and check the condition's case definition at https://ndc.services.cdc.gov/."
   - "New York (state) excludes New York City, which is reported as its own area."
   - "Reporting-area names are upper case for 2022-2024 and title case from 2025 (for example MICHIGAN versus Michigan)."
   - "Total rows include US residents, US territories and non-US residents; US RESIDENTS excludes territories."

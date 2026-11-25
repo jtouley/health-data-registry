@@ -8,6 +8,7 @@ divisions are summary rows. The numbers are made up; only the layout follows the
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -91,3 +92,33 @@ def test_nndss_no_reported_cases_reads_as_zero_with_its_flag(real: tuple[Registr
     )
     assert out["rows"] == [[0, 0, None]]  # 0 cases, no empty values: '-' is not a gap
     assert "'-' as no reported cases" in out["method"]
+
+
+STATUSES = ("Confirmed", "Probable", "Total")
+
+
+def _status_counts(labels: list[str]) -> dict[str, int]:
+    """How many of the publisher's own condition labels end in each case status (', Total' in either case)."""
+    return {s: sum(x.casefold().endswith(f", {s.casefold()}") for x in labels) for s in STATUSES}
+
+
+def test_case_status_text_agrees_with_the_publishers_labels() -> None:
+    """#174 item 1: the NNDSS caveat said case status isn't published, but 30 of CDC's own labels carry Confirmed,
+    Probable or Total. Wherever labels name a status, no caveat or contract text may say it isn't published, and
+    the caveat gives the counts the labels give (hard rule 1: from the publisher's own labels)."""
+    reg = load_registry(ROOT)
+    for ds in reg:
+        counts = _status_counts(list(ds.condition_labels))
+        if not counts["Confirmed"] and not counts["Probable"]:
+            continue
+        texts = [*ds.entry.caveats, *ds.contract.open_questions, str(ds.contract.raw)]
+        for text in texts:
+            assert "case status (confirmed, probable) is not published" not in text.casefold(), text
+            assert "without a confirmed/probable split" not in text, text
+        said = [c for c in ds.entry.caveats if "case status" in c.casefold()]
+        assert len(said) == 1, said
+        for status, n in counts.items():
+            assert re.search(rf"\b{n} (names )?end in '{status}'", said[0]), (status, n, said[0])
+    assert _status_counts(list(reg.get("cdc_nndss_weekly").condition_labels)) == {
+        "Confirmed": 14, "Probable": 11, "Total": 5,
+    }  # fmt: skip

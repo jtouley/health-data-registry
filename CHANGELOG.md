@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- NNDSS caveat on case status (#174, item 1): it said case status isn't published, but 30 of CDC's own
+  condition names carry it (14 end in Confirmed, 11 in Probable, 5 in Total). The caveat and the contract now
+  say which names carry a status, that a Total is never added to its parts, and that every other name doesn't
+  say which statuses its count includes. No number changes; the contract version stays 0.1.0.
 - A summed count never adds up labels that overlap or count different things (hard rule 2). Semantic-model
   dimensions say `non_additive: true` or `false`, and each `true` says why in plain words
   (`non_additive_reason`), which the refusal and `describe_dataset` show. A metric or series that neither picks
