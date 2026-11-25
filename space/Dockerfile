@@ -2,9 +2,9 @@
 # The Space repo holds only space/ (this Dockerfile, README.md with the Space's config header, PRIVACY.md).
 # The package source is one release of the public GitHub repository: a vX.Y.Z tag that release.yml built from a
 # commit on main (HDR_TAG), checked against the commit that tag named when the deploy was prepared (HDR_COMMIT), so
-# a deploy is reproducible and a moved tag fails the build. Both are left empty here on purpose: the deploy (a
-# GitHub Actions job, not added yet; docs/dev/hosting.md) fills them in from the release, and a build without them
-# stops. Never point them at a branch or an unreleased commit. Nothing secret is read at build time; the
+# a deploy is reproducible and a moved tag fails the build. Both are left empty here on purpose:
+# .github/workflows/deploy-space.yml fills them in from the release it deploys, and a build without them stops.
+# Never point them at a branch or an unreleased commit. Nothing secret is read at build time; the
 # private-tier token (HDR_PRIVATE_HF_TOKEN) is a Space secret, read from the environment at run time only.
 ARG HDR_REPO=https://github.com/jtouley/health-data-registry.git
 ARG HDR_TAG=

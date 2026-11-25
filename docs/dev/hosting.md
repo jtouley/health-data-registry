@@ -105,7 +105,7 @@ Point `HDR_HUB` at a release (`hf://datasets/<org>/<name>@release-<date>`) or a 
 
 ## What the maintainer does
 
-Nothing here deploys; the deployment is a separate task. Once:
+Deploys come from `.github/workflows/deploy-space.yml` on a release tag ([automation.md](automation.md)). Once:
 
 1. Create a Space (Docker SDK, CPU Basic). Hugging Face's docs say creating a Docker Space now needs a paid plan
    (PRO for a personal account), though CPU Basic hardware has no hourly cost.
@@ -113,8 +113,8 @@ Nothing here deploys; the deployment is a separate task. Once:
    README's front matter sets `sdk: docker` and `app_port: 7860`). The Dockerfile builds only from a release:
    `HDR_TAG` is a `vX.Y.Z` tag that `release.yml` built from a commit on main, and `HDR_COMMIT` is the commit that
    tag names, checked at build time, so a deploy is reproducible and a moved tag fails the build. Both are empty
-   in git and a build without them stops. The deploy is a GitHub Actions job still to be added: on a release it
-   fills in both and uploads `space/`. To deploy newer code, cut a release; never point them at a branch.
+   in git and a build without them stops. `deploy-space.yml` fills in both from the release it deploys and
+   uploads `space/`. To deploy newer code, cut a release; never point them at a branch.
 3. Optional: attach a Storage Bucket as a volume at `/data`, so the cache survives restarts.
 4. Settings, Variables and secrets: `HDR_HUB` only to pin a release; the secret `HDR_PRIVATE_HF_TOKEN`
    (read-only) once the private tier ships. Never put a token in a file.
