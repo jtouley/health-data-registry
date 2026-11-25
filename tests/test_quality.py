@@ -11,7 +11,7 @@ import pytest
 from health_data_registry import quality as q
 from health_data_registry.registry import Column, RegistryError, load_registry
 from health_data_registry.staging import stage_checked
-from health_data_registry.store import build_snapshot, write_ndjson
+from health_data_registry.store import Manifest, build_snapshot, latest_snapshot, write_ndjson
 from tests.conftest import CONTRACT, RECORDS, raw_fetch, write_registry
 
 REPO = Path(__file__).resolve().parents[1]
@@ -320,20 +320,81 @@ def test_registry_refuses_a_contract_with_a_bad_rule(tmp_path: Path) -> None:
         load_registry(write_registry(tmp_path / "reg", contract=bad))
 
 
-def test_snapshots_and_live_tables_carry_their_quality_results(tmp_path: Path) -> None:
-    ruled = CONTRACT.replace(
-        '          - {property: missingCodes, value: ["-", "N"]}\n',
-        '          - {property: missingCodes, value: ["-", "N"]}\n'
-        "        quality:\n"
-        "          - {id: cases_under_5000, type: sql, query: 'SELECT COUNT(*) FROM {object} WHERE cases >= 5000',"
-        " mustBe: 0, dimension: accuracy, severity: error, description: Toy bound.}\n",
+RULED = CONTRACT.replace(
+    '          - {property: missingCodes, value: ["-", "N"]}\n',
+    '          - {property: missingCodes, value: ["-", "N"]}\n'
+    "        quality:\n"
+    "          - {id: cases_under_5000, type: sql, query: 'SELECT COUNT(*) FROM {object} WHERE cases >= 5000',"
+    " mustBe: 0, dimension: accuracy, severity: error, description: Toy bound.}\n",
+)
+
+
+def _blocked_snapshot(tmp_path: Path, contract: str = RULED) -> tuple[Any, Path, Any]:
+    """A snapshot whose error-severity rule fails: built and kept on disk, but never promoted to LATEST."""
+    ds = load_registry(write_registry(tmp_path / "reg", contract=contract)).get("toy_cases")
+    page = tmp_path / "p.ndjson"
+    write_ndjson(page, RECORDS)
+    lake = tmp_path / "lake"
+    lake.mkdir()
+    with pytest.raises(q.QualityBlocked) as e:
+        build_snapshot(lake, ds, [raw_fetch("https://data.cdc.gov/resource/a.json", RECORDS)], [page])
+    (manifest,) = (lake / "datasets" / "toy_cases").rglob("manifest.json")
+    return ds, lake, (e.value, Manifest.read(manifest), page)
+
+
+def test_a_failed_error_rule_blocks_latest_and_publishing(tmp_path: Path) -> None:
+    ds, lake, (err, m, _page) = _blocked_snapshot(tmp_path)
+    assert str(err) == (
+        "toy_cases: the error-severity check cases_under_5000 failed, so this copy is not served or published and "
+        "the copy before it stays. Compare the data with the publisher's page, then refresh, or have a maintainer "
+        "fix the contract."
     )
-    ds = load_registry(write_registry(tmp_path / "reg", contract=ruled)).get("toy_cases")
+    assert not (lake / "datasets" / "toy_cases" / "LATEST").exists()  # LATEST never moved
+    assert latest_snapshot(lake, "toy_cases") is None
+    # The same inputs again: the kept snapshot is still refused, never promoted on a second run.
+    page = tmp_path / "p.ndjson"
+    with pytest.raises(q.QualityBlocked):
+        build_snapshot(lake, ds, [raw_fetch("https://data.cdc.gov/resource/a.json", RECORDS)], [page])
+    assert not (lake / "datasets" / "toy_cases" / "LATEST").exists()
+    # A LATEST that names a blocked copy (a lake from before the rule) is refused by export-public's checks.
+    (lake / "datasets" / "toy_cases" / "LATEST").write_text(m.snapshot_id + "\n")
+    from health_data_registry.publish import PublishCheckFailed, export_public
+
+    with pytest.raises(
+        PublishCheckFailed, match="toy_cases: the error-severity check cases_under_5000 failed"
+    ):
+        export_public(load_registry(tmp_path / "reg"), lake, str(tmp_path / "out"), run_date="2026-11-25")
+
+    assert q.blocked_message("x", {"results": [], "rule_errors": [{"test": "a"}, {"test": "b"}]}) == (
+        "x: the checks a, b could not run, so this copy is not served or published and the copy before it stays. "
+        "Compare the data with the publisher's page, then refresh, or have a maintainer fix the contract."
+    )
+    assert q.blocked_message("x", None) is None
+
+
+def test_a_warn_rule_does_not_block_latest(tmp_path: Path) -> None:
+    ds = load_registry(
+        write_registry(tmp_path / "reg", contract=RULED.replace("severity: error", "severity: warn"))
+    ).get("toy_cases")
     page = tmp_path / "p.ndjson"
     write_ndjson(page, RECORDS)
     lake = tmp_path / "lake"
     lake.mkdir()
     m = build_snapshot(lake, ds, [raw_fetch("https://data.cdc.gov/resource/a.json", RECORDS)], [page])
+    assert latest_snapshot(lake, "toy_cases") is not None and m.notes[0].startswith(
+        "A data check on this source gave a warning: Toy bound"
+    )
+    # A partial development sample is never published, so its failed rules are caveats only.
+    partial = load_registry(write_registry(tmp_path / "reg2", contract=RULED)).get("toy_cases")
+    sample = build_snapshot(
+        lake, partial, [raw_fetch("https://data.cdc.gov/resource/b.json", RECORDS)], [page], partial=True
+    )
+    assert sample.partial and any(r["status"] == "fail" for r in sample.quality["results"])
+
+
+def test_snapshots_and_live_tables_carry_their_quality_results(tmp_path: Path) -> None:
+    ds, _lake, (_err, m, page) = _blocked_snapshot(tmp_path)
+
     tests = {r["test"]: r["status"] for r in m.quality["results"]}
     assert tests == {"has_rows": "pass", "cases_under_5000": "fail", "fill_rate_cases": "pass",
                      "fill_rate_rate_per_100k": "pass"}  # fmt: skip

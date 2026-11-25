@@ -47,6 +47,7 @@ import duckdb
 import yaml
 
 from health_data_registry.product import Port, load_ports
+from health_data_registry.quality import blocked_message
 from health_data_registry.registry import Dataset, Registry
 from health_data_registry.store import Manifest, latest_snapshot
 
@@ -842,6 +843,8 @@ def check_release(registry: Registry, lake: Path, out: Path) -> list[str]:
             )
         if snap.partial:
             problems.append(f"{ds.id}: the snapshot is a partial development sample, not the full table")
+        elif blocked := blocked_message(ds.id, snap.quality):  # a lake LATEST from before the rule blocked
+            problems.append(blocked)
         if snap.row_count <= 0:
             problems.append(f"{ds.id}: the snapshot has no rows; an empty table is never published")
         # Every file the manifest names is there with its hash.

@@ -41,6 +41,7 @@ from typing import Any
 
 import duckdb
 
+from health_data_registry.quality import QualityBlocked, blocked_message
 from health_data_registry.registry import Dataset
 from health_data_registry.staging import Staged, check_snapshot, stage, write_parquet
 
@@ -221,8 +222,9 @@ def build_snapshot(
 
     if (out / "manifest.json").is_file():  # the same inputs were snapshotted already: never overwrite
         keep()  # a load kept before its metadata was recorded gets it now
-        _point_latest(lake, ds.id, snapshot_id)
-        return Manifest.read(out / "manifest.json")
+        existing = Manifest.read(out / "manifest.json")
+        _promote(lake, ds.id, existing)
+        return existing
     tmp = Path(tempfile.mkdtemp(prefix=f".{ds.id}-", dir=lake))
     try:
         sources = sorted({c.source_field for c in ds.contract.columns})
@@ -266,7 +268,7 @@ def build_snapshot(
         if tmp.exists():
             shutil.rmtree(tmp, ignore_errors=True)
     keep()
-    _point_latest(lake, ds.id, snapshot_id)
+    _promote(lake, ds.id, manifest)
 
     return manifest
 
@@ -340,6 +342,17 @@ def keep_raw_records(
         tmp_meta.write_text(json.dumps(dict(metadata), indent=2, sort_keys=True) + "\n", encoding="utf-8")
         os.replace(tmp_meta, meta)
     return target
+
+
+def _promote(lake: Path, dataset_id: str, manifest: Manifest) -> None:
+    """Point LATEST at a new snapshot, unless a contract rule blocks it (an error-severity failure or a rule that
+    could not run): then the snapshot and its raw records stay on disk for inspection, LATEST keeps naming the
+    copy before it, and QualityBlocked says why. A partial development sample is never published, so its rules
+    are reported as caveats only."""
+    reason = None if manifest.partial else blocked_message(dataset_id, manifest.quality)
+    if reason:
+        raise QualityBlocked(reason)
+    _point_latest(lake, dataset_id, manifest.snapshot_id)
 
 
 def _point_latest(lake: Path, dataset_id: str, snapshot_id: str) -> None:
