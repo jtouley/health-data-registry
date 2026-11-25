@@ -142,8 +142,9 @@ These apply to every generated or hand-written model, and to the Python staging 
   (`arg_max(x, (year, week, x))`). A `string_agg` or `list` aggregate has an `order by`.
 - Every `row_number()`, `rank()` and `qualify` orders by a unique key. Because the SQL text can't show that a key is
   unique, a window passes only when its `partition by` and `order by` columns match a uniqueness test declared on
-  the model it reads: `unique` for one column, or for a composite key a generic test the generator ships in
-  `transform/` (it has no `dbt_utils`).
+  the model it reads: dbt's built-in `unique` for one column, or for a composite key an `odcs_check` rule (the
+  generic test in `transform/macros/odcs_check.sql`) that the generator emits from the contract's primary key,
+  counting duplicate keys (the project has no `dbt_utils`).
 - Staging never deduplicates: a row the publisher sent twice is kept twice, and a duplicate key fails the model's
   test (the rule #81's fix round set for staging).
 - Any aggregate or window aggregate over a `DOUBLE` column (`sum`, `avg`, `var_*`, `stddev_*`, `corr`, `regr_*`,

@@ -96,7 +96,7 @@ contracts generate (b `tests/test_transform_gen.py:49`) and that a snapshot is n
 
 ### Which data-quality gates block publishing today?
 
-| Check | Runs | Blocks LATEST | Blocks publish |
+| Check | Runs | Blocks `LATEST` | Blocks publish |
 |---|---|---|---|
 | Citation, ID-area tag, licence text, redistribution, hosting | export | n/a | yes (main `publish.py:792-863`) |
 | Partial snapshot; no rows; file sha256 and row count match the manifest | export | no | yes (`publish.py:843-862`) |
