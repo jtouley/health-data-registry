@@ -17,7 +17,7 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 | `make install` | `uv sync` |
 | `make check` | lint, typecheck, test, mutate: the quick local loop, not all of CI |
 | `make precheck` | The pre-PR gate's local half: the CI checks plus a docs-drift check, stopping at the first failure; run before every pre-pr push |
-| `make hooks` | Install the pre-commit hooks (`uv run pre-commit install`); once per checkout |
+| `make hooks` | Install the pre-commit and pre-push hooks (`uv run pre-commit install`); once per checkout |
 | `make test` | Offline tests with coverage, one worker per core (pytest-xdist; floor 85%) |
 | `make test-network` | Live publisher checks in `tests/integration` (marker `network`) |
 | `make smoke` | The C. auris in Michigan journey through the MCP server on a synthetic lake, scored with `eval/scorer.py` (marker `smoke`; [docs/dev/README.md](docs/dev/README.md#smoke-journey)) |
@@ -29,6 +29,7 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 | `make check-contracts` | Check each publisher still serves the fields its contract reads |
 | `make contracts` | Regenerate `transform/`'s raw sources, staging models and every model's schema from `contracts/`; CI fails if the committed files differ |
 | `make transform` | `dbt build` (models and tests) on the synthetic fixtures in `tests/fixtures/transform/`, as CI runs it |
+| `make ratchet` | The Trusted gate's ratchet on `HEAD` against `BASE`, without the required-check rule ([docs/dev/README.md](docs/dev/README.md#the-trusted-gate)) |
 | `make eval` | Verify the sealed sets; never run or read the held-out pool while developing |
 | `uv run health-data-registry refresh <id> [--max-rows N]` | One dataset; `--max-rows` marks the snapshot partial |
 | `uv run health-data-registry validate` | Cross-check every catalog entry, contract and semantic model |
@@ -50,12 +51,14 @@ One review round, one fix round, merge, then follow-ups. We don't get stuck in r
      main, counts; anything else runs the shards as usual. Every other check still runs on the PR.
    - Fix-round pushes follow the same path. Merging main into a branch is a change like any other: precheck, then
      pre-pr, then the PR branch.
-   - This can't be skipped. On GitHub, the PR-branch ruleset (`feat/**`, `fix/**`, `ci/**`, `docs/**`,
-     `transform/**`) requires the "CI result" check on a commit before any push may move such a branch to it, so a
-     red or unrun commit is refused; that server rule is the one that counts. Locally, the `pre-push` hook
-     (`make hooks`, `scripts/pre_push_gate.py`) refuses the same push early, and runs ruff, mypy and the changed
-     modules' tests before a pre-pr push.
-   - Every PR into main also has to pass the **Trusted gate**, run from main's copy, never the PR's: it fails a PR
+   - Locally, the `pre-push` hook (`make hooks`, `scripts/pre_push_gate.py`) refuses a push to a PR branch (any
+     branch but `pre-pr/**`, `wip/**`, `dependabot/**` and `main`) whose commit has no green `ci.yml` run on
+     pre-pr, and runs ruff, mypy and the changed modules' tests before a pre-pr push. It doesn't run when a branch
+     is created at a commit the remote already has, so checking the pre-pr run is still yours. The server rule
+     meant to enforce this, a ruleset requiring "CI result" on PR branches, isn't applied yet
+     ([#138](https://github.com/jtouley/health-data-registry/issues/138)).
+   - Every PR into main also runs the **Trusted gate**, from main's copy, never the PR's (a required check once
+     [#138](https://github.com/jtouley/health-data-registry/issues/138) is done): it fails a PR
      that lowers a coverage or mutation floor, adds a skip, pragma, type-ignore, noqa or lint relaxation not in
      `.github/ratchet-allowlist.txt`, drops tests, loosens a required check or `ci/budgets.yml`, weakens a mutation
      job (PR, nightly or release gate), touches `eval/sealed/` or bypasses the hooks
@@ -116,6 +119,7 @@ src/health_data_registry/
                   own flags carried through
   stats.py        pure statistics for analysis.py (standard library only, each method with its published source)
   publication.py  publication outlook: per-conference base rates from publication_base_rates.yaml
+  ratchet.py      CI only, not used by the server: the Trusted gate's ratchet (docs/dev/README.md#the-trusted-gate)
   helpers.py      the clinician workflows: MCP prompts, and the source of docs/helpers.md and the
                   template's Claude Code skills (template/.claude/skills/)
   distribution.py the plugin (plugin/), its marketplace, the Claude Projects kit, and the generated tool lists
@@ -155,7 +159,7 @@ transform/        the dbt project on DuckDB (dbt-duckdb): models/staging/ genera
                   seeds, no data files (a test enforces it); CI's synthetic lake is tests/fixtures/transform/
 eval/sealed/      held-out blind sets, hash-sealed, when present; don't read them while developing
 tests/            synthetic data only; tests/golden holds golden SQL; tests/integration the live `network` checks
-scripts/          mutate_changed.py, write_template.py (make docs, make kit)
+scripts/          mutate_changed.py, write_template.py (make docs, make kit), pre_push_gate.py (the pre-push hook)
 plugin/, template/, packaging/, npm/
                   generated plugin and template; MCP Registry, mcpb and npm packaging
 docs/             setup.md, helpers.md and tools.md (clinicians), dev/ (developers), architecture.md,

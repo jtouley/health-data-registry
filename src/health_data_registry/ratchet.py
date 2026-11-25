@@ -1,4 +1,4 @@
-"""The trusted gate's ratchet: fail a pull request that weakens the checks guarding main.
+"""The Trusted gate's ratchet: fail a pull request that weakens the checks guarding main.
 
 Usage (the Trusted gate workflow, .github/workflows/trusted-gate.yml; locally: `make ratchet`):
   python -m health_data_registry.ratchet --base MAIN_SHA --head PR_SHA [--required-checks FILE] [--github]
@@ -11,17 +11,21 @@ request's head with its merge base (git merge-base BASE HEAD) and fails when the
 1. thresholds: lowers a coverage or mutation floor, or any other floor, fail-under or threshold in pyproject.toml,
    the Makefile, scripts/, the workflows or another tool config, or removes one; or sets the coverage floor below
    85 or the mutation floor below 70 anywhere in those files;
-2. escape hatches: adds a skip, skipif or xfail mark, a test deselection, a no-cover or no-mutate pragma, a mutmut
-   exclusion, a type-ignore or noqa comment, an inline mypy setting, or a ruff, mypy or coverage relaxation, unless
-   the exact line is in the allowlist (ALLOWLIST, read from main);
+2. escape hatches: adds a skip, skipif or xfail mark, a test deselection or a pytest -m/-k filter, a no-cover or
+   no-mutate pragma, a mutmut exclusion, a type-ignore or noqa comment, an inline mypy setting, or a ruff, mypy,
+   coverage or pytest relaxation, unless the exact line is in the allowlist (ALLOWLIST, read from main); or adds a
+   tool settings file beside pyproject.toml (mypy.ini, setup.cfg, a nested ruff.toml, ...), or a file the gate
+   cannot read as text (a symbolic link, a submodule, a config file holding a NUL byte), which no entry allows;
 3. tests: leaves fewer tests in the test modules it touches than the merge base had (deleted or renamed tests
    with no replacement), unless each removed test is in the allowlist;
-4. required checks: removes or renames a check the ruleset requires, makes a required job (or a job it needs)
-   conditional, stops a required job waiting for a job it needed, or adds continue-on-error to one;
+4. required checks: removes or renames a check the ruleset requires, makes a required job (or a job it needs, old
+   or new) conditional, stops a required job waiting for a job it needed, adds continue-on-error to one, or adds a
+   job whose check name is an expression the gate cannot resolve (it could report any required check);
 5. sealed sets: touches eval/sealed/;
-6. hooks: adds a way around the git hooks (no-verify, the n flag of commit, or a hooks-path override);
+6. hooks: adds a way around the git hooks (no-verify, the n flag of git commit, a hooks-path override, pre-commit's
+   skip and allow-no-config variables), or removes a hook from .pre-commit-config.yaml;
 7. allowlist and gate: changes the allowlist together with anything else, or changes the gate's own files
-   together with anything but docs;
+   together with anything but files under docs/ and CHANGELOG.md;
 8. CI budgets: loosens ci/budgets.yml: raises a time budget, adds a key (a new budget is a new allowance), removes
    one, or deletes the file;
 9. mutation: weakens a job that runs mutation tests, in any workflow (the PR mutation shards, the nightly run, the
@@ -41,6 +45,7 @@ import itertools
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tomllib
@@ -53,8 +58,14 @@ from typing import Any
 import yaml
 
 ALLOWLIST = ".github/ratchet-allowlist.txt"
+# The files main's gate runs (python -m health_data_registry.ratchet imports the package's __init__ first).
 GATE_FILES = frozenset(
-    {".github/workflows/trusted-gate.yml", "src/health_data_registry/ratchet.py", "tests/test_ratchet.py"}
+    {
+        ".github/workflows/trusted-gate.yml",
+        "src/health_data_registry/__init__.py",
+        "src/health_data_registry/ratchet.py",
+        "tests/test_ratchet.py",
+    }
 )
 SEALED = "eval/sealed/"
 WORKFLOWS = ".github/workflows/"
@@ -67,6 +78,23 @@ LINE_TEXT_LIMIT = 200
 
 Reader = Callable[[str], str | None]
 
+# What to do about a finding no allowlist entry can clear, by rule.
+NEXT_STEPS = {
+    "threshold": "Restore it. Only the maintainer can lower a floor, by changing the gate in a pull request of its"
+    " own.",
+    "sealed sets": "Revert the change under eval/sealed/.",
+    "budgets": "Restore it; budgets only tighten. Only the maintainer can loosen one, by changing the gate.",
+    "allowlist": "Move the allowlist change to a pull request of its own, merge that first, then this one.",
+    "gate files": "Move the gate change to a pull request of its own; only files under docs/ and CHANGELOG.md may"
+    " come with it.",
+    "required check": "Restore it. If the required checks really change, the maintainer changes the ruleset first.",
+    "hooks": "Remove it: every commit goes through the hooks.",
+    "mutation": "Remove it: a mutation job never ignores its own failure.",
+    "links": "Commit the file itself, not a link to it.",
+    "escape hatch": "Keep tool settings in pyproject.toml, as text the gate can read.",
+    "tests": "Fix the test module so it parses, or split it.",
+}
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -78,15 +106,21 @@ class Finding:
     message: str
     text: str = ""
     allowlistable: bool = False
+    next_step: str = ""
 
     def render(self) -> str:
+        """The failure line, then the way out. Every line starts with fixed text, never with a path or line from
+        the pull request, so no printed line can read as a workflow command."""
         where = f"{clean(self.path)}:{self.line}" if self.line else clean(self.path)
         out = f"FAIL [{self.rule}] {where}: {clean(self.message)}"
         if self.allowlistable:
             out += (
-                f"\n    If it is needed, add this exact line to {ALLOWLIST} in a pull request that changes"
-                f" nothing else:\n    {clean(self.path)} :: {clean(self.text)}"
+                f"\n    If it is needed, add the entry below to {ALLOWLIST} in a pull request that changes nothing"
+                " else, merge that first, then run this check again (push, or edit the pull request's title):"
+                f"\n    Allowlist entry: {clean(self.path)} :: {clean(self.text)}"
             )
+        else:
+            out += f"\n    Next step: {self.next_step or NEXT_STEPS.get(self.rule, 'Restore it.')}"
         return out
 
     def annotation(self) -> str:
@@ -104,14 +138,16 @@ class Change:
 
 @dataclass
 class Snapshot:
-    """The files of one commit, read on demand. paths lists every file (needed for the workflows)."""
+    """The files of one commit, read on demand. paths lists every file (needed for the workflows); modes holds
+    git's mode for the paths that are not plain files (120000 a symbolic link, 160000 a submodule)."""
 
     read: Reader
     paths: list[str] = field(default_factory=list)
+    modes: dict[str, str] = field(default_factory=dict)
 
     @classmethod
-    def of(cls, files: Mapping[str, str]) -> Snapshot:
-        return cls(read=files.get, paths=sorted(files))
+    def of(cls, files: Mapping[str, str], modes: Mapping[str, str] | None = None) -> Snapshot:
+        return cls(read=files.get, paths=sorted(files), modes=dict(modes or {}))
 
 
 def clean(text: str) -> str:
@@ -154,6 +190,35 @@ def _locate(text: str | None, needle: str) -> tuple[int, str]:
     return 0, ""
 
 
+_TOML_HEADER = re.compile(r"\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(?:#.*)?$")
+_BARE_KEY = re.compile(r"[\w-]+")
+
+
+def _locate_toml(text: str | None, section: str, token: str) -> tuple[int, str]:
+    """Like _locate, but only within the TOML tables under section ('' for the whole file). A bare key name as
+    token matches only the line that sets that key, so a removed key is not found (0, '') rather than matched on
+    some other line that happens to contain the word."""
+    kept: list[str] = []
+    numbers: list[int] = []
+    current = ""
+    for i, line in enumerate(_lines(text), 1):
+        m = _TOML_HEADER.match(line)
+        if m:
+            current = m[1].replace('"', "").replace("'", "")
+            continue
+        if not section or current == section or current.startswith(section + "."):
+            kept.append(line)
+            numbers.append(i)
+    if _BARE_KEY.fullmatch(token):
+        key = re.compile(rf"\s*(?:[\w.\"'-]+\.)?[\"']?{re.escape(token)}[\"']?\s*=")
+        for number, line in zip(numbers, kept, strict=True):
+            if key.match(line):
+                return number, line.strip()
+        return 0, ""
+    found, text_found = _locate("\n".join(kept), token)
+    return (numbers[found - 1], text_found) if found else (0, "")
+
+
 def _suffix_or_name(path: str) -> tuple[str, str]:
     p = PurePosixPath(path)
     return p.suffix, p.name
@@ -176,6 +241,11 @@ def parse_allowlist(text: str | None) -> frozenset[tuple[str, str]]:
 
 
 # Rule 5 and 7: sealed sets, allowlist and gate isolation -----------------------------------------------------
+
+
+def plural(n: int, word: str) -> str:
+    """'1 file', '2 files'."""
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
 
 def _paths(changes: Iterable[Change]) -> set[str]:
@@ -201,7 +271,7 @@ def check_isolation(changes: list[Change]) -> list[Finding]:
             Finding(
                 "allowlist", ALLOWLIST, 0,
                 f"the allowlist changes only in a pull request that changes nothing else; this one also changes "
-                f"{len(others)} other file(s): {', '.join(others[:5])}",
+                f"{plural(len(others), 'other file')}: {', '.join(others[:5])}",
             )
         )  # fmt: skip
     gate = sorted(paths & GATE_FILES)
@@ -212,10 +282,35 @@ def check_isolation(changes: list[Change]) -> list[Finding]:
         out.append(
             Finding(
                 "gate files", gate[0], 0,
-                f"the gate's own files ({', '.join(gate)}) change only with docs, in a pull request of their own; "
-                f"this one also changes {len(rest)} other file(s): {', '.join(rest[:5])}",
+                f"the gate's own files ({', '.join(gate)}) change in a pull request of their own, with nothing but "
+                f"files under docs/ and CHANGELOG.md; this one also changes {plural(len(rest), 'other file')}: "
+                f"{', '.join(rest[:5])}",
             )
         )  # fmt: skip
+    return out
+
+
+# Rule 2: links the gate would read as their target's name -------------------------------------------------------
+
+LINK_MODES = {"120000": "a symbolic link", "160000": "a submodule"}
+
+
+def check_links(changes: list[Change], base: Snapshot, head: Snapshot) -> list[Finding]:
+    """A new symbolic link or submodule. git hands the gate a link's target name, not the file Python, make or
+    pytest would read through it, so every rule would read nothing there; a submodule is not read at all."""
+    out = []
+    for change in changes:
+        if change.new is None:
+            continue
+        mode = head.modes.get(change.new)
+        if mode in LINK_MODES and (change.old is None or base.modes.get(change.old) != mode):
+            out.append(
+                Finding(
+                    "links", change.new, 0,
+                    f"adds {LINK_MODES[mode]}, which the gate cannot read through, so no rule would check what it"
+                    " points to",
+                )
+            )  # fmt: skip
     return out
 
 
@@ -290,9 +385,21 @@ MARKERS: tuple[Marker, ...] = (
         SHELL,
     ),
     Marker("escape hatch", "a command whose failure is ignored", re.compile(r"\|\|\s*(?:true|:)(?:\s|$|;)"), SHELL),
+    # A changed -m or -k expression on a pytest command line changes which tests run.
     Marker(
-        "hooks", "a way around the git hooks (no-verify, the n flag of commit, or a hooks-path override)",
-        re.compile(r"--no-ver(?:ify)\b|\bgit\b[^\n]*\bcommit\b[^\n]*\s-n\b|\bcore\.hooksPath\b"),
+        "escape hatch", "a pytest -m or -k filter",
+        re.compile(r"\bpytest\b[^\n|;&]*\s-[mk](?=\s|=|[\"']|$)"),
+        SHELL,
+    ),
+    Marker(
+        "hooks",
+        "a way around the git hooks (no-verify, the n flag of git commit, a hooks-path override, or pre-commit's"
+        " skip and allow-no-config variables)",
+        # git commit's own flags only: the pattern stops at a pipe, ; or &, so `git log ... | head -n 1` is not it.
+        re.compile(
+            r"--no-ver(?:ify)\b|\bgit\b(?:\s+[^\s|;&]+)*?\s+commit(?=\s|$)[^|;&\n]*?\s-[a-zA-Z]*n[a-zA-Z]*\b"
+            r"|\bcore\.hooksPath\b|\bSK(?:IP)=|\bPRE_COMMIT_ALLOW_NO_CONF(?:IG)\b"
+        ),
         allowlistable=False,
     ),
 )  # fmt: skip
@@ -310,6 +417,15 @@ def _is_text(text: str | None) -> bool:
     return text is not None and "\0" not in text
 
 
+# The files some marker reads (the hooks marker reads every file, binaries included, so it is left out here).
+TEXT_SCOPE = PY | CONFIG | SHELL | DOCS
+
+
+def _in_text_scope(path: str) -> bool:
+    suffix, name = _suffix_or_name(path)
+    return suffix in TEXT_SCOPE or name in TEXT_SCOPE
+
+
 def check_markers(
     changes: list[Change], base: Snapshot, head: Snapshot, allow: frozenset[tuple[str, str]]
 ) -> list[Finding]:
@@ -319,9 +435,22 @@ def check_markers(
         if change.new is None or change.new == ALLOWLIST:
             continue
         new_text = head.read(change.new)
-        if not _is_text(new_text):
+        if new_text is None:
             continue
         old_text = base.read(change.old) if change.old else None
+        if not _is_text(new_text):
+            # make, sh and configparser read past a NUL byte; the markers would not. A config or script that
+            # newly holds one fails rather than going unread. Other binaries (images) are not read.
+            if _in_text_scope(change.new) and (old_text is None or _is_text(old_text)):
+                out.append(
+                    Finding(
+                        "escape hatch", change.new, 0,
+                        "holds a NUL byte, so the gate cannot read it as text, and make, the shell or a config"
+                        " reader may still run it",
+                        next_step="Remove the NUL byte; scripts and settings are plain text.",
+                    )
+                )  # fmt: skip
+            continue
         for marker in MARKERS:
             applied = _marker_for(marker, change.new)
             if applied is None:
@@ -393,10 +522,12 @@ def thresholds(text: str | None) -> dict[str, list[tuple[float, int, str]]]:
 
 
 def minimum_for(name: str) -> float | None:
-    """The absolute floor a threshold's name stands for: coverage 85, mutation 70, others none."""
-    if "mutation" in name or name == "floor":
+    """The absolute floor a threshold's name stands for: coverage 85, mutation 70, others none. Whole words of the
+    name decide, so discovery_threshold or recovery_floor are not coverage floors."""
+    words = [w for w in re.split(r"[^a-z0-9]+", name.lower()) if w]
+    if any(w.startswith(("mutation", "mutmut")) for w in words) or words == ["floor"]:
         return MINIMUM_MUTATION
-    if "cov" in name or "fail_under" in name:
+    if any(w in ("cov", "coverage") for w in words) or "fail_under" in name.lower():
         return MINIMUM_COVERAGE
     return None
 
@@ -553,7 +684,7 @@ def _mypy_section(before: Mapping[str, Any], after: Mapping[str, Any], where: st
     for path in _gained(_items(after.get("files")), _items(before.get("files"))):
         out.append((f"mypy {where}files no longer has {path}", "files"))
     for path in _gained(_items(before.get("exclude")), _items(after.get("exclude"))):
-        out.append((f"mypy {where}exclude gains {path}", "exclude"))
+        out.append((f"mypy {where}exclude gains {path}", f'"{path}"'))
     return out
 
 
@@ -583,11 +714,64 @@ def _coverage_relaxations(before: Mapping[str, Any], after: Mapping[str, Any]) -
         for item in _gained(
             _items(_table(before, section).get(key)), _items(_table(after, section).get(key))
         ):
-            out.append((f"coverage {section}.{key} gains {item}", key))
+            out.append((f"coverage {section}.{key} gains {item}", f'"{item}"'))
+    for section, key in (("run", "include"), ("report", "include"), ("report", "partial_branches")):
+        for item in _gained(
+            _items(_table(before, section).get(key)), _items(_table(after, section).get(key))
+        ):
+            out.append((f"coverage {section}.{key} gains {item}", f'"{item}"'))
     for item in _gained(
         _items(_table(after, "run").get("source")), _items(_table(before, "run").get("source"))
     ):
         out.append((f"coverage run.source no longer has {item}", "source"))
+    if _table(before, "run").get("branch") is True and _table(after, "run").get("branch") is not True:
+        out.append(("coverage run.branch turned off", "branch"))
+    return out
+
+
+# Flags in pytest's addopts that narrow what is collected or run, or let collection errors pass (spelled in
+# pieces, so this module trips none of its own markers).
+PYTEST_NARROWING = (
+    "-k", "-m", "--ig" + "nore", "--de" + "select", "-p", "--continue-on-collection-errors", "--lf", "--last-failed",
+    "--sw", "--stepwise", "--co", "--collect-only",
+)  # fmt: skip
+PYTEST_TAKES_VALUE = frozenset({"-k", "-m", "--ig" + "nore", "--ig" + "nore-glob", "--de" + "select", "-p"})
+
+
+def _pytest_filters(addopts: Any) -> list[str]:
+    """The narrowing options in addopts, each with its value ('-m not slow')."""
+    if isinstance(addopts, str):
+        try:
+            tokens = shlex.split(addopts)
+        except ValueError:
+            tokens = addopts.split()
+    else:
+        tokens = _items(addopts)
+    out = []
+    for i, token in enumerate(tokens):
+        if not token.startswith(PYTEST_NARROWING):
+            continue
+        if token in PYTEST_TAKES_VALUE and i + 1 < len(tokens):
+            out.append(f"{token} {tokens[i + 1]}")
+        else:
+            out.append(token)
+    return out
+
+
+def _pytest_relaxations(before: Mapping[str, Any], after: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """[tool.pytest.ini_options]: fewer test paths, other file or function patterns, more skipped directories,
+    or a narrowing option in addopts."""
+    b, a = _table(before, "ini_options"), _table(after, "ini_options")
+    out = []
+    for item in _gained(_items(a.get("testpaths")), _items(b.get("testpaths"))):
+        out.append((f"pytest testpaths no longer has {item}", "testpaths"))
+    for key in ("python_files", "python_classes", "python_functions"):
+        if a.get(key) != b.get(key):
+            out.append((f"pytest {key} changes, which changes what is collected", key))
+    for item in _gained(_items(b.get("norecursedirs")), _items(a.get("norecursedirs"))):
+        out.append((f"pytest norecursedirs gains {item}", f'"{item}"'))
+    for item in _gained(_pytest_filters(b.get("addopts")), _pytest_filters(a.get("addopts"))):
+        out.append((f"pytest addopts gains {item}", "addopts"))
     return out
 
 
@@ -597,7 +781,7 @@ def _mutmut_relaxations(before: Mapping[str, Any], after: Mapping[str, Any]) -> 
         out.append((f"mutmut source_paths no longer has {item}", "source_paths"))
     for key in ("do_not_mutate", "pytest_add_cli_args", "pytest_add_cli_args_test_selection"):
         for item in _gained(_items(before.get(key)), _items(after.get(key))):
-            out.append((f"mutmut {key} gains {item} (a mutmut exclusion)", key))
+            out.append((f"mutmut {key} gains {item} (a mutmut exclusion)", f'"{item}"'))
     return out
 
 
@@ -616,19 +800,60 @@ def check_toml(
             continue
         if isinstance(before, str):
             before = {}
-        found = _ruff_relaxations(_ruff(before, change.new), _ruff(after, change.new))
-        if change.new == "pyproject.toml":
+        pyproject = change.new == "pyproject.toml"
+        found = [
+            ("tool.ruff" if pyproject else "", what, token)
+            for what, token in _ruff_relaxations(_ruff(before, change.new), _ruff(after, change.new))
+        ]
+        if pyproject:
             tool_b, tool_a = _table(before, "tool"), _table(after, "tool")
-            found += _mypy_relaxations(_table(tool_b, "mypy"), _table(tool_a, "mypy"))
-            found += _coverage_relaxations(_table(tool_b, "coverage"), _table(tool_a, "coverage"))
-            found += _mutmut_relaxations(_table(tool_b, "mutmut"), _table(tool_a, "mutmut"))
-        for what, token in found:
-            number, text = _locate(head_text, token)
+            for tool, relaxations in (
+                ("mypy", _mypy_relaxations), ("coverage", _coverage_relaxations),
+                ("mutmut", _mutmut_relaxations), ("pytest", _pytest_relaxations),
+            ):  # fmt: skip
+                found += [
+                    (f"tool.{tool}", what, token)
+                    for what, token in relaxations(_table(tool_b, tool), _table(tool_a, tool))
+                ]
+        for section, what, token in found:
+            number, text = _locate_toml(head_text, section, token)
             if text and (change.new, text) in allow:
                 continue
             out.append(
-                Finding("escape hatch", change.new, number, f"relaxes a check: {what}", text, bool(text))
+                Finding(
+                    "escape hatch", change.new, number, f"relaxes a check: {what}", text, bool(text),
+                    "" if text else "Restore the setting: a setting that is gone has no line to allowlist.",
+                )
+            )  # fmt: skip
+    return out
+
+
+# Settings files that ruff, mypy, pytest or coverage read before pyproject.toml, or instead of it for the files
+# under them (pytest looks upwards from the tests it is given). The gate checks settings only in pyproject.toml.
+SIDE_CONFIGS = frozenset(
+    {"mypy.ini", ".mypy.ini", "setup.cfg", "pytest.ini", ".pytest.ini", "tox.ini", ".coveragerc", "ruff.toml",
+     ".ruff.toml", "pyproject.toml"}
+)  # fmt: skip
+ROOT_TOML = frozenset({"pyproject.toml", "ruff.toml", ".ruff.toml"})
+
+
+def check_side_configs(changes: list[Change]) -> list[Finding]:
+    """A new or changed settings file beside pyproject.toml. The root pyproject.toml, and a root ruff.toml that is
+    already there, are compared key by key (check_toml); any other one could switch a check off unseen."""
+    out = []
+    for change in changes:
+        path = change.new
+        if path is None or PurePosixPath(path).name not in SIDE_CONFIGS:
+            continue
+        if path in ROOT_TOML and (path == "pyproject.toml" or change.old == path):
+            continue
+        out.append(
+            Finding(
+                "escape hatch", path, 0,
+                "adds or changes a settings file that ruff, mypy, pytest or coverage reads before pyproject.toml"
+                " (or instead of it, below this folder); the gate checks settings only in pyproject.toml",
             )
+        )  # fmt: skip
     return out
 
 
@@ -644,7 +869,8 @@ def is_test_module(path: str) -> bool:
     )
 
 
-def _parametrize_count(decorators: list[ast.expr]) -> int:
+def _parametrize_count(decorators: list[ast.expr], consts: Mapping[str, int] | None = None) -> int:
+    """The cases a stack of parametrize marks makes: literal lists, or module-level names bound to one."""
     count = 1
     for dec in decorators:
         if not (
@@ -660,7 +886,26 @@ def _parametrize_count(decorators: list[ast.expr]) -> int:
         )
         if isinstance(values, (ast.List, ast.Tuple, ast.Set)):
             count *= max(len(values.elts), 1)
+        elif isinstance(values, ast.Name) and consts and values.id in consts:
+            count *= max(consts[values.id], 1)
     return count
+
+
+def _literal_lengths(tree: ast.Module) -> dict[str, int]:
+    """Module-level NAME = [literal list, tuple or set] bindings, by name; the last binding wins."""
+    out: dict[str, int] = {}
+    for node in tree.body:
+        target, value = None, None
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target, value = node.targets[0], node.value
+        elif isinstance(node, ast.AnnAssign):
+            target, value = node.target, node.value
+        if isinstance(target, ast.Name):
+            if isinstance(value, (ast.List, ast.Tuple, ast.Set)):
+                out[target.id] = len(value.elts)
+            else:
+                out.pop(target.id, None)
+    return out
 
 
 def _is_test_class(node: ast.ClassDef) -> bool:
@@ -673,18 +918,21 @@ def collect_tests(source: str) -> dict[str, tuple[int, int]]:
 
     Raises SyntaxError (or ValueError) when the source does not parse."""
     tree = ast.parse(source)
+    consts = _literal_lengths(tree)
     found: dict[str, tuple[int, int]] = {}
 
     def visit(body: list[ast.stmt], prefix: str, multiplier: int) -> None:
         for node in body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test"):
                 found[prefix + node.name] = (
-                    multiplier * _parametrize_count(node.decorator_list),
+                    multiplier * _parametrize_count(node.decorator_list, consts),
                     node.lineno,
                 )
             elif isinstance(node, ast.ClassDef) and _is_test_class(node):
                 visit(
-                    node.body, f"{prefix}{node.name}::", multiplier * _parametrize_count(node.decorator_list)
+                    node.body,
+                    f"{prefix}{node.name}::",
+                    multiplier * _parametrize_count(node.decorator_list, consts),
                 )
 
     visit(tree.body, "", 1)
@@ -726,24 +974,35 @@ def check_tests(
         before_total += sum(n for n, _ in before.values())
         after_total += sum(n for n, _ in after.values())
         for test_id, (count, line) in sorted(before.items(), key=lambda item: item[1][1]):
-            if test_id in after:
-                continue
             path = old or ""
+            dropped = count - after[test_id][0] if test_id in after else count
+            if dropped <= 0:
+                continue
             if (path, f"def {test_id.rsplit('::', 1)[-1]}") in allow:
-                allowed += count
+                allowed += dropped
             else:
-                removed.append((path, test_id, line))
+                removed.append(
+                    (
+                        path,
+                        test_id if test_id not in after else f"{test_id} ({plural(dropped, 'fewer case')})",
+                        line,
+                    )
+                )
     if after_total + allowed < before_total:
-        names = (
-            ", ".join(f"{t} ({p} line {n} at the merge base)" for p, t, n in removed[:10])
-            or "a parametrized case"
-        )
+        names = ", ".join(f"{t} ({p} line {n} at the merge base)" for p, t, n in removed[:10])
         first = removed[0] if removed else ("tests/", "", 0)
+        entries = "; ".join(
+            f"{p} :: def {t.split(' ', 1)[0].rsplit('::', 1)[-1]}" for p, t, _ in removed[:10]
+        )
         out.append(
             Finding(
                 "tests", first[0], first[2],
                 f"the test modules it touches had {before_total} tests at the merge base and have {after_total} now;"
                 f" removed or renamed without a replacement: {names}",
+                next_step=(
+                    "Keep the tests, or, if they are meant to go, add an entry for each to the allowlist in a pull"
+                    f" request of its own, merge that first, then this one. Entries: {entries}"
+                ),
             )
         )  # fmt: skip
     return out
@@ -1001,9 +1260,95 @@ def check_required(
                         f"the required check '{check}' no longer runs or waits for job '{lost}'",
                     )
                 )  # fmt: skip
-            pairs = [(job_b, job_h)] + [(j, j) for j in jobs_h if j != job_h and j in jobs_b]
-            for jb, jh in pairs:
-                out += _compare_job(wf_b.jobs[jb], wf_h.jobs[jh], wf_h, jh, allow)
+            out += _compare_job(wf_b.jobs[job_b], wf_h.jobs[job_h], wf_h, job_h, allow)
+            for j in jobs_h:
+                if j == job_h:
+                    continue
+                # A job new to what the required job waits for is compared with nothing: a skipped need skips the
+                # required job, and GitHub counts a skipped required check as passing.
+                was = wf_b.jobs[j] if j in jobs_b else {}
+                out += _compare_job(
+                    was, wf_h.jobs[j], wf_h, j, allow,
+                    why="which a required check runs or waits for" + ("" if j in jobs_b else " (newly)"),
+                )  # fmt: skip
+    if required:
+        out += _unresolved_names(base, head)
+    return out
+
+
+def _unresolved_names(base: Snapshot, head: Snapshot) -> list[Finding]:
+    """A new or renamed job whose check name is still an expression after the literal matrix values are filled in
+    (`${{ 'CI ' + 'result' }}`, a fromJSON matrix). GitHub resolves it before it reports the check, so the gate
+    cannot tell which check it reports: it could stand in for any required one."""
+    old = {(wf.path, j): _scalar(job.get("name", j)) for wf in workflows(base) for j, job in wf.jobs.items()}
+    out = []
+    for wf in workflows(head):
+        for job_id, job in wf.jobs.items():
+            raw = _scalar(job.get("name", job_id))
+            if old.get((wf.path, job_id)) == raw or not any("${{" in n for n in check_names(job_id, job)):
+                continue
+            out.append(
+                Finding(
+                    "required check", wf.path, _job_line(wf.text, job_id),
+                    f"adds or renames job '{job_id}', whose check name '{raw}' is an expression the gate cannot"
+                    " resolve, so it could report a required check",
+                    next_step="Give the job a literal name, or a matrix of literal values.",
+                )
+            )  # fmt: skip
+    return out
+
+
+# Rule 6: hooks removed from the pre-commit config ---------------------------------------------------------------
+
+PRE_COMMIT = ".pre-commit-config.yaml"
+
+
+def hook_ids(text: str | None) -> Counter[str] | None:
+    """The hook ids in a pre-commit config, or None when it does not parse."""
+    if text is None:
+        return Counter()
+    if len(text) > MAX_PARSE_BYTES:
+        return None
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return None
+    repos = data.get("repos") if isinstance(data, dict) else None
+    return Counter(
+        _scalar(hook["id"])
+        for repo in _list(repos)
+        if isinstance(repo, dict)
+        for hook in _list(repo.get("hooks"))
+        if isinstance(hook, dict) and "id" in hook
+    )
+
+
+def check_hooks(
+    changes: list[Change], base: Snapshot, head: Snapshot, allow: frozenset[tuple[str, str]]
+) -> list[Finding]:
+    """A hook removed from .pre-commit-config.yaml (or the file deleted) no longer runs on any commit."""
+    out: list[Finding] = []
+    for change in changes:
+        if change.old != PRE_COMMIT:
+            continue
+        before = hook_ids(base.read(PRE_COMMIT))
+        if before is None:
+            continue  # main's own file does not parse; a pull request can only repair it
+        head_text = head.read(PRE_COMMIT) if change.new == PRE_COMMIT else None
+        after = hook_ids(head_text)
+        if after is None:
+            out.append(
+                Finding(
+                    "hooks", PRE_COMMIT, 0, "could not read the pre-commit config to check its hooks",
+                    next_step="Fix the YAML so the gate can read it.",
+                )
+            )  # fmt: skip
+            continue
+        for hook in sorted((before - after).elements()):
+            text = f"hook {hook}"
+            if (PRE_COMMIT, text) in allow:
+                continue
+            out.append(Finding("hooks", PRE_COMMIT, 0, f"removes the pre-commit hook '{hook}'", text, True))
     return out
 
 
@@ -1196,12 +1541,15 @@ def check(
     found = (
         check_sealed(changes)
         + check_isolation(changes)
+        + check_links(changes, base, head)
         + check_thresholds(changes, base, head)
         + check_markers(changes, base, head, allow)
         + check_toml(changes, base, head, allow)
+        + check_side_configs(changes)
         + check_tests(changes, base, head, allow)
         + (check_required(base, head, required, allow) if required is not None else [])
         + check_budgets(changes, base, head)
+        + check_hooks(changes, base, head, allow)
         + check_mutation(base, head, allow)
     )
     unique: dict[tuple[str, str, int, str], Finding] = {}
@@ -1235,17 +1583,27 @@ def _commit(repo: Path, ref: str) -> str:
     return _git(repo, "rev-parse", "--verify", f"{ref}^{{commit}}").decode().strip()
 
 
-def git_snapshot(repo: Path, commit: str) -> Snapshot:
-    def read(path: str) -> str | None:
-        proc = subprocess.run(
-            ["git", "-C", str(repo), "cat-file", "blob", f"{commit}:{path}"],
-            capture_output=True,
-            env=git_env(),
-        )
-        return proc.stdout.decode("utf-8", "replace") if proc.returncode == 0 else None
+def parse_ls_tree(raw: str) -> dict[str, str]:
+    """`git ls-tree -r -z` output as path -> mode."""
+    out = {}
+    for entry in raw.split("\0"):
+        meta, tab, path = entry.partition("\t")
+        if tab:
+            out[path] = meta.split(" ", 1)[0]
+    return out
 
-    listing = _git(repo, "ls-tree", "-r", "-z", "--name-only", commit).decode("utf-8", "replace")
-    return Snapshot(read=read, paths=[p for p in listing.split("\0") if p])
+
+def git_snapshot(repo: Path, commit: str) -> Snapshot:
+    modes = parse_ls_tree(_git(repo, "ls-tree", "-r", "-z", commit).decode("utf-8", "replace"))
+
+    def read(path: str) -> str | None:
+        """The file's text; None when the commit has no such file (or it is a submodule). Any other failure is a
+        git error, so the gate fails closed rather than reading it as absent."""
+        if modes.get(path, "160000") == "160000":
+            return None
+        return _git(repo, "cat-file", "blob", f"{commit}:{path}").decode("utf-8", "replace")
+
+    return Snapshot(read=read, paths=sorted(modes), modes={p: m for p, m in modes.items() if m in LINK_MODES})
 
 
 def parse_name_status(raw: str) -> list[Change]:
@@ -1287,9 +1645,14 @@ def run(repo: Path, base_ref: str, head_ref: str, required: list[str] | None) ->
 
 
 def read_required(path: Path | None) -> list[str] | None:
+    """The required check names, one per line; None when no file is given. An empty file is an error: the ruleset
+    always requires checks, so an empty answer means the lookup went wrong, and the rule must not go quiet."""
     if path is None:
         return None
-    return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    names = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not names:
+        raise ValueError(f"{path} lists no required checks; main's ruleset should require some")
+    return names
 
 
 def main(argv: list[str] | None = None, out: Any = None) -> int:
@@ -1308,8 +1671,13 @@ def main(argv: list[str] | None = None, out: Any = None) -> int:
     try:
         required = read_required(a.required_checks)
         findings = run(a.repo, a.base, a.head, required)
-    except (GitError, OSError) as exc:
-        print(f"The trusted gate could not check this change, so it fails: {clean(str(exc))}", file=stream)
+    except (GitError, OSError, ValueError) as exc:
+        print(
+            f"The Trusted gate could not check this change, so it fails: {clean(str(exc)).rstrip('.')}. Run the check again;"
+            " if it fails the same way, merge origin/main into the branch and push again, and if it still fails,"
+            " the gate itself needs the maintainer (docs/dev/README.md#when-the-gate-itself-is-wrong).",
+            file=stream,
+        )
         return 2
     if required is None:
         print("Required checks: not checked (no --required-checks file given).", file=stream)
@@ -1319,10 +1687,12 @@ def main(argv: list[str] | None = None, out: Any = None) -> int:
             print(f.annotation(), file=stream)
     if findings:
         print(
-            f"\nThe trusted gate found {len(findings)} way(s) this change weakens main's checks.", file=stream
+            f"\nThe Trusted gate found {plural(len(findings), 'problem')} with this change: each weakens main's"
+            " checks.",
+            file=stream,
         )
         return 1
-    print("The trusted gate found nothing that weakens main's checks.", file=stream)
+    print("The Trusted gate found nothing that weakens main's checks.", file=stream)
     return 0
 
 

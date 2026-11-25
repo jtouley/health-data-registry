@@ -1,18 +1,24 @@
 """The pre-PR gate's local half at push time: fast checks before a pre-pr push, a green verdict before a PR push.
 
-Installed by `make hooks` as a pre-commit `pre-push` hook (.pre-commit-config.yaml). pre-commit runs it once per
-pushed ref and tells it where the push goes (PRE_COMMIT_REMOTE_BRANCH, PRE_COMMIT_TO_REF, PRE_COMMIT_REMOTE_URL).
+Installed by `make hooks` as a pre-commit `pre-push` hook (.pre-commit-config.yaml). pre-commit tells it where
+the push goes (PRE_COMMIT_REMOTE_BRANCH, PRE_COMMIT_TO_REF, PRE_COMMIT_REMOTE_URL), but runs it at most once per
+`git push`, for the first pushed ref that brings commits the remote does not have yet. So it does not run when a
+branch is created at a commit the remote already has (a PR branch made at the commit pushed to pre-pr/), and in
+a push of several refs only the first such ref is checked.
 
-- A push to a PR branch (feat/, fix/, ci/, docs/, transform/) is refused unless that exact commit already has a
-  completed, all-green run of CI (.github/workflows/ci.yml) from a push to a pre-pr/** branch of this repository.
-  It asks the GitHub API through the GitHub CLI (`gh api`, with gh's own login). Any error, gh missing included,
-  refuses the push: it fails closed.
+- A push to a PR branch (any branch but pre-pr/**, wip/**, dependabot/** and main) is refused unless that exact
+  commit already has a completed, green run of CI (.github/workflows/ci.yml) from a push to a pre-pr/** branch of
+  this repository. Only ci.yml's run is read: CodeQL and the other workflows are the pusher's to check. It asks
+  the GitHub API through the GitHub CLI (`gh api`, with gh's own login). Any error, gh missing included, refuses
+  the push: it fails closed.
 - A push to pre-pr/** first runs the fast checks: ruff (lint and format), mypy, and the offline tests of the
   modules the push changes (no coverage floor, no mutation; CI runs those on the pre-pr push).
-- Any other push (wip/**, a deleted branch) passes.
+- A push to wip/**, dependabot/** or main, a tag, or a branch deletion passes. Run without the hook's variables
+  and without --branch and --sha, it refuses.
 
-This hook is fast feedback only. The rule that counts is on the server: the PR-branch ruleset requires the "CI
-result" check on a commit before any push may move a PR branch to it (docs/dev/README.md#the-pre-pr-gate).
+This hook is fast feedback only, with the gaps above. The rule that counts is meant to be on the server: a
+PR-branch ruleset requiring the "CI result" check on a commit before any push may move a PR branch to it, once the
+maintainer applies it (docs/dev/README.md#the-pre-pr-gate).
 Usage outside pre-commit: python scripts/pre_push_gate.py --branch ci/x --sha <sha> [--repo OWNER/NAME]
 """
 
@@ -30,7 +36,9 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-PR_PREFIXES = ("feat/", "fix/", "ci/", "docs/", "transform/")
+# Branches the PR rule leaves alone; every other branch is a PR branch, so a new prefix is covered by default.
+EXEMPT_PREFIXES = ("wip/", "dependabot/")
+EXEMPT_BRANCHES = frozenset({"main"})
 PRE_PR = "pre-pr/"
 ZERO_SHA = "0" * 40
 SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -43,13 +51,16 @@ Run = Callable[[Sequence[str]], int]
 
 
 def kind(branch: str) -> str:
-    """'pr', 'pre-pr' or 'other' for a remote branch name (refs/heads/ is dropped)."""
+    """'pr', 'pre-pr' or 'other' for a remote ref: every branch is a PR branch but pre-pr/**, the exempt ones and
+    refs that are not branches (tags)."""
+    if branch.startswith("refs/") and not branch.startswith("refs/heads/"):
+        return "other"
     name = branch.removeprefix("refs/heads/")
     if name.startswith(PRE_PR):
         return "pre-pr"
-    if name.startswith(PR_PREFIXES):
-        return "pr"
-    return "other"
+    if name in EXEMPT_BRANCHES or name.startswith(EXEMPT_PREFIXES):
+        return "other"
+    return "pr"
 
 
 def repo_from_url(url: str) -> str:
@@ -204,8 +215,12 @@ def main(
     ap.add_argument("--repo", default="")
     a = ap.parse_args(argv)
     if not a.branch or not a.sha:
-        print("Not run from a pre-push hook and no --branch/--sha given; nothing to check.", file=sys.stderr)
-        return 0
+        print(
+            "Push refused: the hook was not told where the push goes. Run it from `git push` (make hooks installs"
+            " it), or pass --branch and --sha.",
+            file=sys.stderr,
+        )
+        return 1
     if a.sha == ZERO_SHA:
         return 0  # a branch deletion
     what = kind(a.branch)

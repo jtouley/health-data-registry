@@ -61,7 +61,8 @@ def api(*runs: dict[str, Any]) -> Any:
     [
         ("refs/heads/feat/x", "pr"), ("fix/y", "pr"), ("ci/trusted-gate", "pr"), ("docs/a", "pr"),
         ("transform/b", "pr"), ("refs/heads/pre-pr/ci/x", "pre-pr"), ("pre-pr/feat-x", "pre-pr"),
-        ("wip/x", "other"), ("main", "other"), ("feature/x", "other"),
+        ("wip/x", "other"), ("main", "other"), ("refs/heads/main", "other"), ("dependabot/pip/x", "other"),
+        ("refs/tags/v1", "other"), ("feature/x", "pr"), ("claude/x", "pr"), ("Fix/y", "pr"), ("mainline", "pr"),
     ],
 )  # fmt: skip
 def test_kind(gate: ModuleType, branch: str, kind: str) -> None:
@@ -182,13 +183,23 @@ def test_the_repo_comes_from_the_remote_url(gate: ModuleType, monkeypatch: pytes
     assert gate.main([], get_json=api(run_record())) == 1
 
 
-def test_deletions_other_branches_and_manual_runs_pass(gate: ModuleType) -> None:
+def test_deletions_exempt_branches_and_tags_pass(gate: ModuleType) -> None:
     def never(path: str) -> Any:
         raise AssertionError("no API call expected")
 
     assert gate.main(["--branch", "ci/x", "--sha", "0" * 40], get_json=never) == 0
     assert gate.main(["--branch", "wip/x", "--sha", SHA], get_json=never) == 0
-    assert gate.main([], get_json=never) == 0
+    assert gate.main(["--branch", "refs/tags/v1", "--sha", SHA], get_json=never) == 0
+
+
+def test_a_run_without_a_destination_is_refused(
+    gate: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for var in ("PRE_COMMIT_REMOTE_BRANCH", "PRE_COMMIT_TO_REF", "PRE_COMMIT_FROM_REF"):
+        monkeypatch.delenv(var, raising=False)
+    assert gate.main([]) == 1
+    assert gate.main(["--branch", "ci/x"]) == 1
+    assert "the hook was not told where the push goes" in capsys.readouterr().err
 
 
 class FakeGit:
