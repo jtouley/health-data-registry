@@ -142,7 +142,10 @@ def test_a_refresh_records_the_override_in_the_fetch_log_and_the_manifest(
     lake = tmp_path / "lake"
     get = crawl.fetcher(reg, FetchLog(lake, "toy_cases"), sleep=lambda s: None)
     m = crawl.refresh_dataset(reg.get("toy_cases"), lake, get)
-    assert m.notes == get.robots_overrides == crawl.override_notes(get)
+    overrides = crawl.override_notes(get)
+    assert get.robots_overrides == overrides and m.notes[: len(overrides)] == overrides
+    # The fake publisher serves no rows, so the generated has_rows check adds its caveat after the overrides.
+    assert [n.split(":")[0] for n in m.notes[len(overrides) :]] == ["A data check on this source failed"]
     assert m.notes[0].startswith("robots_overridden (robots.txt 403): data.cdc.gov")
     log = read_fetch_log(lake, "toy_cases")
     assert log[0]["url"] == "https://data.cdc.gov/robots.txt" and log[0]["error"].startswith(
