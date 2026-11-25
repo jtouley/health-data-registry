@@ -10,9 +10,16 @@ least five conference years (``MIN_YEARS``); the default is the five most recent
 
 Completeness and crash safety (owner conditions D26 and D27):
 
-- A year is complete only when the abstracts read equal the listing's own total ("1277 Results"). A listing
-  page that is empty, unreadable or changed before that total stops the run with ``incomplete_index`` and leaves
-  the checkpoint where it was, so the same command carries on. The store's coverage record says which years are
+- A year is complete only when the distinct abstracts stored (abstract number plus year) equal the listing's
+  own total ("1277 Results"). A listing page that is empty, unreadable or changed before that total, or a
+  listing that says "0 Results" for a year its filter offers, stops the run with ``incomplete_index`` and leaves
+  the checkpoint where it was, so the same command carries on. When the pages run out before the total, the
+  next run walks the listing again from page 1 (pages already read are skipped).
+- Two listed pages that carry the same abstract number in a year are a collision: the second is not written over
+  the first, it is recorded in the checkpoint and the coverage record, and the year stays incomplete until the
+  maintainer decides how to key them (the contracts' open question).
+- A redirect to another CROI abstract page of the same year (or to another listing page) is followed once; any
+  other redirect stops the run and names where it pointed. The store's coverage record says which years are
   complete, and find_prior_work never reads an incomplete year as "nothing presented".
 - Each abstract is written data first (both stores, each as one atomic temp-file-then-rename), checkpoint last,
   coverage after that. Rows are keyed on abstract number plus year, so a replay after a crash at any point
@@ -31,7 +38,7 @@ never requested, only linked. This never runs inside the MCP server.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC
 from pathlib import Path
@@ -39,7 +46,7 @@ from typing import Any
 
 from health_data_registry import private
 from health_data_registry.adapters import croi
-from health_data_registry.fetch import FetchRefused
+from health_data_registry.fetch import FetchRefused, FetchResult
 from health_data_registry.polite import CrawlStopped, PoliteClient, https_getter
 from health_data_registry.registry import Dataset, Registry
 from health_data_registry.store import FetchLog
@@ -61,6 +68,7 @@ class Checkpoint:
     pending: list[dict[str, str]] = field(default_factory=list)  # this page's abstracts not yet read
     done: list[str] = field(default_factory=list)  # abstract page links read
     complete: bool = False
+    collisions: list[str] = field(default_factory=list)  # page links whose abstract number was already stored
 
 
 def checkpoint_path(lake: Path, year: int) -> Path:
@@ -139,8 +147,15 @@ def records(
     return index, text
 
 
-def coverage_entry(cp: Checkpoint) -> dict[str, Any]:
-    return {"total": cp.total, "done": len(cp.done), "complete": cp.complete}
+def coverage_entry(cp: Checkpoint, stored: int) -> dict[str, Any]:
+    """Pages read, distinct abstracts stored, and collisions: a year is complete only when stored == total."""
+    return {
+        "total": cp.total,
+        "done": len(cp.done),
+        "stored": stored,
+        "collisions": len(cp.collisions),
+        "complete": cp.complete,
+    }
 
 
 def default_client(lake: Path, *, max_requests: int | None = None) -> PoliteClient:
@@ -163,11 +178,26 @@ def _incomplete(year: int, cp: Checkpoint, why: str) -> CrawlStopped:
     )
 
 
+def _is_listing(url: str) -> bool:
+    return url.startswith(f"{croi.BASE}/search-abstracts/")
+
+
+def _get(client: PoliteClient, url: str, follow: Callable[[str], bool]) -> tuple[FetchResult, str]:
+    """One page, following one redirect when ``follow`` admits its target (an https link on CROI's host of the
+    same kind); the result and the link the content came from. Any other redirect is raised as it was."""
+    try:
+        return client.get(url), url
+    except FetchRefused as e:
+        if not e.location or not follow(e.location):
+            raise
+        return client.get(e.location), e.location
+
+
 def _read_listing(client: PoliteClient, year: int, cp: Checkpoint) -> croi.Listing:
     """One listing page, or CrawlStopped("incomplete_index") when it is unreadable, changed or empty."""
     url = croi.listing_url(year, cp.next_page)
     try:
-        r = client.get(url)
+        r, url = _get(client, url, _is_listing)
         listing = croi.parse_listing(r.content, url, year=year)
         if year not in listing.years:
             raise croi.LayoutError(url, f"{year} is not offered in the year filter")
@@ -177,6 +207,8 @@ def _read_listing(client: PoliteClient, year: int, cp: Checkpoint) -> croi.Listi
         raise _incomplete(
             year, cp, f"listing page {cp.next_page} was not a readable listing ({e.what})"
         ) from e
+    if listing.total == 0:
+        raise _incomplete(year, cp, "the listing said 0 results for a year its filter offers")
     if cp.total is not None and listing.total != cp.total:
         raise _incomplete(
             year, cp, f"the listing's total changed from {cp.total} to {listing.total} mid-crawl"
@@ -225,14 +257,39 @@ def _index_year(
     stopped: str | None = None
     code: str | None = None
     partition = f"year={year}"
+
+    def stored() -> int:
+        return len(private.stored_rows(lake, ds_index, partition))
+
     try:
         while not cp.complete:
             if not cp.pending:
-                if cp.total is not None and len(cp.done) == cp.total:
-                    cp.complete = True  # the abstracts read equal the listing's own total, and only then
+                if cp.total and len(cp.done) == cp.total:
+                    held = stored()
+                    if held != cp.total:  # pages read isn't abstracts stored: never mark it complete
+                        why = (
+                            f"{len(cp.collisions)} listed page(s) share an abstract number with another page "
+                            f"({', '.join(cp.collisions[:3])}), so"
+                            if cp.collisions
+                            else "of the pages read,"
+                        )
+                        raise CrawlStopped(
+                            "incomplete_index",
+                            f"CROI {year} is not complete: {why} {held} distinct abstracts are stored against the "
+                            f"listing's {cp.total}. Nothing was marked complete; the maintainer decides how to key "
+                            "these pages (the contract's open question) before this year can be complete.",
+                        )
+                    cp.complete = (
+                        True  # distinct abstracts stored equal the listing's own total, and only then
+                    )
                     save_checkpoint(lake, cp)
                     break
                 if cp.pages is not None and cp.next_page > cp.pages:
+                    cp.next_page, cp.pages = (
+                        1,
+                        None,
+                    )  # the next run walks the listing again; read pages skipped
+                    save_checkpoint(lake, cp)
                     raise _incomplete(year, cp, "the listing ran out of pages before its total")
                 listing = _read_listing(client, year, cp)
                 cp.pages, cp.total = listing.pages, listing.total
@@ -242,10 +299,14 @@ def _index_year(
                 save_checkpoint(lake, cp)
                 continue
             entry = croi.ListingEntry(**cp.pending[0])
-            if croi.page_year(entry.page_url) != year:  # an abstract page, never a poster PDF or figure
+
+            def same_year(url: str) -> bool:  # an abstract page, never a poster PDF or figure
+                return croi.page_year(url) == year
+
+            if not same_year(entry.page_url):
                 raise croi.LayoutError(entry.page_url, "a listed link that is not a CROI abstract page")
-            r = client.get(entry.page_url)
-            page = croi.parse_abstract(r.content, entry.page_url)
+            r, final_url = _get(client, entry.page_url, same_year)
+            page = croi.parse_abstract(r.content, final_url)
             if page.abstract_number != entry.abstract_number or page.year != year:
                 raise croi.LayoutError(
                     entry.page_url,
@@ -254,9 +315,13 @@ def _index_year(
                 )
             when = r.retrieved_at.astimezone(UTC).isoformat(timespec="seconds")
             index_row, text_row = records(page, retrieved_at=when, sha256=r.sha256)
-            # Data first, each store one atomic rename; the checkpoint last (D27).
-            private.write_rows(lake, ds_index, partition, [index_row])
-            private.write_rows(lake, ds_text, partition, [text_row])
+            held_row = private.stored_rows(lake, ds_index, partition).get((page.abstract_number, str(year)))
+            if held_row is not None and held_row.get("page_url") != page.page_url:
+                cp.collisions.append(page.page_url)  # reported, never written over the first page's row
+            else:
+                # Data first, each store one atomic rename; the checkpoint last (D27).
+                private.write_rows(lake, ds_index, partition, [index_row])
+                private.write_rows(lake, ds_text, partition, [text_row])
             cp.done.append(entry.page_url)
             cp.pending.pop(0)
             read += 1
@@ -269,8 +334,9 @@ def _index_year(
     except croi.LayoutError as e:
         stopped, code = str(e), "layout_changed"
     if cp.total is not None or read:  # after the checkpoint: coverage never claims more than is stored
+        entry_ = coverage_entry(cp, stored())
         for ds in (ds_index, ds_text):
-            private.write_coverage(lake, ds, {partition: coverage_entry(cp)})
+            private.write_coverage(lake, ds, {partition: entry_})
     return RunSummary(
         year=year,
         requests=client.requests_made - start_requests,

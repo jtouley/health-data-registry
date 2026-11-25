@@ -274,8 +274,9 @@ def test_plain_and_refusal_shapes(registry: Registry, tmp_path: Path) -> None:
     assert tools.message("hi", "json", a=1) == {"message": "hi", "a": 1}
     assert tools.message("hi") == "hi"
     assert tools.find_prior_work(registry, condition="C. auris", geography="Michigan", fmt="json") == {
-        "message": "The index of conference abstracts, case reports and health department reports isn't built yet, "
-        "so nothing is shown rather than a partial list. For now, search PubMed (and OpenEvidence if you use it) "
-        "for 'C. auris' in Michigan, and check IDWeek abstracts in the Open Forum Infectious Diseases supplements.",
+        "message": "The CROI abstract index isn't loaded on this server yet, so nothing is shown rather than a "
+        "partial list. Search PubMed (and OpenEvidence if you use it) for 'C. auris' in Michigan, CROI's own "
+        "abstract search (croiconference.org), and IDWeek abstracts in the Open Forum Infectious Diseases "
+        "supplements.",
         "refused": "index_not_built",
     }

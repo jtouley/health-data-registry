@@ -172,7 +172,7 @@ def test_a_year_is_indexed_and_marked_complete_at_the_listing_total(
     assert sorted(r["abstract_number"] for r in index) == sorted(number(i) for i in range(13))
     assert len(text) == 13
     cov = private.read_coverage(tmp_path, registry.get(croi_index.INDEX_ID))
-    assert cov == {f"year={YEAR}": {"total": 13, "done": 13, "complete": True}}
+    assert cov == {f"year={YEAR}": {"total": 13, "done": 13, "stored": 13, "collisions": 0, "complete": True}}
     assert "the year is complete" in s.lines()
 
 
@@ -210,10 +210,15 @@ def test_a_complete_year_costs_no_request(tmp_path: Path, registry: Registry) ->
     assert len(site.calls) == before
 
 
-def test_a_year_with_no_abstracts_is_complete_at_zero(tmp_path: Path, registry: Registry) -> None:
+def test_a_listing_of_zero_results_is_never_complete(tmp_path: Path, registry: Registry) -> None:
+    """A year the filter offers but whose listing says "0 Results" (a search hiccup) stops incomplete."""
     site = Site(0)
     s = run(registry, tmp_path, site, Clock())
-    assert (s.complete, s.total, s.abstracts_done) == (True, 0, 0)
+    assert (s.complete, s.stop_code, s.abstracts_done) == (False, "incomplete_index", 0)
+    assert "0 results for a year its filter offers" in (s.stopped or "")
+    assert not croi_index.load_checkpoint(tmp_path, YEAR).complete
+    out = _prior(registry, tmp_path, "influenza", years=str(YEAR))
+    assert out.get("refused") in ("index_not_built", "index_incomplete")
 
 
 # ------------------------------------------------------------------------------------------- D26
@@ -232,7 +237,9 @@ def test_an_empty_listing_page_before_the_total_stops_incomplete_and_resumes(
     cp = croi_index.load_checkpoint(tmp_path, YEAR)
     assert (cp.complete, cp.next_page, len(cp.done), cp.total) == (False, 2, 10, 13)
     cov = private.read_coverage(tmp_path, registry.get(croi_index.TEXT_ID))
-    assert cov == {f"year={YEAR}": {"total": 13, "done": 10, "complete": False}}
+    assert cov == {
+        f"year={YEAR}": {"total": 13, "done": 10, "stored": 10, "collisions": 0, "complete": False}
+    }
     site.pages[page2] = good
     calls = len(site.calls)
     s = run(registry, tmp_path, site, clock)
@@ -269,6 +276,47 @@ def test_fewer_listed_than_the_total_is_never_complete(tmp_path: Path, registry:
     assert s.abstracts_done == 12
 
 
+def test_a_listing_that_ran_out_of_pages_is_walked_again_next_run(tmp_path: Path, registry: Registry) -> None:
+    """The rerun the message asks for is real: it reads the listing from page 1 again, skipping read pages."""
+    site, clock = Site(13), Clock()
+    good = site.pages[croi.listing_url(YEAR, 2)]
+    site.pages[croi.listing_url(YEAR, 2)] = listing_html([10, 11], 13)
+    run(registry, tmp_path, site, clock)
+    cp = croi_index.load_checkpoint(tmp_path, YEAR)
+    assert (cp.next_page, cp.pages, len(cp.done)) == (1, None, 12)
+    site.pages[croi.listing_url(YEAR, 2)] = good  # the missing abstract is listed again
+    calls = len(site.calls)
+    s = run(registry, tmp_path, site, clock)
+    assert s.complete and s.abstracts_read == 1
+    assert site.calls[calls + 1 :] == [croi.listing_url(YEAR, 1), croi.listing_url(YEAR, 2), page_url(12)]
+
+
+def test_two_pages_sharing_an_abstract_number_keep_the_year_incomplete(
+    tmp_path: Path, registry: Registry
+) -> None:
+    """Pages read reach the listing's total, but distinct stored abstracts don't: never complete, never
+    overwritten, and find_prior_work names the year."""
+    site, clock = Site(3), Clock()
+    site.pages[page_url(2)] = abstract_html(2, shown_number=number(1))  # e.g. a -td page reusing 101
+    first_listing = croi.listing_url(YEAR, 1)
+    body = site.pages[first_listing]
+    assert isinstance(body, bytes)
+    site.pages[first_listing] = body.replace(f"{number(2)} –".encode(), f"{number(1)} –".encode())
+    first_row = abstract_html(1)
+    s = run(registry, tmp_path, site, clock)
+    assert (s.complete, s.stop_code, s.abstracts_done) == (False, "incomplete_index", 3)
+    assert "share an abstract number" in (s.stopped or "") and "2 distinct abstracts" in (s.stopped or "")
+    index = {r["abstract_number"]: r for r in rows(tmp_path, "croi_abstracts_index")}
+    assert len(index) == 2 and index[number(1)]["page_sha256"] == hashlib.sha256(first_row).hexdigest()
+    cov = private.read_coverage(tmp_path, registry.get(croi_index.INDEX_ID))
+    assert cov == {f"year={YEAR}": {"total": 3, "done": 3, "stored": 2, "collisions": 1, "complete": False}}
+    assert croi_index.load_checkpoint(tmp_path, YEAR).collisions == [page_url(2)]
+    out = _prior(registry, tmp_path, "influenza", years=str(YEAR))
+    assert out.get("refused") == "index_incomplete" and "1 share an abstract number" in out["message"]
+    again = run(registry, tmp_path, site, clock)  # costs no request and still says why
+    assert again.stop_code == "incomplete_index" and again.requests == 0
+
+
 def test_a_total_that_changes_mid_crawl_stops_incomplete(tmp_path: Path, registry: Registry) -> None:
     site, clock = Site(13), Clock()
     site.pages[croi.listing_url(YEAR, 2)] = listing_html([10, 11, 12], 14)
@@ -299,6 +347,58 @@ def test_a_changed_abstract_page_stops_with_layout_changed(tmp_path: Path, regis
     site.pages[page_url(1)] = abstract_html(1, shown_number="999")
     s = run(registry, tmp_path, site, Clock())
     assert s.stop_code == "layout_changed" and s.abstracts_done == 1
+
+
+def _redirect(site: Site, src: str, to: str) -> Any:
+    def redirecting(url: str) -> FetchResult:
+        if url == src:
+            site.calls.append(url)
+            raise FetchRefused("too_many_redirects", "redirected", status=301, location=to)
+        return site(url)
+
+    return redirecting
+
+
+def test_a_redirect_to_another_abstract_page_of_the_year_is_followed_once(
+    tmp_path: Path, registry: Registry
+) -> None:
+    site = Site(3)
+    moved = f"{croi.BASE}/abstract/{5000}-{YEAR}-td/"
+    site.pages[moved] = abstract_html(0)
+    with make_client(tmp_path, site, Clock()) as c:
+        c._get_raw = _redirect(site, page_url(0), moved)
+        s = croi_index.index_croi(registry, tmp_path, YEAR, client=c)
+    assert s.complete
+    index = {r["abstract_number"]: r for r in rows(tmp_path, "croi_abstracts_index")}
+    assert index[number(0)]["page_url"] == moved  # the row names the page its content came from
+
+
+def test_a_redirected_listing_page_is_followed_once(tmp_path: Path, registry: Registry) -> None:
+    site = Site(3)
+    first = croi.listing_url(YEAR, 1)
+    moved = first.replace("?", "?moved=1&")
+    site.pages[moved] = site.pages[first]
+    with make_client(tmp_path, site, Clock()) as c:
+        c._get_raw = _redirect(site, first, moved)
+        s = croi_index.index_croi(registry, tmp_path, YEAR, client=c)
+    assert s.complete and moved in site.calls
+
+
+@pytest.mark.parametrize(
+    "to",
+    [
+        f"{croi.BASE}/wp-content/uploads/poster-100.pdf",  # never a poster
+        f"{croi.BASE}/abstract/5000-2024/",  # another year
+        "https://elsewhere.example.org/abstract/5000-2025/",  # another host
+    ],
+)
+def test_a_redirect_anywhere_else_stops_and_names_it(tmp_path: Path, registry: Registry, to: str) -> None:
+    site = Site(3)
+    with make_client(tmp_path, site, Clock()) as c:
+        c._get_raw = _redirect(site, page_url(0), to)
+        s = croi_index.index_croi(registry, tmp_path, YEAR, client=c)
+    assert s.stop_code == "fetch_refused" and to in (s.stopped or "")
+    assert to not in site.calls
 
 
 def test_a_redirected_abstract_page_stops_with_fetch_refused(tmp_path: Path, registry: Registry) -> None:
@@ -345,9 +445,52 @@ def test_an_incomplete_year_never_reads_as_no_prior_work(tmp_path: Path, registr
     assert "No indexed CROI abstract matches" not in json.dumps(out)
     assert f"{YEAR} (3 of 13 read)" in out["message"]
     run(registry, tmp_path, site, clock)
-    out = _prior(registry, tmp_path, "influenza")
+    out = _prior(registry, tmp_path, "influenza", years=str(YEAR))
     assert "refused" not in out
     assert "No indexed CROI abstract matches 'influenza'" in json.dumps(out)
+
+
+def test_with_no_years_asked_default_years_never_indexed_are_named(
+    tmp_path: Path, registry: Registry
+) -> None:
+    run(registry, tmp_path, Site(3), Clock())
+    out = _prior(registry, tmp_path, "influenza")
+    assert out.get("refused") == "index_incomplete"
+    assert "2022–2024 (not indexed)" in out["message"] and "2026 (not indexed)" in out["message"]
+    assert f"{YEAR} (" not in out["message"]
+
+
+def test_answers_carry_their_provenance(tmp_path: Path, registry: Registry) -> None:
+    run(registry, tmp_path, Site(3), Clock())
+    out = _prior(registry, tmp_path, "tuberculosis", years=str(YEAR))
+    row = dict(zip(out["columns"], out["rows"][0], strict=True))
+    assert row["retrieved_at"] and len(row["page_sha256"]) == 64 and row["link"].startswith(croi.BASE)
+    text = json.dumps(out)
+    for sid in (croi_index.INDEX_ID, croi_index.TEXT_ID):
+        ds = registry.get(sid)
+        assert f"contract {ds.contract.id} version {ds.contract.version}" in text
+
+
+@pytest.mark.parametrize("years", ["2024-2020", "2025-2024"])
+def test_a_backwards_range_is_refused(tmp_path: Path, registry: Registry, years: str) -> None:
+    run(registry, tmp_path, Site(3), Clock())
+    out = _prior(registry, tmp_path, "influenza", years=years)
+    assert out.get("refused") == "bad_years" and "runs backwards" in out["message"]
+
+
+def test_a_corrupt_coverage_record_reads_as_incomplete_and_is_rewritten(
+    tmp_path: Path, registry: Registry
+) -> None:
+    site, clock = Site(13), Clock()
+    run(registry, tmp_path, site, clock, max_requests=5)
+    cov = tmp_path / "private" / "croi_abstracts_index" / private.COVERAGE_FILE
+    cov.write_text('{"year=2025": {"total": 13, ')
+    assert private.read_coverage(tmp_path, registry.get(croi_index.INDEX_ID)) is None
+    out = _prior(registry, tmp_path, "influenza", years=str(YEAR))
+    assert out.get("refused") == "index_incomplete" and f"{YEAR} (partly indexed)" in out["message"]
+    s = run(registry, tmp_path, site, clock)  # a later crawl still records coverage
+    assert s.complete
+    assert private.read_coverage(tmp_path, registry.get(croi_index.INDEX_ID))[f"year={YEAR}"]["complete"]
 
 
 def test_matches_from_an_incomplete_index_carry_the_gap(tmp_path: Path, registry: Registry) -> None:
@@ -360,7 +503,7 @@ def test_asked_for_years_that_were_never_indexed_are_incomplete(tmp_path: Path, 
     run(registry, tmp_path, Site(3), Clock())
     out = _prior(registry, tmp_path, "influenza", years="2021-2025")
     assert out.get("refused") == "index_incomplete"
-    assert "2021 (not indexed)" in out["message"] and f"{YEAR} (" not in out["message"]
+    assert "2021–2024 (not indexed)" in out["message"] and f"{YEAR} (" not in out["message"]
     out = _prior(registry, tmp_path, "influenza", years=str(YEAR))
     assert "refused" not in out
 
@@ -379,10 +522,14 @@ def test_rows_without_a_coverage_record_are_partly_indexed(tmp_path: Path, regis
         ({"total": 3, "done": 2, "complete": True}, False),  # a record that claims more than it holds
         ({"total": 3, "done": 3, "complete": False}, False),
         ({"total": None, "done": 0, "complete": True}, False),
+        ({"total": 0, "done": 0, "complete": True}, False),  # "0 Results" is never a finished year
+        ({"total": 3, "done": 3, "stored": 2, "complete": True}, False),
+        ({"total": 3, "done": 3, "stored": 3, "collisions": 1, "complete": True}, False),
+        ({"total": 3, "done": 3, "stored": 3, "collisions": 0, "complete": True}, True),
     ],
 )
 def test_incomplete_years_trusts_only_done_equal_to_total(record: dict[str, Any], complete: bool) -> None:
-    gaps = tools.incomplete_years({f"year={YEAR}": record}, {YEAR}, None, None)
+    gaps = tools.incomplete_years({f"year={YEAR}": record}, {YEAR}, YEAR, YEAR)
     assert (gaps == []) is complete
 
 
@@ -390,8 +537,13 @@ def test_incomplete_years_ranges() -> None:
     cov = {"year=2024": {"total": 1, "done": 1, "complete": True}}
     assert tools.incomplete_years(cov, {2024}, 2024, 2024) == []
     assert tools.incomplete_years(cov, {2024}, 2023, None) == ["2023 (not indexed)"]
-    assert tools.incomplete_years(cov, {2024}, None, 2024)[0] == f"{croi.FIRST_YEAR} (not indexed)"
-    assert tools.incomplete_years({"junk": {}}, set(), None, None) == []
+    assert tools.incomplete_years(cov, {2024}, None, 2024) == [f"{croi.FIRST_YEAR}–2023 (not indexed)"]
+    assert tools.incomplete_years(cov, {2024}, 2022, 2026) == [
+        "2022–2023 (not indexed)",
+        "2025–2026 (not indexed)",
+    ]
+    assert tools.incomplete_years({"junk": {}}, set(), 2020, 2020) == ["2020 (not indexed)"]
+    assert tools.incomplete_years({"junk": {}}, set(), None, None) == ["2022–2026 (not indexed)"]
 
 
 # ------------------------------------------------------------------------------------------- D27

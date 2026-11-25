@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -46,6 +47,7 @@ HF_OWNER_ENV = naming.OWNER_ENV
 HF_TOKEN_ENV = "HDR_PRIVATE_HF_TOKEN"  # noqa: S105 - the name of an environment variable, not a secret
 HUB_TTL_S = 3600.0
 RAW_DIR = "raw"  # raw API responses of a private-tier source: lake/private/<id>/raw/<sha256>
+_log = logging.getLogger(__name__)
 MANIFEST_SUFFIX = ".manifest.json"
 
 _SOURCE_ID = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
@@ -307,7 +309,11 @@ def read_coverage(lake: Path, ds: Dataset) -> dict[str, dict[str, Any]] | None:
     p = folder / COVERAGE_FILE
     if not p.is_file():
         return None
-    raw = json.loads(p.read_text(encoding="utf-8"))
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:  # truncated or hand-edited: nothing is confirmed complete
+        _log.warning("the coverage record %s can't be read (%s); every year reads as incomplete", p, e)
+        return None
     if not isinstance(raw, dict):
         return None
     return {str(k): dict(v) for k, v in raw.items() if isinstance(v, dict)}

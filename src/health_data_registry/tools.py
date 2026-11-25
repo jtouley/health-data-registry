@@ -933,9 +933,9 @@ _YEARS = re.compile(r"^\s*(\d{4})?\s*(?:(-|–|to)\s*(\d{4})?)?\s*$")
 def _not_built(condition: str, geography: str | None, fmt: Fmt) -> Out:
     where = f" in {geography}" if geography else ""
     return message(
-        "The index of conference abstracts, case reports and health department reports isn't built yet, so "
-        f"nothing is shown rather than a partial list. For now, search PubMed (and OpenEvidence if you use it) "
-        f"for '{condition}'{where}, and check IDWeek abstracts in the Open Forum Infectious Diseases supplements.",
+        "The CROI abstract index isn't loaded on this server yet, so nothing is shown rather than a partial list. "
+        f"Search PubMed (and OpenEvidence if you use it) for '{condition}'{where}, CROI's own abstract search "
+        "(croiconference.org), and IDWeek abstracts in the Open Forum Infectious Diseases supplements.",
         fmt,
         refused="index_not_built",
     )
@@ -950,6 +950,8 @@ def year_range(years: str | None) -> tuple[int | None, int | None]:
         raise ValueError(f"'{years}' isn't a year or a range of years like 2020-2024")
     lo = int(m.group(1)) if m.group(1) else None
     hi = int(m.group(3)) if m.group(3) else (None if m.group(2) else lo)
+    if lo is not None and hi is not None and lo > hi:
+        raise ValueError(f"'{years}' runs backwards (the first year is after the last)")
     return lo, hi
 
 
@@ -988,25 +990,49 @@ def incomplete_years(
     coverage: dict[str, dict[str, Any]], held: set[int], lo: int | None, hi: int | None
 ) -> list[str]:
     """Each asked-for year the index can't vouch for, in plain words: a year is complete only when its
-    coverage record says the abstracts read equal the listing's own total. A year with rows but no record,
-    or asked for and never indexed, is incomplete too."""
+    coverage record says the abstracts read, and the distinct abstracts stored, equal the listing's own total.
+    A year with rows but no record, or asked for (or one of the index's default years, when no years are asked)
+    and never indexed, is incomplete too. Runs of years never indexed are named as one range."""
+    from health_data_registry import croi_index
     from health_data_registry.adapters import croi
 
     recorded = {int(k[5:]): v for k, v in coverage.items() if k.startswith("year=") and k[5:].isdigit()}
     if lo is None and hi is None:
-        years = held | set(recorded)
+        years = held | set(recorded) | set(croi_index.DEFAULT_YEARS)
     else:
         first = lo if lo is not None else croi.FIRST_YEAR
         last = hi if hi is not None else max(held | set(recorded) | {first})
         years = set(range(first, last + 1))
     out: list[str] = []
+    never: list[int] = []
+
+    def flush() -> None:
+        if never:
+            span = str(never[0]) if len(never) == 1 else f"{never[0]}–{never[-1]}"
+            out.append(f"{span} (not indexed)")
+            never.clear()
+
     for y in sorted(years):
         c = recorded.get(y)
         total = c.get("total") if c else None
+        if c is None and y not in held:
+            if never and never[-1] != y - 1:
+                flush()
+            never.append(y)
+            continue
+        flush()
         if c is None:
-            out.append(f"{y} (partly indexed)" if y in held else f"{y} (not indexed)")
-        elif not (c.get("complete") is True and total is not None and c.get("done") == total):
-            out.append(f"{y} ({c.get('done', 0)} of {total if total is not None else '?'} read)")
+            out.append(f"{y} (partly indexed)")
+        elif not (
+            c.get("complete") is True
+            and total
+            and c.get("done") == total
+            and c.get("stored", total) == total
+            and not c.get("collisions")
+        ):
+            shared = f"; {c['collisions']} share an abstract number" if c.get("collisions") else ""
+            out.append(f"{y} ({c.get('done', 0)} of {total if total is not None else '?'} read{shared})")
+    flush()
     return out
 
 
@@ -1064,7 +1090,8 @@ def find_prior_work(
                 continue
             rows.append(
                 ["CROI", y, r["abstract_number"], r["title"], r.get("session_type") or "", r["page_url"],
-                 r.get("poster_url") or "", excerpt(body) if body else ""]
+                 r.get("poster_url") or "", excerpt(body) if body else "", r.get("retrieved_at") or "",
+                 r.get("page_sha256") or ""]
             )  # fmt: skip
         coverage = ", ".join(f"{y}: {n}" for y, n in sorted(per_year.items()))
         notes.append(
@@ -1078,8 +1105,10 @@ def find_prior_work(
                 "are shown."
             )
         notes += private.notes(ds)
+        notes.append(_provenance_note(ds, index))
         if text_found is not None and text_ds is not None:
             notes += private.notes(text_ds)
+            notes.append(_provenance_note(text_ds, text_found))
     if not held:
         return _not_built(condition, geography, fmt)
     rows.sort(key=lambda r: (-int(r[1]), str(r[2])))
@@ -1114,8 +1143,21 @@ def find_prior_work(
         "link",
         "poster_link",
         "excerpt",
+        "retrieved_at",
+        "page_sha256",
     ]
     return Result(cols, rows, notes).render(fmt)
+
+
+def _provenance_note(ds: Any, found: Any) -> str:
+    """Where a private store's rows come from (hard rule 8): the dataset, its contract version and status, the
+    store version, and that each row's link, retrieved_at and page_sha256 are its source, time and page hash."""
+    status = "draft" if ds.entry.status != "reviewed" else "reviewed"
+    return (
+        f"Source {ds.id}: {ds.entry.publisher}; contract {ds.contract.id} version {ds.contract.version} ({status}); "
+        f"private store version {found.version} ({found.origin}). Each row's link is the page it was read from, "
+        "retrieved_at is when, and page_sha256 is the sha256 of the page's bytes."
+    )
 
 
 def query_sql(engine: Engine, sql: str, *, fmt: Fmt = "csv") -> Out:
