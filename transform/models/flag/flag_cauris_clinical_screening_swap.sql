@@ -1,27 +1,30 @@
 -- Review queue (contracts/models/flag_cauris_clinical_screening_swap.odcs.yaml, issue #16): area-years whose
 -- C. auris clinical year-to-date exceeds screening at the year's latest week. Lists candidates; changes nothing.
+-- Reporting areas only: a summary row (TOTAL, a census division) would repeat one state's swap as another area.
+-- The two labels are literals; the NNDSS contract's warn rule cauris_labels_present notices if CDC renames one.
 with cauris as (
-    select states, year, week, label, m3
+    select states, states_key, year, week, label, m3
     from {{ ref('int_cdc_nndss_weekly') }}
-    where label in ('Candida auris, clinical', 'Candida auris, screening')
+    where label in ('Candida auris, clinical', 'Candida auris, screening') and not is_total_row
 ),
 
 latest as (
-    select states, year, max(week) as latest_week
+    select states_key, year, max(week) as latest_week
     from cauris
-    group by states, year
+    group by states_key, year
 ),
 
 ytd as (
     select
-        c.states,
+        c.states_key,
         c.year,
         l.latest_week,
+        any_value(c.states) as states,
         max(c.m3) filter (where c.label = 'Candida auris, clinical') as clinical_ytd,
         max(c.m3) filter (where c.label = 'Candida auris, screening') as screening_ytd
     from cauris as c
-    inner join latest as l on c.states = l.states and c.year = l.year and c.week = l.latest_week
-    group by c.states, c.year, l.latest_week
+    inner join latest as l on c.states_key = l.states_key and c.year = l.year and c.week = l.latest_week
+    group by c.states_key, c.year, l.latest_week
 )
 
 select

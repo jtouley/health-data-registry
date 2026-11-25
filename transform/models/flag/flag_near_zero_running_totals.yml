@@ -2,7 +2,9 @@
 version: 2
 models:
 - name: flag_near_zero_running_totals
-  description: One row per reporting area, condition and MMWR year flagged as above.
+  description: One row per reporting area (summary rows such as TOTAL and the census divisions left out), condition
+    and MMWR year flagged as above; an area is matched across years ignoring case, edge spaces and dots, with renamed
+    labels joined.
   config:
     materialized: table
     contract:
@@ -18,7 +20,7 @@ models:
   columns:
   - name: states
     data_type: varchar
-    description: Reporting area, as NNDSS publishes it.
+    description: Reporting area, as NNDSS publishes it in that year.
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -86,7 +88,8 @@ models:
       missing_codes: []
   - name: prior_year_ytd
     data_type: bigint
-    description: The year before's year-to-date count at its own latest week, as published.
+    description: The year before's year-to-date count at the same MMWR week (or its last published week before it),
+      as published.
     meta:
       logical_type: integer
       physical_type: BIGINT

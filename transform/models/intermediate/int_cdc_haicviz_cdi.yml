@@ -4,7 +4,7 @@ models:
 - name: int_cdc_haicviz_cdi
   description: 'Long table: one value per year x topic x view x grouping x series.'
   config:
-    materialized: table
+    materialized: view
     contract:
       enforced: true
     tags:
@@ -15,6 +15,18 @@ models:
     contract_version: 0.1.0
     contract_status: draft
   data_tests:
+  - odcs_check:
+      name: cdc_haicviz_cdi_has_rows
+      arguments:
+        measure_sql: SELECT count(*) FROM {object}
+        condition: measured > 0
+      config:
+        severity: error
+        meta:
+          dimension: completeness
+          rule: has_rows
+          contract: contracts/cdc_haicviz_cdi.odcs.yaml
+          checks: This copy of the source has no rows, so there is nothing to answer from.
   - odcs_check:
       name: cdc_haicviz_cdi_fill_rate_value
       arguments:
@@ -27,7 +39,8 @@ models:
           dimension: completeness
           rule: fill_rate_value
           contract: contracts/cdc_haicviz_cdi.odcs.yaml
-          checks: value is not empty in every row (an all-empty column would pass every value check).
+          checks: 'No row has a value for the published number: a case count when topic is number of cases, cases
+            per 100,000 population when topic is case rates, unconfirmed for strain type.'
   columns:
   - name: yearname
     data_type: bigint
@@ -39,8 +52,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
   - name: topic
     data_type: varchar
     description: 'What the value measures: number of CDI cases, case rate per 100,000 population, or strain type
@@ -52,8 +63,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
   - name: viewby
     data_type: varchar
     description: 'Which breakdown the row belongs to: Total, Age, Sex, Race or Ribotype. Each view covers the same
@@ -65,8 +74,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
   - name: grouping
     data_type: varchar
     description: All cases, or split by epidemiologic class into healthcare-associated (HA) and community-associated
@@ -78,8 +85,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
   - name: series
     data_type: varchar
     description: 'The specific stratum, prefixed by epi class where split: e.g. Total, Healthcare-associated, Community-associated,
@@ -91,8 +96,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
   - name: value
     data_type: double
     description: 'The published number: a case count when topic is number of cases, cases per 100,000 population

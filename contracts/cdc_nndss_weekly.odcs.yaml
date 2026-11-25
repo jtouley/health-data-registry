@@ -85,7 +85,16 @@ schema:
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: label}
+        quality:
+          - id: cauris_labels_present
+            dimension: coverage
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(DISTINCT label) FROM {object} WHERE label IN ('Candida auris, clinical', 'Candida auris, screening')"
+            mustBe: 2
+            description: "Both C. auris labels the review queue flag_cauris_clinical_screening_swap reads by name are still published (they were in the live data on 2026-11-24); if CDC renames one, the queue would go quiet without this warning."
       - name: m1
+
         physicalType: BIGINT
         logicalType: integer
         required: false

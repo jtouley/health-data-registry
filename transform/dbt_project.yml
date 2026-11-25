@@ -6,7 +6,8 @@ version: "0.1.0"
 config-version: 2
 profile: health_data_registry
 
-model-paths: ["models"]
+# unit_tests/ holds hand-written dbt unit tests (synthetic rows only); models/ is generated or contract-backed.
+model-paths: ["models", "unit_tests"]
 test-paths: ["tests"]
 macro-paths: ["macros"]
 target-path: target
@@ -31,8 +32,9 @@ models:
     staging:
       +materialized: table
       +schema: staging
+    # Intermediate models only add columns beside staging, so they are views: no second copy of every source.
     intermediate:
-      +materialized: table
+      +materialized: view
       +schema: intermediate
     reference:
       +materialized: table

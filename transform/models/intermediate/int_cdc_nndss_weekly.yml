@@ -4,7 +4,7 @@ models:
 - name: int_cdc_nndss_weekly
   description: One row per reporting area, MMWR year, MMWR week and condition.
   config:
-    materialized: table
+    materialized: view
     contract:
       enforced: true
     tags:
@@ -15,6 +15,33 @@ models:
     contract_version: 0.1.0
     contract_status: draft
   data_tests:
+  - odcs_check:
+      name: cdc_nndss_weekly_has_rows
+      arguments:
+        measure_sql: SELECT count(*) FROM {object}
+        condition: measured > 0
+      config:
+        severity: error
+        meta:
+          dimension: completeness
+          rule: has_rows
+          contract: contracts/cdc_nndss_weekly.odcs.yaml
+          checks: This copy of the source has no rows, so there is nothing to answer from.
+  - odcs_check:
+      name: cdc_nndss_weekly_cauris_labels_present
+      arguments:
+        measure_sql: SELECT COUNT(DISTINCT label) FROM {object} WHERE label IN ('Candida auris, clinical', 'Candida
+          auris, screening')
+        condition: measured = 2
+      config:
+        severity: warn
+        meta:
+          dimension: coverage
+          rule: cauris_labels_present
+          contract: contracts/cdc_nndss_weekly.odcs.yaml
+          checks: Both C. auris labels the review queue flag_cauris_clinical_screening_swap reads by name are still
+            published (they were in the live data on 2026-11-24); if CDC renames one, the queue would go quiet without
+            this warning.
   - odcs_check:
       name: cdc_nndss_weekly_m1_flag_codes
       arguments:
@@ -40,20 +67,8 @@ models:
           dimension: completeness
           rule: fill_rate_m1
           contract: contracts/cdc_nndss_weekly.odcs.yaml
-          checks: m1 is not empty in every row (an all-empty column would pass every value check).
-  - odcs_check:
-      name: cdc_nndss_weekly_fill_rate_m1_flag
-      arguments:
-        measure_sql: SELECT CASE WHEN count(*) = 0 THEN 0.0 ELSE count(*) FILTER (WHERE ("m1_flag" IS NULL OR trim(CAST("m1_flag"
-          AS VARCHAR)) = '')) / count(*) END FROM {object}
-        condition: measured < 1.0
-      config:
-        severity: warn
-        meta:
-          dimension: completeness
-          rule: fill_rate_m1_flag
-          contract: contracts/cdc_nndss_weekly.odcs.yaml
-          checks: m1_flag is not empty in every row (an all-empty column would pass every value check).
+          checks: No row has a value for cases reported for this condition and area in this MMWR week (publisher
+            column 'Current week').
   - odcs_check:
       name: cdc_nndss_weekly_fill_rate_m2
       arguments:
@@ -66,20 +81,8 @@ models:
           dimension: completeness
           rule: fill_rate_m2
           contract: contracts/cdc_nndss_weekly.odcs.yaml
-          checks: m2 is not empty in every row (an all-empty column would pass every value check).
-  - odcs_check:
-      name: cdc_nndss_weekly_fill_rate_m2_flag
-      arguments:
-        measure_sql: SELECT CASE WHEN count(*) = 0 THEN 0.0 ELSE count(*) FILTER (WHERE ("m2_flag" IS NULL OR trim(CAST("m2_flag"
-          AS VARCHAR)) = '')) / count(*) END FROM {object}
-        condition: measured < 1.0
-      config:
-        severity: warn
-        meta:
-          dimension: completeness
-          rule: fill_rate_m2_flag
-          contract: contracts/cdc_nndss_weekly.odcs.yaml
-          checks: m2_flag is not empty in every row (an all-empty column would pass every value check).
+          checks: No row has a value for highest weekly count in the previous 52 weeks for this condition and area,
+            counting only weeks when the condition was reportable there (publisher footnote).
   - odcs_check:
       name: cdc_nndss_weekly_fill_rate_m3
       arguments:
@@ -92,20 +95,8 @@ models:
           dimension: completeness
           rule: fill_rate_m3
           contract: contracts/cdc_nndss_weekly.odcs.yaml
-          checks: m3 is not empty in every row (an all-empty column would pass every value check).
-  - odcs_check:
-      name: cdc_nndss_weekly_fill_rate_m3_flag
-      arguments:
-        measure_sql: SELECT CASE WHEN count(*) = 0 THEN 0.0 ELSE count(*) FILTER (WHERE ("m3_flag" IS NULL OR trim(CAST("m3_flag"
-          AS VARCHAR)) = '')) / count(*) END FROM {object}
-        condition: measured < 1.0
-      config:
-        severity: warn
-        meta:
-          dimension: completeness
-          rule: fill_rate_m3_flag
-          contract: contracts/cdc_nndss_weekly.odcs.yaml
-          checks: m3_flag is not empty in every row (an all-empty column would pass every value check).
+          checks: No row has a value for cumulative cases so far in this MMWR year up to and including this week
+            (year to date).
   - odcs_check:
       name: cdc_nndss_weekly_fill_rate_m4
       arguments:
@@ -118,20 +109,8 @@ models:
           dimension: completeness
           rule: fill_rate_m4
           contract: contracts/cdc_nndss_weekly.odcs.yaml
-          checks: m4 is not empty in every row (an all-empty column would pass every value check).
-  - odcs_check:
-      name: cdc_nndss_weekly_fill_rate_m4_flag
-      arguments:
-        measure_sql: SELECT CASE WHEN count(*) = 0 THEN 0.0 ELSE count(*) FILTER (WHERE ("m4_flag" IS NULL OR trim(CAST("m4_flag"
-          AS VARCHAR)) = '')) / count(*) END FROM {object}
-        condition: measured < 1.0
-      config:
-        severity: warn
-        meta:
-          dimension: completeness
-          rule: fill_rate_m4_flag
-          contract: contracts/cdc_nndss_weekly.odcs.yaml
-          checks: m4_flag is not empty in every row (an all-empty column would pass every value check).
+          checks: No row has a value for cumulative cases in the previous MMWR year up to the same week, as published
+            in this week's table.
   - odcs_check:
       name: cdc_nndss_weekly_fill_rate_location1
       arguments:
@@ -144,7 +123,8 @@ models:
           dimension: completeness
           rule: fill_rate_location1
           contract: contracts/cdc_nndss_weekly.odcs.yaml
-          checks: location1 is not empty in every row (an all-empty column would pass every value check).
+          checks: No row has a value for name of a single jurisdiction (state, DC, New York City or territory);
+            empty on summary rows.
   - odcs_check:
       name: cdc_nndss_weekly_fill_rate_location2
       arguments:
@@ -157,7 +137,8 @@ models:
           dimension: completeness
           rule: fill_rate_location2
           contract: contracts/cdc_nndss_weekly.odcs.yaml
-          checks: location2 is not empty in every row (an all-empty column would pass every value check).
+          checks: No row has a value for name of a summary area (TOTAL, US RESIDENTS, US TERRITORIES, NON-US RESIDENTS
+            or a census division); empty on single-jurisdiction rows.
   - odcs_check:
       name: cdc_nndss_weekly_fill_rate_sort_order
       arguments:
@@ -170,7 +151,8 @@ models:
           dimension: completeness
           rule: fill_rate_sort_order
           contract: contracts/cdc_nndss_weekly.odcs.yaml
-          checks: sort_order is not empty in every row (an all-empty column would pass every value check).
+          checks: No row has a value for publisher's row order key (year, week and area position); used only to
+            keep the published table order.
   columns:
   - name: states
     data_type: varchar
@@ -185,8 +167,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
   - name: year
     data_type: bigint
     description: MMWR (epidemiological) year of the report. Published as text; cast to integer.
@@ -197,8 +177,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
   - name: week
     data_type: bigint
     description: MMWR week of the report (1-52, or 53 in 53-week years such as 2025).
@@ -209,8 +187,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
   - name: label
     data_type: varchar
     description: 'Notifiable condition as named in the NNDSS tables (for example Legionellosis, Candida auris, clinical;
@@ -222,8 +198,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
   - name: m1
     data_type: bigint
     description: Cases reported for this condition and area in this MMWR week (publisher column 'Current week').
@@ -375,6 +349,13 @@ models:
     data_type: boolean
     description: True on the publisher's total and summary rows (the contract's totalRows), which are never added
       to the rows they sum (hard rule 2).
+    meta:
+      derived_from_contract: true
+  - name: states_key
+    data_type: varchar
+    description: 'states as a key for matching the same place across years: upper case, edge whitespace and dots
+      removed, and a renamed label mapped to the label it continues (the read path''s label key), so ''MINNESOTA''
+      in one year and ''Minnesota'' in the next match.'
     meta:
       derived_from_contract: true
   - name: states_label

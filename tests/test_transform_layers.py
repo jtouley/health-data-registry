@@ -53,6 +53,7 @@ def test_intermediate_adds_one_column_per_contract_rule_and_changes_nothing(tmp_
     cols = tg.derived_columns(ds.contract)
     assert [(n, t) for n, t, _s, _d in cols] == [
         ("is_total_row", "boolean"),
+        ("reporting_area_key", "varchar"),
         ("reporting_area_label", "varchar"),
         ("reporting_area_partial_note", "varchar"),
         ("cases_flag_meaning", "varchar"),
@@ -70,12 +71,12 @@ def test_intermediate_adds_one_column_per_contract_rule_and_changes_nothing(tmp_
     )
     body = sql.split("\n", 3)[3].replace("{{ ref('stg_toy_cases') }}", "stg")
     rows = con.execute(body + " ORDER BY year, reporting_area NULLS LAST").fetchall()
-    assert [r[-4:] for r in rows] == [
-        (True, "US RESIDENTS", None, None),
-        (False, "new york", "excludes New York City", "no reported cases"),
-        (False, "Northern Mariana Islands", None, None),
-        (False, None, None, None),
-        (False, "Northern Mariana Islands", None, None),
+    assert [r[-5:] for r in rows] == [
+        (True, "US RESIDENTS", "US RESIDENTS", None, None),
+        (False, "NEW YORK", "new york", "excludes New York City", "no reported cases"),
+        (False, "NORTHERN MARIANA ISLANDS", "Northern Mariana Islands", None, None),
+        (False, None, None, None, None),
+        (False, "NORTHERN MARIANA ISLANDS", "Northern Mariana Islands", None, None),
     ]
     assert rows[1][:6] == (
         "new york",
@@ -118,7 +119,8 @@ def test_every_contract_rule_becomes_a_named_dbt_test_with_its_dimension_and_sev
     ds = toy(tmp_path)
     tests = [t["odcs_check"] for t in tg.quality_tests(ds)]
     assert [t["name"] for t in tests] == [f"toy_cases_{r.id}" for r in rules_for(ds.contract)]
-    codes = tests[0]
+    assert tests[0]["name"] == "toy_cases_has_rows" and tests[0]["config"]["severity"] == "error"
+    codes = tests[1]
     assert codes["config"] == {"severity": "error", "meta": {"dimension": "conformity", "rule": "flag_codes",
                                "contract": "contracts/toy_cases.odcs.yaml", "checks": "Codes from the codebook."}}  # fmt: skip
     assert codes["arguments"]["condition"] == "measured = 0"
@@ -128,30 +130,73 @@ def test_every_contract_rule_becomes_a_named_dbt_test_with_its_dimension_and_sev
     doc = yaml.safe_load(tg.intermediate_yml(ds))
     (m,) = doc["models"]
     assert m["name"] == "int_toy_cases" and m["config"]["contract"] == {"enforced": True}
-    assert [c["name"] for c in m["columns"]][-4:] == [n for n, *_ in tg.derived_columns(ds.contract)]
-    assert all("data_tests" not in c for c in m["columns"])  # code tests live on staging; rules on the model
+    assert [c["name"] for c in m["columns"]][-5:] == [n for n, *_ in tg.derived_columns(ds.contract)]
+    assert m["config"]["materialized"] == "view"  # only adds columns: no second copy of the staged table
+    # Code tests and constraints live on the staging table under the view; contract rules on the model.
+    assert all("data_tests" not in c and "constraints" not in c for c in m["columns"])
     assert len(m["data_tests"]) == len(tests)
 
 
-def test_the_dbt_test_and_the_read_path_agree(tmp_path: Path) -> None:
-    """The macro's query (odcs_check.sql) over the same table gives a row exactly when run_rules says fail."""
-    ds = toy(tmp_path)
+MACRO = REPO / "transform" / "macros" / "odcs_check.sql"
+
+
+def _macro_sql(rule: Any, relation: str) -> str:
+    """The test odcs_check.sql renders, with the macro's own body and the generated arguments filled in."""
+    body = MACRO.read_text().split("{% test odcs_check(model, measure_sql, condition) %}")[1]
+    body = body.split("{% endtest %}")[0]
+    return (
+        body.replace("{{ measure_sql | replace('{object}', model) }}", measure_sql(rule, relation))
+        .replace("{{ condition }}", condition_sql(rule, "measured"))
+        .strip()
+    )
+
+
+NULL_RULE = """
+    quality:
+      - {id: biggest_case_count, type: sql, query: 'SELECT max(cases) FROM {object}', mustBeLessOrEqualTo: 5,
+         dimension: accuracy, severity: error, description: Toy bound on the largest count.}
+    properties:
+"""
+
+
+@pytest.mark.parametrize("rows", [2, 0])
+def test_the_dbt_test_and_the_read_path_agree(tmp_path: Path, rows: int) -> None:
+    """The macro's query (odcs_check.sql) over the same table gives a row exactly when run_rules says the rule did
+    not pass, and raises an error exactly when run_rules records a rule error (a NULL measurement)."""
+    ds = toy(tmp_path, RICH.replace("    properties:\n", NULL_RULE, 1))
     con = duckdb.connect()
     con.execute("CREATE TABLE t AS SELECT * FROM (VALUES ('A', 1, 'L', 3, 'X', 1.0), ('B', 1, 'L', NULL, '-', 2.0)) "
-                "x(reporting_area, year, condition, cases, cases_flag, rate_per_100k)")  # fmt: skip
-    results = {r["test"]: r["status"] for r in run_rules(con, "t", rules_for(ds.contract)).results}
+                f"x(reporting_area, year, condition, cases, cases_flag, rate_per_100k) LIMIT {rows}")  # fmt: skip
+    report = run_rules(con, "t", rules_for(ds.contract))
+    results = {r["test"]: r["status"] for r in report.results}
+    errors = {e["test"] for e in report.rule_errors}
     for rule in rules_for(ds.contract):
-        sql = f"select measured from ({measure_sql(rule, 't')}) as m(measured) where not coalesce({condition_sql(rule, 'measured')}, false)"
-        failed = bool(con.execute(sql).fetchall())
-        assert failed == (results[rule.id] != "pass"), rule.id
-    assert results["flag_codes"] == "fail"
-    macro = (REPO / "transform" / "macros" / "odcs_check.sql").read_text()
-    assert "{{ measure_sql | replace('{object}', model) }}" in macro and "{{ condition }}" in macro
+        try:
+            failed = bool(con.execute(_macro_sql(rule, "t")).fetchall())
+        except duckdb.Error as e:
+            assert rule.id in errors and "could not be judged" in str(e), rule.id
+            continue
+        assert rule.id not in errors and failed == (results[rule.id] != "pass"), rule.id
+    if rows:
+        assert results["flag_codes"] == "fail" and results["biggest_case_count"] == "pass"
+    else:  # an empty table: the volume check fails, and max() over no rows is a rule error on both paths
+        assert results["has_rows"] == "fail" and errors == {"biggest_case_count"}
+
+
+def test_label_keys_match_in_python_and_duckdb() -> None:
+    from health_data_registry.registry import label_key, label_key_sql
+
+    labels = ["New York\t", " U.S. Residents\n", "\r\fMinnesota\v", "MICHIGAN", "a "]
+    con = duckdb.connect()
+    for label in labels:
+        assert con.execute(f"SELECT {label_key_sql('?')}", [label]).fetchone() == (label_key(label),), repr(
+            label
+        )
 
 
 @pytest.mark.parametrize(
     ("comparator", "bound", "sql"),
-    [("mustBe", 0, "v = 0"), ("mustNotBe", "x", "v <> 'x'"), ("mustBeGreaterThan", 0, "v > 0"),
+    [("mustBe", 0, "v = 0"), ("mustNotBe", 3, "v <> 3"), ("mustBeGreaterThan", 0, "v > 0"),
      ("mustBeGreaterOrEqualTo", 1, "v >= 1"), ("mustBeLessThan", 1.0, "v < 1.0"), ("mustBeLessOrEqualTo", 2, "v <= 2"),
      ("mustBeBetween", [21, 21], "v BETWEEN 21 AND 21"), ("mustNotBeBetween", [1, 2], "v NOT BETWEEN 1 AND 2")],
 )  # fmt: skip
@@ -186,24 +231,46 @@ def test_unmapped_labels_lists_labels_missing_from_the_catalog(tmp_path: Path) -
 
 NNDSS_ROWS = [
     # states, year, week, label, m1, m1_flag, m3, m3_flag
-    ("Georgia", 2024, 51, "Candida auris, clinical", 5, None, 600, None),
-    ("Georgia", 2024, 52, "Candida auris, clinical", 4, None, 651, None),
-    ("Georgia", 2024, 52, "Candida auris, screening", 9, None, 365, None),
-    ("Ohio", 2024, 52, "Candida auris, clinical", 1, None, 10, None),
-    ("Ohio", 2024, 52, "Candida auris, screening", 3, None, 40, None),
-    ("Idaho", 2024, 1, "Anthrax", None, "-", None, "-"),
+    ("GEORGIA", 2024, 1, "Candida auris, clinical", 2, None, 2, None),
+    ("GEORGIA", 2024, 51, "Candida auris, clinical", 5, None, 600, None),
+    ("GEORGIA", 2024, 52, "Candida auris, clinical", 4, None, 651, None),
+    ("GEORGIA", 2024, 52, "Candida auris, screening", 9, None, 365, None),
+    (
+        "Georgia",
+        2025,
+        1,
+        "Candida auris, clinical",
+        0,
+        None,
+        0,
+        None,
+    ),  # January: same-week compare, not flagged
+    ("OHIO", 2024, 52, "Candida auris, clinical", 1, None, 10, None),
+    ("OHIO", 2024, 52, "Candida auris, screening", 3, None, 40, None),
+    ("IDAHO", 2024, 1, "Anthrax", None, "-", None, "-"),
     ("Idaho", 2025, 1, "Anthrax", None, "-", None, "-"),
     ("Idaho", 2025, 1, "Legionellosis", None, "U", None, "U"),
-    ("Minnesota", 2024, 52, "Candida auris, clinical", 0, None, 12, None),
+    ("Idaho", 2025, 1, "Tularemia", None, "-", None, "-"),
+    ("Idaho", 2025, 2, "Tularemia", None, None, None, None),  # neither a count nor a flag: not '-'
+    ("MINNESOTA", 2024, 52, "Candida auris, clinical", 0, None, 12, None),
     ("Minnesota", 2025, 53, "Candida auris, clinical", None, "-", None, "-"),
+    ("TOTAL", 2024, 52, "Candida auris, clinical", 9, None, 900, None),  # summary rows: never in a queue
+    ("TOTAL", 2024, 52, "Candida auris, screening", 1, None, 10, None),
+    ("TOTAL", 2025, 53, "Candida auris, clinical", None, "-", None, "-"),
+    ("TOTAL", 2025, 1, "Anthrax", None, "-", None, "-"),
 ]
 
 
 def _run_flag(name: str) -> list[tuple[Any, ...]]:
+    from health_data_registry.registry import label_key
+
     con = duckdb.connect()
     con.execute("CREATE TABLE n (states VARCHAR, year BIGINT, week BIGINT, label VARCHAR, m1 BIGINT, m1_flag VARCHAR, "
-                "m3 BIGINT, m3_flag VARCHAR)")  # fmt: skip
-    con.executemany("INSERT INTO n VALUES (?, ?, ?, ?, ?, ?, ?, ?)", NNDSS_ROWS)
+                "m3 BIGINT, m3_flag VARCHAR, states_key VARCHAR, is_total_row BOOLEAN)")  # fmt: skip
+    con.executemany(
+        "INSERT INTO n VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [(*r, label_key(r[0]), r[0] == "TOTAL") for r in NNDSS_ROWS],
+    )
     project = yaml.safe_load((REPO / "transform" / "dbt_project.yml").read_text())
     sql = (FLAGS / f"{name}.sql").read_text().replace("{{ ref('int_cdc_nndss_weekly') }}", "n")
     sql = re.sub(r"\{\{ var\('(\w+)'\) \}\}", lambda m: str(project["vars"][m.group(1)]), sql)
@@ -212,22 +279,27 @@ def _run_flag(name: str) -> list[tuple[Any, ...]]:
 
 def test_flag_cauris_swap_lists_clinical_above_screening_at_the_latest_week() -> None:
     rows = _run_flag("flag_cauris_clinical_screening_swap")
-    assert [r[:5] for r in rows] == [("Georgia", 2024, 52, 651, 365), ("Minnesota", 2024, 52, 12, None)]
+    assert [r[:5] for r in rows] == [("GEORGIA", 2024, 52, 651, 365), ("MINNESOTA", 2024, 52, 12, None)]
     assert "issue #16" in rows[0][5] and "Check against CDC" in rows[0][5]
 
 
 def test_flag_all_dash_areas_needs_every_week_dashed() -> None:
     rows = _run_flag("flag_all_dash_areas")
-    # Minnesota's clinical pair is out: its 2024 week has a count (0), so not every week is '-'. Idaho's
-    # Legionellosis is out too: 'U' (unavailable) is not '-'.
+    # IDAHO (2024) and Idaho (2025) are one area. Minnesota's clinical pair is out: its 2024 week has a count (0).
+    # Idaho's Legionellosis is out ('U' is not '-'), and so is Tularemia (a week with no count and no flag).
+    # TOTAL is a summary row.
     assert [r[:5] for r in rows] == [("Idaho", "Anthrax", 2024, 2025, 2)]
     assert "issue #14" in rows[0][5]
 
 
 def test_flag_near_zero_running_totals_uses_the_reviewed_thresholds() -> None:
     rows = _run_flag("flag_near_zero_running_totals")
+    # MINNESOTA (2024) matches Minnesota (2025); week 53 is set against 2024's week 52. Georgia's week 1 is set
+    # against 2024's week 1 (2), not the whole year (651), so January does not flood the queue. TOTAL is left out.
     assert [r[:7] for r in rows] == [("Minnesota", "Candida auris, clinical", 2025, 53, None, "-", 12)]
-    assert "withdrawn, reset or not yet reported" in rows[0][7]
+    assert (
+        "at week 53, after 12 by week 52 the year before: withdrawn, reset or not yet reported" in rows[0][7]
+    )
 
 
 def test_flag_and_intermediate_models_are_contract_backed_and_generated_where_per_source() -> None:

@@ -5,7 +5,7 @@ models:
   description: One row per year x geography x phenotype x HAI type x age x sex x teaching status x hospital size
     x facility type x procedure x unit type. Each stratifier includes an 'All ...' margin value.
   config:
-    materialized: table
+    materialized: view
     contract:
       enforced: true
     tags:
@@ -16,6 +16,18 @@ models:
     contract_version: 0.1.0
     contract_status: draft
   data_tests:
+  - odcs_check:
+      name: cdc_nhsn_ar_hai_has_rows
+      arguments:
+        measure_sql: SELECT count(*) FROM {object}
+        condition: measured > 0
+      config:
+        severity: error
+        meta:
+          dimension: completeness
+          rule: has_rows
+          contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
+          checks: This copy of the source has no rows, so there is nothing to answer from.
   - odcs_check:
       name: cdc_nhsn_ar_hai_percent_only_when_20_tested
       arguments:
@@ -53,7 +65,8 @@ models:
           dimension: completeness
           rule: fill_rate_isolates_tested
           contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
-          checks: isolates_tested is not empty in every row (an all-empty column would pass every value check).
+          checks: No row has a value for number of isolates tested for susceptibility to the antimicrobial, as reported
+            to NHSN (column description).
   - odcs_check:
       name: cdc_nhsn_ar_hai_fill_rate_resistant_isolates
       arguments:
@@ -66,7 +79,8 @@ models:
           dimension: completeness
           rule: fill_rate_resistant_isolates
           contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
-          checks: resistant_isolates is not empty in every row (an all-empty column would pass every value check).
+          checks: No row has a value for number of tested isolates that were resistant (for some phenotypes, non-susceptible);
+            shown only when at least 20 isolates were tested (column description).
   - odcs_check:
       name: cdc_nhsn_ar_hai_fill_rate_percent_resistant
       arguments:
@@ -79,20 +93,8 @@ models:
           dimension: completeness
           rule: fill_rate_percent_resistant
           contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
-          checks: percent_resistant is not empty in every row (an all-empty column would pass every value check).
-  - odcs_check:
-      name: cdc_nhsn_ar_hai_fill_rate_suppressed
-      arguments:
-        measure_sql: SELECT CASE WHEN count(*) = 0 THEN 0.0 ELSE count(*) FILTER (WHERE ("suppressed" IS NULL OR
-          trim(CAST("suppressed" AS VARCHAR)) = '')) / count(*) END FROM {object}
-        condition: measured < 1.0
-      config:
-        severity: warn
-        meta:
-          dimension: completeness
-          rule: fill_rate_suppressed
-          contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
-          checks: suppressed is not empty in every row (an all-empty column would pass every value check).
+          checks: 'No row has a value for percent of tested isolates that were resistant: resistant / tested x 100;
+            calculated only when at least 20 isolates were tested (column description).'
   - odcs_check:
       name: cdc_nhsn_ar_hai_fill_rate_display_tested
       arguments:
@@ -105,7 +107,8 @@ models:
           dimension: completeness
           rule: fill_rate_display_tested
           contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
-          checks: display_tested is not empty in every row (an all-empty column would pass every value check).
+          checks: No row has a value for publisher's indicator of whether data are sufficient to display; empty
+            in every row observed.
   - odcs_check:
       name: cdc_nhsn_ar_hai_fill_rate_lower_confidence_interval
       arguments:
@@ -118,8 +121,8 @@ models:
           dimension: completeness
           rule: fill_rate_lower_confidence_interval
           contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
-          checks: lower_confidence_interval is not empty in every row (an all-empty column would pass every value
-            check).
+          checks: No row has a value for lower bound of the 95% mid-P exact confidence interval around percent resistant;
+            only when percent resistant is calculated (column descriptions for geography and this field).
   - odcs_check:
       name: cdc_nhsn_ar_hai_fill_rate_upper_confidence_interval
       arguments:
@@ -132,8 +135,7 @@ models:
           dimension: completeness
           rule: fill_rate_upper_confidence_interval
           contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
-          checks: upper_confidence_interval is not empty in every row (an all-empty column would pass every value
-            check).
+          checks: No row has a value for upper bound of the 95% mid-P exact confidence interval around percent resistant.
   columns:
   - name: source
     data_type: varchar
@@ -145,8 +147,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
   - name: year
     data_type: bigint
     description: Calendar year for which number resistant, number tested and pooled percent resistant are calculated
@@ -158,8 +158,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
   - name: geography
     data_type: varchar
     description: United States, one of the nine census divisions, or a state (50 states, DC and Puerto Rico). Small
@@ -172,8 +170,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
   - name: event_type
     data_type: varchar
     description: 'Type of healthcare-associated infection the isolate came from: central line-associated bloodstream
@@ -186,8 +182,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
   - name: phenotype
     data_type: varchar
     description: 'Organism and resistance pattern, e.g. methicillin-resistant Staphylococcus aureus or carbapenem-resistant
@@ -199,8 +193,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
   - name: age_category
     data_type: varchar
     description: Adults (18 and over) or pediatrics (under 18), by age at the infection date (CLABSI, CAUTI) or
@@ -212,8 +204,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
   - name: sex
     data_type: varchar
     description: Patient sex (male or female) or both sexes combined.
@@ -224,8 +214,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
   - name: teaching_hospital
     data_type: varchar
     description: Whether the hospital trains medical students and residents; only available for general acute care
@@ -237,8 +225,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
   - name: hospital_size
     data_type: varchar
     description: Large (200 or more beds) or small (under 200 beds) facility; only for general acute care hospitals;
@@ -250,8 +236,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
   - name: facility
     data_type: varchar
     description: 'Facility type: acute care hospital, inpatient rehabilitation facility or long-term acute care
@@ -263,8 +247,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
   - name: procedure
     data_type: varchar
     description: NHSN inpatient surgical procedure type (SSI only), or all procedures.
@@ -275,8 +257,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
   - name: location
     data_type: varchar
     description: 'Hospital unit type: ICU, neonatal ICU, oncology unit or other unit (ward, step-down, mixed acuity);
@@ -288,8 +268,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
   - name: isolates_tested
     data_type: bigint
     description: Number of isolates tested for susceptibility to the antimicrobial, as reported to NHSN (column

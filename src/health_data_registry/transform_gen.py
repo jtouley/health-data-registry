@@ -43,6 +43,7 @@ from health_data_registry.registry import (
     Dataset,
     Registry,
     label_key,
+    label_key_sql,
     load_registry,
     parse_contract,
 )
@@ -243,8 +244,8 @@ def _lit(value: str) -> str:
 
 
 def _key_sql(col: str) -> str:
-    """SQL for registry.label_key: upper case, edge spaces trimmed, dots removed."""
-    return f"regexp_replace(upper(trim({_q(col)})), '[.]', '', 'g')"
+    """SQL for registry.label_key (the same edge whitespace, case and dots as the read path)."""
+    return label_key_sql(_q(col))
 
 
 def derived_columns(contract: Contract) -> list[tuple[str, str, str, str]]:
@@ -262,6 +263,21 @@ def derived_columns(contract: Contract) -> list[tuple[str, str, str, str]]:
         )
     ]
     for c in contract.columns:
+        if c.renamed_labels or c.partial_places:
+            renamed = {label_key(a): label_key(b) for a, b in c.renamed_labels}
+            whens = " ".join(f"WHEN {_lit(a)} THEN {_lit(b)}" for a, b in renamed.items())
+            out.append(
+                (
+                    f"{c.name}_key",
+                    "varchar",
+                    f"CASE {_key_sql(c.name)} {whens} ELSE {_key_sql(c.name)} END"
+                    if whens
+                    else _key_sql(c.name),
+                    f"{c.name} as a key for matching the same place across years: upper case, edge whitespace and "
+                    "dots removed, and a renamed label mapped to the label it continues (the read path's label "
+                    "key), so 'MINNESOTA' in one year and 'Minnesota' in the next match.",
+                )
+            )
         if c.renamed_labels:
             names = {label_key(x): earlier for later, earlier in c.renamed_labels for x in (later, earlier)}
             whens = " ".join(f"WHEN {_lit(k)} THEN {_lit(v)}" for k, v in names.items())
@@ -377,7 +393,9 @@ def unmapped_labels_sql(registry: Registry) -> str:
 def intermediate_yml(ds: Dataset) -> str:
     schema = (ds.contract.raw.get("schema") or [{}])[0]
     columns = [
-        {k: v for k, v in c.items() if k != "data_tests"} for c in _columns(ds.contract, f"int_{ds.id}")
+        # A view takes no constraints (dbt-duckdb): the staging table under it enforces them.
+        {k: v for k, v in c.items() if k not in ("data_tests", "constraints")}
+        for c in _columns(ds.contract, f"int_{ds.id}")
     ]
     columns += [
         {"name": name, "data_type": typ, "description": desc, "meta": {"derived_from_contract": True}}
@@ -386,7 +404,7 @@ def intermediate_yml(ds: Dataset) -> str:
     entry = {
         "name": f"int_{ds.id}",
         "description": str(schema.get("description") or ds.entry.title).strip(),
-        "config": {"materialized": "table", "contract": {"enforced": True}, "tags": ["intermediate"]},
+        "config": {"materialized": "view", "contract": {"enforced": True}, "tags": ["intermediate"]},
         "meta": {
             "contract": ds.entry.contract,
             "contract_id": ds.contract.id,

@@ -2,8 +2,8 @@
 version: 2
 models:
 - name: flag_cauris_clinical_screening_swap
-  description: One row per reporting area and MMWR year whose clinical year-to-date exceeds its screening year-to-date
-    at the latest week published for that year.
+  description: One row per reporting area (summary rows such as TOTAL and the census divisions left out) and MMWR
+    year whose clinical year-to-date exceeds its screening year-to-date at the latest week published for that year.
   config:
     materialized: table
     contract:

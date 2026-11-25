@@ -4,5 +4,6 @@
 select
   stg.*,
   coalesce((state IN ('Overall', 'COVID-NET', 'FluSurv-NET', 'RSV-NET')), false) AS "is_total_row",
+  regexp_replace(upper(trim(CAST("state" AS VARCHAR), ' ' || chr(9) || chr(10) || chr(11) || chr(12) || chr(13))), '[.]', '', 'g') AS "state_key",
   CASE WHEN "state" IS NULL THEN NULL ELSE 'a RESP-NET site''s catchment counties, not necessarily the whole state; the dataset doesn''t list the counties' END AS "state_partial_note"
 from {{ ref('stg_cdc_respnet') }} as stg
