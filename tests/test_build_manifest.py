@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
@@ -17,6 +16,7 @@ from health_data_registry import build_manifest as bm
 from health_data_registry import dbt_raw
 from health_data_registry import release_gate as rg
 from health_data_registry.publish import PublishCheckFailed, export_public
+from health_data_registry.ratchet import _git
 from health_data_registry.registry import Registry, load_registry
 from health_data_registry.store import Manifest, build_snapshot, latest_snapshot, write_ndjson
 from tests.conftest import (
@@ -68,7 +68,10 @@ def test_the_pin_names_every_input_and_its_id_covers_each(toy: tuple[Registry, P
     reg, lake = toy
     pinned = pin_toy_build(reg, lake)
     assert list(pinned) == list(bm.PINNED_KEYS) and pinned["manifest_version"] == bm.MANIFEST_VERSION
-    (sid, snap) = latest_snapshot(lake, "toy_cases")[1].snapshot_id, latest_snapshot(lake, "toy_cases")[1]  # type: ignore[index]
+    found = latest_snapshot(lake, "toy_cases")
+    assert found is not None
+    snap = found[1]
+    sid = snap.snapshot_id
     read = pinned["inputs"]["toy_cases"]
     records = lake / f"raw_records/toy_cases/{sid}.ndjson"
     assert read == {
@@ -214,7 +217,7 @@ def test_the_code_state_is_the_commit_lock_and_any_uncommitted_change(tmp_path: 
     repo.mkdir()
 
     def git(*args: str) -> None:
-        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)  # noqa: S603,S607
+        _git(repo, *args)
 
     git("init", "-q")
     git("config", "user.email", "t@example.invalid")
@@ -348,7 +351,9 @@ def test_the_release_carries_the_build_that_read_its_snapshots(tmp_path: Path) -
 
 def test_a_release_never_names_a_build_that_did_not_read_it(tmp_path: Path) -> None:
     reg, lake = _hub_registry(tmp_path)
-    first = bm.latest_build(lake)[1]["build_id"]  # type: ignore[index]
+    passed = bm.latest_build(lake)
+    assert passed is not None
+    first = passed[1]["build_id"]
     # The lake's LATEST moves on after the build: publishing it under that build is refused.
     page = tmp_path / "p2.ndjson"
     write_ndjson(page, RECORDS)

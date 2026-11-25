@@ -42,7 +42,6 @@ import json
 import os
 import platform
 import re
-import subprocess  # noqa: S404 - git only, with fixed arguments
 from collections.abc import Mapping, Sequence
 from importlib import metadata
 from pathlib import Path
@@ -195,26 +194,22 @@ def dbt_vars(root: Path) -> dict[str, Any]:
     return dict(doc.get("vars") or {})
 
 
-def _git(root: Path, *args: str) -> bytes:
-    return subprocess.run(  # noqa: S603 - fixed git arguments, no shell
-        ["git", "-C", str(root), *args],  # noqa: S607 - git from PATH, as every developer and CI runs it
-        capture_output=True,
-        check=True,
-        timeout=120,
-    ).stdout
-
-
 def code_state(root: Path, *, commit: str | None = None) -> dict[str, Any]:
     """The code a build ran: the git commit, uv.lock's hash, and a hash of any uncommitted change.
 
-    `commit`, when given (--commit, or $GITHUB_SHA in CI), must be the checkout's HEAD."""
+    `commit`, when given (--commit, or $GITHUB_SHA in CI), must be the checkout's HEAD. git runs as the Trusted
+    gate runs it (ratchet._git: fixed arguments, git's own environment variables left out, so a hook's GIT_DIR
+    can't point it at another repository)."""
+    from health_data_registry.ratchet import GitError
+    from health_data_registry.ratchet import _git as git
+
     try:
-        head = _git(root, "rev-parse", "HEAD").decode().strip()
-        diff = _git(root, "diff", "HEAD", "--binary", "--no-ext-diff", "--no-textconv")
+        head = git(root, "rev-parse", "HEAD").decode().strip()
+        diff = git(root, "diff", "HEAD", "--binary", "--no-ext-diff", "--no-textconv")
         untracked = sorted(
-            p for p in _git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0") if p
+            p for p in git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0") if p
         )
-    except (OSError, subprocess.SubprocessError) as e:
+    except (OSError, GitError) as e:
         raise BuildManifestError(
             f"the code's commit can't be read: {root} is not a git checkout git can read ({type(e).__name__})"
         ) from e
