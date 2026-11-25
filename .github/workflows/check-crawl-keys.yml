@@ -6,13 +6,15 @@
 #              maintainer must set: docs/dev/automation.md.
 #   check      in the GitHub environment `crawl`: one request to the Census API with CENSUS_API_KEY, one to
 #              CDC's Socrata portal with SOCRATA_APP_TOKEN and one to OpenAlex with OPENALEX_API_KEY. Each step
-#              reports its key as rejected (the publisher's bad-key answer), not rejected (HTTP 200), or not
-#              checked (no answer, a rate limit, an outage or any other status, which says nothing about the
-#              key). The Socrata step adds one line on throttle headers. The job fails unless every key is
-#              present and not rejected.
+#              reports its key as rejected (the publisher's bad-key answer), not checked (no answer, a rate
+#              limit or an outage, which says nothing about the key), or, for the Census key and the Socrata
+#              token, not rejected (HTTP 200). The OpenAlex step asks an endpoint that answers only a valid key,
+#              so it reports accepted, or not confirmed for any answer that doesn't prove the key. The Socrata
+#              step adds one line on throttle headers. The job fails unless every key is present and not
+#              rejected, and the OpenAlex key accepted.
 #
-# A 200 shows only that a key was not rejected: each of these APIs also answers some requests with no key, so
-# it does not show that the key was applied or is needed.
+# For Census and Socrata a 200 shows only that a key was not rejected: both also answer some requests with no
+# key, so it does not show that the key was applied or is needed.
 #
 # What it never does: print a key, a request URL, response headers or a response body; put a key on a command
 # line (curl reads it from stdin, so it is not in the process list); check out the repository; use an action;
@@ -177,30 +179,40 @@ jobs:
             exit 1
           fi
           echo "::add-mask::$OPENALEX_API_KEY"
-          # OpenAlex takes the key as the api_key query parameter. It goes in on stdin
-          # (--data-urlencode api_key@-, appended to the query by -G), never on the command line. A bad key gets
-          # 401, so a 200 means the key was not rejected. OpenAlex also answers this request with no key at all
-          # (cursor paging included), so a 200 does not show the key was applied. --globoff keeps curl from
-          # reading the URL as a pattern. The body is discarded.
+          # GET /rate-limit answers only a valid key: no key and a made-up key both get 401, and a key that isn't
+          # activated gets 403 key_not_activated. So a 200 carrying the budget object shows the key was accepted
+          # and applied (a /works request would not: OpenAlex answers it with no key). The key goes in as an
+          # Authorization: Bearer header on stdin (-H @-), never on the command line. The body stays in memory,
+          # is only tested for its shape, and is never printed. No -L, so curl never follows a redirect.
           rc=0
-          code=$(printf '%s' "$OPENALEX_API_KEY" | curl -sS --fail-with-body --proto '=https' --max-redirs 0 \
-            --max-time 30 --globoff -G --data-urlencode 'api_key@-' -o /dev/null -w '%{http_code}' \
-            'https://api.openalex.org/works?per-page=1&cursor=*') || rc=$?
+          resp=$(printf 'Authorization: Bearer %s\n' "$OPENALEX_API_KEY" | curl -sS --fail-with-body \
+            --proto '=https' --max-redirs 0 --max-time 30 -H @- -w '\n%{http_code}' \
+            'https://api.openalex.org/rate-limit') || rc=$?
+          code=${resp##*$'\n'}
+          body=${resp%$'\n'*}
           if [ "$rc" -ne 0 ] && [ "$code" = "000" ]; then
             echo "::error::OpenAlex key: not checked: api.openalex.org could not be reached (curl exit $rc). Try again later."
             exit 1
           fi
           case "$code" in
             200)
-              echo "OpenAlex key: not rejected (HTTP 200). OpenAlex also answers without a key, so this does not show the key was applied."
-              exit 0
+              if jq -e 'type == "object" and (has("error") | not) and length > 0' <<<"$body" >/dev/null 2>&1; then
+                echo "OpenAlex key: accepted (HTTP 200 from the rate-limit endpoint, which answers only a valid key)"
+                exit 0
+              fi
+              echo "::error::OpenAlex key: not confirmed: the rate-limit endpoint answered HTTP 200 but not with a budget, so it does not show the key works."
+              exit 1
               ;;
             401|403)
-              echo "::error::OpenAlex key: rejected (HTTP $code). Check the key in your OpenAlex account."
+              echo "::error::OpenAlex key: rejected (HTTP $code). Check that the key is right and activated in your OpenAlex account."
+              exit 1
+              ;;
+            429|5??)
+              echo "::error::OpenAlex key: not checked: api.openalex.org answered HTTP $code, which does not say whether the key is good. Try again later."
               exit 1
               ;;
             *)
-              echo "::error::OpenAlex key: not checked: api.openalex.org answered HTTP $code, which does not say whether the key is good. Try again later."
+              echo "::error::OpenAlex key: not confirmed: api.openalex.org answered HTTP $code, which does not show the key works."
               exit 1
               ;;
           esac

@@ -14,7 +14,7 @@ our own.
 | [`drift-check.yml`](../../.github/workflows/drift-check.yml) | `check-contracts` against every publisher, opening or updating an issue on failure; re-enables the scheduled workflows | Friday 05:37 | Issues; workflow enabled state |
 | [`cflite_pr.yml`](../../.github/workflows/cflite_pr.yml) | ClusterFuzzLite: builds the Atheris harnesses in `fuzz/` and fuzzes what the change reaches, about 5 minutes per harness | On pull requests, and pushes to `pre-pr/**`, that touch `src/`, `fuzz/` or `.clusterfuzzlite/` | Run artifacts only |
 | [`cflite_batch.yml`](../../.github/workflows/cflite_batch.yml) | ClusterFuzzLite: fuzzes every harness for about 30 minutes each and keeps the grown corpus | Thursday 02:53 | Run artifacts only (the corpus) |
-| [`check-crawl-keys.yml`](../../.github/workflows/check-crawl-keys.yml) | Checks that the `crawl` environment's API keys are not rejected, one request per publisher; never prints a key ([README](README.md)) | Manual dispatch only, on main, in the `crawl` environment | Nothing |
+| [`check-crawl-keys.yml`](../../.github/workflows/check-crawl-keys.yml) | Checks the `crawl` environment's API keys (Census, Socrata, OpenAlex), one request per publisher; never prints a key ([README](README.md)) | Manual dispatch only, on main, in the `crawl` environment | Nothing |
 
 CI, CodeQL, Scorecard, release and npm-publish are unchanged and described in their own files.
 

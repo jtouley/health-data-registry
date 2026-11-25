@@ -90,11 +90,13 @@ needs. Every Hugging Face repository is named by one convention, built in `namin
 is what keeps the keys off other branches, because a run on another branch uses that branch's copy of the
 workflow, which can drop the workflow's own main-only check. To check the keys, open the Actions tab, choose
 "Check crawl API keys", then "Run workflow" with the branch set to `main`. It makes one request each to the
-Census API, data.cdc.gov and OpenAlex, and reports each key as rejected (the publisher's bad-key answer), not
-rejected (HTTP 200), or not checked (no answer, a rate limit or an outage: try again later, and don't replace
-the key). A 200 shows only that a key was not rejected: these APIs also answer without a key. The run fails
-unless every key is present and not rejected. It never prints a key, a request URL, response headers or a body,
-and writes nothing.
+Census API, data.cdc.gov and OpenAlex, and reports each key as rejected (the publisher's bad-key answer) or
+not checked (no answer, a rate limit or an outage: try again later, and don't replace the key). Otherwise the
+Census key and the Socrata token are reported as not rejected: both APIs also answer without a key, so a 200
+doesn't show the key was applied. OpenAlex is asked for its rate-limit status, which it gives only to a valid
+key, so its key is reported as accepted, or as not confirmed when the answer doesn't prove it. The run fails
+unless every key is present, Census and Socrata are not rejected and OpenAlex is accepted. It never prints a
+key, a request URL, response headers or a body, and writes nothing.
 
 To run the server in Claude Code from a checkout:
 
