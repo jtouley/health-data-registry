@@ -1,0 +1,5 @@
+{"year": "2020", "value": "8.5", "units": "Per 100,000 population", "bacteria": "Streptococcus pneumoniae", "topic": "Case Rates", "viewby": "Overall"}
+{"year": "2020", "value": "21.0", "units": "Per 100,000 population", "bacteria": "Streptococcus pneumoniae", "topic": "Case Rates", "viewby": "Age", "viewby2": "≥65 years old"}
+{"year": "2020", "value": "1500", "units": "Counts", "bacteria": "Streptococcus pneumoniae", "topic": "Number of Cases and Deaths", "viewby": "ALL", "viewby2": "Total cases"}
+{"year": "2020", "value": "12.5", "units": "Percent", "bacteria": "Streptococcus pneumoniae", "topic": "Syndromes", "viewby": "Meningitis"}
+{"year": "2020", "units": "Percent", "bacteria": "Streptococcus pneumoniae", "topic": "Antibiotic resistance", "viewby": "Tetracycline3"}

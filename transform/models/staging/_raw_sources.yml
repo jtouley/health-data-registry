@@ -6,6 +6,68 @@ sources:
     LATEST full load by the dbt_raw plugin (profiles.yml).
   schema: raw
   tables:
+  - name: cdc_abcs_pneumococcal
+    description: 'Raw records of Active Bacterial Core surveillance (ABCs) Streptococcus pneumoniae as the adapter
+      hands them on, every value as text: the publisher''s own fields, or for a wide table the adapter''s structural
+      reshaping of them (see the staging model). Only the full load the dataset''s LATEST pointer names is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_abcs_pneumococcal.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - bacteria
+      - topic
+      - units
+      - value
+      - viewby
+      - viewby2
+      - year
+    columns:
+    - name: bacteria
+      data_type: varchar
+      description: 'Publisher field bacteria, as text; read into bacteria (The bacterium: Streptococcus pneumoniae
+        (the only value).)'
+    - name: topic
+      data_type: varchar
+      description: 'Publisher field topic, as text; read into topic (What the figure measures: Case Rates, Death
+        Rates or Serotypes (rates per 100,000), Number of Cases and Deaths (counts), Syndromes (percent of cases),
+        or Antibiotic resistance (percent of isolates resistant, or the number of isolates).)'
+    - name: units
+      data_type: varchar
+      description: 'Publisher field units, as text; read into units (The unit of the figure: Per 100,000 population,
+        Percent, or Counts.)'
+    - name: value
+      data_type: varchar
+      description: 'Publisher field value, as text; read into value (The published figure, in the row''s unit: a
+        rate per 100,000 population, a percent, or a count. Empty in a few antibiotic resistance rows (5 of 216
+        on 2026-11-25), which are never read as zero.)'
+    - name: viewby
+      data_type: varchar
+      description: 'Publisher field viewby, as text; read into viewby (The first breakdown, which depends on the
+        topic: Overall, Age or Race for case and death rates; an age group for serotype rates; ALL for counts; the
+        syndrome for Syndromes; the antibiotic (as CDC writes it, e.g. Penicillin1, Cefotaxime4, with footnote numbers
+        whose meaning is not in the data) or Number of isolates for Antibiotic resistance.)'
+    - name: viewby2
+      data_type: varchar
+      description: 'Publisher field viewby2, as text; read into viewby2 (The second breakdown: the age group or
+        race (or Overall) for case and death rates, the vaccine serotype group (All Serotypes, PCV13, PCV15, PCV20,
+        PCV21, PPSV23 Serotypes) for serotype rates, or Total cases, Number of deaths or Number of survivals for
+        counts. Empty where there is no second breakdown.)'
+    - name: year
+      data_type: varchar
+      description: Publisher field year, as text; read into year (Surveillance year (1997 to 2024 on 2026-11-25;
+        resistance and serotype rows from 1998).)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
   - name: cdc_haicviz_cdi
     description: 'Raw records of HAICViz - CDI as the adapter hands them on, every value as text: the publisher''s
       own fields, or for a wide table the adapter''s structural reshaping of them (see the staging model). Only

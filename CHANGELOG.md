@@ -41,6 +41,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- New source, draft and not yet hosted: `cdc_abcs_pneumococcal`, CDC's Active Bacterial Core surveillance figures
+  for invasive Streptococcus pneumoniae disease since 1997 (case and death rates, vaccine serotype-group rates,
+  counts, syndromes and antibiotic resistance; data.cdc.gov en3s-hzsr), on the existing Socrata adapter. Every
+  figure is for the ABCs surveillance areas, never called a national or state figure, and nothing is added.
 - The Trusted gate (`.github/workflows/trusted-gate.yml`, `python -m health_data_registry.ratchet`, `make
   ratchet`): a check a pull request cannot edit, run from main's copy on `pull_request_target` with a read-only
   token, reading the pull request as data only (a required check once the `main` ruleset lists it, #138). It fails

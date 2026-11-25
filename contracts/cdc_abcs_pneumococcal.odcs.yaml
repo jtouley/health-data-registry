@@ -1,0 +1,185 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: cdc_abcs_pneumococcal
+name: Active Bacterial Core surveillance (ABCs) Streptococcus pneumoniae
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Annual figures for invasive Streptococcus pneumoniae disease from CDC's Active Bacterial Core surveillance in the ABCs surveillance areas since 1997: case and death rates, serotype-group rates, counts of cases and deaths, syndromes and antibiotic resistance (dataset description, https://data.cdc.gov/api/views/en3s-hzsr.json)."
+  usage: "Read one topic, stratum and year as published, or follow one over the years. Never add across topics, age groups, race groups or serotype groups, and never add rates. Name the place as the ABCs surveillance areas, never the United States."
+  limitations: "A surveillance catchment, not the whole country; the areas and the methods changed over time (missing data handled by imputation from 2010); whether rates are crude or projected, the denominator population and the antibiotic footnotes are not in the data."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://data.cdc.gov/d/en3s-hzsr", description: "Publisher dataset page"}
+    - {type: businessDefinition, url: "https://data.cdc.gov/api/views/en3s-hzsr.json", description: "Socrata metadata (dataset description, footnotes, column names), read 2026-11-25"}
+    - {type: businessDefinition, url: "https://www.cdc.gov/abcs/methodology/index.html", description: "ABCs methodology, linked from the dataset description (not fetched; see openQuestions)"}
+    - {type: businessDefinition, url: "https://www.cdc.gov/abcs/about/surv-areas-and-populations.html", description: "ABCs surveillance areas and populations, linked from the dataset description (not fetched; see openQuestions)"}
+    - {type: businessDefinition, url: "https://www.cdc.gov/abcs/reports/index.html", description: "ABCs reports with the case definition and rate methods by year, linked from the dataset description (not fetched)"}
+servers:
+  - id: data_cdc_gov
+    server: data.cdc.gov
+    type: api
+    location: https://data.cdc.gov/resource/en3s-hzsr.json
+schema:
+  - name: cdc_abcs_pneumococcal
+    physicalName: cdc_abcs_pneumococcal
+    physicalType: table
+    logicalType: object
+    description: "Long table: one published figure per year x topic x view x stratum, with its unit."
+    dataGranularityDescription: "year x topic x viewby x viewby2 (x units, which differ within the Antibiotic resistance topic)"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://data.cdc.gov/api/views/en3s-hzsr.json"}
+    customProperties:
+      - property: totalRows
+        value: "viewby = 'Overall' OR viewby2 IN ('Overall', 'Total cases', 'All Serotypes')"
+        description: "Rows that sum or contain the rows beside them, labelled so by CDC (every distinct topic, viewby and viewby2 checked on the full table, 1,677 rows, 2026-11-25): viewby 'Overall' (all ages and races), viewby2 'Overall' inside the Age and Race views, 'Total cases' beside 'Number of deaths' and 'Number of survivals', and 'All Serotypes' beside the vaccine serotype groups it contains. Whether the parts add up to these rows is not stated; nothing here is ever added."
+      - {property: tableShape, value: rate_table}
+      - property: idDimensions
+        value:
+          condition: bacteria
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: viewby
+          period: year
+          provisionalFlag: null
+        description: "One bacterium (Streptococcus pneumoniae) in the bacteria column. Serotype groups (PCV13, PCV15, PCV20, PCV21, PPSV23) sit in viewby2 under topic Serotypes, and the antibiotic under topic Antibiotic resistance sits in viewby. The ABCs case definition is in the ABCs reports, not the data. No case status or provisional column."
+    properties:
+      - name: year
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "Surveillance year (1997 to 2024 on 2026-11-25; resistance and serotype rows from 1998)."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: year}
+      - name: bacteria
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The bacterium: Streptococcus pneumoniae (the only value)."
+        enum: [{value: Streptococcus pneumoniae}]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: bacteria}
+        quality:
+          - id: bacteria_is_pneumococcus
+            dimension: conformity
+            severity: error
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["Streptococcus pneumoniae"]}
+            mustBe: 0
+            description: "The dataset's title names one bacterium, Streptococcus pneumoniae; a row for another would belong to a different ABCs table."
+      - name: topic
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "What the figure measures: Case Rates, Death Rates or Serotypes (rates per 100,000), Number of Cases and Deaths (counts), Syndromes (percent of cases), or Antibiotic resistance (percent of isolates resistant, or the number of isolates)."
+        enum: [{value: Case Rates}, {value: Death Rates}, {value: Serotypes}, {value: Number of Cases and Deaths}, {value: Syndromes}, {value: Antibiotic resistance}]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: topic}
+      - name: viewby
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The first breakdown, which depends on the topic: Overall, Age or Race for case and death rates; an age group for serotype rates; ALL for counts; the syndrome for Syndromes; the antibiotic (as CDC writes it, e.g. Penicillin1, Cefotaxime4, with footnote numbers whose meaning is not in the data) or Number of isolates for Antibiotic resistance."
+        examples: ["Overall", "Age", "Race", "≥65 years old", "ALL", "Meningitis", "Penicillin1", "Number of isolates"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: viewby}
+      - name: viewby2
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "The second breakdown: the age group or race (or Overall) for case and death rates, the vaccine serotype group (All Serotypes, PCV13, PCV15, PCV20, PCV21, PPSV23 Serotypes) for serotype rates, or Total cases, Number of deaths or Number of survivals for counts. Empty where there is no second breakdown."
+        examples: ["≥65 years old", "Overall", "Black", "PCV20 Serotypes", "Total cases", "Number of deaths"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: viewby2}
+      - name: units
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The unit of the figure: Per 100,000 population, Percent, or Counts."
+        enum: [{value: "Per 100,000 population"}, {value: Percent}, {value: Counts}]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: units}
+      - name: value
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "The published figure, in the row's unit: a rate per 100,000 population, a percent, or a count. Empty in a few antibiotic resistance rows (5 of 216 on 2026-11-25), which are never read as zero."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: value}
+          - {property: unit, value: "see units: /100000, % or count"}
+        quality:
+          - id: percents_between_0_and_100
+            dimension: conformity
+            severity: error
+            type: sql
+            description: "A value the publisher's units column gives as Percent (of cases with a syndrome, or of isolates resistant) lies between 0 and 100."
+            query: "SELECT COUNT(*) FROM {object} WHERE units = 'Percent' AND (value < 0 OR value > 100)"
+            mustBe: 0
+          - id: rates_and_counts_not_negative
+            dimension: conformity
+            severity: error
+            type: sql
+            description: "A value the publisher's units column gives as Per 100,000 population or Counts is a rate or a count, so it is never negative."
+            query: "SELECT COUNT(*) FROM {object} WHERE units IN ('Per 100,000 population', 'Counts') AND value < 0"
+            mustBe: 0
+          - id: counts_are_whole_numbers
+            dimension: conformity
+            severity: error
+            type: sql
+            description: "A value the publisher's units column gives as Counts (cases, deaths, survivals, isolates) is a whole number."
+            query: "SELECT COUNT(*) FROM {object} WHERE units = 'Counts' AND value <> floor(value)"
+            mustBe: 0
+          - id: some_values_present
+            dimension: completeness
+            severity: error
+            type: sql
+            description: "Fill rate: an all-empty value column passes every check above, so at least one row must carry a value (1,672 of 1,677 did on 2026-11-25)."
+            query: "SELECT COUNT(*) FROM {object} WHERE value IS NOT NULL"
+            mustBeGreaterThan: 0
+          - id: overall_case_rate_present
+            dimension: completeness
+            severity: warn
+            type: sql
+            description: "Fill rate for the headline series: the overall case rate (topic Case Rates, viewby Overall) has a value in at least one year (every year 1997 to 2024 did on 2026-11-25)."
+            query: "SELECT COUNT(*) FROM {object} WHERE topic = 'Case Rates' AND viewby = 'Overall' AND value IS NOT NULL"
+            mustBeGreaterThan: 0
+    quality:
+      - id: one_row_per_year_and_stratum
+        dimension: uniqueness
+        severity: error
+        type: sql
+        description: "Grain: one published figure per year, topic, view, stratum and unit (an exact structural fact of the full table, 1,677 rows, on 2026-11-25). A repeat would mean two figures for one cell."
+        query: "SELECT COUNT(*) FROM (SELECT year, topic, viewby, viewby2, units FROM {object} GROUP BY year, topic, viewby, viewby2, units HAVING COUNT(*) > 1)"
+        mustBe: 0
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: licenceSource, value: "No licence field in the Socrata metadata (read 2026-11-25); attribution CDC, https://www.cdc.gov/abcs/bact-facts/data-dashboard.html. A CDC work on data.cdc.gov, a US federal work under 17 USC 105. A maintainer confirms the wording (see openQuestions)."}
+  - {property: citation, value: "Centers for Disease Control and Prevention, Active Bacterial Core surveillance. Active Bacterial Core surveillance (ABCs) Streptococcus pneumoniae. https://data.cdc.gov/d/en3s-hzsr. Accessed on <date>."}
+  - {property: refresh, value: annual}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "Each refresh stores the complete table as a dated, append-only load. Incremental loading waits for a reviewed row key and the publisher's update field."
+  - {property: geographyBasis, value: "ABCs surveillance areas: the catchment of the Active Bacterial Core surveillance sites combined, not the United States and not a GBD location; which counties, and when they changed, is not in the data (see openQuestions)"}
+  - {property: rateDenominator, value: "unresolved: per 100,000 population (units column), but which population (the surveillance-area population, or a projection to the United States) and which census estimates are not stated in the data (see openQuestions)"}
+  - {property: unreliableRule, value: {kind: none, description: "None with a threshold: the dataset footnote says small numbers for some topics or filters may make year-to-year changes difficult to interpret, but states no cut-off and marks no value."}}
+  - property: openQuestions
+    value:
+      - "One table mixes rates, counts and percents (topic and units). Each topic is its own measure and is never added. Is every value in a topic the same kind of figure, and does 'Antibiotic resistance' Percent mean resistant or nonsusceptible?"
+      - "The viewby/viewby2 strata and their total rows: do the age groups and race groups add up to Overall, and do Number of deaths and Number of survivals add up to Total cases? Not stated; totalRows marks the labelled totals and nothing is added."
+      - "Which ABCs sites and counties make up the surveillance areas each year, and when did they change? Must come from the ABCs methods (surveillance areas and populations page), not inferred."
+      - "Are the rates crude rates for the surveillance areas, or projected to the United States? ABCs reports publish both kinds. Which one is this table? Until confirmed, nothing here is called a national rate."
+      - "Is the denominator the bridged-race or a Vintage Census population, and which vintage for each year?"
+      - "The revision policy for recent years: are the latest years revised in later releases (rowsUpdatedAt 2026-04-22)?"
+      - "The antibiotic labels carry footnote numbers (Penicillin1, Penicillin2, Tetracycline3, Cefotaxime4) whose meaning (breakpoints, meningitis vs non-meningitis criteria) is not in the data. Needed before any resistance figure is explained."
+      - "5 antibiotic resistance rows have no value (2026-11-25). Not tested that year, suppressed, or not yet available? No missing code is published; the empty value is kept, never read as zero."
+      - "Case definition: invasive pneumococcal disease as ABCs defines it (isolation from a normally sterile site in a surveillance-area resident) and its effective years are in the ABCs reports, not the data; add as caseDefinitions after a maintainer reads them."
+      - "Licence: the Socrata metadata has no licence field (2026-11-25). public-domain-us-federal is assumed from its being a CDC work; a maintainer confirms the wording."
+      - "Proposed GBD keys (catalog gbd.causes): pathogen Streptococcus pneumoniae with causes Lower respiratory infections and Meningitis; bacteremia without focus and sepsis are not GBD causes. No GBD location: the ABCs surveillance areas are a catchment, never 'United States of America'. A maintainer reviews the mapping."
