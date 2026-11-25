@@ -315,7 +315,7 @@ WORKFLOWS: tuple[Workflow, ...] = (
                 "The tool isn't in my chat: tools added during a chat only appear in a new chat; start a new chat."
             ),
             Step(
-                "It says the open data hub has no published release yet: the hub's first data release isn't out. "
+                "It says the open data hub has no published release: the hub couldn't be read just then. "
                 "Nothing is wrong on my side; try again later, or ask a WHO question, which is read live."
             ),
             Step(

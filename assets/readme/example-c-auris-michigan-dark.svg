@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 468" width="660" height="468" role="img" aria-labelledby="t d" font-family="-apple-system, BlinkMacSystemFont, &apos;Segoe UI&apos;, &apos;Noto Sans&apos;, Helvetica, Arial, sans-serif">
+<title id="t">Example answer: clinical C. auris cases in Michigan</title>
+<desc id="d">Bar chart of clinical Candida auris cases reported in Michigan, CDC year-end counts, checked 25 November 2026: 2022, 27; 2023, 103; 2024, 174, provisional; 2025, 178, provisional.</desc>
+<defs><pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="8" height="8" fill="#163b39"/><rect width="3" height="8" fill="#4fbfb6"/></pattern></defs>
+<text x="0" y="36" font-size="32" font-weight="600" fill="#f0f6fc">Clinical <tspan font-style="italic">C. auris</tspan> cases, Michigan</text>
+<text x="0" y="76" font-size="28" fill="#9198a1">Reported each year, CDC year-end counts</text>
+<path d="M58.5 380V353.76Q58.5 349.76 62.5 349.76H102.5Q106.5 349.76 106.5 353.76V380Z" fill="#4fbfb6"/>
+<text x="82.5" y="337.76" font-size="32" font-weight="600" fill="#f0f6fc" text-anchor="middle">27</text>
+<text x="82.5" y="416" font-size="28" fill="#9198a1" text-anchor="middle">2022</text>
+<path d="M223.5 380V268.64Q223.5 264.64 227.5 264.64H267.5Q271.5 264.64 271.5 268.64V380Z" fill="#4fbfb6"/>
+<text x="247.5" y="252.64" font-size="32" font-weight="600" fill="#f0f6fc" text-anchor="middle">103</text>
+<text x="247.5" y="416" font-size="28" fill="#9198a1" text-anchor="middle">2023</text>
+<path d="M388.5 380V189.12Q388.5 185.12 392.5 185.12H432.5Q436.5 185.12 436.5 189.12V380Z" fill="url(#hatch)"/>
+<text x="412.5" y="173.12" font-size="32" font-weight="600" fill="#f0f6fc" text-anchor="middle">174</text>
+<text x="412.5" y="416" font-size="28" fill="#9198a1" text-anchor="middle">2024</text>
+<text x="412.5" y="452" font-size="28" fill="#9198a1" text-anchor="middle">provisional</text>
+<path d="M553.5 380V184.64Q553.5 180.64 557.5 180.64H597.5Q601.5 180.64 601.5 184.64V380Z" fill="url(#hatch)"/>
+<text x="577.5" y="168.64" font-size="32" font-weight="600" fill="#f0f6fc" text-anchor="middle">178</text>
+<text x="577.5" y="416" font-size="28" fill="#9198a1" text-anchor="middle">2025</text>
+<text x="577.5" y="452" font-size="28" fill="#9198a1" text-anchor="middle">provisional</text>
+<path d="M0 380H660" stroke="#3d444d" stroke-width="2"/>
+</svg>

@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The README is rewritten for clinicians: four setup steps that each say what you'll see, a C. auris in
+  Michigan example checked against CDC, and light and dark images from `tools/readme_svg/gen.py`. The setup
+  guide and the Something's wrong helper no longer say the hosted preview can't answer CDC questions.
+
 ### Added
 
 - Condition vocabulary: each catalog entry lists the publisher's own condition labels (`conditions:`, with
