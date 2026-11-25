@@ -144,7 +144,7 @@ of main take the same path.
 - **Locally (fast feedback):** the `pre-push` hook (`make hooks` installs it; `scripts/pre_push_gate.py`) refuses
   a push to a PR branch unless that exact commit has a completed, all-green CI run from a push to `pre-pr/**`
   (asked with `gh api`; any error refuses the push), and runs ruff, mypy and the changed modules' tests before a
-  push to `pre-pr/**`. It is a convenience: `--no-verify` is never used, and the server refuses the same push
+  push to `pre-pr/**`. It is a convenience: the hooks are never bypassed, and the server refuses the same push
   anyway.
 
 The actionlint and shellcheck hooks need `uv sync` first: both tools come from the locked dev environment

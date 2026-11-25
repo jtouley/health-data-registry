@@ -136,10 +136,14 @@ def _lines(text: str | None) -> list[str]:
 
 
 def _locate(text: str | None, needle: str) -> tuple[int, str]:
-    """The first line containing needle, as (1-based number, stripped text); (0, '') if none."""
-    for i, line in enumerate(_lines(text), 1):
-        if needle in line:
-            return i, line.strip()
+    """The first line containing needle, as (1-based number, stripped text); (0, '') if none. A needle of
+    NUL-separated parts means the first line holding every part, else the first holding the first part."""
+    parts = needle.split("\0")
+    lines = _lines(text)
+    for wanted in (parts, parts[:1]):
+        for i, line in enumerate(lines, 1):
+            if all(part in line for part in wanted):
+                return i, line.strip()
     return 0, ""
 
 
@@ -514,7 +518,8 @@ def _ruff_relaxations(before: Mapping[str, Any], after: Mapping[str, Any]) -> li
             out.append((f"ruff {key} gains {code}", f'"{code}"'))
     for key in ("per-file-ignores", "extend-per-file-ignores"):
         for pair in _gained(_pairs(before.get(key)), _pairs(after.get(key))):
-            out.append((f"ruff {key} gains {pair}", f'"{pair.rsplit(": ", 1)[1]}"'))
+            glob, code = pair.rsplit(": ", 1)
+            out.append((f"ruff {key} gains {pair}", f'{glob}\0"{code}"'))
     return out
 
 

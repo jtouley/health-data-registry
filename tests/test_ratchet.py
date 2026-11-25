@@ -467,6 +467,21 @@ def test_tightening_the_toml_passes() -> None:
     assert toml_findings(new.replace("[tool.mypy.overrides]", "[[tool.mypy.overrides]]")) == []
 
 
+def test_a_per_file_ignore_is_located_on_its_own_line() -> None:
+    old = PYPROJECT.replace('"tests/**" = ["S101"]', '"tests/**" = ["S101"]\n"scripts/**" = ["S603"]')
+    new = old.replace('"scripts/**" = ["S603"]', '"scripts/**" = ["S603"]\n"src/x.py" = [\n  "S603",\n]')
+    f = one(toml_findings(new, old=old))
+    assert (f.line, f.text) == (8, '"src/x.py" = [')
+
+
+def test_locate() -> None:
+    text = "a b\nc d\nb c\n"
+    assert r._locate(text, "c\0b") == (3, "b c")
+    assert r._locate(text, "c\0zz") == (2, "c d")
+    assert r._locate(text, "zz\0c") == (0, "")
+    assert r._locate(None, "a") == (0, "")
+
+
 def test_a_ruff_toml_is_read_at_its_top_level() -> None:
     f = one(
         toml_findings(
