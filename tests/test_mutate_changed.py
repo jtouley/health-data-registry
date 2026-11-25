@@ -758,6 +758,7 @@ def test_an_expect_list_mixing_two_splits_of_a_module_fails(mc: ModuleType) -> N
     assert mc.split_gaps([f"{A}#1of2@{'a' * 12}", f"{A}#2of2@{'a' * 12}"]) == []
 
 
+@reads_real_sources  # .github/ is not copied into mutants/
 def test_the_list_job_splits_with_the_shards_python() -> None:
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     list_job = ci.split("  mutation-list:", 1)[1].split("\n  mutation:", 1)[0]
