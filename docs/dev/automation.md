@@ -12,7 +12,7 @@ our own.
 | [`sitemaps.yml`](../../.github/workflows/sitemaps.yml) | Takes a weekly copy of the michigan.gov and kentcountymi.gov seed sitemaps, with the week's diff | Monday 04:43 | Private dataset `jtouley/health-data-registry-ops-sitemaps`; an issue when refused |
 | [`deploy-space.yml`](../../.github/workflows/deploy-space.yml) | Syncs `space/` to the Space that hosts the MCP server | Only on a release tag `vX.Y.Z` on main that passed CI | Space `jtouley/health-data-registry-mcp` |
 | [`drift-check.yml`](../../.github/workflows/drift-check.yml) | `check-contracts` against every publisher, opening or updating an issue on failure; re-enables the scheduled workflows | Friday 05:37 | Issues; workflow enabled state |
-| [`branch-hygiene.yml`](../../.github/workflows/branch-hygiene.yml) | Archive-tags, verifies, then deletes inactive and finished branches; deletes a PR's `pre-pr/` twin when it closes ([branch-hygiene.md](branch-hygiene.md)) | 03:41 daily; when a PR closes | Tags `archive/<branch>/<date>`; branch deletes; the tracking issue |
+| [`branch-hygiene.yml`](../../.github/workflows/branch-hygiene.yml) | Archive-tags, verifies, then deletes inactive and finished branches; deletes a PR's `pre-pr/` twin when it closes ([branch-hygiene.md](branch-hygiene.md)) | 03:41 daily; when a PR closes; after CI on a probe branch | Tags `archive/<branch>/<date>`; branch deletes; the tracking issue |
 | [`cflite_pr.yml`](../../.github/workflows/cflite_pr.yml) | ClusterFuzzLite: builds the Atheris harnesses in `fuzz/` and fuzzes what the change reaches, about 5 minutes per harness | On pull requests, and pushes to `pre-pr/**`, that touch `src/`, `fuzz/` or `.clusterfuzzlite/` | Run artifacts only |
 | [`cflite_batch.yml`](../../.github/workflows/cflite_batch.yml) | ClusterFuzzLite: fuzzes every harness for about 30 minutes each and keeps the grown corpus | Thursday 02:53 | Run artifacts only (the corpus) |
 
@@ -24,7 +24,7 @@ write` is granted only to the jobs that open an issue, `actions: write` only to 
 artifacts) and CI's mutation list job (to find a green pre-pr verdict for the same commit, [the pre-PR
 gate](README.md#the-pre-pr-gate)). The ClusterFuzzLite actions are pinned by SHA too, but they pull OSS-Fuzz's runner images by their
 `v1` tag inside the action, which a workflow can't pin. Every checkout drops its credentials, and no workflow pushes to
-git; only `branch-hygiene.yml` writes refs, through the API (`contents: write` on its sweep and pull-request jobs). Each source has its own concurrency group, and no scheduled workflow's group cancels a running job. The PR
+git; only `branch-hygiene.yml` writes refs, through the API (`contents: write` on its sweep, pull-request and probe jobs). Each source has its own concurrency group, and no scheduled workflow's group cancels a running job. The PR
 fuzzing group (`cflite_pr.yml`) is the exception: a newer push to the same PR or `pre-pr/` branch cancels the
 fuzzing run it supersedes. `HF_TOKEN` is set only on
 the steps that talk to Hugging Face, never job-wide, so dependency installs, the browser and the crawlers'

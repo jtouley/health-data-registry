@@ -1,25 +1,35 @@
-"""Branch hygiene: archive-tag and delete inactive branches, purge listed ones, tag merged PR branches (issue #67).
+"""Branch hygiene: archive-tag, verify, then delete finished and inactive branches (issue #67).
 
 Usage (from .github/workflows/branch-hygiene.yml; GH_TOKEN in the environment):
   python scripts/branch_hygiene.py run --repo OWNER/NAME [--dry-run] --report report.md --changes changes.md
-  python scripts/branch_hygiene.py tag-merged --repo OWNER/NAME --branch B --sha SHA --pr N
+  python scripts/branch_hygiene.py pr-closed --repo OWNER/NAME --branch B --sha SHA --pr N [--merged] --report r.md
+  python scripts/branch_hygiene.py probe-done --repo OWNER/NAME --branch B --sha SHA --report r.md
 
-`run` reads every branch from the GitHub API and decides, for each one, to keep, archive or purge it:
+`run` (the daily sweep, live unless --dry-run) reads every branch and decides to keep, archive or purge it.
 
-- keep: the default branch, protected branches, branches that are the head or base of an open pull request,
-  dependabot/*, the `keep` list in config/branch_keep.yaml, branch names outside a plain character set, and
-  branches with a commit in the last 7 days (unless a wip/* backup whose pull request has merged);
-- archive: create the annotated tag archive/<branch>/<YYYY-MM-DD> at the branch head, check that the tag
-  resolves to that same commit, check that the branch has not moved, and only then delete the branch;
-- purge: delete with no tag (the `purge` list: content that must not stay in the repo).
+Never touched: the default branch; a branch that is protected, by branch protection or by a ruleset that
+restricts deletion (checked through the API for each branch, never assumed); the head or base of an open pull
+request, and the pre-pr/<head> twin of an open pull request's head; dependabot/*; the `keep` list in
+config/branch_keep.yaml; a name outside [A-Za-z0-9._/-]; and any branch pushed to or committed to in the last
+24 hours.
 
-A branch whose tag can't be created or verified is reported and never deleted. Every step is idempotent: a
-second run on the same day finds the tag already in place, checks it, and goes on. `--dry-run` changes nothing
-and reports what a live run would do. The report is Markdown for the tracking issue; branch names in it are
-limited to [A-Za-z0-9._/-], so they can't format the issue or mention anyone.
+Archived (in this order): a CI probe branch (the `probes` patterns); a pre-pr/* or wip/* branch whose head
+commit belongs only to closed pull requests (merged or abandoned); any branch with no push and no commit for
+7 days. Purged: the `purge` list, deleted with no tag because its content must not stay in the repo.
 
-`tag-merged` tags the head of a merged pull request's branch (archive/<branch>/<date>), so every branch the
-repository auto-deletes on merge keeps an archive tag. It never deletes anything, and skips purge-listed branches.
+Archiving a branch: create the annotated tag archive/<branch>/<YYYY-MM-DD> at its head (or reuse that tag; a
+tag is never moved), read the tag back and check that it resolves to the head, re-read the branch and its
+protection, check it has not moved, and only then delete it. A branch whose tag can't be verified, or that
+moved or became protected, is reported and never deleted. Every step is idempotent.
+
+`pr-closed` runs when a pull request closes: when it merged, it tags the head (the repository auto-deletes the
+branch); either way it archives the pull request's pre-pr/<branch> twin, if the twin holds only this pull
+request's commits. `probe-done` runs after CI finishes on a probe branch and archives it, if it still points at
+the commit CI ran on. The protections above apply to both, except the 24-hour rule: these two act on an event
+that says the branch's work is done.
+
+Reports are Markdown (the tracking issue, the job summary): branch names are limited to [A-Za-z0-9._/-] and
+free text loses backticks, @ and angle brackets, so a report can't format the issue or mention anyone.
 """
 
 from __future__ import annotations
@@ -43,14 +53,17 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "config" / "branch_keep.yaml"
-INACTIVE_DAYS = 7
+INACTIVE = timedelta(days=7)
+FRESH = timedelta(hours=24)
+TWIN = "pre-pr/"
 # Branch names this tool will act on: plain characters only, so a name is safe in a tag name, a URL path and
-# the issue report. Any other name is kept and reported.
+# a report. Any other name is kept and reported.
 SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,199}")
 SHA = re.compile(r"[0-9a-f]{40}")
 REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 MAX_REPORT = 60_000  # GitHub caps an issue body at 65,536 characters
 MAX_TAG_DEPTH = 5
+GONE = "gone"  # check_deletable: the branch no longer exists
 
 
 class ApiError(Exception):
@@ -120,7 +133,7 @@ def get_all(api: Api, path: str) -> list[Any]:
 
 
 def safe_name(name: str) -> bool:
-    """True for a branch name this tool will act on (and write into a tag name and the report)."""
+    """True for a branch name this tool will act on (and write into a tag name and a report)."""
     return (
         SAFE_NAME.fullmatch(name) is not None
         and ".." not in name
@@ -131,42 +144,52 @@ def safe_name(name: str) -> bool:
 
 
 def plain(text: str) -> str:
-    """Free text (a reason or an error) on one line, with nothing that could format the report or mention."""
+    """Free text (a reason or an error) on one line, with nothing that could format a report or mention."""
     return re.sub(r"[\r\n`@<>]|::", " ", text)[:300]
 
 
 def shown(name: str) -> str:
-    """A name as it may appear in the report: unsafe characters replaced, cut short."""
+    """A name as it may appear in a report: unsafe characters replaced, cut short."""
     return re.sub(r"[^A-Za-z0-9._/-]", "?", name)[:100]
+
+
+def parse_time(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 @dataclass(frozen=True)
 class Config:
-    keep: dict[str, str]  # pattern -> reason
+    keep: dict[str, str]  # glob -> reason
     purge: dict[str, str]  # exact name -> reason
+    probes: dict[str, str]  # glob -> reason
 
     def kept_by(self, name: str) -> str | None:
-        for pattern, reason in self.keep.items():
-            if fnmatch.fnmatchcase(name, pattern):
-                return reason
-        return None
+        return next((r for p, r in self.keep.items() if fnmatch.fnmatchcase(name, p)), None)
+
+    def probe(self, name: str) -> str | None:
+        return next((r for p, r in self.probes.items() if fnmatch.fnmatchcase(name, p)), None)
+
+
+SECTIONS = ("keep", "purge", "probes")
 
 
 def load_config(path: Path) -> Config:
-    """config/branch_keep.yaml. Strict: every entry has a name and a reason, purge names are exact."""
+    """config/branch_keep.yaml. Strict: known lists only, every entry has a name and a reason, purge names exact."""
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    if not isinstance(data, dict) or set(data) - {"keep", "purge"}:
-        raise ValueError(f"{path}: only `keep` and `purge` lists are allowed")
-    out: dict[str, dict[str, str]] = {"keep": {}, "purge": {}}
-    for section in ("keep", "purge"):
+    if not isinstance(data, dict) or set(data) - set(SECTIONS):
+        raise ValueError(f"{path}: only the lists {', '.join(SECTIONS)} are allowed")
+    out: dict[str, dict[str, str]] = {s: {} for s in SECTIONS}
+    for section in SECTIONS:
         for entry in data.get(section) or []:
             if not isinstance(entry, dict) or not entry.get("name") or not entry.get("reason"):
                 raise ValueError(f"{path}: each `{section}` entry needs a name and a reason")
             name = str(entry["name"])
             if section == "purge" and not safe_name(name):
                 raise ValueError(f"{path}: purge entry {shown(name)!r} is not a plain branch name")
+            if section == "probes" and name.strip("*") == "":
+                raise ValueError(f"{path}: probe pattern {name!r} would match every branch")
             out[section][name] = str(entry["reason"])
-    return Config(keep=out["keep"], purge=out["purge"])
+    return Config(keep=out["keep"], purge=out["purge"], probes=out["probes"])
 
 
 @dataclass(frozen=True)
@@ -190,7 +213,7 @@ class Decision:
 @dataclass(frozen=True)
 class Outcome:
     branch: str
-    action: str  # archived | purged | failed | would-archive | would-purge
+    action: str  # archived | purged | failed | kept | skipped | would-archive | would-purge
     detail: str
     tag: str = ""
 
@@ -215,6 +238,8 @@ def exclusion(name: str, protected: bool, state: RepoState, cfg: Config) -> str 
         return "has an open pull request"
     if name in state.open_bases:
         return "base of an open pull request"
+    if name.startswith(TWIN) and name[len(TWIN) :] in state.open_heads:
+        return "pre-pr twin of an open pull request"
     if name.startswith("dependabot/"):
         return "dependabot branch"
     kept = cfg.kept_by(name)
@@ -225,13 +250,55 @@ def exclusion(name: str, protected: bool, state: RepoState, cfg: Config) -> str 
     return None
 
 
-def merged_pr(api: Api, repo: str, sha: str) -> int | None:
-    """The merged pull request this commit belongs to, if it belongs to no open one."""
+def deletion_rules(api: Api, repo: str, branch: str) -> str | None:
+    """Why a ruleset forbids deleting the branch, or None. An unreadable answer counts as forbidden."""
+    try:
+        rules = api.request("GET", f"/repos/{repo}/rules/branches/{q(branch)}")
+    except ApiError as e:
+        return f"could not read the rulesets for the branch ({e})"
+    if any(r.get("type") == "deletion" for r in rules):
+        return "a ruleset forbids deleting it"
+    return None
+
+
+def check_deletable(api: Api, repo: str, branch: str, sha: str) -> str | None:
+    """Right before a delete: None when the branch still points at `sha` and nothing protects it; GONE when it
+    no longer exists; otherwise why it must be kept. Every error keeps the branch."""
+    try:
+        b = api.request("GET", f"/repos/{repo}/branches/{q(branch)}")
+    except ApiError as e:
+        return GONE if e.status == 404 else f"could not read the branch ({e})"
+    if b.get("protected"):
+        return "the branch is protected"
+    head = str(b["commit"]["sha"])
+    if head != sha:
+        return f"the branch moved to {head}; kept"
+    return deletion_rules(api, repo, branch)
+
+
+def commit_info(api: Api, repo: str, sha: str) -> dict[str, str]:
+    commit = api.request("GET", f"/repos/{repo}/commits/{sha}")["commit"]
+    return {
+        "committed_at": str(commit["committer"]["date"]),
+        "author": str(commit["author"]["name"]),
+        "subject": str(commit["message"]).split("\n", 1)[0][:200],
+    }
+
+
+def last_push(api: Api, repo: str, branch: str) -> datetime | None:
+    """When the branch was last pushed to, created or moved (repository activity), or None if never recorded."""
+    ref = urllib.parse.quote(f"refs/heads/{branch}", safe="")
+    items = api.request("GET", f"/repos/{repo}/activity?ref={ref}&per_page=1&direction=desc")
+    return parse_time(str(items[0]["timestamp"])) if items else None
+
+
+def closed_pr(api: Api, repo: str, sha: str) -> tuple[int, bool] | None:
+    """(number, merged) of the latest pull request this commit belongs to, if it belongs to no open one."""
     pulls = api.request("GET", f"/repos/{repo}/commits/{sha}/pulls")
-    if any(p.get("state") == "open" for p in pulls):
+    if not pulls or any(p.get("state") != "closed" for p in pulls):
         return None
-    merged = sorted(int(p["number"]) for p in pulls if p.get("merged_at"))
-    return merged[-1] if merged else None
+    last = max(pulls, key=lambda p: int(p["number"]))
+    return int(last["number"]), bool(last.get("merged_at"))
 
 
 def decide(
@@ -244,20 +311,29 @@ def decide(
         return Decision(name, sha, "keep", reason)
     if name in cfg.purge:
         return Decision(name, sha, "purge", f"purge list: {cfg.purge[name]}")
-    commit = api.request("GET", f"/repos/{repo}/commits/{sha}")["commit"]
-    when = datetime.fromisoformat(commit["committer"]["date"].replace("Z", "+00:00"))
-    info = {
-        "committed_at": when.date().isoformat(),
-        "author": str(commit["author"]["name"]),
-        "subject": str(commit["message"]).split("\n", 1)[0][:200],
-    }
-    if when < now - timedelta(days=INACTIVE_DAYS):
-        return Decision(name, sha, "archive", f"no commit since {info['committed_at']}", **info)
-    if name.startswith("wip/"):
-        pr = merged_pr(api, repo, sha)
+    try:
+        info = commit_info(api, repo, sha)
+        pushed = last_push(api, repo, name)
+    except ApiError as e:
+        return Decision(name, sha, "keep", f"could not read its last commit or push, so kept ({e})")
+    active = max(t for t in (parse_time(info["committed_at"]), pushed) if t is not None)
+    info["committed_at"] = info["committed_at"][:10]
+    if active > now - FRESH:
+        return Decision(name, sha, "keep", "active in the last 24 hours", **info)
+    probe = cfg.probe(name)
+    if probe is not None:
+        return Decision(name, sha, "archive", f"CI probe branch ({probe})", **info)
+    if name.startswith((TWIN, "wip/")):
+        try:
+            pr = closed_pr(api, repo, sha)
+        except ApiError as e:
+            return Decision(name, sha, "keep", f"could not read its pull requests, so kept ({e})", **info)
         if pr is not None:
-            return Decision(name, sha, "archive", f"wip backup of merged pull request #{pr}", **info)
-    return Decision(name, sha, "keep", f"active: last commit {info['committed_at']}", **info)
+            how = "merged" if pr[1] else "closed without merging"
+            return Decision(name, sha, "archive", f"its pull request #{pr[0]} was {how}", **info)
+    if active < now - INACTIVE:
+        return Decision(name, sha, "archive", f"no push or commit since {active.date().isoformat()}", **info)
+    return Decision(name, sha, "keep", f"active: last push or commit {active.date().isoformat()}", **info)
 
 
 def plan(api: Api, repo: str, cfg: Config, now: datetime) -> list[Decision]:
@@ -312,24 +388,15 @@ def ensure_tag(api: Api, repo: str, tag: str, sha: str, message: str) -> str | N
     return None
 
 
-def head_now(api: Api, repo: str, branch: str) -> str | None:
-    """The branch's current head commit, or None when the branch is gone."""
-    try:
-        return str(api.request("GET", f"/repos/{repo}/branches/{q(branch)}")["commit"]["sha"])
-    except ApiError as e:
-        if e.status == 404:
-            return None
-        raise
-
-
 def delete_branch(api: Api, repo: str, d: Decision) -> str | None:
-    """Delete the branch if it still points at the planned commit. None when deleted (or already gone)."""
+    """Delete the branch if it still points at the planned commit and nothing protects it. None when deleted
+    (or already gone), else why it was kept."""
+    why = check_deletable(api, repo, d.branch, d.sha)
+    if why == GONE:
+        return None
+    if why is not None:
+        return why
     try:
-        now_sha = head_now(api, repo, d.branch)
-        if now_sha is None:
-            return None
-        if now_sha != d.sha:
-            return f"the branch moved to {now_sha} after the plan; kept"
         api.request("DELETE", f"/repos/{repo}/git/refs/heads/{q(d.branch)}")
     except ApiError as e:
         return f"could not delete the branch ({e})"
@@ -345,18 +412,23 @@ def tag_message(d: Decision) -> str:
     )
 
 
+def archive(api: Api, repo: str, d: Decision, day: str) -> Outcome:
+    """Tag, verify the tag, then delete. Any failure keeps the branch and says why."""
+    tag = tag_name(d.branch, day)
+    err = ensure_tag(api, repo, tag, d.sha, tag_message(d))
+    if err is None:
+        err = delete_branch(api, repo, d)
+    return Outcome(d.branch, "failed" if err else "archived", err or d.reason, tag)
+
+
 def apply(api: Api, repo: str, decisions: list[Decision], day: str, dry_run: bool) -> list[Outcome]:
     out: list[Outcome] = []
     for d in decisions:
         if d.action == "archive":
-            tag = tag_name(d.branch, day)
             if dry_run:
-                out.append(Outcome(d.branch, "would-archive", d.reason, tag))
-                continue
-            err = ensure_tag(api, repo, tag, d.sha, tag_message(d))
-            if err is None:
-                err = delete_branch(api, repo, d)
-            out.append(Outcome(d.branch, "failed" if err else "archived", err or d.reason, tag))
+                out.append(Outcome(d.branch, "would-archive", d.reason, tag_name(d.branch, day)))
+            else:
+                out.append(archive(api, repo, d, day))
         elif d.action == "purge":
             if dry_run:
                 out.append(Outcome(d.branch, "would-purge", d.reason))
@@ -364,6 +436,80 @@ def apply(api: Api, repo: str, decisions: list[Decision], day: str, dry_run: boo
             err = delete_branch(api, repo, d)
             out.append(Outcome(d.branch, "failed" if err else "purged", err or d.reason))
     return out
+
+
+def with_commit(api: Api, repo: str, branch: str, sha: str, reason: str) -> Decision:
+    """A Decision to archive `sha`, with the commit details for the tag message when they can be read."""
+    try:
+        info = commit_info(api, repo, sha)
+        info["committed_at"] = info["committed_at"][:10]
+    except ApiError:
+        info = {}  # the tag message then lacks the commit details; the tag itself is what matters
+    return Decision(branch, sha, "archive", reason, **info)
+
+
+def pr_closed(
+    api: Api, repo: str, branch: str, sha: str, pr: int, merged: bool, cfg: Config, day: str
+) -> list[Outcome]:
+    """A pull request closed: tag its head if it merged, and archive its pre-pr/<branch> twin."""
+    if not safe_name(branch) or SHA.fullmatch(sha) is None:
+        return [Outcome(shown(branch), "failed", "unusual branch name or commit id: nothing done")]
+    out: list[Outcome] = []
+    if merged and branch not in cfg.purge:
+        d = with_commit(api, repo, branch, sha, f"merged in pull request #{pr}")
+        tag = tag_name(branch, day)
+        err = ensure_tag(api, repo, tag, sha, tag_message(d))
+        out.append(Outcome(branch, "failed" if err else "tagged", err or d.reason, tag))
+    if branch.startswith(TWIN):
+        return out
+    twin = TWIN + branch
+    try:
+        head = api.request("GET", f"/repos/{repo}/branches/{q(twin)}")
+        state = read_state(api, repo)
+    except ApiError as e:
+        if e.status == 404:
+            return out
+        return [*out, Outcome(twin, "failed", f"could not read the twin branch ({e})")]
+    twin_sha = str(head["commit"]["sha"])
+    reason = exclusion(twin, bool(head.get("protected")), state, cfg)
+    if reason is not None:
+        return [*out, Outcome(twin, "kept", reason)]
+    if twin_sha != sha:
+        try:
+            ours = any(
+                int(p["number"]) == pr for p in api.request("GET", f"/repos/{repo}/commits/{twin_sha}/pulls")
+            )
+        except ApiError as e:
+            return [*out, Outcome(twin, "failed", f"could not read the twin's pull requests ({e})")]
+        if not ours:
+            return [*out, Outcome(twin, "kept", f"its head is not a commit of pull request #{pr}")]
+    how = "merged" if merged else "closed without merging"
+    d = with_commit(api, repo, twin, twin_sha, f"pre-pr twin of pull request #{pr}, {how}")
+    return [*out, archive(api, repo, d, day)]
+
+
+def probe_done(api: Api, repo: str, branch: str, sha: str, cfg: Config, day: str) -> Outcome:
+    """CI finished on a probe branch: archive it if it still points at the commit CI ran on."""
+    if not safe_name(branch) or SHA.fullmatch(sha) is None:
+        return Outcome(shown(branch), "failed", "unusual branch name or commit id: nothing done")
+    probe = cfg.probe(branch)
+    if probe is None:
+        return Outcome(branch, "skipped", "not a probe branch")
+    try:
+        head = api.request("GET", f"/repos/{repo}/branches/{q(branch)}")
+        state = read_state(api, repo)
+    except ApiError as e:
+        if e.status == 404:
+            return Outcome(branch, "skipped", "already deleted")
+        return Outcome(branch, "failed", f"could not read the branch ({e})")
+    reason = exclusion(branch, bool(head.get("protected")), state, cfg)
+    if reason is not None:
+        return Outcome(branch, "kept", reason)
+    if str(head["commit"]["sha"]) != sha:
+        return Outcome(branch, "kept", "pushed again since this CI run; the next run's cleanup handles it")
+    return archive(
+        api, repo, with_commit(api, repo, branch, sha, f"CI probe branch, run finished ({probe})"), day
+    )
 
 
 def restore_command(branch: str, tag: str) -> str:
@@ -376,14 +522,17 @@ def restore_command(branch: str, tag: str) -> str:
 HEADINGS = {
     "archived": "Archived (tagged, verified, then deleted)",
     "purged": "Purged (deleted with no tag)",
+    "tagged": "Tagged (merged pull request; GitHub deletes the branch)",
     "failed": "Not deleted: needs a maintainer",
+    "kept": "Kept",
+    "skipped": "Nothing to do",
     "would-archive": "Would archive (dry run: nothing changed)",
     "would-purge": "Would purge (dry run: nothing changed)",
 }
 
 
 def changes(outcomes: list[Outcome]) -> str:
-    """Markdown lines for what this run did or would do; empty when nothing."""
+    """Markdown for what a run did or would do; empty when nothing."""
     lines: list[str] = []
     for action, heading in HEADINGS.items():
         rows = [o for o in outcomes if o.action == action]
@@ -400,6 +549,11 @@ def changes(outcomes: list[Outcome]) -> str:
     return "\n".join(lines).strip()
 
 
+def counts(outcomes: list[Outcome]) -> str:
+    n = {a: sum(o.action == a for o in outcomes) for a in ("archived", "purged", "failed")}
+    return f"{n['archived']} archived, {n['purged']} purged, {n['failed']} not deleted (needs a maintainer)"
+
+
 def report(
     decisions: list[Decision], outcomes: list[Outcome], *, dry_run: bool, run_url: str, day: str
 ) -> str:
@@ -407,6 +561,8 @@ def report(
     kept = [d for d in decisions if d.action == "keep"]
     body = [
         f"Branch hygiene, {day}, {mode}. Run: {run_url or '(local)'}",
+        "",
+        f"{len(decisions)} branches: {counts(outcomes)}, {len(kept)} kept.",
         "",
         "How it works and how to restore a branch: `docs/dev/branch-hygiene.md`. A restore is:",
         "",
@@ -428,46 +584,24 @@ def report(
     return text
 
 
-def tag_merged(api: Api, repo: str, branch: str, sha: str, pr: int, cfg: Config, day: str) -> Outcome:
-    """Tag a merged pull request's head so the auto-deleted branch keeps an archive tag. Never deletes."""
-    if branch in cfg.purge:
-        return Outcome(branch, "skipped", "purge list: never tagged")
-    if not safe_name(branch) or SHA.fullmatch(sha) is None:
-        return Outcome(branch, "failed", "unusual branch name or commit id: not tagged")
-    tag = tag_name(branch, day)
-    d = Decision(branch, sha, "archive", f"merged in pull request #{pr}")
-    try:
-        commit = api.request("GET", f"/repos/{repo}/commits/{sha}")["commit"]
-        d = Decision(
-            branch,
-            sha,
-            "archive",
-            d.reason,
-            committed_at=str(commit["committer"]["date"])[:10],
-            author=str(commit["author"]["name"]),
-            subject=str(commit["message"]).split("\n", 1)[0][:200],
-        )
-    except ApiError:
-        pass  # the tag message then lacks the commit details; the tag itself is what matters
-    err = ensure_tag(api, repo, tag, sha, tag_message(d))
-    return Outcome(branch, "failed" if err else "archived", err or d.reason, tag)
-
-
 def main(argv: list[str] | None = None, api_factory: Callable[[], Api] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    run = sub.add_parser("run", help="archive or purge branches (live unless --dry-run)")
+    run = sub.add_parser("run", help="the daily sweep (live unless --dry-run)")
     run.add_argument("--dry-run", action="store_true")
-    run.add_argument("--report", type=Path, required=True, help="write the tracking-issue body here")
     run.add_argument("--changes", type=Path, required=True, help="write what changed here (empty if nothing)")
     run.add_argument("--run-url", default="")
-    tm = sub.add_parser("tag-merged", help="tag a merged pull request's branch head")
-    tm.add_argument("--branch", required=True)
-    tm.add_argument("--sha", required=True)
-    tm.add_argument("--pr", type=int, required=True)
-    for p in (run, tm):
+    pc = sub.add_parser("pr-closed", help="a pull request closed: tag a merged head, archive its pre-pr twin")
+    pc.add_argument("--pr", type=int, required=True)
+    pc.add_argument("--merged", action="store_true")
+    pd = sub.add_parser("probe-done", help="CI finished on a probe branch: archive it")
+    for p in (pc, pd):
+        p.add_argument("--branch", required=True)
+        p.add_argument("--sha", required=True)
+    for p in (run, pc, pd):
         p.add_argument("--repo", required=True)
         p.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+        p.add_argument("--report", type=Path, required=True, help="write the Markdown report here")
     a = ap.parse_args(argv)
     if REPO.fullmatch(a.repo) is None:
         ap.error("--repo must be OWNER/NAME")
@@ -482,20 +616,27 @@ def main(argv: list[str] | None = None, api_factory: Callable[[], Api] | None = 
     now = datetime.now(UTC)
     day = now.date().isoformat()
 
-    if a.cmd == "tag-merged":
-        o = tag_merged(api, a.repo, a.branch, a.sha, a.pr, cfg, day)
-        print(f"{shown(o.branch)}: {o.action}: {plain(o.detail)} {shown(o.tag)}".rstrip())
-        return 1 if o.action == "failed" else 0
-
-    decisions = plan(api, a.repo, cfg, now)
-    outcomes = apply(api, a.repo, decisions, day, a.dry_run)
-    a.report.write_text(report(decisions, outcomes, dry_run=a.dry_run, run_url=a.run_url, day=day), "utf-8")
-    a.changes.write_text(changes(outcomes), encoding="utf-8")
+    if a.cmd == "run":
+        decisions = plan(api, a.repo, cfg, now)
+        outcomes = apply(api, a.repo, decisions, day, a.dry_run)
+        text = report(decisions, outcomes, dry_run=a.dry_run, run_url=a.run_url, day=day)
+        a.changes.write_text(changes(outcomes), encoding="utf-8")
+    elif a.cmd == "pr-closed":
+        outcomes = pr_closed(api, a.repo, a.branch, a.sha, a.pr, a.merged, cfg, day)
+        text = (
+            f"Pull request #{a.pr} closed: {counts(outcomes)}.\n\n{changes(outcomes) or 'Nothing to do.'}\n"
+        )
+    else:
+        outcomes = [probe_done(api, a.repo, a.branch, a.sha, cfg, day)]
+        text = f"Probe branch cleanup: {counts(outcomes)}.\n\n{changes(outcomes)}\n"
+    a.report.write_text(text, encoding="utf-8")
+    print(counts(outcomes))
     for o in outcomes:
         print(f"{o.action}: {shown(o.branch)}: {plain(o.detail)}")
         if o.action == "failed":
             print(f"::warning::{shown(o.branch)} was not deleted: {plain(o.detail)}")
-    return 0
+    # The sweep reports a branch it could not delete and goes on; an event job that failed shows red.
+    return 1 if a.cmd != "run" and any(o.action == "failed" for o in outcomes) else 0
 
 
 if __name__ == "__main__":
