@@ -2,13 +2,19 @@ name: CodeQL
 
 on:
   pull_request:
+  # pre-pr/** is the pre-PR gate (CLAUDE.md, "How changes land"): a commit goes green there before it reaches a PR.
   push:
-    branches: [main]
+    branches: [main, "pre-pr/**"]
   schedule:
     - cron: "41 5 * * 3"
 
 permissions:
   contents: read
+
+# A newer push to the same PR or pre-pr branch cancels the superseded run; main and scheduled runs always finish.
+concurrency:
+  group: codeql-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pre-pr/') }}
 
 jobs:
   analyze:

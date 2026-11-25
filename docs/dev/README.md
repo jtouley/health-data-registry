@@ -28,6 +28,7 @@ work is not committed to the PR branch: it stays uncommitted or goes on a separa
 |---|---|
 | `make install` | `uv sync` |
 | `make check` | `lint`, `typecheck`, `test` and `mutate`: everything CI runs |
+| `make precheck` | The pre-PR gate: every CI step locally, stopping at the first failure ([below](#the-pre-pr-gate)) |
 | `make lint` / `make fmt` | Ruff lint and format check / fix |
 | `make typecheck` | mypy, strict |
 | `make test` | Offline tests with coverage; fails under 85% (`COV_FLOOR`) |
@@ -84,6 +85,29 @@ To run the server in Claude Code from a checkout:
 ```bash
 claude mcp add health-data-registry -- uv run --directory "$PWD" health-data-registry serve
 ```
+
+## The pre-PR gate
+
+A pull request's CI should pass the first time. So a commit is checked twice before it reaches a PR branch:
+
+1. **`make precheck`** runs every step CI runs, in order, and stops at the first failure: all pre-commit hooks
+   (actionlint with shellcheck included), lint, typecheck, tests with the coverage floor, the `smoke` target if
+   one exists, the Projects kit build, the docs drift check (`make docs`, then nothing may change), and mutation
+   tests on the modules changed since `BASE` (default `origin/main`), one step per module as CI shards them, then
+   the 70% floor on the total. Each step prints a PASS or FAIL line, and a summary follows. It checks the working
+   tree, so commit first: CI checks the commit you push.
+2. **Push to `pre-pr/<branch>`** (`git push origin HEAD:pre-pr/<branch>`). CI and CodeQL run on every push to
+   `pre-pr/**`, mutation shards included, against `origin/main`. A newer push to the same pre-pr branch cancels
+   the older run. CodeQL and the Python 3.13 test leg run only here.
+3. **When every check is green**, open the PR from that exact commit, or fast-forward the PR branch to it
+   (`git push origin <green sha>:<pr-branch>`). The PR's CI re-runs on the same commit.
+
+Red on the pre-pr branch? Fix it there, run `make precheck` again, and push again. Fix-round commits and merges
+of main take the same path. A red commit never goes to a PR branch.
+
+The actionlint hook needs `uv sync` first: shellcheck comes from the locked dev environment, and the
+`shellcheck-present` hook fails if it is missing, because actionlint would otherwise skip its shell checks
+silently.
 
 ## Architecture
 

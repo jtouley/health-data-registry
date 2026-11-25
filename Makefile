@@ -1,6 +1,6 @@
 # Developer and CI entry points. `make help` lists the targets.
 .DEFAULT_GOAL := help
-.PHONY: help install lint fmt typecheck test test-network mutate docs kit check refresh serve check-contracts eval hooks
+.PHONY: help install lint fmt typecheck test test-network mutate docs kit check precheck refresh serve check-contracts eval hooks
 
 UV ?= uv
 COV_FLOOR ?= 85
@@ -44,6 +44,9 @@ kit: ## Build the Claude Projects kit into KIT_DIR (default dist/projects-kit, n
 	$(UV) run python scripts/write_template.py --kit $(KIT_DIR)
 
 check: lint typecheck test mutate ## Everything CI runs: lint, typecheck, test, mutation tests on changed modules
+
+precheck: ## The pre-PR gate: every CI step locally (hooks, lint, types, tests, kit, docs drift, mutation shards); stops at the first failure
+	UV="$(UV)" MAKE="$(MAKE)" BASE="$(BASE)" COV_FLOOR="$(COV_FLOOR)" MUTATION_FLOOR="$(MUTATION_FLOOR)" bash scripts/precheck.sh
 
 refresh: ## Fetch every catalogued source into the local lake
 	$(UV) run health-data-registry refresh --all

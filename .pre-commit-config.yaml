@@ -26,8 +26,25 @@ repos:
         args: [--fix]
       - id: ruff-format
 
+  # Workflow lint, with shellcheck on every `run:` block (catches SC2015 and friends before CI does). The hook
+  # builds actionlint from this pinned commit (v1.7.9) with Go, which pre-commit installs if it is missing.
+  # shellcheck comes from the locked dev environment (shellcheck-py in uv.lock, so `uv sync` first). actionlint
+  # silently skips shellcheck when it cannot find it, so the local shellcheck-present hook below fails instead.
+  - repo: https://github.com/rhysd/actionlint
+    rev: a443f344ff32813837fa49f7aa6cbc478d770e62 # v1.7.9
+    hooks:
+      - id: actionlint
+        args: [-shellcheck=.venv/bin/shellcheck]
+
   - repo: local
     hooks:
+      # Without this, a missing shellcheck would turn the actionlint hook's shell checks off without a word.
+      - id: shellcheck-present
+        name: shellcheck available for actionlint (uv sync installs it)
+        entry: .venv/bin/shellcheck --version
+        language: system
+        files: ^\.github/workflows/
+        pass_filenames: false
       # Runs in the project's locked environment (uv.lock) with the strict settings in pyproject.toml.
       - id: mypy
         name: mypy (strict, uv run)

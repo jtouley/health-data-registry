@@ -32,9 +32,18 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 
 One review round, one fix round, merge, then follow-ups. We don't get stuck in review rounds.
 
-1. **Pull request.** Every change lands through a pull request; there are no direct pushes to main. Before opening
-   it, `make check` passes (mutation tests on changed modules included) and every commit carries the required
-   trailers. The PR body names the skills used and what each changed.
+1. **Green before the pull request.** Every change lands through a pull request; there are no direct pushes to
+   main. CI must be green before a commit reaches a PR branch ([docs/dev/README.md](docs/dev/README.md#the-pre-pr-gate)):
+   - `make precheck` passes locally: every step CI runs, stopping at the first failure.
+   - Then push the commit to `pre-pr/<branch>` and wait until every CI check there is green. Fix anything red on
+     the pre-pr branch, and go through `make precheck` again.
+   - Only then open the PR, or fast-forward the PR branch, to that exact green commit. The PR's own CI re-runs on
+     the same commit.
+   - Fix-round pushes follow the same path. Merging main into a branch is a change like any other: precheck, then
+     pre-pr, then the PR branch.
+   - Never push a red commit to a PR branch.
+
+   Every commit carries the required trailers, and the PR body names the skills used and what each changed.
    Every commit, by people, subagents and the lead, goes through the pre-commit hooks (`make hooks`); `--no-verify`
    is never used. Unfinished work is not committed to the PR branch: it stays uncommitted or goes on a separate WIP
    branch until it passes the hooks.

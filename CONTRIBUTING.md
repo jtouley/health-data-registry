@@ -28,6 +28,8 @@ publishers and are left out of `make test`; run them with `make test-network`.
 - `make check` passes: ruff lint and format, mypy (strict), pytest with at least 85% coverage, and mutation tests
   (`make mutate`) on the modules you changed, with at least 70% of mutants killed. Kill survivors with a test, or
   say in the pull request why a mutant is equivalent.
+- CI is green before the pull request: `make precheck` passes, then the commit goes green on `pre-pr/<branch>`,
+  and only that commit goes to the PR branch ([the pre-PR gate](docs/dev/README.md#the-pre-pr-gate)).
 - **New features and bug fixes add tests.** A bug fix includes a test that fails without it.
 - No data is committed. Snapshots live in the Hugging Face dataset, and only for sources whose terms allow it
   (see [licenses/README.md](licenses/README.md)). Small hand-written fixtures in `tests/` are the exception.
