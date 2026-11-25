@@ -86,12 +86,14 @@ SEP = "ǁ"
 # run long. quality.py and store.py ran at 18 and 15 a minute on PR #86 (CI run 45572465486; the registry runs
 # every contract's rules when it loads, and most tests build a snapshot), so both 40-minute shards timed out.
 # registry.py's shards of 150 ran past 20 minutes on the same PR, once the registry parsed and guarded every
-# contract quality rule, so its target is 100.
+# contract quality rule, so its target is 100. staging.py's mutants ran at 8 a minute (every snapshot, live read
+# and the dbt generator stage through it), so its single shard timed out: 80 keeps a shard near 10 minutes.
 SHARD_TARGET = 500
 SHARD_TARGET_BY_MODULE = {
     "health_data_registry.registry": 100,
     "health_data_registry.quality": 150,
     "health_data_registry.store": 150,
+    "health_data_registry.staging": 80,
 }
 
 # GitHub runs at most 256 jobs from one matrix.
