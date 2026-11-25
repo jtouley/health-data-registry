@@ -17,3 +17,9 @@
 # A mutation job: <workflow> :: job <id> | needs <job> -> <mutation job> | schedule <cron> | <job>: <command>
 # A removed pre-commit hook: .pre-commit-config.yaml :: hook <id>
 # Say why in a comment above each entry.
+
+# PR #82 (audit #74): Engine._attach_lake turns any failure to check or open one lake snapshot (a damaged manifest
+# can raise AttributeError, KeyError, TypeError, OSError or a DuckDB error) into that source's plain lake_unverified
+# refusal, so one bad local copy never stops the other sources loading; tests/test_audit_74.py
+# (test_audit74_lakeAnyFailure_refusedPlainly) pins it. The same catch-all already guards live and private loads.
+src/health_data_registry/query.py :: except Exception:  # noqa: BLE001 - a damaged manifest or file must not break the other sources
