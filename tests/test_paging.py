@@ -286,7 +286,11 @@ def fake_hf(monkeypatch: pytest.MonkeyPatch, releases: tuple[Registry, dict[str,
             raise OSError("404")
         target = Path(kw["local_dir"]) / filename
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(releases[1][kw["revision"]] / filename, target)
+        part = target.with_name(
+            target.name + ".incomplete"
+        )  # as huggingface_hub does: a temp file, then a move
+        shutil.copyfile(releases[1][kw["revision"]] / filename, part)
+        part.replace(target)  # replaces a read-only verified copy too, as a rename does
         return str(target)
 
     monkeypatch.setattr(huggingface_hub, "hf_hub_download", download)

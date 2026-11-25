@@ -243,7 +243,11 @@ def test_remote_hub_uses_hf_download(tmp_path: Path, reg: Registry, released: Pa
         calls.append((repo, filename, kw))
         target = Path(kw["local_dir"]) / filename
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(released / filename, target)
+        part = target.with_name(
+            target.name + ".incomplete"
+        )  # as huggingface_hub does: a temp file, then a move
+        shutil.copyfile(released / filename, part)
+        part.replace(target)
         return str(target)
 
     import huggingface_hub
