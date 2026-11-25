@@ -713,6 +713,8 @@ def test_guard_quotedStatementWord_isAnOrdinaryName(word: str) -> None:
         "SELECT state AS repeat_row FROM deaths",  # only in DuckDB's own list of table functions
         "SELECT state AS pg_timezone_names FROM deaths",
         "SELECT state AS checkpoint FROM deaths",  # a pragma
+        "SELECT rank() OVER read_csv AS r FROM deaths WINDOW read_csv AS (ORDER BY year)",  # a window name
+        "SELECT rank() OVER (read_csv) AS r FROM deaths WINDOW read_csv AS (ORDER BY year)",
     ],
 )
 def test_guard_functionNameAsName_refused(sql: str) -> None:
@@ -738,6 +740,7 @@ def test_guard_forbiddenFunctionAsAlias_refusedUnquotedAllowedQuoted(fn: str) ->
         'WITH "query" AS (SELECT state FROM deaths) SELECT state FROM "query"',
         'SELECT * FROM deaths AS d("current_setting", b, c, e)',
         'SELECT "range".state FROM deaths AS "range"',
+        'SELECT rank() OVER "glob" AS r FROM deaths WINDOW "glob" AS (ORDER BY year)',
     ],
 )
 def test_guard_quotedFunctionName_isAnOrdinaryName(sql: str) -> None:

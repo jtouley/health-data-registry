@@ -362,10 +362,10 @@ def _looks_like_function(name: str) -> bool:
 
 
 def _is_definition(node: exp.Identifier) -> bool:
-    """The identifier names something the query defines: a column alias, a table alias (or its column list), or
-    a WITH name."""
-    parent = node.parent
-    return isinstance(parent, exp.TableAlias) or (isinstance(parent, exp.Alias) and node.arg_key == "alias")
+    """The identifier names something the query defines: a column alias, a table alias (or its column list), a
+    WITH name, or a named window (WINDOW w AS (...), OVER w). An Identifier sits directly under an Alias or a
+    Window only as that name: the aliased expression and the window's columns are Column nodes."""
+    return isinstance(node.parent, exp.TableAlias | exp.Alias | exp.Window)
 
 
 def _check_name(node: exp.Identifier) -> None:
@@ -381,7 +381,7 @@ def _check_name(node: exp.Identifier) -> None:
     if _is_definition(node) and _looks_like_function(name):
         raise SqlRefused(
             "forbidden_construct",
-            f"{name} looks like the name of a function, so it can't name a column, table or WITH part: choose "
+            f"{name} looks like the name of a function, so it can't name a column, table, window or WITH part: choose "
             f'another name, or put it in double quotes ("{name}").',
         )
 
