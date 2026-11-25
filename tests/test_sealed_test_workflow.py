@@ -158,6 +158,17 @@ def test_the_driver_gets_the_questions_alone(wf: dict[Any, Any]) -> None:
     assert "test.jsonl" not in ask["run"]
 
 
+def test_only_the_harness_installs_the_drivers_eval_group_from_the_lock(wf: dict[Any, Any]) -> None:
+    # eval is not a default group, so the harness must ask for it or the driver can't import its SDK
+    install = next(
+        s
+        for s in wf["jobs"]["evaluate"]["steps"]
+        if s.get("name") == "Install age and the locked dependencies"
+    )
+    assert "(cd harness && uv sync --locked --no-dev --group eval)" in install["run"]
+    assert "(cd server && uv sync --locked --no-dev)" in install["run"]
+
+
 def test_the_inputs_job_checks_the_environment_is_main_only(wf: dict[Any, Any]) -> None:
     run = wf["jobs"]["inputs"]["steps"][-1]["run"]
     assert "custom_branch_policies" in run and '"branch:main"' in run

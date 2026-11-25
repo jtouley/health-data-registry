@@ -233,7 +233,9 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends age
           age --version | tee "$RUNNER_TEMP/age-version.txt"
-          (cd harness && uv sync --locked --no-dev)
+          # The harness runs the driver, so it installs the eval group (the Claude API client), which is not a
+          # default group; the server never needs it.
+          (cd harness && uv sync --locked --no-dev --group eval)
           (cd server && uv sync --locked --no-dev)
 
       - name: Fetch the ciphertext

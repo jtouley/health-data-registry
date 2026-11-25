@@ -232,6 +232,33 @@ def test_score_run_scores_every_label_and_keeps_rows_private(tmp_path: Path) -> 
     assert MARKER not in results.read_text()
 
 
+def test_score_run_skips_the_drivers_header_records(tmp_path: Path) -> None:
+    # Arrange: driver output as eval/drive.py writes it, each file opening with its header record
+    labels, transcript, answers, digest = scored_inputs(tmp_path)
+    header = {scorer.DRIVE_HEADER_KEY: {"model": "synthetic-model", "prompt_version": "0", "protocol": "A"}}
+    write_jsonl(
+        transcript,
+        [header, {"id": "syn-c", "tool": "list_sources", "args": {}, "result": "synthetic result"}],
+    )
+    write_jsonl(
+        answers,
+        [
+            header,
+            {"id": "syn-a", "answer": "No catalogued source covers that."},
+            {"id": "syn-b", "answer": "Ask the IHME GBD connector for Toyland."},
+        ],
+    )
+    results = tmp_path / "results.jsonl"
+
+    # Act
+    scored = score_run(labels, transcript, answers, results, expect_sha=digest)
+
+    # Assert: the header is neither a question nor a stray id, and every label is scored once
+    assert scored == 3
+    rows = [json.loads(x) for x in results.read_text().splitlines()]
+    assert [(r["id"], r["pass"]) for r in rows] == [("syn-a", True), ("syn-b", True), ("syn-c", False)]
+
+
 def test_score_run_refuses_ids_that_are_not_labels(tmp_path: Path) -> None:
     labels, transcript, answers, digest = scored_inputs(tmp_path)
     write_jsonl(answers, [{"id": "stray-1", "answer": "x"}])
