@@ -150,6 +150,13 @@ ALLOWED_IMPORTS = {"__future__", "collections", "collections.abc", "dataclasses"
                    # The HTML reader parse extensions use: a pure parser (checked below), no network or files.
                    "health_data_registry.adapters.html"}  # fmt: skip
 FORBIDDEN_CALLS = {"open", "eval", "exec", "__import__", "input"}
+# Mutation testing runs these tests on a mutated copy of the package, where mutmut adds an import of its own
+# trampoline to every mutated module; that is the test harness, not the extension's code.
+MUTATION_HARNESS = "mutmut."
+
+
+def _allowed(name: str, extra: frozenset[str] = frozenset()) -> bool:
+    return name in ALLOWED_IMPORTS or name in extra or name.startswith(MUTATION_HARNESS)
 
 
 def test_extensions_are_pure() -> None:
@@ -168,7 +175,7 @@ def test_extensions_are_pure() -> None:
                 and node.func.id in FORBIDDEN_CALLS
             ):
                 bad.append(f"{path.name}:{node.lineno} calls {node.func.id}")
-            bad += [f"{path.name}:{node.lineno} imports {n}" for n in names if n not in ALLOWED_IMPORTS]
+            bad += [f"{path.name}:{node.lineno} imports {n}" for n in names if not _allowed(n)]
     assert not bad, "extensions are pure: no network, file system, clock or environment\n" + "\n".join(bad)
 
 
@@ -179,17 +186,17 @@ def test_the_html_reader_extensions_may_use_is_pure() -> None:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     names = [a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names]
     names += [n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
-    allowed = ALLOWED_IMPORTS | {"html.parser"}
-    assert names and not [n for n in names if n not in allowed]
+    assert names and not [n for n in names if not _allowed(n, frozenset({"html.parser"}))]
     calls = [n.func.id for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)]
     assert not set(calls) & FORBIDDEN_CALLS
 
 
 def test_the_purity_lint_catches_an_impure_import() -> None:
-    tree = ast.parse("import socket\nfrom pathlib import Path\nimport time\n")
+    tree = ast.parse("import socket\nfrom pathlib import Path\nimport time\nimport mutmutx\n")
     names = [a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names]
-    names += [n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
-    assert not set(names) & ALLOWED_IMPORTS
+    names += [n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
+    assert not [n for n in names if _allowed(n)]
+    assert _allowed("mutmut.mutation.trampoline")  # the mutation harness only, by its package
 
 
 def test_extension_tests_run_without_sockets(no_sockets: None) -> None:
