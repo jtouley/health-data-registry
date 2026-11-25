@@ -1,6 +1,8 @@
 # One local DuckDB file; nothing here is a secret. HDR_TRANSFORM_DB moves it (default: target/transform.duckdb).
 # HDR_LAKE is the lake the raw sources are read from (default ../lake, relative to transform/; an absolute path is
-# safest). The dbt_raw plugin resolves each raw source to the full load the dataset's LATEST pointer names.
+# safest). HDR_BUILD_PIN is the build's pin (`health-data-registry pin-build`, relative to transform/ or absolute):
+# with it, the dbt_raw plugin reads only the loads the pin names and checks their sha256; without it (a quick local
+# run), the full load each dataset's LATEST pointer names.
 health_data_registry:
   target: local
   outputs:
@@ -13,3 +15,4 @@ health_data_registry:
           alias: hdr_raw
           config:
             lake: "{{ env_var('HDR_LAKE', '../lake') }}"
+            pin: "{{ env_var('HDR_BUILD_PIN', '') }}"

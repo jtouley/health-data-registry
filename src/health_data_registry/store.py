@@ -11,6 +11,8 @@ Layout under the lake root ($HDR_LAKE, default ./lake), partitioned by source an
     raw_records/<id>/<snapshot_id>.ndjson
                                          the parsed publisher records (every value as published text) that the
                                          dbt staging models in transform/ read; full loads only, never partial
+    builds/<build_id>/build.json         a transform build's manifest (build_manifest.py), written by the release
+                                         gate; builds/LATEST names the last build that passed
     fetch_log/source=<id>/run_date=<YYYY-MM-DD>.jsonl
                                          one row per fetch attempt, ok or error: URL, time, status, bytes,
                                          sha256 and the error in plain words
@@ -83,6 +85,9 @@ class Manifest:
     run_date: str | None = None
     release_contract_version: str | None = None
     release_files: dict[str, str] = field(default_factory=dict)  # path in the release -> sha256
+    # The transform build the release carries (build_manifest.py): its id and the sha256 of its build.json.
+    build_id: str | None = None
+    build_manifest_sha256: str | None = None
     notes: list[str] = field(default_factory=list)  # plain-words notes shown with every answer
     quality: dict[str, Any] = field(
         default_factory=dict

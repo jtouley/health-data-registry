@@ -9,6 +9,7 @@ import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -208,3 +209,41 @@ def lake(tmp_path: Path, registry: Registry) -> Path:
         [f],
     )
     return lake
+
+
+# A synthetic code state for builds made in tests: the registry roots tests write are not git checkouts.
+TEST_CODE = {"commit": "0" * 40, "uv_lock_sha256": "1" * 64, "uncommitted_sha256": None}
+TEST_ENGINES = {"python": "3.12.0", "dbt-core": "1.12.7", "dbt-duckdb": "1.10.0", "duckdb": "1.4.0"}
+
+
+def pin_toy_build(registry: Registry, lake: Path) -> dict[str, Any]:
+    """The pinned part of a build of `lake`, with a minimal dbt project in the registry root if it has none."""
+    from health_data_registry import build_manifest as bm
+
+    project = registry.root / bm.DBT_PROJECT
+    if not project.is_file():
+        project.parent.mkdir(parents=True, exist_ok=True)
+        project.write_text("name: toy\nvars:\n  near_zero_ytd_max: 1\n")
+    return bm.pin(registry, lake, code=TEST_CODE, engine_versions=TEST_ENGINES)
+
+
+def pass_toy_build(registry: Registry, lake: Path, *, servable: bool = True) -> str:
+    """Record a build of `lake` that passed (or was held by) the gate, as the gate writes it; returns its id."""
+    from health_data_registry import build_manifest as bm
+    from health_data_registry import release_gate as rg
+
+    pinned = pin_toy_build(registry, lake)
+    build = rg.Build(
+        build_id=bm.build_id_of(pinned),
+        generated_at="2026-11-25T12:00:00Z",
+        dbt_version="1.12.7",
+        invocation_id="inv-toy",
+        models_built=1,
+        tests_passed=1,
+        passed_tests=["toy_cases_has_rows"],
+        data_failures=[] if servable else [{"test": "toy_cases_codes", "failures": 2}],
+    )
+    bm.write_manifest(lake, bm.manifest_of(pinned, build))
+    if servable:
+        bm.point_latest(lake, build.build_id)
+    return build.build_id

@@ -28,7 +28,7 @@ from health_data_registry.publish import (
 )
 from health_data_registry.registry import Registry, load_registry
 from health_data_registry.store import build_snapshot, latest_snapshot, write_ndjson
-from tests.conftest import CATALOG, CONTRACT, RECORDS, SEMANTIC, raw_fetch
+from tests.conftest import CATALOG, CONTRACT, RECORDS, SEMANTIC, pass_toy_build, raw_fetch
 
 RUN = "2026-11-24"
 LISTED_TERMS = "https://www.who.int/about/policies/publishing/data-policy/terms-and-conditions"
@@ -85,6 +85,8 @@ def make_lake(lake: Path, registry: Registry, tmp: Path, *, partial: bool = Fals
         [f],
         partial=partial,
     )
+    if not partial:  # a hub upload carries the build that passed the gate on this lake
+        pass_toy_build(registry, lake)
     return lake
 
 
@@ -499,6 +501,7 @@ def test_upload_one_commit_then_new_tag(tmp_path: Path, hub_registry: Registry, 
     assert paths == [
         "CHANGELOG.md",
         "README.md",
+        "build.json",
         "manifest.json",
         "toy_cases/LICENSE.md",
         "toy_cases/README.md",

@@ -1,5 +1,5 @@
 """Command line: serve [--http], refresh, fetch, export-public, check-contracts, validate, eval,
-publication-outlook, sitemaps snapshot, harvest-doi, and the analysis tools."""
+publication-outlook, sitemaps snapshot, harvest-doi, pin-build, gate, and the analysis tools."""
 
 from __future__ import annotations
 
@@ -69,45 +69,96 @@ def validate(registry: Registry, lake: Path) -> int:
     return 1 if failed else 0
 
 
-def gate(a: Any) -> int:
-    """The release gate: the expected models and tests come from the contracts, and the build id from its inputs
-    (the lake's LATEST snapshots, the contracts and the commit). Anything unreadable holds the release."""
+def pin_build(a: Any) -> int:
+    """Before dbt runs: resolve each stored source's LATEST once and write the build's pinned part, which the
+    dbt_raw plugin then reads instead of LATEST (HDR_BUILD_PIN). Prints the build id."""
     import os
 
+    from health_data_registry import build_manifest as bm
+
+    try:
+        registry = load_registry()
+        pinned = bm.pin(registry, lake_root(), commit=a.commit or os.environ.get("GITHUB_SHA"))
+        build_id = bm.write_pin(a.out, pinned)
+    except (RegistryError, bm.BuildManifestError) as e:
+        print(f"The build was not pinned: {e}.", file=sys.stderr)
+        return 1
+    print(f"Pinned {build_id} in {a.out}:")
+    for line in bm.summary(pinned):
+        print(line)
+    if pinned["code"]["uncommitted_sha256"]:
+        print("Note: the checkout has uncommitted changes, so this build can't be published.")
+    return 0
+
+
+def gate(a: Any) -> int:
+    """The release gate: the expected models and tests come from the contracts; the build id from the pin made
+    before dbt ran, which must match the pin made here from this checkout and lake. Anything unreadable holds the
+    release."""
+    import os
+
+    from health_data_registry import build_manifest as bm
     from health_data_registry.release_gate import (
         GateInputMissing,
-        build_inputs,
         expected_from,
+        hold,
         run,
         run_confirm,
     )
 
     ops = a.ops or lake_root() / "ops"
+    lake = lake_root()
     try:
         registry = load_registry()
         expected = expected_from(registry)
-        commit = a.commit or os.environ.get("GITHUB_SHA")
-        if not commit:  # without the code's commit, builds of different code would share one build id
-            raise ValueError("no commit was given (--commit, or GITHUB_SHA in CI)")
-        inputs = build_inputs(registry, lake_root(), commit)
     except (RegistryError, GateInputMissing, ValueError) as e:
-        print(f"The release is held: the contracts or the lake could not be read ({e}).", file=sys.stderr)
+        print(f"The release is held: the contracts could not be read ({e}).", file=sys.stderr)
         return 1
+    try:
+        pinned = bm.read_pin(a.pin or a.target / bm.PIN_FILE)
+        here = bm.pin(
+            registry,
+            lake,
+            commit=a.commit or os.environ.get("GITHUB_SHA"),
+            engine_versions=pinned["engines"],
+        )
+    except bm.BuildManifestError as e:
+        reason = f"The release is held: {e}."
+        hold(ops, reason)
+        print(reason, file=sys.stderr)
+        return 1
+    problems = [
+        f"the build read other inputs than this checkout and lake hold ({', '.join(diff)})"
+        for diff in [bm.differences(pinned, here)]
+        if diff
+    ]
+    if pinned["code"]["uncommitted_sha256"]:
+        problems.append("the build ran on uncommitted code, and only a build of a commit can be published")
     if a.confirm:
-        ok, message = run_confirm(a.target, ops, a.confirm, expected=expected, inputs=inputs)
+        ok, message = run_confirm(
+            a.target, ops, a.confirm, expected=expected, inputs=pinned, problems=problems, lake=lake
+        )
     else:
-        ok, message = run(a.target, ops, expected=expected, inputs=inputs, run_date=a.run_date)
+        ok, message = run(
+            a.target, ops, expected=expected, inputs=pinned, run_date=a.run_date, problems=problems, lake=lake
+        )
     print(message, file=sys.stdout if ok else sys.stderr)
     return 0 if ok else 1
 
 
 def export_public(
-    registry: Registry, to: str, *, lake: Path, run_date: str | None, tag_file: Path | None = None
+    registry: Registry,
+    to: str,
+    *,
+    lake: Path,
+    run_date: str | None,
+    tag_file: Path | None = None,
+    build: str | None = None,
 ) -> int:
     from health_data_registry.publish import PublishCheckFailed, export_public
 
     try:
-        result = export_public(registry, lake, to, run_date=run_date)
+        result = export_public(registry, lake, to, run_date=run_date, build=build)
     except PublishCheckFailed as e:
         print(f"export stopped: {e}", file=sys.stderr)
         return 1
@@ -326,6 +377,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     ex.add_argument("--to", required=True, help="hf://datasets/<org>/<name>, or a local directory")
     ex.add_argument("--run-date", default=None, help="YYYY-MM-DD; defaults to today (UTC)")
     ex.add_argument(
+        "--build",
+        default=None,
+        help="the build id whose build manifest goes in the release (default for the hub: builds/LATEST, the last "
+        "build that passed the gate)",
+    )
+    ex.add_argument(
         "--tag-file",
         type=Path,
         default=None,
@@ -384,13 +441,31 @@ def main(argv: Sequence[str] | None = None) -> int:
     g.add_argument(
         "--commit",
         default=None,
-        help="the code commit the build ran from (default: $GITHUB_SHA); part of the build's content hash",
+        help="the code commit the build ran from (default: $GITHUB_SHA); must be the checkout's HEAD",
+    )
+    g.add_argument(
+        "--pin",
+        type=Path,
+        default=None,
+        help="the pin `pin-build` wrote before dbt ran (default: <target>/build-pin.json)",
+    )
+    pb = sub.add_parser(
+        "pin-build",
+        help="before dbt runs: pin each source's LATEST load, the contracts, the code and the engines for one build",
+    )
+    pb.add_argument(
+        "--out", type=Path, default=Path("transform/target") / "build-pin.json", help="where to write the pin"
+    )
+    pb.add_argument(
+        "--commit", default=None, help="the commit the build must run from (default: $GITHUB_SHA when set)"
     )
     a = p.parse_args(argv)
     if a.cmd == "publication-outlook":  # reads only the packaged base rates, not the registry
         return publication_outlook(a)
     if a.cmd == "gate":
         return gate(a)
+    if a.cmd == "pin-build":
+        return pin_build(a)
 
     if a.cmd == "sitemaps":  # reads only the seed list, not the registry
         return sitemaps.snapshot(a, error=snap.error)
@@ -423,7 +498,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             lake=lake_root(),
         )  # fmt: skip
     if a.cmd == "export-public":
-        return export_public(registry, a.to, lake=lake_root(), run_date=a.run_date, tag_file=a.tag_file)
+        return export_public(
+            registry, a.to, lake=lake_root(), run_date=a.run_date, tag_file=a.tag_file, build=a.build
+        )
     if a.cmd == "fetch":
         return refresh(registry, [a.source], max_rows=a.max_rows, lake=lake_root())
     ids = sorted(registry.datasets) if a.all else list(a.datasets)
