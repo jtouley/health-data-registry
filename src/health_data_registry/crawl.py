@@ -159,6 +159,7 @@ class Robots:
             )
 
     def _rules(self, host: str) -> RobotFileParser | None:
+        from health_data_registry import deadline
         from health_data_registry.fetch import FetchRefused, fetch
 
         if host in self.rules:
@@ -167,16 +168,19 @@ class Robots:
         for attempt in range(RATE_LIMIT_TRIES):
             retry_after = None
             try:
-                r = fetch(f"https://{host}/robots.txt", allowed_hosts=self.hosts, timeout=ROBOTS_TIMEOUT_S)
+                r = fetch(
+                    f"https://{host}/robots.txt",
+                    allowed_hosts=self.hosts,
+                    timeout=deadline.cap(ROBOTS_TIMEOUT_S),
+                )
                 status, body = r.status, r.content
             except FetchRefused as e:
                 if e.status is None:
                     return None  # can't be read now: asked again on the next fetch
                 status, body, retry_after = e.status, b"", e.retry_after
             finally:
-                self.last[host] = (
-                    self.clock()
-                )  # robots.txt was a request too: the page waits its turn after it
+                # robots.txt was a request too: the page waits its turn after it
+                self.last[host] = self.clock()
             if status != RATE_LIMITED or attempt == RATE_LIMIT_TRIES - 1:
                 break
             floor = self.min_interval if host in self.paced else 0.0
@@ -187,6 +191,9 @@ class Robots:
             )
             if wait > MAX_RETRY_AFTER_S:
                 break  # longer than any wait we make: handled below like an exhausted 429
+            left = deadline.remaining()
+            if left is not None and left <= wait:
+                raise deadline.DeadlineExceeded()  # a hosted call never waits past its deadline
             logger.info("robots.txt at %s answered 429; asking again in %.0f s", host, wait)
             self.sleep(wait)
         blocking = status in BLOCK_STATUSES or status == RATE_LIMITED
@@ -234,8 +241,10 @@ class Robots:
 
     def wait_turn(self, url: str) -> bool:
         """Refuse a blocked host, or a path robots.txt disallows (not on a government host); then wait out the
-        host's pace. Returns True when robots.txt disallowed the path and the government-host policy overrode it.
+        host's pace, within the budget. Returns True when robots.txt disallowed the path and the government-host
+        policy overrode it.
         """
+        from health_data_registry import deadline
         from health_data_registry.fetch import FetchRefused
 
         host = (urlsplit(url).hostname or "").lower()
@@ -259,6 +268,9 @@ class Robots:
             now = self.clock()
             due = self.last[host] + delay - now
             if due > 0:
+                left = deadline.remaining()
+                if left is not None and left <= due:  # inside a hosted call: never sleep past its deadline
+                    raise deadline.DeadlineExceeded()
                 ours = max(0.0, self.last[host] + floor - now)
                 charged = due - ours
                 if self.waited + charged > self.budget:
@@ -345,9 +357,14 @@ def fetcher(
     A 429, on every host, is asked again after its Retry-After (else exponential back-off with ``jitter``), never
     sooner than the host's pace; after RATE_LIMIT_TRIES of them the host is blocked for the run. A 503 is retried
     after its Retry-After (or the usual back-off). A wait longer than ``max_retry_after_s`` stops the fetch in plain
-    words. ``hosts`` narrows the allowlist to one
-    dataset's hosts (a DOI harvest's enrich hosts are reachable only from its own fetcher).
+    words. ``hosts`` narrows the allowlist to one dataset's hosts (a DOI harvest's enrich hosts are reachable only
+    from its own fetcher).
+
+    Inside a call deadline (deadline.call_deadline, the hosted server), every attempt is capped by what is left of
+    the budget and no retry starts once the budget can't cover its back-off: the call stops with
+    deadline.DeadlineExceeded instead of retrying past it.
     """
+    from health_data_registry import deadline
     from health_data_registry.fetch import FetchRefused, fetch
 
     hosts = registry.hosts if hosts is None else hosts
@@ -357,13 +374,11 @@ def fetcher(
     overridden: list[str] = []
     robots_notes = policy.robots_overrides if policy is not None else []
 
-    def one(url: str) -> FetchResult:
+    def one(url: str, timeout: float) -> FetchResult:
         host = (urlsplit(url).hostname or "").lower()
         src = _source_for(registry, url)
         if src is None or not src.browser:
-            return fetch(
-                url, allowed_hosts=hosts, headers={"Accept": "application/json"}, timeout=FETCH_TIMEOUT_S
-            )
+            return fetch(url, allowed_hosts=hosts, headers={"Accept": "application/json"}, timeout=timeout)
         from health_data_registry.browser_fetch import browser_fetch
 
         tableau = src.portal == "tableau"
@@ -372,7 +387,7 @@ def fetcher(
             url,
             allowed_hosts=hosts,
             capture=[TABLEAU_DATA] if tableau else [],
-            timeout=FETCH_TIMEOUT_S,
+            timeout=timeout,
             allow=policy.allowed if policy is not None else None,
         )
         if not tableau:
@@ -415,8 +430,9 @@ def fetcher(
         slow = limited = 0  # failed attempts so far: slow or unreachable (RETRIES), too many requests (429s)
         while True:
             when = datetime.now(UTC)
+            budget = deadline.cap(FETCH_TIMEOUT_S)  # raises DeadlineExceeded when nothing is left
             try:
-                r = one(url)
+                r = one(url, budget)
             except FetchRefused as e:
                 if e.status == RATE_LIMITED:
                     # Owner decision, 25 Nov 2026: a 429 is backed off and asked again on every host; the host is
@@ -439,6 +455,9 @@ def fetcher(
                         raise FetchRefused(
                             "rate_limited", _busy(registry, url, wait), status=e.status, retry_after=wait
                         ) from None
+                    left = deadline.remaining()
+                    if left is not None and left <= wait:
+                        raise deadline.DeadlineExceeded() from e
                     sleep(wait)
                     continue
                 if e.status in BLOCK_STATUSES and e.code != "blocked":
@@ -458,6 +477,9 @@ def fetcher(
                 busy = e.code == "http_error" and e.status == 503
                 slow += 1
                 if (e.code not in ("timeout", "connect_failed") and not busy) or slow >= RETRIES:
+                    left = deadline.remaining()
+                    if e.code == "timeout" and left is not None and left <= 0:
+                        raise deadline.DeadlineExceeded() from e
                     raise e from None
                 wait = MIN_INTERVAL_S * 2 ** (slow - 1) if host in paced else 2.0**slow
                 if busy and e.retry_after is not None:
@@ -466,6 +488,9 @@ def fetcher(
                     raise FetchRefused(
                         "rate_limited", _busy(registry, url, wait), status=e.status, retry_after=wait
                     ) from None
+                left = deadline.remaining()
+                if left is not None and left <= wait:
+                    raise deadline.DeadlineExceeded() from e
                 sleep(wait)
                 continue
             if r.status != 200:

@@ -1,0 +1,1 @@
+SELECT year, rate, lag(rate) OVER (PARTITION BY state ORDER BY year) FROM vax QUALIFY row_number() OVER (ORDER BY year) < 5

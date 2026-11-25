@@ -1,0 +1,1 @@
+SELECT d.state FROM deaths d, vax v WHERE d.state = v.state
