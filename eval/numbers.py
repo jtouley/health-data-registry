@@ -5,15 +5,20 @@ responses and call arguments, so "12" matched inside "2012", and a year in the a
 digits written as a count. Here every number is a token with a value, a precision and a kind:
 
 - N1 Tokens. A number is digits with optional thousands commas and decimals, not glued to a letter, digit,
-  dot, dash, slash or colon on the left (H5N1, v3.2, the 11 in 2026-11-24, 22:01), except the second year of
-  a four-digit range (2022-2023) nor to a letter, digit or a
-  further ".digit" or ":digit" on the right (5huc, 20261124T..., 0.1.0). A following "%" or "percent" makes it a percent.
-  Commas are dropped from the value: 1,234 and 1234 are the same token.
-- N2 Kinds, from the words around the token in the same text:
+  dot, dash, slash or colon on the left (H5N1, v3.2, the 11 in 2026-11-24, 22:01), nor to a letter, digit or a
+  further ".digit" or ":digit" on the right (5huc, 20261124T..., 0.1.0). Three exceptions: a "-" after a space,
+  "(" or the start of the text is a sign ("a -35% change" is -35); both ends of a numeric range or ratio
+  written "a-b", "a–b" or "a/b" are read ("120-150 cases" is 120 and 150, "2022-2023" is 2022 and 2023); and
+  a date (2026-11-24, 11/24/2026) stays unread. A following "%" or "percent" makes it a percent. Commas are
+  dropped from the value: 1,234 and 1234 are the same token.
+- N2 Kinds, from the words around the token in the same text (the second end of a range of years or weeks,
+  "weeks 9-11" or "week 9 to 11", takes the kind of the first):
   `denominator` right after "per" ("per 100,000"): a rate's unit, never checked;
   `time` right after a time or age word ("week 45", "aged 65", "through week 52");
-  `year` a whole number 1900-2100 written without a comma, unless a count word follows it ("2024 cases") and
-  no year preposition precedes it ("in 2024 cases rose" is a year);
+  `year` a whole number 1900-2100 written without a comma or sign, unless a count word follows it ("2024
+  cases") and no year preposition precedes it ("in 2024 cases rose" is a year); a count word only counts when
+  it directly follows the number or one or two words do ("2023 the publisher reports" is a year: "reports" is
+  not a count word);
   `value` everything else, the numbers a reader takes as results.
 - N3 Pools. In a tool response, a CSV block is read by its header: cells under a time column (year, week,
   last_week and so on) go to the time pool, other numeric cells to the value pool. Lines outside CSV blocks are
@@ -22,12 +27,17 @@ digits written as a count. Here every number is a token with a value, a precisio
 - N4 Matching. A `value` token not written as a count also matches a year or week a response returned. A
   `value` token matches a value-pool number equal to it after rounding that number to the
   decimals the answer shows (116 and 116.0 match 116.04; 2.34 matches 2.337, 2.3 does not match 2.337 written
-  as 2.34). A percent also matches a fraction times 100 (12.5% matches 0.125). A `year` or `time` token
+  as 2.34). A number written without a sign also matches a negative one of the same size ("fell 35%" for
+  -35). A percent also matches a fraction times 100 (12.5% matches 0.125). A `year` or `time` token
   matches any number in either pool, exactly. A `denominator` always passes.
 - N5 Allowlist. The baseline's tokens 1, 2, 5, 10, 100 and 100000 pass as values unless a count word follows
   them ("2 cases" is checked; "top 5" and "1 of 10" are not).
 - N6 Derivations. A value that matches no response number passes only as one of `ALLOWED_DERIVATIONS`, the
-  arithmetic the rubric and the semantic models allow; it is reported separately as derived. The forbidden
+  arithmetic the rubric and the semantic models allow; it is reported separately as derived. Weeks are put in
+  numeric order (week 9 before week 10) before runs of weeks are added. A sum across places is tried only
+  over the whole group (total rows left out), over runs of rows in the order the table lists them, and over
+  places the call's filter or the answer names: any other subset would make almost every small integer
+  reachable in a 55-state table. Every candidate sum tried is counted (`SumCounter`). The forbidden
   ones in `FORBIDDEN_DERIVATIONS` are recognised so the report can say why a number failed, and so Target can
   flag a total row or a second series added in.
 """
@@ -46,12 +56,18 @@ type Kind = Literal["value", "year", "time", "denominator"]
 type ColumnKind = Literal["time", "place", "series", "count", "running", "maximum", "rate", "other"]
 
 YEAR_MIN, YEAR_MAX = 1900, 2100
+NUM = r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?"
 TOKEN_RE = re.compile(
-    r"(?<![\w.\-/:])(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\w])(?![.:]\d)"
+    rf"(?:(?<![^\s(\[])(?P<sign>[-\u2212])|(?<![\w.\-\u2212/:]))(?P<num>{NUM})(?![\w])(?![.:]\d)"
     r"(?P<pct>\s?%|\s+per\s?cent\b|\s+percent\b)?",
     re.I,
 )
 YEAR_RANGE_RE = re.compile(r"(?<![\w.])((?:19|20)\d\d)[-\u2013]((?:19|20)\d\d)(?!\w)")
+# N1: "120-150", "120 – 150", "3/10": both ends. Not a date: a third part ("-24", "/2026") stops the match.
+RANGE_RE = re.compile(
+    rf"(?<![\w.\-\u2212/:])(?!(?:19|20)\d\d[-\u2013/]\d\d(?!\d))({NUM})\s?[-\u2013/]\s?({NUM})(?![\w\-\u2013/])(?![.:]\d)"
+)
+TO_BETWEEN_RE = re.compile(r"\s*(?:to|through|-|\u2013)\s*", re.I)
 YEAR_BEFORE_RE = re.compile(r"\b(?:in|from|since|during|until|before|after|between|mmwr year)\s*$", re.I)
 PER_BEFORE_RE = re.compile(r"\bper\s*$", re.I)
 TIME_BEFORE_RE = re.compile(
@@ -123,13 +139,17 @@ def _decimal(text: str) -> Decimal | None:
 
 def tokens(text: str) -> list[Token]:
     """N1-N2: every number in `text`, in order. A four-digit year range ("2022-2023") gives both years."""
-    text = YEAR_RANGE_RE.sub(r"\1 to \2", text)
+    text = RANGE_RE.sub(r"\1 to \2", YEAR_RANGE_RE.sub(r"\1 to \2", text))
     out: list[Token] = []
+    prev_end, prev_kind = -1, ""
     for m in TOKEN_RE.finditer(text):
+        signed = m.group("sign") is not None
         num = m.group("num")
         value = _decimal(num)
         if value is None:  # pragma: no cover - the regex only admits digits, commas and one dot
             continue
+        if signed:
+            value = -value
         before = text[max(0, m.start() - 16) : m.start()]
         after = text[m.end() : m.end() + 40]
         percent = m.group("pct") is not None
@@ -142,6 +162,7 @@ def tokens(text: str) -> list[Token]:
             kind = "time"
         elif (
             not percent
+            and not signed
             and (not count_context or YEAR_BEFORE_RE.search(before) is not None)
             and decimals == 0
             and "," not in num
@@ -151,7 +172,15 @@ def tokens(text: str) -> list[Token]:
             kind = "year"
         else:
             kind = "value"
-        out.append(Token(num, value, decimals, percent, kind, count_context, m.start()))
+        if (
+            prev_kind in ("time", "year")
+            and kind == "value"
+            and not percent
+            and TO_BETWEEN_RE.fullmatch(text[prev_end : m.start()])
+        ):
+            kind = prev_kind  # the second end of "weeks 9-11" or "week 9 to 11" is a week too
+        prev_end, prev_kind = m.end("num"), kind
+        out.append(Token(("-" if signed else "") + num, value, decimals, percent, kind, count_context, m.start()))
     return out
 
 
@@ -282,7 +311,7 @@ def value_matches(tok: Token, pool: Pools) -> bool:
     if not tok.count_context and tok.decimals == 0 and tok.value in pool.response_times:
         return True
     for v in pool.values:
-        if rounds_to(v, tok.decimals, tok.value):
+        if rounds_to(v, tok.decimals, tok.value) or (tok.value >= 0 and v < 0 and rounds_to(-v, tok.decimals, tok.value)):
             return True
         if (
             tok.percent
