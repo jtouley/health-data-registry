@@ -1,5 +1,6 @@
 # Tagged release: vX.Y.Z on a commit of main, with a "## [X.Y.Z]" section in CHANGELOG.md.
 #
+#   mutation-gate  the latest nightly mutation run covering this commit is green, no survivor issue open
 #   build       sdist + wheel (uv build), a CycloneDX SBOM of the locked runtime environment, and the
 #               Claude Projects kit (make kit), zipped for the release
 #   provenance  SLSA v1.0 build provenance (*.intoto.jsonl) for every built file
@@ -22,8 +23,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The release gate (hard rule 13): the latest nightly mutation run covering this commit is green, and no
+  # mutation-survivors issue is open (scripts/mutation_nightly.py gate). Any doubt blocks the release.
+  mutation-gate:
+    name: Mutation gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read # the nightly mutation runs
+      issues: read # open survivor issues
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Nightly mutation run green on this commit, no survivor issue open
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: python3 scripts/mutation_nightly.py gate --repo "${REPO}" --sha "${SHA}"
+
   build:
     name: Build dists and SBOM
+    needs: mutation-gate
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:

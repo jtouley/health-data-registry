@@ -16,12 +16,12 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 |---|---|
 | `make install` | `uv sync` |
 | `make check` | lint, typecheck, test, mutate: the quick local loop, not all of CI |
-| `make precheck` | The pre-PR gate's local half: the CI checks plus a docs-drift check, stopping at the first failure; run before every pre-pr push |
+| `make precheck` | The pre-PR gate's local half: the CI checks plus a generated-files drift check, stopping at the first failure; run before every pre-pr push |
 | `make hooks` | Install the pre-commit hooks (`uv run pre-commit install`); once per checkout |
 | `make test` | Offline tests with coverage, one worker per core (pytest-xdist; floor 85%) |
 | `make test-network` | Live publisher checks in `tests/integration` (marker `network`) |
 | `make smoke` | The C. auris in Michigan journey through the MCP server on a synthetic lake, scored with `eval/scorer.py` (marker `smoke`; [docs/dev/README.md](docs/dev/README.md#smoke-journey)) |
-| `make mutate` | Mutation tests on the functions changed since `BASE` (`scripts/mutate_changed.py`, floor 70%) |
+| `make mutate` | Mutation tests on the functions changed since `BASE` (`scripts/mutate_changed.py`, floor 70%); CI runs them nightly on main |
 | `make docs` | Regenerate `docs/helpers.md`, `template/.claude/skills/`, `plugin/` and the marketplace from `helpers.py`, and the tool lists in README.md, docs/tools.md and this file from the server |
 | `make kit` | Build the Claude Projects kit into `dist/projects-kit/` ([docs/dev/distribution.md](docs/dev/distribution.md)) |
 | `make refresh` / `make serve` | Fetch every source into the lake / run the MCP server on stdio |
@@ -41,13 +41,19 @@ One review round, one fix round, merge, then follow-ups. We don't get stuck in r
    main. CI must be green before a commit reaches a PR branch ([docs/dev/README.md](docs/dev/README.md#the-pre-pr-gate)):
    - Merge `origin/main` into the branch first. A PR's CI tests the branch merged with current main, while a
      pre-pr run tests the branch tip, so the two agree only when the branch already contains main.
-   - `make precheck` passes locally: the CI checks plus a docs-drift check, stopping at the first failure.
+   - `make precheck` passes locally: the CI checks plus a generated-files drift check, stopping at the first
+     failure.
    - Then push the commit to `pre-pr/<branch>` and wait until every CI check there is green. If one is red, fix it
      on the pre-pr branch, run `make precheck` again, and push again.
    - Only then open the PR, or fast-forward the PR branch, to that exact green commit. The PR's CI then reuses the
-     pre-pr mutation verdict instead of running the shards again: only a completed, successful "Mutation tests
-     (changed modules)" from a push to `pre-pr/**` in this repository, for exactly the PR's head SHA, on a PR into
-     main, counts; anything else runs the shards as usual. Every other check still runs on the PR.
+     whole pre-pr verdict instead of running it again: only a completed, successful "CI result" from a push to
+     `pre-pr/**` in this repository, for exactly the PR's head SHA, on a PR into main whose tested merge has the
+     head's own tree, counts, and only while main has a merge queue; anything else runs everything as usual.
+     CodeQL still runs on the PR.
+   - While main has a merge queue, a PR's CI runs only what the change can affect (`scripts/ci_impact.py`) and the
+     queue runs everything before the merge; without a queue, a PR runs everything. Main and nightly run
+     everything. "CI result" is the one required CI check. Mutation tests are not part of CI: they run nightly
+     (hard rule 13).
    - Fix-round pushes follow the same path. Merging main into a branch is a change like any other: precheck, then
      pre-pr, then the PR branch.
 
@@ -227,8 +233,9 @@ These come from the spec and [docs/adr/](docs/adr/README.md). A PR that breaks o
     every refusal are in plain clinical words with a next step: never a stack trace, an HTTP code or a bare
     exception. Every step a clinician takes has a helper; change helper text only in `helpers.py`, then
     `make docs` (a test fails if `docs/helpers.md` drifts). The main path in the README never needs a terminal.
-13. **Mutation tests on what you change.** `make mutate` is part of `make check` and runs in CI on every PR. Kill
-    survivors with a test, or say in the PR why a mutant is equivalent.
+13. **Mutation tests run nightly on everything changed on main**; survivors are killed with a test or explained in
+    an issue before the next release; floor 70%. (`.github/workflows/mutation.yml`; the maintainer's decision of
+    25 Nov 2026. A release waits for the gate in `scripts/mutation_nightly.py`.)
 14. **Sealed sets stay sealed.** Don't read `eval/sealed/` while developing, and never change prompts, contracts or
     metrics because of a held-out result.
 15. **ELT, not ETL** ([ADR 0015](docs/adr/0015-elt-raw-data-stored-as-sent.md), proposed; audit in
