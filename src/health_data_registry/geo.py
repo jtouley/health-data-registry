@@ -114,6 +114,11 @@ def parent_key(key: str) -> str | None:
     return None
 
 
+def is_city(key: str) -> bool:
+    """Is the conformed key a city reported apart from its state (a declared part of a place, e.g. US-36/nyc)?"""
+    return "/" in key
+
+
 def within(outer: str, inner: str) -> bool:
     """Is the place `inner` the place `outer` or a part of it?"""
     k: str | None = inner

@@ -22,6 +22,18 @@ All notable changes to this project are documented here. The format follows
 - `get_series(source_id=...)` honours the source asked for, or refuses in plain words; it never answers from
   another source's labels (#112). `query_sql` on a private abstract source no longer says other tools can answer;
   it says a search tool is planned and where to browse the abstracts for now (#112, #106).
+- `suggest_datasets` routes a literature question (papers, abstracts, prior work, case reports, or a named
+  meeting such as IDWeek) to the conference abstract tables and hands published papers to the PubMed and OpenAlex
+  connectors, with the question's topic as the search (#106, #111). Before, it marked every source "no", or
+  marked surveillance sources "yes, fits" by word overlap. A named meeting narrows the answer to its own table; a
+  meeting with no table here (CROI) goes to the hand-off; a question about how often abstracts became papers points
+  to `get_publication_outlook`.
+- A source that declares only its country or state is "unknown" for a city reported apart from its state
+  (Detroit, New York City), never a fit: NNDSS no longer fits a Detroit question (#111). A question about
+  population reaches the Census denominator, and an RSV question reaches RESP-NET, whose condition words were
+  dropped with its publisher's name.
+- The "Rows cover N condition labels" and "Rows mix measures" notes count only the rows returned, never series
+  that matched but gave no rows (#112).
 - A summed count never adds up labels that overlap or count different things (hard rule 2). Semantic-model
   dimensions say `non_additive: true` or `false`, and each `true` says why in plain words
   (`non_additive_reason`), which the refusal and `describe_dataset` show. A metric or series that neither picks

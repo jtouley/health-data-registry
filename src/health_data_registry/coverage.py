@@ -60,10 +60,12 @@ GENERIC_WORDS = frozenset(
         "in",
         "incidence",
         "infection",
+        "infectious",
         "infections",
         "invasive",
         "isolates",
         "lower",
+        "net",
         "of",
         "other",
         "percent",
@@ -107,12 +109,20 @@ class Coverage:
     year_end: int | None
 
     def holds(self, key: str) -> bool | None:
-        """Does the declared coverage contain the place `key`? None when nothing is declared."""
+        """Does the declared coverage contain the place `key`? None when nothing is declared.
+
+        A city a publisher reports apart from its state (Detroit, New York City) is held only when the city itself
+        is declared: a country or state declaration says which states a source reports, never which cities it
+        reports apart from them, so a nationwide source is "unknown" for a city, never a fit (#111)."""
         if self.everywhere:
             return True
         if self.place_keys is None:
             return None
-        return any(geo.within(outer, key) for outer in self.place_keys)
+        if not any(geo.within(outer, key) for outer in self.place_keys):
+            return False
+        if geo.is_city(key) and not any(geo.is_city(o) and geo.within(o, key) for o in self.place_keys):
+            return None
+        return True
 
     def holds_years(self, start: int | None, end: int | None) -> bool:
         """Do the declared years overlap the years asked for (either end may be open)?"""
@@ -178,8 +188,9 @@ def declared_coverage(ds: Dataset) -> Coverage:
     parts += [s.label for s in ds.semantic.series]
     if "infectious_disease" not in e.research_areas:
         parts = []  # a source outside infectious disease (a population denominator) declares no condition
-    # The publisher's and places' own names sit in labels ("... (Detroit Health Department)"): never a condition.
-    not_conditions = words(f"{e.publisher} {e.agency} {place_words}") | GENERIC_WORDS
+    # The agency's and places' own names sit in labels ("... (Detroit Health Department)"): never a condition. The
+    # publisher's full name is not dropped: it can name the conditions it covers ("RSV-NET", "respiratory").
+    not_conditions = words(f"{e.agency} {place_words}") | GENERIC_WORDS
     return Coverage(
         place_keys=frozenset(keys) if keys or everywhere else None,
         everywhere=everywhere,

@@ -88,6 +88,102 @@ def test_a_gbd_measure_is_handed_to_the_gbd_connector(reg: Registry) -> None:
     assert any(n.startswith("For years of life lost, ask the IHME GBD connector") for n in out["notes"])
 
 
+# --------------------------------------------------------------------------------------------- literature (#106)
+
+
+def _data_sources(registry: Registry) -> list[str]:
+    return [ds.id for ds in registry if ds.id not in ABSTRACTS]
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Has anyone presented abstracts on doxycycline post-exposure prophylaxis for STI prevention?",
+        "Prior work on C. auris in Michigan",
+        "Published papers on antimicrobial stewardship in nursing homes",
+        "Case reports of melioidosis after a hurricane",
+        "Is there literature on syphilis screening in emergency departments?",
+    ],
+)
+def test_a_literature_question_goes_to_the_abstracts_and_the_hand_off(reg: Registry, question: str) -> None:
+    out = _json(tools.suggest_datasets(reg, question, fmt="json"))
+    got = {r[0]: (r[1], r[2]) for r in out["rows"]}
+    assert {ds_id for ds_id, v in got.items() if v[0] == "yes"} == set(ABSTRACTS)
+    for ds_id in _data_sources(reg):
+        assert got[ds_id] == ("no", "holds numbers (counts, rates or populations), not papers or abstracts")
+    assert out["hand_off_to"] == ["pubmed", "openalex"]
+    assert any(n.startswith("For published papers, search your PubMed connector") for n in out["notes"])
+    assert out["notes"][0].startswith("Read as: a literature question")
+    for row in out["rows"]:
+        if row[0] in ABSTRACTS:
+            assert "the title, DOI and link of each" in row[3] and "query_sql" in row[3]
+
+
+def test_the_hand_off_carries_the_topic_not_the_question_words(reg: Registry) -> None:
+    question = "Has anyone presented abstracts on doxycycline post-exposure prophylaxis at IDWeek 2024?"
+    out = _json(tools.suggest_datasets(reg, question, fmt="json"))
+    assert out["notes"][0] == (
+        "Read as: a literature question (papers, abstracts or prior work) about 'doxycycline post-exposure "
+        "prophylaxis', meetings ['IDWeek'], years [2024]."
+    )
+    assert out["notes"][1] == (
+        "For published papers, search your PubMed connector, or OpenAlex if you have it, for 'doxycycline "
+        "post-exposure prophylaxis'. This server lists conference abstracts (title, DOI and link), not papers."
+    )
+
+
+def test_a_named_meeting_narrows_to_its_own_abstracts(reg: Registry) -> None:
+    got = verdicts(reg, "SHEA Spring abstracts on CLABSI in 2022")
+    assert got["shea_abstracts"] == ("yes", "fits")
+    assert got["idweek_abstracts"] == ("no", "holds IDWeek abstracts only, not SHEA Spring")
+    assert got["apic_abstracts"][0] == "no" and got["icid_abstracts"][0] == "no"
+    # Naming the meeting alone makes it a literature question.
+    at_idweek = verdicts(reg, "C. auris at IDWeek")
+    assert at_idweek["idweek_abstracts"] == ("yes", "fits") and at_idweek["cdc_nndss_weekly"][0] == "no"
+
+
+def test_abstract_years_outside_the_table_are_a_no(reg: Registry) -> None:
+    got = verdicts(reg, "SHEA abstracts on CLABSI in 2019")
+    assert got["shea_abstracts"] == ("no", "holds SHEA Spring Conference abstracts for 2020-present only")
+
+
+def test_a_meeting_with_no_table_here_goes_to_the_hand_off(reg: Registry) -> None:
+    out = _json(tools.suggest_datasets(reg, "CROI abstracts on long-acting cabotegravir", fmt="json"))
+    assert "yes" not in {r[1] for r in out["rows"]}
+    assert (
+        "No abstract table here holds CROI: ask PubMed or OpenAlex for its abstracts and papers."
+        in out["notes"]
+    )
+    assert out["hand_off_to"] == ["pubmed", "openalex"]
+
+
+def test_how_often_abstracts_became_papers_points_to_the_outlook(reg: Registry) -> None:
+    out = _json(tools.suggest_datasets(reg, "How often do IDWeek abstracts become full papers?", fmt="json"))
+    assert out["notes"][1] == (
+        "For how often a meeting's presented abstracts became full papers, use get_publication_outlook with "
+        "conference 'IDWeek': it answers from reviewed published base rates."
+    )
+
+
+def test_the_hand_off_shows_in_csv_too(reg: Registry) -> None:
+    out = tools.suggest_datasets(reg, "Prior work on C. auris", fmt="csv")
+    assert isinstance(out, str) and "hand_off_to: pubmed" in out and "hand_off_to: openalex" in out
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Patients presented to the ED with influenza in Detroit",  # "presented to", not "presented at"
+        "AIDS cases in Ohio 2022",  # a condition, never the International AIDS Conference
+        "Chlamydia in California 2023",
+    ],
+)
+def test_a_data_question_is_not_read_as_literature(reg: Registry, question: str) -> None:
+    out = _json(tools.suggest_datasets(reg, question, fmt="json"))
+    assert "hand_off_to" not in out
+    assert not out["notes"][0].startswith("Read as: a literature question")
+
+
 def test_generic_words_alone_never_fit(reg: Registry) -> None:
     got = verdicts(reg, "Cases and deaths per year in Ohio")
     assert "yes" not in {v[0] for v in got.values()}
@@ -106,6 +202,59 @@ def test_a_covered_question_still_fits(reg: Registry) -> None:
         "this source doesn't declare which places it covers yet",
     )
     assert verdicts(reg, "C. auris in Michigan in 2024")["cdc_nndss_weekly"][0] == "yes"
+
+
+@pytest.mark.parametrize(
+    ("question", "source"),
+    [
+        ("Chlamydia in California 2023", "cdc_nndss_weekly"),
+        ("C. difficile infections in the United States 2020", "cdc_haicviz_cdi"),
+        ("Carbapenem-resistant Enterobacterales in Michigan 2021", "cdc_nhsn_ar_hai"),
+        ("RSV hospitalizations in Michigan 2024", "cdc_respnet"),  # "RSV" sits in the publisher's own name
+        ("Tuberculosis incidence by country 2020", "who_gho_tb_incidence"),
+        ("Population of Michigan in 2022", "census_county_pop"),
+        ("Population of Ohio counties 2023", "census_county_pop"),
+    ],
+)
+def test_a_question_reaches_its_source(reg: Registry, question: str, source: str) -> None:
+    out = _json(tools.suggest_datasets(reg, question, fmt="json"))
+    assert out["rows"][0][:3] == [source, "yes", "fits"], out["rows"][:3]
+
+
+@pytest.mark.parametrize(
+    ("question", "source"),
+    [
+        ("Tuberculosis in Detroit 2023", "detroit_dhd_epi_annual"),
+        ("COVID-19 cases in Detroit 2021", "detroit_dhd_covid_archive_daily"),
+        ("Influenza emergency department visits in Detroit 2026", "detroit_dhd_resp_ed_weekly"),
+        ("Measles in Michigan 2026", "mdhhs_measles_county"),
+    ],
+)
+def test_a_local_question_reaches_its_source_as_unknown_until_places_are_declared(
+    reg: Registry, question: str, source: str
+) -> None:
+    """The city and state dashboards declare no places yet, so they are offered as unknown: never left out, and
+    never ranked under a source that can't answer."""
+    rows = _json(tools.suggest_datasets(reg, question, fmt="json"))["rows"]
+    order = [r[0] for r in rows]
+    assert tuple(rows[order.index(source)][1:3]) == (
+        "unknown",
+        "this source doesn't declare which places it covers yet",
+    )
+    assert all(r[1] != "no" for r in rows[: order.index(source)])
+
+
+def test_a_nationwide_source_is_unknown_for_a_city(reg: Registry) -> None:
+    """A country declaration says nothing about which cities a source reports apart from their states."""
+    got = verdicts(reg, "Tuberculosis in Detroit 2023")
+    assert got["cdc_nndss_weekly"] == (
+        "unknown",
+        "covers the United States, but doesn't declare which cities it reports apart from their states, so not "
+        "whether it reports Detroit",
+    )
+    assert got["cdc_respnet"][0] == "no" and "city" in got["cdc_respnet"][1]  # its levels stop at state
+    assert "cities" not in got["cdc_respnet"][1]
+    assert "yes" not in {v[0] for v in got.values()}
 
 
 def test_a_source_without_declared_places_is_unknown(tmp_path: Path) -> None:
@@ -183,7 +332,8 @@ def test_a_fixed_place_is_declared_coverage(reg: Registry) -> None:
 
 def test_declared_coverage_from_the_catalog(reg: Registry) -> None:
     nndss = coverage.declared_coverage(reg.get("cdc_nndss_weekly"))
-    assert nndss.place_keys == {"USA"} and nndss.nationwide and nndss.holds("US-36/nyc")
+    assert nndss.place_keys == {"USA"} and nndss.nationwide and nndss.holds("US-36")
+    assert nndss.holds("US-36/nyc") is None  # which cities it reports apart from their states isn't declared
     assert nndss.place_words == "the United States"
     assert {"legionella", "candida", "syphilis"} <= nndss.condition_words  # GBD crosswalk pathogens count too
     assert nndss.holds_years(2020, 2023) and nndss.holds_years(2030, None) and nndss.holds_years(2022, 2022)
@@ -334,3 +484,21 @@ def test_an_mdhhs_read_with_no_suppressed_county_loads(reg: Registry) -> None:
         for county, total, outbreak in (("Wayne", "3", "2"), ("Kent", "1", "0"))
     ]  # fmt: skip
     assert load_live(duckdb.connect(":memory:"), ds, rows).staging.row_count == 2
+
+
+def test_a_live_state_source_is_not_read_for_a_city_it_does_not_declare(reg: Registry) -> None:
+    from dataclasses import replace
+
+    ds = reg.get("detroit_dhd_epi_annual")
+    place = {"match": "fixed", "fixed": {"name": "Michigan", "key": "US-26"}}
+    schema = {**ds.contract.raw["schema"][0], "customProperties": [{"property": "conformedDimensions",
+                                                                     "value": {"place": place}}]}  # fmt: skip
+    state_only = replace(ds, contract=replace(ds.contract, raw={**ds.contract.raw, "schema": [schema]}))
+    assert tools.not_read_live(state_only, ["Michigan"]) is None
+    assert tools.not_read_live(state_only, ["Detroit"]) == (
+        "detroit_dhd_epi_annual was not read for Detroit: it covers Michigan, and which cities it reports apart "
+        "from their states isn't declared. Ask again for the state, or without places."
+    )
+    assert tools.not_read_live(state_only, ["Ohio"]) == (
+        "detroit_dhd_epi_annual was not read for Ohio: it covers Michigan only."
+    )

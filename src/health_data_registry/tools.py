@@ -729,6 +729,36 @@ _GBD_MEASURE = re.compile(
     r"life expectancy|burden of disease)\b",
     re.IGNORECASE,
 )
+# A question about the literature (papers, abstracts, prior work), not about counts: it goes to the conference
+# abstract tables here and to the fellow's own PubMed and OpenAlex connectors, never to a surveillance source.
+_LITERATURE = re.compile(
+    r"\b(abstracts?|papers?|publications?|literature|prior work|previous work|presented at|posters?|"
+    r"case reports?|case series|systematic reviews?|meta-analys[ie]s|articles?|preprints?|"
+    r"has anyone (?:published|presented|reported|studied|written|looked)|published (?:on|about|work|studies))\b",
+    re.IGNORECASE,
+)
+# How often abstracts became papers: get_publication_outlook answers that here, from its reviewed base rates.
+_OUTLOOK = re.compile(
+    r"\b(?:became|become|becomes|turned into|go on to be|went on to be|end up as|published as)\b"
+    r"[^.?]*\b(?:papers?|publications?|articles?|published)\b",
+    re.IGNORECASE,
+)
+# A meeting alias that is also a condition's name is never read as a meeting on its own.
+_NOT_A_MEETING = frozenset(["aids"])
+# Words of a literature question that say what kind of answer is wanted, never what it is about.
+_LITERATURE_WORDS = frozenset(
+    [
+        "abstract", "abstracts", "paper", "papers", "publication", "publications", "published", "literature",
+        "prior", "previous", "work", "presented", "presentation", "presentations", "poster", "posters", "report",
+        "reports", "reported", "series", "systematic", "review", "reviews", "meta-analysis", "meta-analyses",
+        "article", "articles", "preprint", "preprints", "anyone", "studied", "written", "looked", "studies",
+        "study", "conference", "conferences", "meeting", "meetings", "any", "about", "there", "been", "what",
+        "which", "who", "were", "share", "proportion", "percent", "often", "many", "much", "went", "go", "goes",
+        "become", "became", "becomes", "turned", "into", "end", "up", "full", "later", "eventually",
+    ]
+)  # fmt: skip
+# The connectors a literature question is handed to: the fellow's own, named here and never called by this server.
+LITERATURE_CONNECTORS = ("pubmed", "openalex")
 # Words a question uses that are neither a place nor a condition, so a capitalised one is never read as a place.
 _QUESTION_WORDS = frozenset(
     [
@@ -755,12 +785,123 @@ def _level(key: str) -> str:
     return "nation" if key == geo.NATION_KEY else "city" if "/" in key else "state"
 
 
+def _meeting_of(ds: Dataset) -> str | None:
+    """The meeting whose abstracts a source lists (the publication outlook's name for it), else None."""
+    from health_data_registry.publication import find_conference  # publication imports this module
+
+    key = ds.entry.source.conference
+    if ds.entry.source.portal != "doi" or not key:
+        return None
+    found = find_conference(key)
+    return found.name if found else ds.entry.source.conference_name or key
+
+
+def _meetings_named(registry: Registry, question: str) -> tuple[list[str], list[str]]:
+    """The meetings a question names, by the publication outlook's names and aliases or an abstract source's own
+    conference name, in the order they appear; and the words that named them."""
+    from health_data_registry.publication import load_base_rates  # publication imports this module
+
+    terms: dict[str, str] = {}
+    for c in load_base_rates().conferences:
+        for t in (c.name, c.full_name, *c.aliases):
+            if t.lower() not in _NOT_A_MEETING:
+                terms[t.lower()] = c.name
+    for ds in registry:
+        if (m := _meeting_of(ds)) and ds.entry.source.conference_name:
+            terms[ds.entry.source.conference_name.lower()] = m
+    found: dict[int, str] = {}  # where each name starts in the question -> the words as written
+    for t in sorted(terms, key=len, reverse=True):  # the longest name first, so "SHEA Spring" beats "SHEA"
+        for hit in re.finditer(rf"(?<![\w/&]){re.escape(t)}(?![\w/&])", question, re.IGNORECASE):
+            if not any(s <= hit.start() < s + len(w) for s, w in found.items()):
+                found[hit.start()] = hit.group(0)
+    said = [found[i] for i in sorted(found)]
+    return list(dict.fromkeys(terms[w.lower()] for w in said)), said
+
+
+def _literature_search(question: str, meeting_words: Sequence[str]) -> str:
+    """The question's own topic words, in its order, for the hand-off: what kind of answer is wanted, which meeting
+    and the question's filler words are left out."""
+    drop = _STOP | _QUESTION_WORDS | _LITERATURE_WORDS | {w.lower() for m in meeting_words for w in m.split()}
+    kept = [w for w in re.findall(r"[A-Za-z0-9][\w.\-]*[\w]|[A-Za-z0-9]", question) if w.lower() not in drop]
+    return " ".join(w for w in kept if not re.fullmatch(r"(19|20)\d\d", w))
+
+
+def _literature_row(
+    ds: Dataset, meetings: Sequence[str], y0: int | None, y1: int | None
+) -> tuple[str, str, str]:
+    """A source's verdict on a literature question: (can_answer, why, what_it_supports). Only a conference abstract
+    table can hold the answer; a surveillance source holds numbers, never papers or abstracts."""
+    e = ds.entry
+    meeting = _meeting_of(ds)
+    if meeting is None:
+        return "no", "holds numbers (counts, rates or populations), not papers or abstracts", ""
+    name = e.source.conference_name or meeting
+    supports = (
+        f"{name} abstracts, {_years(ds)}: the title, DOI and link of each. Search the titles with query_sql for "
+        "now; find_prior_work doesn't search this table yet"
+    )
+    if meetings and meeting not in meetings:
+        return "no", f"holds {name} abstracts only, not {', '.join(meetings)}", supports
+    if y0 is not None and not coverage.declared_coverage(ds).holds_years(y0, y1):
+        return "no", f"holds {name} abstracts for {_years(ds)} only", supports
+    return "yes", "fits", supports
+
+
+def _suggest_literature(
+    registry: Registry, question: str, meetings: list[str], meeting_words: list[str], years: list[int],
+    engine: Engine | None, fmt: Fmt,
+) -> Out:  # fmt: skip
+    """suggest_datasets for a question about papers, abstracts or prior work: the conference abstract tables here,
+    then the hand-off to the fellow's PubMed and OpenAlex connectors for published papers."""
+    y0, y1 = (min(years), max(years)) if years else (None, None)
+    rows: list[list[Any]] = []
+    for ds in registry:
+        can, why, supports = _literature_row(ds, meetings, y0, y1)
+        rows.append([ds.entry.id, can, why, supports, *provenance_fields(ds, engine).values()])
+    rank = {"yes": 0, "unknown": 1, "no": 2}
+    rows.sort(key=lambda r: (rank[r[1]], r[0]))
+    search = _literature_search(question, meeting_words)
+    held = {m for ds in registry if (m := _meeting_of(ds))}
+    notes = [
+        f"Read as: a literature question (papers, abstracts or prior work) about '{search or 'no topic named'}', "
+        f"meetings {meetings or 'any'}, years {years or 'any'}.",
+        "For published papers, search your PubMed connector, or OpenAlex if you have it"
+        + (f", for '{search}'" if search else "")
+        + ". This server lists conference abstracts (title, DOI and link), not papers.",
+    ]
+    if outside := [m for m in meetings if m not in held]:
+        notes.append(
+            f"No abstract table here holds {', '.join(outside)}: ask PubMed or OpenAlex for its abstracts and papers."
+        )
+    if _OUTLOOK.search(question):
+        notes.insert(
+            1,
+            "For how often a meeting's presented abstracts became full papers, use get_publication_outlook"
+            + (f" with conference '{meetings[0]}'" if meetings else "")
+            + ": it answers from reviewed published base rates.",
+        )
+    notes.append(NO_PATIENT_DATA)
+    return Result(
+        ["source_id", "can_answer", "why", "what_it_supports", *PROVENANCE_COLUMNS],
+        rows,
+        notes,
+        extra={"presentation_rules": PRESENTATION_RULES, "hand_off_to": list(LITERATURE_CONNECTORS)},
+    ).render(fmt)
+
+
 def suggest_datasets(
     registry: Registry, question: str, *, engine: Engine | None = None, fmt: Fmt = "csv"
 ) -> Out:
     """Which sources' declared coverage (coverage.declared_coverage) holds the question's place, condition and
     years. A place that can't be read, or a source whose coverage isn't declared, is "unknown", never a fit; a
-    fit needs a condition word the source declares, never a generic word alone ("cases", "years", "lost")."""
+    fit needs a condition word the source declares, never a generic word alone ("cases", "years", "lost").
+
+    A question about papers, abstracts or prior work, or one that names a meeting, is routed to the conference
+    abstract tables and handed to the PubMed and OpenAlex connectors instead (_suggest_literature)."""
+    meetings, meeting_words = _meetings_named(registry, question)
+    if meetings or _LITERATURE.search(question):
+        years_asked = [int(y) for y in re.findall(r"\b(19[5-9]\d|20[0-4]\d)\b", question)]
+        return _suggest_literature(registry, question, meetings, meeting_words, years_asked, engine, fmt)
     named, rest = geo.places_named(question)
     place_names = [n for n, _ in named]
     unplaced = _unplaced(registry, rest)
@@ -775,6 +916,7 @@ def suggest_datasets(
     specific = coverage.words(low) - not_topic - STOP_WORDS - coverage.GENERIC_WORDS - _STOP
     specific = {w for w in specific if not w.isdigit()}
     gbd_measure = _GBD_MEASURE.search(question)
+    asks_population = re.search(r"\b(populations?|denominators?|residents)\b", low) is not None
     rows: list[list[Any]] = []
     for ds in registry:
         e = ds.entry
@@ -786,6 +928,8 @@ def suggest_datasets(
             why_not.append(
                 f"{gbd_measure.group(0).lower()} is a modelled GBD estimate, which no source here holds"
             )
+        elif asks_population and "denominator" in e.research_areas:
+            pass  # a population denominator answers a question about population, whatever the condition
         elif not specific:
             unknown.append("the question names no specific condition (a disease or pathogen)")
         elif not cov.condition_words:
@@ -797,6 +941,12 @@ def suggest_datasets(
         held = {name: cov.holds(key) for name, key in named}
         if outside := [n for n, h in held.items() if h is False]:
             why_not.append(f"covers {cov.place_words} only, not {', '.join(outside)}")
+        elif cov.place_keys is not None and (cities := [n for n, h in held.items() if h is None]):
+            if "city" in e.geography:  # otherwise its levels already say no, below
+                unknown.append(
+                    f"covers {cov.place_words}, but doesn't declare which cities it reports apart from their "
+                    f"states, so not whether it reports {', '.join(cities)}"
+                )
         elif any(h is None for h in held.values()) or (not named and cov.place_keys is None):
             unknown.append("this source doesn't declare which places it covers yet")
         elif not named and not cov.nationwide:
@@ -1098,11 +1248,12 @@ def get_series(
         return matched_nothing(engine, ran, condition, locations, year_start, year_end, fmt)
     if not rows and not ran and not failed:
         return place_not_covered(condition, locations, not_read, fmt)
-    if len({s.measure for _, s in matches}) > 1:
+    # Counted over the rows returned, never over series that matched but gave none (#112).
+    if len({r[columns.index("measure")] for r in rows}) > 1:
         notes.insert(
             0, "Rows mix measures (see the measure column); never compare or add them across measures."
         )
-    labels = sorted({s.label for _, s in matches})
+    labels = sorted({r[columns.index("condition")] for r in rows})
     conditions = {spelling_key(x) for x in labels}
     if len(conditions) > 1:
         notes.insert(
@@ -1161,6 +1312,11 @@ def not_read_live(ds: Dataset, locations: Sequence[str]) -> str | None:
         return (
             f"{ds.id} was not read for {asked}: it is read live from {ds.entry.publisher}, and which places it "
             "covers isn't declared yet. Ask again without places to read it."
+        )
+    if any(geo.is_city(k) for k in (geo.key_for(loc) for loc in locations) if k is not None):
+        return (
+            f"{ds.id} was not read for {asked}: it covers {cov.place_words}, and which cities it reports apart "
+            "from their states isn't declared. Ask again for the state, or without places."
         )
     return f"{ds.id} was not read for {asked}: it covers {cov.place_words} only."
 
