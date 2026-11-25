@@ -45,7 +45,7 @@ eval [--sealed DIR] [--run FILE]`. `fetch <source>` refreshes one source. `expor
 whose licence allows redistribution to the open data hub (cards, licence text, Parquet, `manifest.json`, tag
 `release-<run date>`), lists the rest with a card and no data, and stops if a pre-publish check fails; it needs
 `HF_TOKEN` only for an `hf://` target. `validate` loads and cross-checks every catalog entry, contract and
-semantic model.
+semantic model, and every data product and contract against Bitol's vendored ODPS and ODCS schemas.
 
 The lake lives at `$HDR_LAKE` (default `./lake`, ignored by git), partitioned by source and run date
 (`datasets/<id>/run_date=<date>/<snapshot>/`), with raw bytes under `raw/<sha256>` and one fetch-log row per
@@ -78,6 +78,8 @@ reading the pinned release, or attaching the downloaded file by hand.
 The scheduled refresh, crawls, sitemap snapshots, publishing and Space deploy run on GitHub Actions;
 [automation.md](automation.md) lists each workflow, its schedule and limits, and the secrets and variables it
 needs. Every Hugging Face repository is named by one convention, built in `naming.py`: see [naming.md](naming.md).
+The three ODPS data products, their ports, tiers and port contracts are described in
+[data-products.md](data-products.md).
 
 To run the server in Claude Code from a checkout:
 

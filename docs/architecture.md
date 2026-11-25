@@ -42,7 +42,7 @@ layer because it checks the same catalog and semantic layer the tools use.
 | `publish.py` | `export-public`: hub release with cards, licence texts, Parquet and `manifest.json`; listed-not-hosted cards; pre-publish checks; upload and `release-<run date>` tag |
 | `hub.py` | The hosted read path: immutable hub release, sha256 check, fail-closed contract check, bounded cache |
 | `live.py` | Restricted-licence sources (WHO GHO): read live from the publisher per question, in memory only, never written to disk |
-| `product.py` | Reads the ODPS data product (`contracts/health-data-registry.odps.yaml`) and its output ports |
+| `product.py` | Reads the ODPS data products (`contracts/*.odps.yaml`) and their output ports; validates them and every contract against Bitol's vendored schemas ([data-products.md](dev/data-products.md)) |
 | `fetch.py` | HTTPS-only fetches to catalogued, publicly routable publisher hosts |
 | `geo.py` | One place whatever the publisher calls it; GBD location names |
 | `evaluation.py` | Sealed blind sets, the scorer and the release gate |

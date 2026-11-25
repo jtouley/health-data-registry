@@ -8,6 +8,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Two more ODPS data products, both draft stubs until their sources are catalogued: ID conference abstracts (a
+  public index of titles, authors, links and DOIs, and abstract text in a private tier that is never published) and
+  Michigan HIV data (MDHHS, Detroit Ryan White and EHE as programme data, AHEAD Wayne, AIDSVu private; grouped,
+  never merged). Each port has its own ODCS contract, tier, release tag, SLA and a contract-finding issue form.
+- `validate` checks every data product and contract against Bitol's official ODPS v1.1.0 and ODCS v3.2.0 JSON
+  schemas, vendored with their source URL and sha256.
 - Condition vocabulary: each catalog entry lists the publisher's own condition labels (`conditions:`, with
   where they come from), and `get_series`, `get_rate` and `get_trend` accept any of them through the semantic
   model's `generic_series`, with the same aggregation rules as the named series. `validate` fails when a local
