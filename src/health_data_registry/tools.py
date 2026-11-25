@@ -340,7 +340,11 @@ def series_for(
     for ds in registry:
         if source_id and ds.id != source_id:
             continue
-        named = [s for s in ds.semantic.series if _names_match(want, {s.condition, s.label})]
+        named = [
+            s
+            for s in ds.semantic.series
+            if _names_match(want, {s.condition, s.label}) and _asked_with(want, s)
+        ]
         if named:
             found += [(ds, s) for s in named if fits(s)]
             continue
@@ -348,6 +352,11 @@ def series_for(
         for label in catalogued_labels(ds, condition):
             found += [(ds, s) for s in ds.condition_series(label) if fits(s)]
     return found
+
+
+def _asked_with(want: str, s: Series) -> bool:
+    """Whether the words asked use one of the series' asked_with words (always, when it names none)."""
+    return not s.asked_with or bool(set(want.split()) & {norm_label(w) for w in s.asked_with})
 
 
 def _names_match(want: str, names: set[str]) -> bool:
@@ -1026,8 +1035,8 @@ def get_series(
         )
     notes[0:0] = spelling_notes(labels)
     notes.append(
-        "lower and upper are the publisher's own uncertainty bounds, shown only where published; observed counts "
-        "have none. An empty value is never a zero: where the publisher gives a reason, it is in the flag column."
+        "lower and upper are the publisher's own uncertainty bounds where this server returns them; observed "
+        "counts have none, and a source whose published range is not returned yet says so in its notes above. An empty value is never a zero: where the publisher gives a reason, it is in the flag column."
     )
     return Result(columns, rows, notes)
 

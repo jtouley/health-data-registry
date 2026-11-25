@@ -25,7 +25,7 @@ schema:
     physicalName: cdc_nis_teen_coverage
     physicalType: table
     logicalType: object
-    description: "One row per vaccine and dose, place, survey year (or pooled survey years) and population group."
+    description: "One row per vaccine and dose, place, survey year (or pooled survey years) and population group (unique on the 2026-11-25 data and checked by grain_unique; not yet a declared key)."
     dataGranularityDescription: "vaccine x dose x geography x survey year x dimension_type x dimension"
     authoritativeDefinitions:
       - {type: businessDefinition, url: "https://data.cdc.gov/api/views/ee48-w5t6.json"}
@@ -50,7 +50,21 @@ schema:
         type: sql
         query: "SELECT COUNT(*) FROM {object} WHERE coverage_estimate IS NOT NULL AND (ci_95 IS NULL OR trim(ci_95) = '')"
         mustBeLessThan: 10
-        description: "Fill rate. Every published estimate should come with its 95% interval (column description: 'The 95% confidence interval of the estimate'). Live data on 2026-11-25 had 2 rows with an estimate and no interval (828 NA estimates, 830 empty intervals); more than a handful means the interval column has changed. Why those rows have none is an open question."
+        description: "Fill rate. Every published estimate should come with its 95% interval (column description: 'The 95% confidence interval of the estimate'). Live data on 2026-11-25 had 2 rows with an estimate and no interval (828 NA estimates, 830 empty intervals). The bound of 10 is provisional, chosen from that pull, not from the codebook: a maintainer confirms it (open question 'Interval tolerance'). Why those rows have none is an open question."
+      - id: grain_unique
+        dimension: uniqueness
+        severity: warn
+        type: sql
+        query: "SELECT COUNT(*) - COUNT(DISTINCT vaccine || '|' || coalesce(dose, '') || '|' || geography || '|' || year_season || '|' || dimension_type || '|' || dimension) FROM {object}"
+        mustBe: 0
+        description: "Structural: vaccine x dose x geography x survey year x dimension_type x dimension was unique over all 30,466 rows on 2026-11-25 (open question 'Grain'). A repeat means CDC published two estimates for one group, for example a revision beside the old row, and every series would show both; it warns until a maintainer declares the key. dose is empty when the vaccine name carries it, so it is compared with empty as one value."
+      - id: pooled_years_not_in_age_rows
+        dimension: consistency
+        severity: warn
+        type: sql
+        query: "SELECT COUNT(*) FROM {object} WHERE dimension_type = 'Age' AND NOT regexp_full_match(trim(year_season), '[0-9]{4}')"
+        mustBe: 0
+        description: "dimension_type's column description: in a single survey year the only kind of group is age; the five-survey-year estimates are given by the other kinds. True of every row on 2026-11-25. The series read the age rows and pick years by prefix, so a pooled range ('2018-2022') among age rows would be read as one year's coverage."
     properties:
       - name: vaccine
         physicalType: VARCHAR
@@ -61,20 +75,11 @@ schema:
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: vaccine}
-        quality:
-          - id: vaccine_labels
-            dimension: conformity
-            severity: warn
-            type: library
-            metric: invalidValues
-            arguments: {validValues: ["≥1 Dose MenACWY", "≥2 Doses Hep A", "≥2 Doses MMR", "≥3 Doses HepB", "HPV", "Tetanus", "Varicella"]}
-            mustBe: 0
-            description: "Every vaccine label published on 2026-11-25. A new label is a new series to review (catalog conditions), not an error in the data."
       - name: dose
         physicalType: VARCHAR
         logicalType: string
         required: false
-        description: "The dose or definition the coverage counts, for vaccines whose name doesn't carry it: e.g. '≥1 Dose Tdap', 'Up-to-Date, Males and Females' for HPV, '≥2 Doses or history of disease' for varicella. Empty when the dose is in the vaccine name. What up to date means for each vaccine and year is an open question (up_to_date_definition)."
+        description: "The dose or definition the coverage counts, for vaccines whose name doesn't carry it, for example '≥1 Dose Tdap', 'Up-to-Date, Males and Females' for HPV, '≥2 Doses or history of disease' for varicella. Empty when the dose is in the vaccine name. What up to date means for each vaccine and year is an open question (up_to_date_definition)."
         examples: ["≥1 Dose Tdap", "Up-to-Date, Males and Females", "≥1 Dose, Females", "≥2 Doses or history of disease", ""]
         customProperties:
           - {property: role, value: dimension}
@@ -142,7 +147,7 @@ schema:
           - {property: role, value: measure}
           - {property: sourceField, value: coverage_estimate}
           - {property: unit, value: "%"}
-          - {property: missingCodes, value: ["NA"], description: "Column description, https://data.cdc.gov/api/views/ee48-w5t6.json: 'Non-numeric data are present in this column, such as \"NA.\" These data indicate if an estimate is not applicable.' NA is the only non-numeric value published on 2026-11-25."}
+          - {property: missingCodes, value: ["NA"], description: "Column description, https://data.cdc.gov/api/views/ee48-w5t6.json: 'Non-numeric data are present in this column, such as \"NA.\" These data indicate if an estimate is not applicable.' NA is the only non-numeric value published on 2026-11-25 (all 30,466 rows); whether CDC uses others is an open question ('Other non-numeric codes')."}
         quality:
           - id: coverage_is_a_percent
             dimension: conformity
@@ -155,7 +160,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: false
-        description: "CDC's 95% confidence interval for the coverage estimate, in percent, exactly as CDC writes it: the lower and upper ends in one text field, 'lower to upper' (column '95% CI (%)', e.g. '60.3 to 68.3'). Kept as sent: splitting it into two numbers changes the value, so it waits for a staging extension. Empty when CDC gives no interval."
+        description: "CDC's 95% confidence interval for the coverage estimate, in percent, exactly as CDC writes it: the lower and upper ends in one text field, 'lower to upper' (column '95% CI (%)', for example '60.3 to 68.3'). Not yet split into separate lower and upper numbers; read the two ends from the text. Empty when CDC gives no interval."
         examples: ["60.3 to 68.3", "88.5 to 95.3"]
         customProperties:
           - {property: role, value: attribute}
@@ -166,7 +171,7 @@ schema:
             dimension: conformity
             severity: warn
             type: sql
-            query: "SELECT COUNT(*) FROM {object} WHERE trim(ci_95) <> '' AND NOT regexp_full_match(ci_95, '[0-9]+([.][0-9]+)? to [0-9]+([.][0-9]+)?')"
+            query: "SELECT COUNT(*) FROM {object} WHERE trim(ci_95) <> '' AND NOT regexp_full_match(trim(ci_95), '[0-9]+([.][0-9]+)? to [0-9]+([.][0-9]+)?')"
             mustBe: 0
             description: "Structural: every interval published on 2026-11-25 (29,636 rows) is two numbers joined by ' to '. A value in any other form is a change to review before the interval is split into lower and upper ends."
       - name: population_sample_size
@@ -207,8 +212,10 @@ customProperties:
       - "Suppression: does CDC blank or flag estimates from small samples or with wide intervals (e.g. a relative standard error rule)? NA is described only as 'not applicable'. Until the codebook says, unreliableRule is none and every estimate is shown with its interval and sample size."
       - "Local areas: how does each local area map to a place: the cities ('IL-City of Chicago', 'NY-City of New York', 'TX-City of Houston', 'PA-Philadelphia'), the Texas counties, and the 'Rest of state' areas? None is Detroit. Until a maintainer declares the mapping, local areas are not keyed to GBD locations (GBD stops at states)."
       - "Revisions: does CDC revise earlier survey years when weights or definitions change? Each annual load is stored whole, so a revision shows as a difference between snapshots; whether one has happened is not stated."
+      - "Interval tolerance: interval_filled_where_estimate warns at 10 or more rows with an estimate and no interval. 10 is provisional, chosen from the 2 such rows on 2026-11-25, not from the codebook; a maintainer confirms the bound or sets another."
+      - "Other non-numeric codes: CDC's column description says non-numeric estimates are present 'such as \"NA.\"', so NA may not be the only one. Only NA was published on 2026-11-25. Any other non-numeric value would stop the staging cast to a number, so a load fails rather than reads a code as a number; a maintainer then adds the code (from the codebook) to missingCodes."
       - "Empty interval: two rows published on 2026-11-25 had an estimate but no interval. Why (an interval not calculated, or a missing value)?"
       - "Vaccine/Sample: the vaccine column is titled 'Vaccine/Sample' and coverage_estimate's description also covers 'percent of sample represented by each survey sociodemographic characteristic'. No survey-sample rows were published on 2026-11-25; if CDC adds them, they are percents of the sample, not coverage, and need their own metric."
-      - "Grain: vaccine x dose x geography x survey year x dimension_type x dimension was unique over the whole table on 2026-11-25 (30,466 rows). A maintainer confirms it as the key before one is declared."
+      - "Grain: vaccine x dose x geography x survey year x dimension_type x dimension was unique over the whole table on 2026-11-25 (30,466 rows). Until a maintainer confirms it as the key, the warn rule grain_unique checks it on every load; no key is declared."
       - "Licence: the Socrata metadata has no licence field; public-domain-us-federal is assumed from its being a CDC work (17 USC 105). Maintainer to confirm the wording before the first public release (the catalog says hosting: public, as every catalogued CDC source does, and the contract stays draft until then)."
       - "GBD mapping: review the GBD cause proposals in gbdCauseProposals (vaccine to cause, and MenACWY to Meningitis with Neisseria meningitidis). None is asserted until a maintainer approves it."

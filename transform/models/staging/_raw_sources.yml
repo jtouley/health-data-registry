@@ -209,8 +209,8 @@ sources:
       data_type: varchar
       description: 'Publisher field _95_ci, as text; read into ci_95 (CDC''s 95% confidence interval for the coverage
         estimate, in percent, exactly as CDC writes it: the lower and upper ends in one text field, ''lower to upper''
-        (column ''95% CI (%)'', e.g. ''60.3 to 68.3''). Kept as sent: splitting it into two numbers changes the
-        value, so it waits for a staging extension. Empty when CDC gives no interval.)'
+        (column ''95% CI (%)'', for example ''60.3 to 68.3''). Not yet split into separate lower and upper numbers;
+        read the two ends from the text. Empty when CDC gives no interval.)'
     - name: coverage_estimate
       data_type: varchar
       description: 'Publisher field coverage_estimate, as text; read into coverage_estimate (Estimated percent of
@@ -228,10 +228,10 @@ sources:
         estimates are given overall and by insurance coverage, urbanicity, race and ethnicity, and poverty.)'
     - name: dose
       data_type: varchar
-      description: 'Publisher field dose, as text; read into dose (The dose or definition the coverage counts, for
-        vaccines whose name doesn''t carry it: e.g. ''≥1 Dose Tdap'', ''Up-to-Date, Males and Females'' for HPV,
-        ''≥2 Doses or history of disease'' for varicella. Empty when the dose is in the vaccine name. What up to
-        date means for each vaccine and year is an open question (up_to_date_definition).)'
+      description: Publisher field dose, as text; read into dose (The dose or definition the coverage counts, for
+        vaccines whose name doesn't carry it, for example '≥1 Dose Tdap', 'Up-to-Date, Males and Females' for HPV,
+        '≥2 Doses or history of disease' for varicella. Empty when the dose is in the vaccine name. What up to date
+        means for each vaccine and year is an open question (up_to_date_definition).)
     - name: geography
       data_type: varchar
       description: 'Publisher field geography, as text; read into geography (The place the estimate is for: United

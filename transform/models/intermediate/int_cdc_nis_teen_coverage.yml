@@ -2,7 +2,8 @@
 version: 2
 models:
 - name: int_cdc_nis_teen_coverage
-  description: One row per vaccine and dose, place, survey year (or pooled survey years) and population group.
+  description: One row per vaccine and dose, place, survey year (or pooled survey years) and population group (unique
+    on the 2026-11-25 data and checked by grain_unique; not yet a declared key).
   config:
     materialized: view
     contract:
@@ -41,25 +42,42 @@ models:
           contract: contracts/cdc_nis_teen_coverage.odcs.yaml
           checks: 'Fill rate. Every published estimate should come with its 95% interval (column description: ''The
             95% confidence interval of the estimate''). Live data on 2026-11-25 had 2 rows with an estimate and
-            no interval (828 NA estimates, 830 empty intervals); more than a handful means the interval column has
-            changed. Why those rows have none is an open question.'
+            no interval (828 NA estimates, 830 empty intervals). The bound of 10 is provisional, chosen from that
+            pull, not from the codebook: a maintainer confirms it (open question ''Interval tolerance''). Why those
+            rows have none is an open question.'
   - odcs_check:
-      name: cdc_nis_teen_coverage_vaccine_labels
+      name: cdc_nis_teen_coverage_grain_unique
       arguments:
-        measure_sql: SELECT CASE WHEN count(*) FILTER (WHERE NOT ("vaccine" IS NULL OR trim(CAST("vaccine" AS VARCHAR))
-          = '')) = 0 THEN NULL ELSE count(*) FILTER (WHERE NOT ("vaccine" IS NULL OR trim(CAST("vaccine" AS VARCHAR))
-          = '') AND "vaccine" NOT IN ('≥1 Dose MenACWY', '≥2 Doses Hep A', '≥2 Doses MMR', '≥3 Doses HepB', 'HPV',
-          'Tetanus', 'Varicella')) END FROM {object}
+        measure_sql: SELECT COUNT(*) - COUNT(DISTINCT vaccine || '|' || coalesce(dose, '') || '|' || geography ||
+          '|' || year_season || '|' || dimension_type || '|' || dimension) FROM {object}
         condition: measured = 0
-        nothing_to_judge: true
       config:
         severity: warn
         meta:
-          dimension: conformity
-          rule: vaccine_labels
+          dimension: uniqueness
+          rule: grain_unique
           contract: contracts/cdc_nis_teen_coverage.odcs.yaml
-          checks: Every vaccine label published on 2026-11-25. A new label is a new series to review (catalog conditions),
-            not an error in the data.
+          checks: 'Structural: vaccine x dose x geography x survey year x dimension_type x dimension was unique
+            over all 30,466 rows on 2026-11-25 (open question ''Grain''). A repeat means CDC published two estimates
+            for one group, for example a revision beside the old row, and every series would show both; it warns
+            until a maintainer declares the key. dose is empty when the vaccine name carries it, so it is compared
+            with empty as one value.'
+  - odcs_check:
+      name: cdc_nis_teen_coverage_pooled_years_not_in_age_rows
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE dimension_type = 'Age' AND NOT regexp_full_match(trim(year_season),
+          '[0-9]{4}')
+        condition: measured = 0
+      config:
+        severity: warn
+        meta:
+          dimension: consistency
+          rule: pooled_years_not_in_age_rows
+          contract: contracts/cdc_nis_teen_coverage.odcs.yaml
+          checks: 'dimension_type''s column description: in a single survey year the only kind of group is age;
+            the five-survey-year estimates are given by the other kinds. True of every row on 2026-11-25. The series
+            read the age rows and pick years by prefix, so a pooled range (''2018-2022'') among age rows would be
+            read as one year''s coverage.'
   - odcs_check:
       name: cdc_nis_teen_coverage_dimension_type_labels
       arguments:
@@ -92,8 +110,8 @@ models:
   - odcs_check:
       name: cdc_nis_teen_coverage_interval_text_form
       arguments:
-        measure_sql: SELECT COUNT(*) FROM {object} WHERE trim(ci_95) <> '' AND NOT regexp_full_match(ci_95, '[0-9]+([.][0-9]+)?
-          to [0-9]+([.][0-9]+)?')
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE trim(ci_95) <> '' AND NOT regexp_full_match(trim(ci_95),
+          '[0-9]+([.][0-9]+)? to [0-9]+([.][0-9]+)?')
         condition: measured = 0
       config:
         severity: warn
@@ -116,8 +134,9 @@ models:
           dimension: completeness
           rule: fill_rate_dose
           contract: contracts/cdc_nis_teen_coverage.odcs.yaml
-          checks: 'No row has a value for the dose or definition the coverage counts, for vaccines whose name doesn''t
-            carry it: e.g.'
+          checks: No row has a value for the dose or definition the coverage counts, for vaccines whose name doesn't
+            carry it, for example '≥1 Dose Tdap', 'Up-to-Date, Males and Females' for HPV, '≥2 Doses or history
+            of disease' for varicella.
   - odcs_check:
       name: cdc_nis_teen_coverage_fill_rate_coverage_estimate
       arguments:
@@ -146,7 +165,7 @@ models:
           contract: contracts/cdc_nis_teen_coverage.odcs.yaml
           checks: 'No row has a value for CDC''s 95% confidence interval for the coverage estimate, in percent,
             exactly as CDC writes it: the lower and upper ends in one text field, ''lower to upper'' (column ''95%
-            CI (%)'', e.g.'
+            CI (%)'', for example ''60.3 to 68.3'').'
   - odcs_check:
       name: cdc_nis_teen_coverage_fill_rate_population_sample_size
       arguments:
@@ -175,10 +194,10 @@ models:
       missing_codes: []
   - name: dose
     data_type: varchar
-    description: 'The dose or definition the coverage counts, for vaccines whose name doesn''t carry it: e.g. ''≥1
-      Dose Tdap'', ''Up-to-Date, Males and Females'' for HPV, ''≥2 Doses or history of disease'' for varicella.
-      Empty when the dose is in the vaccine name. What up to date means for each vaccine and year is an open question
-      (up_to_date_definition).'
+    description: The dose or definition the coverage counts, for vaccines whose name doesn't carry it, for example
+      '≥1 Dose Tdap', 'Up-to-Date, Males and Females' for HPV, '≥2 Doses or history of disease' for varicella. Empty
+      when the dose is in the vaccine name. What up to date means for each vaccine and year is an open question
+      (up_to_date_definition).
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -260,9 +279,9 @@ models:
   - name: ci_95
     data_type: varchar
     description: 'CDC''s 95% confidence interval for the coverage estimate, in percent, exactly as CDC writes it:
-      the lower and upper ends in one text field, ''lower to upper'' (column ''95% CI (%)'', e.g. ''60.3 to 68.3'').
-      Kept as sent: splitting it into two numbers changes the value, so it waits for a staging extension. Empty
-      when CDC gives no interval.'
+      the lower and upper ends in one text field, ''lower to upper'' (column ''95% CI (%)'', for example ''60.3
+      to 68.3''). Not yet split into separate lower and upper numbers; read the two ends from the text. Empty when
+      CDC gives no interval.'
     meta:
       logical_type: string
       physical_type: VARCHAR

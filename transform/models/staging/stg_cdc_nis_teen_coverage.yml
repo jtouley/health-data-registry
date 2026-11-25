@@ -2,7 +2,8 @@
 version: 2
 models:
 - name: stg_cdc_nis_teen_coverage
-  description: One row per vaccine and dose, place, survey year (or pooled survey years) and population group.
+  description: One row per vaccine and dose, place, survey year (or pooled survey years) and population group (unique
+    on the 2026-11-25 data and checked by grain_unique; not yet a declared key).
   config:
     materialized: table
     contract:
@@ -31,10 +32,10 @@ models:
     - type: not_null
   - name: dose
     data_type: varchar
-    description: 'The dose or definition the coverage counts, for vaccines whose name doesn''t carry it: e.g. ''≥1
-      Dose Tdap'', ''Up-to-Date, Males and Females'' for HPV, ''≥2 Doses or history of disease'' for varicella.
-      Empty when the dose is in the vaccine name. What up to date means for each vaccine and year is an open question
-      (up_to_date_definition).'
+    description: The dose or definition the coverage counts, for vaccines whose name doesn't carry it, for example
+      '≥1 Dose Tdap', 'Up-to-Date, Males and Females' for HPV, '≥2 Doses or history of disease' for varicella. Empty
+      when the dose is in the vaccine name. What up to date means for each vaccine and year is an open question
+      (up_to_date_definition).
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -136,9 +137,9 @@ models:
   - name: ci_95
     data_type: varchar
     description: 'CDC''s 95% confidence interval for the coverage estimate, in percent, exactly as CDC writes it:
-      the lower and upper ends in one text field, ''lower to upper'' (column ''95% CI (%)'', e.g. ''60.3 to 68.3'').
-      Kept as sent: splitting it into two numbers changes the value, so it waits for a staging extension. Empty
-      when CDC gives no interval.'
+      the lower and upper ends in one text field, ''lower to upper'' (column ''95% CI (%)'', for example ''60.3
+      to 68.3''). Not yet split into separate lower and upper numbers; read the two ends from the text. Empty when
+      CDC gives no interval.'
     meta:
       logical_type: string
       physical_type: VARCHAR

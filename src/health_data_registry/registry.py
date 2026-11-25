@@ -1015,6 +1015,9 @@ class Series(_Strict):
     week_dimension: str | None = None
     # An age-specific series (age_adjust): counts or populations split by this age-group dimension.
     age_dimension: str | None = None
+    # Words, one of which a question must use for this series to answer it (e.g. "vaccination"): a vaccination
+    # coverage series answers a question about the vaccine, never one that names only the disease. Empty: any.
+    asked_with: list[str] = Field(default_factory=list)
 
     def held_dimensions(self) -> list[str]:
         """The dimensions each answer row of this series holds at one value: filtered to one value

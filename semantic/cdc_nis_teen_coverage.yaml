@@ -24,54 +24,73 @@ metrics:
     uncertainty: none
     uncertainty_reason: "CDC publishes the 95% confidence interval as one text field (for example '60.3 to 68.3'), kept exactly as sent in the ci_95 column. It is not split into lower and upper numbers yet, so it isn't shown here: ask query_sql for ci_95 beside the estimate, or see describe_dataset."
 # Single-year series read the '13-17 Years' age row, the survey's whole age range (open question overall_row).
+# One named series per catalogued vaccine and no generic series: CDC's vaccine labels include disease names
+# ('Tetanus', 'Varicella'), so a series reached by the bare label would answer a disease question with coverage.
+# Conditions and labels name the vaccine, and asked_with (written once, on the first series) keeps each series to questions about vaccination: a
+# question naming only the disease ('tetanus', 'varicella') gets the case counts, never a coverage percent.
 series:
-  - condition: "HPV"
+  - condition: "HPV vaccination"
     label: "HPV vaccination up to date, teens 13-17 (both sexes)"
     metric: vaccination_coverage
     measure: percent
     filters: {vaccine: "HPV", dose: "Up-to-Date, Males and Females", group_type: "Age", group: "13-17 Years"}
     location_dimension: place
     time_dimension: survey_year
-  - condition: "HPV"
+    asked_with: &asked_with [vaccination, vaccinations, vaccinated, vaccine, vaccines, immunization, immunizations,
+      immunisation, coverage, tdap, menacwy, mmr, hepb]
+  - condition: "HPV vaccination"
     label: "HPV vaccination, at least one dose, teens 13-17 (both sexes)"
     metric: vaccination_coverage
     measure: percent
     filters: {vaccine: "HPV", dose: "≥1 Dose, Males and Females", group_type: "Age", group: "13-17 Years"}
     location_dimension: place
     time_dimension: survey_year
-  - condition: "≥1 Dose MenACWY"
-    label: "MenACWY, at least one dose, teens 13-17"
+    asked_with: *asked_with
+  - condition: "MenACWY vaccination"
+    label: "MenACWY vaccination, at least one dose, teens 13-17"
     metric: vaccination_coverage
     measure: percent
     filters: {vaccine: "≥1 Dose MenACWY", group_type: "Age", group: "13-17 Years"}
     location_dimension: place
     time_dimension: survey_year
-  - condition: "Tetanus"
-    label: "Tdap, at least one dose, teens 13-17"
+    asked_with: *asked_with
+  - condition: "Tdap vaccination"
+    label: "Tdap vaccination, at least one dose, teens 13-17"
     metric: vaccination_coverage
     measure: percent
     filters: {vaccine: "Tetanus", dose: "≥1 Dose Tdap", group_type: "Age", group: "13-17 Years"}
     location_dimension: place
     time_dimension: survey_year
-  - condition: "Varicella"
-    label: "Varicella, two doses or history of disease, teens 13-17"
+    asked_with: *asked_with
+  - condition: "Varicella vaccination"
+    label: "Varicella vaccination, two doses or history of disease, teens 13-17"
     metric: vaccination_coverage
     measure: percent
     filters: {vaccine: "Varicella", dose: "≥2 Doses or history of disease", group_type: "Age", group: "13-17 Years"}
     location_dimension: place
     time_dimension: survey_year
-  - condition: "≥2 Doses MMR"
-    label: "MMR, at least two doses, teens 13-17"
+    asked_with: *asked_with
+  - condition: "MMR vaccination"
+    label: "MMR vaccination, at least two doses, teens 13-17"
     metric: vaccination_coverage
     measure: percent
     filters: {vaccine: "≥2 Doses MMR", group_type: "Age", group: "13-17 Years"}
     location_dimension: place
     time_dimension: survey_year
-# Any vaccine label: the same metric and age row as the named series, the vaccine pinned to the asked label.
-# Doses are not pinned, so each dose is its own row; nothing is added across them.
-generic_series:
-  - metric: vaccination_coverage
+    asked_with: *asked_with
+  - condition: "Hep A vaccination"
+    label: "Hep A vaccination, at least two doses, teens 13-17"
+    metric: vaccination_coverage
     measure: percent
-    filters: {group_type: "Age", group: "13-17 Years"}
+    filters: {vaccine: "≥2 Doses Hep A", group_type: "Age", group: "13-17 Years"}
     location_dimension: place
     time_dimension: survey_year
+    asked_with: *asked_with
+  - condition: "HepB vaccination"
+    label: "HepB vaccination, at least three doses, teens 13-17"
+    metric: vaccination_coverage
+    measure: percent
+    filters: {vaccine: "≥3 Doses HepB", group_type: "Age", group: "13-17 Years"}
+    location_dimension: place
+    time_dimension: survey_year
+    asked_with: *asked_with

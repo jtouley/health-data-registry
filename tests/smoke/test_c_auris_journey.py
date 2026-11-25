@@ -332,8 +332,8 @@ def test_trial_vaccination_is_declined_with_no_number(
 ) -> None:
     qid, label, places, condition = OUT_OF_SCOPE[0]
     # The label says no vaccination-coverage source is catalogued: true of the catalog it names, not of sources
-    # catalogued since (the NIS and SchoolVaxView coverage sources), so it is scored on that catalog; #175
-    # asks the maintainer to re-audit the label.
+    # catalogued since (cdc_nis_teen_coverage), so it is scored on that catalog; #175 asks the maintainer to
+    # re-audit the label. What the full catalog answers is pinned in tests/test_cdc_nis_teen_coverage.py.
     journey = pinned_to_label_catalog(journey, str((trials[qid].model_extra or {})["catalog_ref"]))
     reply = run_out_of_scope(journey, TRIALS[qid], condition, places)
     assert not data_returned(journey.calls, journey.responses)

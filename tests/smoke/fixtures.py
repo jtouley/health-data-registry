@@ -14,6 +14,7 @@ The lake is built in a temporary directory at test time and deleted with it; not
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -144,6 +145,10 @@ def build_journey(tmp_path: Path) -> Journey:
     return Journey(reg, Engine(registry=reg, lake=lake, hub=None, fetch_at_run_time=False), raw)
 
 
+# A DEV label's catalog_ref: "<repo>@<sha> (<notes>; catalog/: id, id, ...)".
+CATALOG_REF = re.compile(r"\S+@[0-9a-f]+ \(.*; catalog/: (?P<ids>[a-z0-9_]+(?:, [a-z0-9_]+)*)\)")
+
+
 def pinned_to_label_catalog(journey: Journey, catalog_ref: str) -> Journey:
     """The same server and lake, with only the sources a DEV label was made against (its catalog_ref).
 
@@ -151,7 +156,13 @@ def pinned_to_label_catalog(journey: Journey, catalog_ref: str) -> Journey:
     true for that catalog, not for sources catalogued later. A source added since then is the label re-audit's
     concern, so a check scored against the label runs on the catalog the label names.
     """
-    ids = [x.strip() for x in catalog_ref.rsplit("catalog/:", 1)[1].rstrip(")").split(",")]
+    found = CATALOG_REF.fullmatch(catalog_ref.strip())
+    if found is None:
+        raise ValueError(f"catalog_ref is not '<repo>@<sha> (...; catalog/: id, id, ...)': {catalog_ref!r}")
+    ids = [x.strip() for x in found["ids"].split(",")]
+    unknown = [i for i in ids if i not in {ds.id for ds in journey.registry}]
+    if unknown:
+        raise ValueError(f"catalog_ref names sources this registry doesn't hold: {', '.join(unknown)}")
     reg = Registry(journey.registry.root, {i: journey.registry.get(i) for i in ids})
     return Journey(
         reg, Engine(registry=reg, lake=journey.engine.lake, hub=None, fetch_at_run_time=False), journey.raw
