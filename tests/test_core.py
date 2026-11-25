@@ -49,7 +49,7 @@ def test_registry_loads(registry: Registry) -> None:
             "totalRows",
         ),
         ("contract", "physicalType: DOUBLE", "physicalType: FLOAT8", "physicalType"),
-        ("contract", "apiVersion: v3.0.2", "apiVersion: v2.2.0", "ODCS v3"),
+        ("contract", "apiVersion: v3.2.0", "apiVersion: v2.2.0", "ODCS v3"),
     ],
 )
 def test_registry_refuses_bad_files(tmp_path: Path, kind: str, old: str, new: str, msg: str) -> None:

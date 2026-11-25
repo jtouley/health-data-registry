@@ -1,0 +1,350 @@
+# Output port contract: the public index of ID conference abstracts (product id-conference-abstracts).
+# A draft stub: its sources are on unmerged pull requests (#29 DOI harvest, #30 CROI), and whether their metadata
+# may be published is an open question below. Nothing is hosted until a maintainer answers it.
+apiVersion: v3.2.0
+kind: DataContract
+id: id_abstracts_index
+name: ID conference abstracts, public index
+version: 0.1.0
+status: draft
+domain: research_landscape
+description:
+  purpose: One index of infectious disease conference abstracts across conferences, so a fellow can see what has
+    been presented on a condition, place or year, and follow each abstract's link or DOI to read it.
+  usage: Each row is one abstract in one conference year, with its title, authors, link and DOI where it has one.
+    The abstract itself is read at its link; this port never holds abstract text.
+  limitations: Metadata only, never abstract text (that is the private-tier port id_abstracts_text). Not a
+    peer-reviewed literature index; many abstracts are never published in full. Condition, organism and place
+    tags are proposed by dictionary matching and are not facts until a maintainer accepts them.
+schema:
+- name: id_abstracts_index
+  physicalName: id_abstracts_index
+  physicalType: table
+  logicalType: object
+  description: One row per abstract, conference and conference year. Rows from different conferences are listed
+    side by side, never combined into counts.
+  dataGranularityDescription: conference x year x abstract (DOI where there is one, else the conference's own
+    abstract number)
+  customProperties:
+  - property: totalRows
+    value: none
+  - property: tableShape
+    value: registry
+  properties:
+  - name: conference
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: Which conference the abstract was presented at, by the source's own conference code (e.g. idweek,
+      shea, apic, icid, croi).
+    customProperties:
+    - property: role
+      value: dimension
+    quality:
+    - name: conference_not_null
+      description: Every row has a conference.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: year
+    physicalType: INTEGER
+    logicalType: integer
+    required: true
+    description: The conference year the abstract was presented in.
+    customProperties:
+    - property: role
+      value: dimension
+    - property: conformedKey
+      value: {dimension: dim_time, grain: year}
+    quality:
+    - name: year_not_null
+      description: Every row has a year.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: route
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: 'How the record was found: doi (the journal supplement''s DOI metadata from Crossref, OpenAlex and
+      Europe PMC) or site (the conference''s own abstract pages, e.g. CROI). It decides which licence and provenance
+      apply.'
+    customProperties:
+    - property: role
+      value: dimension
+    quality:
+    - name: route_not_null
+      description: Every row has a route.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+    - name: route_accepted_values
+      description: 'route is one of doi, site.'
+      type: library
+      metric: invalidValues
+      arguments: {validValues: [doi, site]}
+      mustBe: 0
+      dimension: conformity
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: accepted_values}
+  - name: source_dataset
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The catalogued source the row comes from (e.g. idweek_abstracts, croi_abstracts_index), whose
+      contract, licence and caveats apply to it.
+    customProperties:
+    - property: role
+      value: dimension
+    quality:
+    - name: source_dataset_not_null
+      description: Every row has a source dataset.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: abstract_number
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: The abstract or poster number the conference gives it, as published; empty where the source
+      doesn't show one.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: title
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The abstract's title as published.
+    customProperties:
+    - property: role
+      value: attribute
+    quality:
+    - name: title_not_null
+      description: Every row has a title.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: authors
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Authors' names exactly as the source lists them.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: doi
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: The abstract's DOI, for abstracts published in a journal supplement; empty for abstracts that
+      have none (e.g. CROI).
+    customProperties:
+    - property: role
+      value: attribute
+  - name: link_url
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: Where to read the abstract, the DOI link or the conference's abstract page.
+    customProperties:
+    - property: role
+      value: attribute
+    quality:
+    - name: link_url_not_null
+      description: Every row has a link url.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: condition_concept_ids
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Conditions the abstract is about, as MeSH descriptor ids separated by '; ', the same ids the
+      surveillance contracts use. Proposed by dictionary matching over the title; not a fact until accepted.
+    customProperties:
+    - property: role
+      value: attribute
+    - property: conformedKey
+      value: {dimension: dim_concept, vocabulary: MeSH, assignment: dictionary_proposed,
+              reviewStateColumn: concept_tag_state}
+  - name: organism_taxon_ids
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Organisms the abstract names, as NCBI Taxonomy ids separated by '; '. Proposed by dictionary
+      matching; not a fact until accepted.
+    customProperties:
+    - property: role
+      value: attribute
+    - property: conformedKey
+      value: {dimension: dim_concept, vocabulary: NCBI Taxonomy, assignment: dictionary_proposed,
+              reviewStateColumn: concept_tag_state}
+  - name: place_keys
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: Places the abstract names, as FIPS codes (US) or ISO3 country codes separated by '; '; empty when
+      it names none. Proposed by dictionary matching; not a fact until accepted.
+    customProperties:
+    - property: role
+      value: attribute
+    - property: conformedKey
+      value: {dimension: dim_place, vocabulary: FIPS/ISO3, assignment: dictionary_proposed,
+              reviewStateColumn: place_tag_state}
+  - name: concept_tag_state
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: 'Review state of the condition and organism tags: proposed (dictionary match, not reviewed),
+      accepted or rejected (by a maintainer). Only accepted tags are answered as facts.'
+    customProperties:
+    - property: role
+      value: attribute
+    quality:
+    - name: concept_tag_state_not_null
+      description: Every row has a concept tag state.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+    - name: concept_tag_state_accepted_values
+      description: 'concept tag state is one of proposed, accepted, rejected.'
+      type: library
+      metric: invalidValues
+      arguments: {validValues: [proposed, accepted, rejected]}
+      mustBe: 0
+      dimension: conformity
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: accepted_values}
+  - name: place_tag_state
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: 'Review state of the place tags: proposed, accepted or rejected, as for concept_tag_state.'
+    customProperties:
+    - property: role
+      value: attribute
+    quality:
+    - name: place_tag_state_not_null
+      description: Every row has a place tag state.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+    - name: place_tag_state_accepted_values
+      description: 'place tag state is one of proposed, accepted, rejected.'
+      type: library
+      metric: invalidValues
+      arguments: {validValues: [proposed, accepted, rejected]}
+      mustBe: 0
+      dimension: conformity
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: accepted_values}
+  - name: source_url
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The address the record was read from.
+    customProperties:
+    - property: role
+      value: attribute
+    quality:
+    - name: source_url_not_null
+      description: Every row has a source url.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: raw_sha256
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: sha256 of the raw bytes the record was read from, so anyone can check it against the source.
+    customProperties:
+    - property: role
+      value: attribute
+    quality:
+    - name: raw_sha256_not_null
+      description: Every row has a raw sha256.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: retrieved_at
+    physicalType: TIMESTAMP
+    logicalType: timestamp
+    required: true
+    description: When the record was read from its source (UTC).
+    customProperties:
+    - property: role
+      value: attribute
+    quality:
+    - name: retrieved_at_not_null
+      description: Every row has a retrieved at.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+customProperties:
+- property: tier
+  value: public
+- property: unreliableRule
+  value:
+    kind: none
+    description: 'None: an index of abstracts holds no rates or counts, so no value is marked unreliable.'
+- property: fingerprints
+  value:
+  - {version: 0.1.0, interface: 8a5607e6eabdde8400e4fa9f12e8356b4301cdc3808e1815a273424b37421f29, docs: 2612d10f829f138d9c4a414cb7593ae7b9644a690bf303819b8f980eb1301098}
+- property: openQuestions
+  value:
+  - 'May the index (titles, authors, links, DOIs) be published? The DOI sources record their metadata as from
+    Crossref ("free to use") and OpenAlex (CC0) in their licenceNote, but are catalogued redistribution: false
+    (PR #29); whether CROI''s metadata may be redistributed is the maintainer''s call (PR #30). Until answered the
+    port is not hosted.'
+  - 'Fills from PR #29 (idweek_abstracts, shea_abstracts, apic_abstracts, icid_abstracts) and PR #30
+    (croi_abstracts_index) once they merge; ESCMID and other conferences join as they are catalogued.'
+  - The concept and place dimensions (dim_concept, dim_place, dim_time) come from the silver stage on
+    feat/contract-silver; confirm their names when that lands.

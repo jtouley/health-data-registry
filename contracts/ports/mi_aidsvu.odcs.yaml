@@ -1,0 +1,162 @@
+# Output port contract: mi_aidsvu (product michigan-hiv). A draft stub: its source is not catalogued yet, so no
+# measure is declared and nothing is hosted. Every number-changing fact is an open question (hard rule 1).
+apiVersion: v3.2.0
+kind: DataContract
+id: mi_aidsvu
+name: "AIDSVu Michigan data (private tier)"
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "AIDSVu's Michigan figures, held in the private tier only."
+  usage: One series of the Michigan HIV product, read on its own with its own counted unit; never added to or merged
+    with another port's figures.
+  limitations: 'Draft stub. Data kind: unresolved: read from AIDSVu''s own data methods. Measures and their counted unit are declared only from the
+    publisher''s own codebook once the source is catalogued.'
+schema:
+- name: mi_aidsvu
+  physicalName: mi_aidsvu
+  physicalType: table
+  logicalType: object
+  description: One row per place, period and published figure, as the publisher lays it out (to be confirmed).
+  customProperties:
+  - property: totalRows
+    value: none
+  - property: tableShape
+    value: unresolved
+  properties:
+  - name: place
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The place exactly as the publisher names it. Detroit and Out-Wayne stay separate rows wherever the
+      publisher splits them; they are never added together here.
+    customProperties:
+    - property: role
+      value: dimension
+    quality:
+    - name: place_not_null
+      description: Every row has a place.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: place_key
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: The place's FIPS code, from a reviewed mapping of the publisher's place name; empty where the place
+      has no FIPS code of its own (e.g. Out-Wayne).
+    customProperties:
+    - property: role
+      value: attribute
+    - property: conformedKey
+      value: {dimension: dim_place, vocabulary: FIPS/ISO3, assignment: reviewed_mapping}
+  - name: period
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The time the figure covers, as the publisher states it (e.g. a calendar year).
+    customProperties:
+    - property: role
+      value: dimension
+    - property: conformedKey
+      value: {dimension: dim_time, grain: as_published}
+    quality:
+    - name: period_not_null
+      description: Every row has a period.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: condition_concept_id
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: The condition the figure is about, as a MeSH descriptor id (the id the surveillance contracts
+      use), from a reviewed mapping of the publisher's label.
+    customProperties:
+    - property: role
+      value: attribute
+    - property: conformedKey
+      value: {dimension: dim_concept, vocabulary: MeSH, assignment: reviewed_mapping}
+  - name: source_url
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The address the figure was read from.
+    customProperties:
+    - property: role
+      value: attribute
+    quality:
+    - name: source_url_not_null
+      description: Every row has a source url.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: raw_sha256
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: sha256 of the raw bytes the figure was read from.
+    customProperties:
+    - property: role
+      value: attribute
+    quality:
+    - name: raw_sha256_not_null
+      description: Every row has a raw sha256.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: retrieved_at
+    physicalType: TIMESTAMP
+    logicalType: timestamp
+    required: true
+    description: When the figure was read from the publisher (UTC).
+    customProperties:
+    - property: role
+      value: attribute
+    quality:
+    - name: retrieved_at_not_null
+      description: Every row has a retrieved at.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+customProperties:
+- property: tier
+  value: private
+- property: dataKind
+  value: 'unresolved: read from AIDSVu''s own data methods'
+- property: countedUnit
+  value: 'unresolved: from the publisher''s codebook once catalogued'
+- property: unreliableRule
+  value:
+    kind: none
+    description: 'Not yet read: the publisher''s suppression rule is an open question until the source is catalogued.'
+- property: fingerprints
+  value:
+  - {version: 0.1.0, interface: e9b95c98a638b1d9ab93a35a3c5f98c800ec6b51169303c6a71d02081fafa2ca, docs: 029b559d6508106eba277ae6e25395ca5d684110f3b932ea1a0e4428efc95c24}
+- property: openQuestions
+  value:
+  - 'Not catalogued yet (tasks 78-80): which AIDSVu files, and under which terms of use.'
+  - 'Private tier by the owner''s decision (25 Nov): never on the public hub.'
+  - 'countedUnit: what one figure is comes from AIDSVu''s own methods.'
+  - 'Whether AIDSVu splits Detroit from Out-Wayne; where it does, they stay separate series.'

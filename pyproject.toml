@@ -17,6 +17,7 @@ classifiers = [
 dependencies = [
     "duckdb>=1.4,<3",
     "huggingface-hub>=1.0,<3",
+    "jsonschema>=4.23,<5",
     "mcp>=2.3,<3",
     "pydantic>=2.7,<3",
     "pyyaml>=6",

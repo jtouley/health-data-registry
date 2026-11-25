@@ -1,0 +1,151 @@
+# ODPS data product: infectious disease conference abstracts, all conferences, in two output ports with their own
+# ODCS contracts in contracts/ports/. Follows Bitol ODPS v1.1.0; `health-data-registry validate` checks it against
+# the vendored schema and product.py's rules (tiers, licences inherited from sources, no private data in a public
+# port). Both ports are draft stubs until PR #29 (DOI harvest) and PR #30 (CROI) merge.
+apiVersion: v1.1.0
+kind: DataProduct
+id: id-conference-abstracts
+name: ID conference abstracts
+version: 0.1.0
+status: draft
+domain: research_landscape
+type: sourceAligned
+description:
+  purpose: >-
+    What has been presented at infectious disease conferences (IDWeek, SHEA, APIC, ICID, CROI, ESCMID and others),
+    so a fellow can see prior work on a condition, place or year before planning a study, and follow each abstract
+    to its source.
+  usage: >-
+    Ask through the health-data-registry MCP server (find_prior_work). The public index gives titles, authors,
+    links and DOIs; abstract text is quoted only as a short excerpt from the private tier, always with its link.
+  limitations: >-
+    An abstract is not a peer-reviewed paper. Every record keeps its conference, year and route (DOI metadata or
+    the conference's own site) and its own licence. Text under a restrictive licence is private tier: never
+    published. Condition, organism and place tags are proposed by dictionary matching, never stored as facts
+    until a maintainer accepts them, and no model output is ever stored.
+tags: [infectious-disease, conference-abstracts, research-landscape]
+context:
+  instructions: >-
+    Answer with each abstract's title, conference, year and link. Quote text only from the private tier, as a short
+    excerpt with its licence and link. Treat proposed tags as suggestions.
+  constraints:
+    - constraint: Never publish or export abstract text from the private-tier port.
+    - constraint: Never count abstracts across conferences as if they were one series; list them side by side.
+    - constraint: Never state a proposed condition, organism or place tag as a fact.
+authoritativeDefinitions:
+  - type: license
+    url: https://github.com/jtouley/health-data-registry/blob/main/licenses/README.md
+    description: Each source keeps its publisher's terms; each abstract keeps its own licence.
+inputPorts:
+  - name: api-crossref-org
+    tags: [doi, crossref]
+    customProperties:
+      - property: description
+        value: "DOI metadata of journal abstract supplements (Crossref, with OpenAlex and Europe PMC), from PR #29."
+      - property: license
+        value: doi-abstracts-mixed
+    authoritativeDefinitions:
+      - type: canonicalUrl
+        url: https://www.crossref.org/documentation/retrieve-metadata/rest-api/
+        description: Crossref REST API.
+  - name: www-croiconference-org
+    tags: [croi]
+    customProperties:
+      - property: description
+        value: "CROI's own abstract pages, read at its robots.txt crawl delay, from PR #30."
+      - property: license
+        value: croi-metadata-index and croi-abstract-text
+    authoritativeDefinitions:
+      - type: canonicalUrl
+        url: https://www.croiconference.org/search-abstracts/
+        description: CROI's searchable abstract database.
+outputPorts:
+  - name: id_abstracts_index
+    description: Public index of abstracts across conferences (titles, authors, links, DOIs; conference, year, route). Draft stub, not hosted until its licence question is answered.
+    type: tables
+    version: 0.1.0
+    contractId: id_abstracts_index
+    inputContracts:
+      - {id: idweek_abstracts, version: 0.1.0}
+      - {id: shea_abstracts, version: 0.1.0}
+      - {id: apic_abstracts, version: 0.1.0}
+      - {id: icid_abstracts, version: 0.1.0}
+      - {id: croi_abstracts_index, version: 0.1.0}
+    context:
+      constraints:
+        - constraint: Holds no abstract text; never read from the private-tier port.
+    customProperties:
+      - {property: tier, value: public}
+      - {property: hosting, value: none}
+      - {property: stub, value: true}
+      - {property: releaseTag, value: "release-<run date>"}
+      - property: sla
+        value:
+          refresh: annual
+          release: Once hosted, in the next release after a conference's abstracts are harvested in full.
+          support: Best effort by one maintainer; no guaranteed response time.
+      - {property: feedback, value: "https://github.com/jtouley/health-data-registry/issues/new?template=contract-finding.yml"}
+      - {property: licences, value: [croi-metadata-index, doi-abstracts-mixed]}
+      - property: pendingInputs
+        value:
+          - {id: idweek_abstracts, licence: doi-abstracts-mixed, fillsFrom: "PR #29 (feat/doi-harvest)"}
+          - {id: shea_abstracts, licence: doi-abstracts-mixed, fillsFrom: "PR #29 (feat/doi-harvest)"}
+          - {id: apic_abstracts, licence: doi-abstracts-mixed, fillsFrom: "PR #29 (feat/doi-harvest)"}
+          - {id: icid_abstracts, licence: doi-abstracts-mixed, fillsFrom: "PR #29 (feat/doi-harvest)"}
+          - {id: croi_abstracts_index, licence: croi-metadata-index, fillsFrom: "PR #30 (feat/croi-index)"}
+      - property: openQuestions
+        value:
+          - "May titles, authors, links and DOIs be published? Every source is catalogued redistribution false today (PR #29, PR #30); the port stays unhosted until a maintainer answers."
+          - ESCMID and other conferences join as they are catalogued.
+  - name: id_abstracts_text
+    description: Abstract text where the licence restricts it (CROI, ESCMID and others). Private tier, only in private Hugging Face datasets, never public. Draft stub.
+    type: tables
+    version: 0.1.0
+    contractId: id_abstracts_text
+    inputContracts:
+      - {id: croi_abstracts_text, version: 0.1.0}
+      - {id: idweek_abstracts, version: 0.1.0}
+      - {id: shea_abstracts, version: 0.1.0}
+      - {id: apic_abstracts, version: 0.1.0}
+      - {id: icid_abstracts, version: 0.1.0}
+    context:
+      constraints:
+        - constraint: Private tier. Never published, exported or copied into a public port; quote only a short excerpt with its licence and link.
+    customProperties:
+      - {property: tier, value: private}
+      - {property: hosting, value: none}
+      - {property: stub, value: true}
+      - {property: releaseTag, value: "release-<run date>"}
+      - property: sla
+        value:
+          refresh: annual
+          release: Once hosted, in the private dataset's next release after a conference's abstracts are harvested.
+          support: Best effort by one maintainer; no guaranteed response time.
+      - {property: feedback, value: "https://github.com/jtouley/health-data-registry/issues/new?template=contract-finding.yml"}
+      - {property: licences, value: [croi-abstract-text, doi-abstracts-mixed]}
+      - property: pendingInputs
+        value:
+          - {id: croi_abstracts_text, licence: croi-abstract-text, fillsFrom: "PR #30 (feat/croi-index)"}
+          - {id: idweek_abstracts, licence: doi-abstracts-mixed, fillsFrom: "PR #29 (feat/doi-harvest), private-tier rows only"}
+          - {id: shea_abstracts, licence: doi-abstracts-mixed, fillsFrom: "PR #29 (feat/doi-harvest), private-tier rows only"}
+          - {id: apic_abstracts, licence: doi-abstracts-mixed, fillsFrom: "PR #29 (feat/doi-harvest), private-tier rows only"}
+          - {id: icid_abstracts, licence: doi-abstracts-mixed, fillsFrom: "PR #29 (feat/doi-harvest), private-tier rows only"}
+      - property: openQuestions
+        value:
+          - Which private Hugging Face dataset holds each conference's text is confirmed when the datasets are created.
+customProperties:
+  - property: combine
+    value: listed-side-by-side
+  - property: recordKeys
+    value: [conference, year, route]
+team:
+  name: health-data-registry
+  members:
+    - username: jtouley
+      role: owner
+support:
+  - channel: contract-finding
+    url: https://github.com/jtouley/health-data-registry/issues/new?template=contract-finding.yml
+    tool: ticket
+    scope: issues
+    description: A finding about one port's contract; triaged into contract:<dataset> issues.

@@ -65,7 +65,21 @@ def validate(registry: Registry, lake: Path) -> int:
             )
         else:
             print(f"ok   {ds_id}: every condition label in the snapshot is catalogued")
+    failed += validate_products_cli(registry)
     return 1 if failed else 0
+
+
+def validate_products_cli(registry: Registry) -> int:
+    """Every *.odps.yaml and *.odcs.yaml against Bitol's vendored schemas and the port rules; the count of problems."""
+    from health_data_registry.product import load_products, summary, validate_products
+
+    problems = validate_products(registry.root, registry)
+    for line in problems:
+        print(f"FAIL {line}", file=sys.stderr)
+    if not problems:
+        for line in summary(list(load_products(registry.root).values())):
+            print(line)
+    return len(problems)
 
 
 def export_public(registry: Registry, to: str, *, lake: Path, run_date: str | None) -> int:

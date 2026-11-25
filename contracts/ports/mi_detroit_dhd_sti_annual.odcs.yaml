@@ -1,0 +1,161 @@
+# Output port contract: mi_detroit_dhd_sti_annual (product michigan-hiv). A draft stub: its source is not catalogued yet, so no
+# measure is declared and nothing is hosted. Every number-changing fact is an open question (hard rule 1).
+apiVersion: v3.2.0
+kind: DataContract
+id: mi_detroit_dhd_sti_annual
+name: "Detroit Health Department yearly STI figures (Epidemiology Dashboard)"
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "The Detroit Health Department Epidemiology Dashboard's yearly figures for chlamydia and syphilis (catalogued on PR #19 as detroit_dhd_epi_annual), kept as their own series."
+  usage: One series of the Michigan HIV product, read on its own with its own counted unit; never added to or merged
+    with another port's figures.
+  limitations: 'Draft stub. Data kind: surveillance. Measures and their counted unit are declared only from the
+    publisher''s own codebook once the source is catalogued.'
+schema:
+- name: mi_detroit_dhd_sti_annual
+  physicalName: mi_detroit_dhd_sti_annual
+  physicalType: table
+  logicalType: object
+  description: One row per place, period and published figure, as the publisher lays it out (to be confirmed).
+  customProperties:
+  - property: totalRows
+    value: none
+  - property: tableShape
+    value: unresolved
+  properties:
+  - name: place
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The place exactly as the publisher names it. Detroit and Out-Wayne stay separate rows wherever the
+      publisher splits them; they are never added together here.
+    customProperties:
+    - property: role
+      value: dimension
+    quality:
+    - name: place_not_null
+      description: Every row has a place.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: place_key
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: The place's FIPS code, from a reviewed mapping of the publisher's place name; empty where the place
+      has no FIPS code of its own (e.g. Out-Wayne).
+    customProperties:
+    - property: role
+      value: attribute
+    - property: conformedKey
+      value: {dimension: dim_place, vocabulary: FIPS/ISO3, assignment: reviewed_mapping}
+  - name: period
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The time the figure covers, as the publisher states it (e.g. a calendar year).
+    customProperties:
+    - property: role
+      value: dimension
+    - property: conformedKey
+      value: {dimension: dim_time, grain: as_published}
+    quality:
+    - name: period_not_null
+      description: Every row has a period.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: condition_concept_id
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: The condition the figure is about, as a MeSH descriptor id (the id the surveillance contracts
+      use), from a reviewed mapping of the publisher's label.
+    customProperties:
+    - property: role
+      value: attribute
+    - property: conformedKey
+      value: {dimension: dim_concept, vocabulary: MeSH, assignment: reviewed_mapping}
+  - name: source_url
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The address the figure was read from.
+    customProperties:
+    - property: role
+      value: attribute
+    quality:
+    - name: source_url_not_null
+      description: Every row has a source url.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: raw_sha256
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: sha256 of the raw bytes the figure was read from.
+    customProperties:
+    - property: role
+      value: attribute
+    quality:
+    - name: raw_sha256_not_null
+      description: Every row has a raw sha256.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: retrieved_at
+    physicalType: TIMESTAMP
+    logicalType: timestamp
+    required: true
+    description: When the figure was read from the publisher (UTC).
+    customProperties:
+    - property: role
+      value: attribute
+    quality:
+    - name: retrieved_at_not_null
+      description: Every row has a retrieved at.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+customProperties:
+- property: tier
+  value: private
+- property: dataKind
+  value: 'surveillance'
+- property: countedUnit
+  value: 'unresolved: from the publisher''s codebook once catalogued'
+- property: unreliableRule
+  value:
+    kind: none
+    description: 'Not yet read: the publisher''s suppression rule is an open question until the source is catalogued.'
+- property: fingerprints
+  value:
+  - {version: 0.1.0, interface: 74c84d395e5b316200f4959a367806f69bff3afa52f708ee07548dd9cf0324de, docs: 155ddd3789cbfc1c7fd9d80e3065a7ebeff3f8cec29e31179138cc052312d64c}
+- property: openQuestions
+  value:
+  - 'Fills from PR #19 (feat/michigan-tableau, detroit_dhd_epi_annual). Its HIV and gonorrhea yearly charts were not read on 2026-11-24; HIV figures there may include Ryan White programme data and must then be labelled as programme data.'
+  - 'Rate denominator, case definitions and geography basis are open questions in that contract; they apply here unchanged.'
+  - 'The dashboard shows Detroit and Michigan (Michigan includes Detroit); Out-Wayne is not shown.'

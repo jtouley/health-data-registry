@@ -305,6 +305,7 @@ source = { editable = "." }
 dependencies = [
     { name = "duckdb" },
     { name = "huggingface-hub" },
+    { name = "jsonschema" },
     { name = "mcp" },
     { name = "pydantic" },
     { name = "pyyaml" },
@@ -327,6 +328,7 @@ dev = [
 requires-dist = [
     { name = "duckdb", specifier = ">=1.4,<3" },
     { name = "huggingface-hub", specifier = ">=1.0,<3" },
+    { name = "jsonschema", specifier = ">=4.23,<5" },
     { name = "mcp", specifier = ">=2.3,<3" },
     { name = "pydantic", specifier = ">=2.7,<3" },
     { name = "pyyaml", specifier = ">=6" },

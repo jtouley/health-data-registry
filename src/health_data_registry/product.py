@@ -1,18 +1,103 @@
-"""The ODPS data product (contracts/health-data-registry.odps.yaml): the hub's products and their output ports.
+"""ODPS data products (contracts/*.odps.yaml): the products, their output ports, and the checks they must pass.
 
-Each output port is one catalogued source; its contractId and version name the ODCS contract it serves. The
-server shows the product and port with every source, and `export-public` writes them into each release manifest.
+Three products, one file each:
+
+- contracts/health-data-registry.odps.yaml, the open data hub. Each output port is one catalogued source; its
+  contractId and version name that source's ODCS contract. The server shows the product and port with every
+  source, and `export-public` writes them into each release manifest (`load_ports`, hub only).
+- contracts/id-conference-abstracts.odps.yaml and contracts/michigan-hiv.odps.yaml. Each output port has its own
+  ODCS contract in contracts/ports/, and reads one or more catalogued sources (`inputContracts`).
+
+`validate_products` checks every *.odps.yaml against Bitol's official ODPS v1.1.0 JSON schema and every
+*.odcs.yaml against the official ODCS v3.2.0 schema, both vendored byte for byte in schemas/ (fetched at
+development time by scripts/vendor_schemas.py, never at run time; each sha256 is checked before use). Each port
+contract in contracts/ports/ also carries interface and docs fingerprints (a new major version for a change of
+shape, a new minor for a change of meaning) and quality rules with a dbt-test name, a dimension and a severity, so
+the silver stage can generate them as dbt tests; a port is served only when its error-severity rules pass
+(`servable`). Then this project's own rules:
+
+- every port names its tier (public or private), where it is hosted, its release tag, its SLA and its feedback
+  channel (the contract-finding issue form);
+- a port inherits its sources' licences: the licences it declares must be exactly its sources' licences, and its
+  answers carry its sources' caveats (`inherited_context`);
+- no public port exposes private-tier data: a public port is put on the public hub only when every source's
+  licence allows a public copy, never reads a private-tier port, and its contract has no private-tier column;
+- a private-tier port is never on the public hub (hard rule 10);
+- a port whose sources aren't catalogued yet is a draft stub: not hosted, with open questions, never a guess.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import hashlib
+import json
+import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from health_data_registry.registry import (
+    REDISTRIBUTABLE_LICENCES,
+    Contract,
+    Registry,
+    RegistryError,
+    parse_contract,
+)
+
 PRODUCT_FILE = Path("contracts") / "health-data-registry.odps.yaml"
+PRODUCT_GLOB = "*.odps.yaml"
+PORT_CONTRACTS = Path("contracts") / "ports"
+
+SCHEMA_DIR = Path(__file__).resolve().parent / "schemas"
+
+
+@dataclass(frozen=True)
+class VendoredSchema:
+    """One of Bitol's official JSON schemas, vendored byte for byte from its release tag.
+
+    Fetched only at development time by scripts/vendor_schemas.py, which checks `sha256`; never at run time.
+    """
+
+    standard: str
+    api_version: str
+    url: str
+    sha256: str
+
+    @property
+    def path(self) -> Path:
+        return SCHEMA_DIR / self.url.rsplit("/", 1)[1]
+
+
+ODPS = VendoredSchema(
+    "ODPS",
+    "v1.1.0",
+    "https://raw.githubusercontent.com/bitol-io/open-data-product-standard/v1.1.0/schema/odps-json-schema-v1.1.0.json",
+    "b7eae1af15b3c6b18e5dffaa2119212acb38ec73286933c76d16c8712e0d90d1",
+)
+ODCS = VendoredSchema(
+    "ODCS",
+    "v3.2.0",
+    "https://raw.githubusercontent.com/bitol-io/open-data-contract-standard/v3.2.0/schema/odcs-json-schema-v3.2.0.json",
+    "edb41f33ec46e84780e99872ab2bd67f074959d2bf3e9c9fc54e61f8982b0d93",
+)
+VENDORED = (ODPS, ODCS)
+ODPS_API_VERSION = ODPS.api_version
+ODCS_API_VERSION = ODCS.api_version
+
+# Every port's feedback channel: the contract-finding issue form (.github/ISSUE_TEMPLATE/contract-finding.yml).
+FEEDBACK_URL = "https://github.com/jtouley/health-data-registry/issues/new?template=contract-finding.yml"
+
+TIERS = ("public", "private")
+# public-hub: data files in the open Hugging Face dataset. private-hf: data files only in a private Hugging Face
+# dataset. live: read from the publisher per question, in memory only, never stored. none: not built yet.
+HOSTINGS = ("public-hub", "private-hf", "live", "none")
+RELEASE_TAG = "release-<run date>"
+SLA_KEYS = ("refresh", "release", "support")
+REFRESH = ("daily", "weekly", "monthly", "quarterly", "annual", "irregular")
+UNRESOLVED = "unresolved"
+_PORT_NAME = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
 
 
 @dataclass(frozen=True)
@@ -25,14 +110,71 @@ class Port:
     hosted: bool
 
 
+@dataclass(frozen=True)
+class PendingInput:
+    """A source a port will read once it is catalogued (e.g. on an unmerged pull request)."""
+
+    id: str
+    licence: str
+    fills_from: str
+
+
+@dataclass(frozen=True)
+class OutputPort:
+    """One output port with the properties this project requires of every port."""
+
+    product_id: str
+    name: str
+    version: str
+    contract_id: str
+    tier: str
+    hosting: str
+    release_tag: str
+    sla: Mapping[str, str]
+    feedback: str
+    licences: tuple[str, ...]
+    inputs: tuple[str, ...]
+    pending: tuple[PendingInput, ...]
+    stub: bool
+    open_questions: tuple[str, ...]
+    constraints: tuple[str, ...]
+    custom: Mapping[str, Any] = field(repr=False, compare=False)
+
+    @property
+    def is_public(self) -> bool:
+        return self.tier == "public"
+
+
+@dataclass(frozen=True)
+class Product:
+    id: str
+    version: str
+    path: Path
+    ports: tuple[OutputPort, ...]
+    raw: Mapping[str, Any] = field(repr=False, compare=False)
+
+
 def _custom(items: Any) -> dict[str, Any]:
     return {
         str(i["property"]): i.get("value") for i in items or [] if isinstance(i, dict) and "property" in i
     }
 
 
+def _read(path: Path) -> dict[str, Any]:
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        raise RegistryError(f"{path.name}: not valid YAML: {e}") from e
+    if not isinstance(doc, dict):
+        raise RegistryError(f"{path.name}: a data product must be a YAML mapping")
+    return doc
+
+
 def load_ports(root: Path) -> dict[str, Port]:
-    """Output ports by contract id; empty when the registry has no product file (e.g. a test registry)."""
+    """The hub's output ports by contract id; empty when the registry has no hub file (e.g. a test registry).
+
+    Only the hub's ports: the other products' ports are never published by `export-public`.
+    """
     path = root / PRODUCT_FILE
     if not path.is_file():
         return {}
@@ -42,13 +184,527 @@ def load_ports(root: Path) -> dict[str, Port]:
     ports: dict[str, Port] = {}
     for p in doc.get("outputPorts") or []:
         cp = _custom(p.get("customProperties"))
+        hosted = cp["hosted"] if "hosted" in cp else cp.get("hosting") == "public-hub"
         port = Port(
             product_id=str(doc.get("id", "")),
             product_version=str(doc.get("version", "")),
             name=str(p.get("name", "")),
             contract_id=str(p.get("contractId", "")),
             version=str(p.get("version", "")),
-            hosted=bool(cp.get("hosted", False)),
+            hosted=hosted is True,
         )
         ports[port.contract_id] = port
     return ports
+
+
+# ----------------------------------------------------------------------------------- the official schemas
+
+
+def load_schema(spec: VendoredSchema, path: Path | None = None) -> dict[str, Any]:
+    """A vendored Bitol JSON schema, refused unless its bytes are exactly the ones recorded."""
+    path = path or spec.path
+    try:
+        data = path.read_bytes()
+    except OSError as e:
+        raise RegistryError(
+            f"the vendored {spec.standard} schema is missing ({path.name}); run scripts/vendor_schemas.py"
+        ) from e
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != spec.sha256:
+        raise RegistryError(
+            f"the vendored {spec.standard} schema {path.name} has sha256 {digest}, not the recorded "
+            f"{spec.sha256}; restore it with scripts/vendor_schemas.py"
+        )
+    schema: dict[str, Any] = json.loads(data)
+    return schema
+
+
+def odps_schema() -> dict[str, Any]:
+    return load_schema(ODPS)
+
+
+def odcs_schema() -> dict[str, Any]:
+    return load_schema(ODCS)
+
+
+def schema_errors(doc: Mapping[str, Any], schema: Mapping[str, Any] | None = None) -> list[str]:
+    """Every place `doc` breaks the JSON schema (ODPS by default), as `path: message` lines; empty when it conforms."""
+    import jsonschema
+
+    validator = jsonschema.Draft201909Validator(
+        schema or odps_schema(), format_checker=jsonschema.Draft201909Validator.FORMAT_CHECKER
+    )
+    errors = sorted(validator.iter_errors(dict(doc)), key=lambda e: [str(p) for p in e.absolute_path])
+    return [f"{'/'.join(str(p) for p in e.absolute_path) or '(top)'}: {e.message}" for e in errors]
+
+
+# ------------------------------------------------------------------------------------------ loading ports
+
+
+def _strings(value: Any, where: str) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not all(isinstance(v, str) and v.strip() for v in value):
+        raise RegistryError(f"{where} must be a list of non-empty texts")
+    return tuple(value)
+
+
+def _pending(value: Any, where: str) -> tuple[PendingInput, ...]:
+    out: list[PendingInput] = []
+    for item in value or []:
+        if not isinstance(item, Mapping) or not all(
+            str(item.get(k) or "").strip() for k in ("id", "licence", "fillsFrom")
+        ):
+            raise RegistryError(f"{where}: each pendingInputs entry needs id, licence and fillsFrom")
+        out.append(PendingInput(str(item["id"]), str(item["licence"]), str(item["fillsFrom"])))
+    return tuple(out)
+
+
+def _port(product_id: str, p: Mapping[str, Any]) -> OutputPort:
+    name = str(p.get("name", ""))
+    where = f"{product_id}/{name}"
+    cp = _custom(p.get("customProperties"))
+    sla = cp.get("sla")
+    if not isinstance(sla, Mapping) or any(not str(sla.get(k) or "").strip() for k in SLA_KEYS):
+        raise RegistryError(f"{where}: customProperties.sla needs {', '.join(SLA_KEYS)}")
+    inputs = tuple(str(i.get("id", "")) for i in p.get("inputContracts") or [] if isinstance(i, Mapping))
+    context = p.get("context") or {}
+    constraints = tuple(
+        str(c.get("constraint", "")) for c in context.get("constraints") or [] if isinstance(c, Mapping)
+    )
+    return OutputPort(
+        product_id=product_id,
+        name=name,
+        version=str(p.get("version", "")),
+        contract_id=str(p.get("contractId", "")),
+        tier=str(cp.get("tier", "")),
+        hosting=str(cp.get("hosting", "")),
+        release_tag=str(cp.get("releaseTag") or ""),
+        sla={k: str(sla[k]) for k in SLA_KEYS},
+        feedback=str(cp.get("feedback") or ""),
+        licences=_strings(cp.get("licences"), f"{where}: licences"),
+        inputs=inputs or (str(p.get("contractId", "")),),
+        pending=_pending(cp.get("pendingInputs"), where),
+        stub=cp.get("stub") is True,
+        open_questions=_strings(cp.get("openQuestions"), f"{where}: openQuestions"),
+        constraints=constraints,
+        custom=cp,
+    )
+
+
+def load_product(path: Path) -> Product:
+    doc = _read(path)
+    if doc.get("kind") != "DataProduct":
+        raise RegistryError(f"{path.name}: kind must be DataProduct")
+    pid = str(doc.get("id", ""))
+    ports = tuple(_port(pid, p) for p in doc.get("outputPorts") or [] if isinstance(p, Mapping))
+    return Product(id=pid, version=str(doc.get("version", "")), path=path, ports=ports, raw=doc)
+
+
+def product_files(root: Path) -> list[Path]:
+    return sorted((root / "contracts").glob(PRODUCT_GLOB))
+
+
+def load_products(root: Path) -> dict[str, Product]:
+    products: dict[str, Product] = {}
+    for path in product_files(root):
+        prod = load_product(path)
+        if prod.id in products:
+            raise RegistryError(f"{path.name}: product id {prod.id!r} is also used by another product file")
+        products[prod.id] = prod
+    return products
+
+
+# --------------------------------------------------------------------------------------- port contracts
+
+
+def port_contract(root: Path, registry: Registry, contract_id: str) -> Contract:
+    """The ODCS contract a port serves: a catalogued source's own contract, or its file in contracts/ports/."""
+    if contract_id in registry.datasets:
+        return registry.get(contract_id).contract
+    path = root / PORT_CONTRACTS / f"{contract_id}.odcs.yaml"
+    if not path.is_file():
+        raise RegistryError(
+            f"port contract {contract_id} is neither a catalogued source's contract nor "
+            f"{PORT_CONTRACTS}/{contract_id}.odcs.yaml"
+        )
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(doc, Mapping) or doc.get("id") != contract_id:
+        raise RegistryError(f"{path.name}: contract id must be {contract_id}")
+    return parse_contract(doc, expected_id=contract_id)
+
+
+def private_columns(contract: Contract) -> list[str]:
+    """Columns the contract marks private tier (e.g. abstract text under a restrictive licence)."""
+    out: list[str] = []
+    for obj in contract.raw.get("schema") or []:
+        for prop in obj.get("properties") or []:
+            if _custom(prop.get("customProperties")).get("tier") == "private":
+                out.append(str(prop.get("name")))
+    return out
+
+
+def inherited_licences(port: OutputPort, registry: Registry) -> tuple[str, ...]:
+    """The licence ids of every source the port reads, catalogued or still pending, sorted and distinct."""
+    ids = {registry.get(i).entry.licence.id for i in port.inputs if i in registry.datasets}
+    ids |= {p.licence for p in port.pending}
+    return tuple(sorted(ids))
+
+
+def inherited_context(port: OutputPort, registry: Registry) -> list[str]:
+    """What travels with every answer from this port: its own constraints, then each catalogued source's
+    licence terms and caveats, then the open questions of a draft stub."""
+    lines = list(port.constraints)
+    for i in port.inputs:
+        if i in registry.datasets:
+            e = registry.get(i).entry
+            lines.append(f"{e.id}: licence {e.licence.id} ({e.licence.terms_url})")
+            lines.extend(f"{e.id}: {c}" for c in e.caveats)
+    lines.extend(f"pending {p.id} ({p.fills_from}): licence {p.licence}" for p in port.pending)
+    lines.extend(f"open question: {q}" for q in port.open_questions)
+    return lines
+
+
+# ------------------------------------------------------------------- port contracts: fingerprints and rules
+
+# The shape a consumer codes against. A change here is a major version.
+_INTERFACE_KEYS = ("name", "physicalType", "logicalType", "required", "primaryKey", "primaryKeyPosition")
+# Recorded history and review state: they don't change what a column means.
+_NOT_MEANING = frozenset({"fingerprints", "openQuestions"})
+_SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+SEVERITIES = ("error", "warn")
+# The conformed dimensions the silver stage builds (feat/contract-silver, stage c). Port contracts declare keys
+# into them; they never build the gazetteer or the concept mappings themselves.
+CONFORMED_DIMENSIONS = ("dim_concept", "dim_place", "dim_time")
+TAG_STATES = ("proposed", "accepted", "rejected")
+
+
+def _digest(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def interface_fingerprint(doc: Mapping[str, Any]) -> str:
+    """sha256 of the contract's shape: each table and each column's name, types, required and key."""
+    shape = [
+        {
+            "name": obj.get("name"),
+            "properties": [{k: p.get(k) for k in _INTERFACE_KEYS} for p in obj.get("properties") or []],
+        }
+        for obj in doc.get("schema") or []
+    ]
+    return _digest(shape)
+
+
+def docs_fingerprint(doc: Mapping[str, Any]) -> str:
+    """sha256 of what the contract means: every description, rule and property, but not its version, status,
+    open questions or fingerprint history."""
+    meaning = {k: v for k, v in doc.items() if k not in ("version", "status", "customProperties")}
+    meaning["customProperties"] = [
+        c
+        for c in doc.get("customProperties") or []
+        if isinstance(c, Mapping) and c.get("property") not in _NOT_MEANING
+    ]
+    return _digest(meaning)
+
+
+def _semver(v: str) -> tuple[int, int, int] | None:
+    m = _SEMVER.fullmatch(str(v))
+    return (int(m[1]), int(m[2]), int(m[3])) if m else None
+
+
+def fingerprint_errors(doc: Mapping[str, Any], where: str) -> list[str]:
+    """The version rule: a new major for a change of shape, a new minor for a change of meaning.
+
+    customProperties.fingerprints is the history, one {version, interface, docs} per released version; its last
+    entry must be this version and match the contract as it stands.
+    """
+    history = _custom(doc.get("customProperties")).get("fingerprints")
+    if not isinstance(history, list) or not history or not all(isinstance(h, Mapping) for h in history):
+        return [f"{where}: customProperties.fingerprints needs at least one {{version, interface, docs}}"]
+    errs: list[str] = []
+    last = history[-1]
+    if str(last.get("version")) != str(doc.get("version")):
+        errs.append(
+            f"{where}: the last fingerprints entry is for {last.get('version')}, not version {doc.get('version')}"
+        )
+    if last.get("interface") != interface_fingerprint(doc):
+        errs.append(f"{where}: its shape changed; bump the major version and add a fingerprints entry")
+    elif last.get("docs") != docs_fingerprint(doc):
+        errs.append(f"{where}: its meaning changed; bump the minor version and add a fingerprints entry")
+    for a, b in zip(history, history[1:], strict=False):
+        va, vb = _semver(str(a.get("version"))), _semver(str(b.get("version")))
+        if va is None or vb is None:
+            errs.append(f"{where}: fingerprint versions must be MAJOR.MINOR.PATCH")
+            continue
+        if a.get("interface") != b.get("interface") and vb[0] <= va[0]:
+            errs.append(f"{where}: {b.get('version')} changed the shape, so it must be a new major version")
+        elif a.get("docs") != b.get("docs") and vb[:2] <= va[:2]:
+            errs.append(
+                f"{where}: {b.get('version')} changed the meaning, so it must be at least a new minor"
+            )
+        elif vb <= va:
+            errs.append(f"{where}: fingerprint versions must increase")
+    return errs
+
+
+@dataclass(frozen=True)
+class QualityRule:
+    name: str
+    dbt_test: str
+    dimension: str
+    severity: str
+    column: str | None
+
+
+def quality_rules(doc: Mapping[str, Any]) -> list[QualityRule]:
+    """Every quality rule in the contract, table-level and column-level, as the silver builder generates them."""
+    rules: list[QualityRule] = []
+    for obj in doc.get("schema") or []:
+        holders = [(None, obj)] + [(str(p.get("name")), p) for p in obj.get("properties") or []]
+        for column, holder in holders:
+            for q in holder.get("quality") or []:
+                rules.append(
+                    QualityRule(
+                        name=str(q.get("name") or ""),
+                        dbt_test=str(_custom(q.get("customProperties")).get("dbtTest") or ""),
+                        dimension=str(q.get("dimension") or ""),
+                        severity=str(q.get("severity") or ""),
+                        column=column,
+                    )
+                )
+    return rules
+
+
+def quality_errors(doc: Mapping[str, Any], where: str) -> list[str]:
+    rules = quality_rules(doc)
+    errs = [] if rules else [f"{where}: a port contract declares its quality rules"]
+    names = [r.name for r in rules]
+    for r in rules:
+        if not r.name or not r.dbt_test or not r.dimension or r.severity not in SEVERITIES:
+            errs.append(
+                f"{where}: quality rule {r.name or '(unnamed)'} needs a name, a dbtTest, a dimension and a "
+                f"severity ({' or '.join(SEVERITIES)})"
+            )
+    errs.extend(
+        f"{where}: quality rule name {n} is used twice"
+        for n in sorted({n for n in names if names.count(n) > 1})
+    )
+    return errs
+
+
+def servable(doc: Mapping[str, Any], results: Mapping[str, bool]) -> bool:
+    """A port is served only when every error-severity rule ran and passed; a rule with no result fails closed."""
+    errors = [r.name for r in quality_rules(doc) if r.severity == "error"]
+    return bool(errors) and all(results.get(n) is True for n in errors)
+
+
+def conformed_key_errors(doc: Mapping[str, Any], where: str) -> list[str]:
+    """Conformed keys name a silver dimension; a dictionary-proposed tag carries its own review state."""
+    errs: list[str] = []
+    for obj in doc.get("schema") or []:
+        props = {str(p.get("name")): p for p in obj.get("properties") or []}
+        for name, p in props.items():
+            key = _custom(p.get("customProperties")).get("conformedKey")
+            if key is None:
+                continue
+            if not isinstance(key, Mapping) or key.get("dimension") not in CONFORMED_DIMENSIONS:
+                errs.append(
+                    f"{where}.{name}: conformedKey.dimension must be one of {', '.join(CONFORMED_DIMENSIONS)}"
+                )
+                continue
+            if key.get("assignment") == "dictionary_proposed":
+                state = str(key.get("reviewStateColumn") or "")
+                allowed = [
+                    q.get("arguments", {}).get("validValues")
+                    for q in (props.get(state) or {}).get("quality") or []
+                    if q.get("metric") == "invalidValues"
+                ]
+                if state not in props or list(TAG_STATES) not in allowed:
+                    errs.append(
+                        f"{where}.{name}: a dictionary-proposed tag needs a reviewStateColumn whose values are "
+                        f"checked to be {', '.join(TAG_STATES)} (rules 1 and 9: proposed is never a fact)"
+                    )
+    return errs
+
+
+def port_contract_errors(path: Path) -> list[str]:
+    """The rules every file in contracts/ports/ follows beyond the ODCS schema."""
+    doc = _read(path)
+    where = path.name
+    errs = fingerprint_errors(doc, where) + quality_errors(doc, where) + conformed_key_errors(doc, where)
+    if _custom(doc.get("customProperties")).get("tier") not in TIERS:
+        errs.append(f"{where}: customProperties.tier must be one of {', '.join(TIERS)}")
+    return errs
+
+
+def contract_files(root: Path) -> list[Path]:
+    return sorted((root / "contracts").glob("*.odcs.yaml")) + sorted(
+        (root / PORT_CONTRACTS).glob("*.odcs.yaml")
+    )
+
+
+# ---------------------------------------------------------------------------------------------- checks
+
+
+def _port_errors(root: Path, registry: Registry, port: OutputPort, private_ports: set[str]) -> list[str]:
+    where = f"{port.product_id}/{port.name}"
+    errs: list[str] = []
+    if not _PORT_NAME.fullmatch(port.name):
+        errs.append(f"{where}: port name must be snake_case")
+    if port.tier not in TIERS:
+        errs.append(f"{where}: tier must be one of {', '.join(TIERS)}")
+    if port.hosting not in HOSTINGS:
+        errs.append(f"{where}: hosting must be one of {', '.join(HOSTINGS)}")
+    if port.feedback != FEEDBACK_URL:
+        errs.append(f"{where}: feedback must be the contract-finding issue form ({FEEDBACK_URL})")
+    if port.hosting in ("public-hub", "private-hf") and port.release_tag != RELEASE_TAG:
+        errs.append(f"{where}: a hosted port's releaseTag is {RELEASE_TAG}")
+    if not port.release_tag:
+        errs.append(f"{where}: every port needs a releaseTag")
+    if port.sla["refresh"] not in REFRESH:
+        errs.append(f"{where}: sla.refresh must be one of {', '.join(REFRESH)}")
+    if "hosted" in port.custom and (port.custom["hosted"] is True) != (port.hosting == "public-hub"):
+        errs.append(f"{where}: hosted must be true exactly when hosting is public-hub")
+
+    # Sources: catalogued now, or pending with the pull request that fills them; never anything else.
+    pending_ids = {p.id for p in port.pending}
+    for i in port.inputs:
+        if i not in registry.datasets and i not in pending_ids:
+            errs.append(f"{where}: input {i} is not catalogued and not listed in pendingInputs")
+    for p in port.pending:
+        if p.id not in port.inputs:
+            errs.append(f"{where}: pendingInputs {p.id} is not one of the port's inputContracts")
+    if port.pending and not port.stub:
+        errs.append(f"{where}: a port whose sources aren't all catalogued must be marked stub: true")
+    if port.stub:
+        if port.hosting != "none":
+            errs.append(f"{where}: a stub port is not hosted (hosting: none)")
+        if not port.open_questions:
+            errs.append(f"{where}: a stub port lists its openQuestions")
+    for i in port.inputs:
+        if i in registry.datasets:
+            refresh = registry.get(i).entry.refresh
+            if port.sla["refresh"] != refresh:
+                errs.append(
+                    f"{where}: sla.refresh {port.sla['refresh']} differs from {i}'s refresh {refresh}"
+                )
+
+    # Licences are inherited, never declared freely.
+    inherited = inherited_licences(port, registry)
+    if tuple(sorted(set(port.licences))) != inherited:
+        errs.append(
+            f"{where}: licences {list(port.licences)} must be its sources' licences {list(inherited)}"
+        )
+
+    # The contract the port serves.
+    try:
+        contract = port_contract(root, registry, port.contract_id)
+    except RegistryError as e:
+        errs.append(f"{where}: {e}")
+        contract = None
+    if contract is not None:
+        if contract.version != port.version:
+            errs.append(f"{where}: version {port.version} differs from contract version {contract.version}")
+        if port.stub and contract.status != "draft":
+            errs.append(f"{where}: a stub port's contract stays draft")
+
+    # Public versus private (hard rule 10).
+    if port.tier == "private" and port.hosting == "public-hub":
+        errs.append(f"{where}: a private-tier port is never on the public hub")
+    if port.is_public:
+        read_private = [i for i in port.inputs if i in private_ports]
+        if read_private:
+            errs.append(f"{where}: a public port may not read private-tier ports ({', '.join(read_private)})")
+        if contract is not None and private_columns(contract):
+            errs.append(
+                f"{where}: a public port's contract has private-tier columns ({', '.join(private_columns(contract))})"
+            )
+        if port.hosting == "public-hub":
+            closed = [x for x in inherited if x not in REDISTRIBUTABLE_LICENCES or x.startswith(UNRESOLVED)]
+            not_public = [
+                i for i in port.inputs if i in registry.datasets and not registry.get(i).entry.hosted
+            ]
+            if closed or not_public or port.pending:
+                errs.append(
+                    f"{where}: on the public hub only when every source is catalogued, hosting: public and "
+                    f"licensed for a public copy (not: {', '.join(closed + not_public) or 'pending sources'})"
+                )
+    return errs
+
+
+def _product_errors(product: Product) -> list[str]:
+    errs: list[str] = []
+    where = product.path.name
+    if product.raw.get("apiVersion") != ODPS_API_VERSION:
+        errs.append(f"{where}: apiVersion must be {ODPS_API_VERSION}, the vendored schema's version")
+    names = [p.name for p in product.ports]
+    if len(set(names)) != len(names):
+        errs.append(f"{where}: output port names must be unique")
+    if not product.ports:
+        errs.append(f"{where}: a product needs at least one output port")
+    custom = _custom(product.raw.get("customProperties"))
+    if custom.get("combine") == "grouped-never-merged":
+        # Each source stays its own series with its own counted unit.
+        for p in product.ports:
+            if len(p.inputs) != 1:
+                errs.append(f"{where}/{p.name}: in a grouped product each port reads exactly one source")
+            if not str(p.custom.get("countedUnit") or "").strip():
+                errs.append(f"{where}/{p.name}: in a grouped product each port declares its countedUnit")
+    return errs
+
+
+def validate_contracts(root: Path, schema: Mapping[str, Any] | None = None) -> list[str]:
+    """Every ODCS contract against the official ODCS schema, and every port contract against this project's
+    port rules (fingerprints and version rule, quality rules for dbt, conformed keys, tier)."""
+    schema = schema or odcs_schema()
+    errs: list[str] = []
+    for path in contract_files(root):
+        try:
+            doc = _read(path)
+        except RegistryError as e:
+            errs.append(str(e))
+            continue
+        if doc.get("apiVersion") != ODCS_API_VERSION:
+            errs.append(f"{path.name}: apiVersion must be {ODCS_API_VERSION}, the vendored schema's version")
+        errs.extend(f"{path.name}: {m}" for m in schema_errors(doc, schema))
+        if path.parent.name == PORT_CONTRACTS.name:
+            errs.extend(port_contract_errors(path))
+    return errs
+
+
+def validate_products(root: Path, registry: Registry, schema: Mapping[str, Any] | None = None) -> list[str]:
+    """Every problem with every product file and contract, as lines; empty when all pass."""
+    errs = validate_contracts(root)
+    schema = schema or odps_schema()
+    products: list[Product] = []
+    for path in product_files(root):
+        try:
+            doc = _read(path)
+        except RegistryError as e:
+            errs.append(str(e))
+            continue
+        errs.extend(f"{path.name}: {m}" for m in schema_errors(doc, schema))
+        try:
+            products.append(load_product(path))
+        except RegistryError as e:
+            errs.append(str(e))
+    ids = [p.id for p in products]
+    errs.extend(
+        f"product id {i} is used by more than one file" for i in sorted({i for i in ids if ids.count(i) > 1})
+    )
+    private_ports = {p.contract_id for prod in products for p in prod.ports if p.tier == "private"}
+    private_ports |= {p.name for prod in products for p in prod.ports if p.tier == "private"}
+    for prod in products:
+        errs.extend(_product_errors(prod))
+        for port in prod.ports:
+            errs.extend(_port_errors(root, registry, port, private_ports))
+    return errs
+
+
+def summary(products: Sequence[Product]) -> list[str]:
+    """One line per port, for `validate`'s output."""
+    return [
+        f"ok   {prod.id}/{p.name}: {p.tier} tier, hosting {p.hosting}{', draft stub' if p.stub else ''}"
+        for prod in products
+        for p in prod.ports
+    ]

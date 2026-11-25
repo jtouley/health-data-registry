@@ -9,8 +9,11 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
+      # Vendored schemas stay byte-for-byte as published (product.py checks their sha256).
       - id: trailing-whitespace
+        exclude: ^src/health_data_registry/schemas/
       - id: end-of-file-fixer
+        exclude: ^src/health_data_registry/schemas/
       - id: check-yaml
       - id: check-toml
       - id: check-merge-conflict

@@ -1,0 +1,235 @@
+# ODPS data product: Michigan HIV data. Sources are grouped, never merged: each output port reads one source
+# and stays its own series with its own counted unit. Each port has its own ODCS contract in contracts/ports/.
+# Follows Bitol ODPS v1.1.0; `health-data-registry validate` checks it against the vendored schema and
+# product.py's rules. Every port is a draft stub until its source is catalogued (tasks 78-80, PR #19).
+apiVersion: v1.1.0
+kind: DataProduct
+id: michigan-hiv
+name: Michigan HIV data
+version: 0.1.0
+status: draft
+domain: infectious_disease
+type: sourceAligned
+description:
+  purpose: >-
+    HIV and STI figures for Michigan, Detroit and Wayne County from each publisher that has them, side by side,
+    so a fellow can see every local series with its own source, definitions and counted unit.
+  usage: >-
+    Ask through the health-data-registry MCP server. Each answer names its port, so surveillance and programme
+    data are never confused.
+  limitations: >-
+    Grouped, never merged: figures from different ports are never added, averaged or reconciled into one number.
+    Ryan White and EHE figures are programme data about people served, not surveillance. Detroit and Out-Wayne
+    stay apart wherever the publisher splits them. AIDSVu is private tier.
+tags: [infectious-disease, hiv, stis, michigan, detroit]
+context:
+  instructions: >-
+    Name the port and its data kind (surveillance or programme) with every figure, and its counted unit.
+  constraints:
+    - constraint: Never add, average or merge figures from different ports; each port is its own series.
+    - constraint: Detroit and Out-Wayne stay separate series wherever the publisher splits them; never add them together.
+    - constraint: Never present programme data (Ryan White, EHE) as surveillance.
+authoritativeDefinitions:
+  - type: license
+    url: https://github.com/jtouley/health-data-registry/blob/main/licenses/README.md
+    description: Each source keeps its publisher's terms.
+outputPorts:
+  - name: mi_mdhhs_hiv_sti
+    description: "MDHHS HIV and STI surveillance for Michigan. Draft stub."
+    type: tables
+    version: 0.1.0
+    contractId: mi_mdhhs_hiv_sti
+    inputContracts:
+      - {id: mdhhs_hiv_sti, version: 0.1.0}
+    context:
+      constraints:
+        - constraint: "Detroit and Out-Wayne stay separate series wherever the publisher splits them; never add them together."
+    customProperties:
+      - {property: tier, value: public}
+      - {property: hosting, value: none}
+      - {property: stub, value: true}
+      - {property: dataKind, value: surveillance}
+      - {property: countedUnit, value: "unresolved: from the publisher's codebook once catalogued"}
+      - {property: releaseTag, value: "release-<run date>"}
+      - property: sla
+        value:
+          refresh: irregular
+          release: Once hosted, in the next release after the publisher updates.
+          support: Best effort by one maintainer; no guaranteed response time.
+      - {property: feedback, value: "https://github.com/jtouley/health-data-registry/issues/new?template=contract-finding.yml"}
+      - {property: licences, value: ["unresolved: MDHHS terms not yet read"]}
+      - property: pendingInputs
+        value:
+          - {id: mdhhs_hiv_sti, licence: "unresolved: MDHHS terms not yet read", fillsFrom: "tasks 78-80 (not catalogued yet)"}
+      - property: openQuestions
+        value:
+          - "Not catalogued yet: which MDHHS HIV/STI sources, at which URLs, under which terms."
+  - name: mi_detroit_ryan_white
+    description: "Detroit-area Ryan White HIV/AIDS Program data. Programme data about clients served, NOT surveillance. Draft stub."
+    type: tables
+    version: 0.1.0
+    contractId: mi_detroit_ryan_white
+    inputContracts:
+      - {id: detroit_ryan_white, version: 0.1.0}
+    context:
+      constraints:
+        - constraint: "Detroit and Out-Wayne stay separate series wherever the publisher splits them; never add them together."
+        - constraint: "Programme data, not surveillance: never present it as the number of people diagnosed."
+    customProperties:
+      - {property: tier, value: public}
+      - {property: hosting, value: none}
+      - {property: stub, value: true}
+      - {property: dataKind, value: programme}
+      - {property: countedUnit, value: "unresolved: from the publisher's codebook once catalogued"}
+      - {property: releaseTag, value: "release-<run date>"}
+      - property: sla
+        value:
+          refresh: irregular
+          release: Once hosted, in the next release after the publisher updates.
+          support: Best effort by one maintainer; no guaranteed response time.
+      - {property: feedback, value: "https://github.com/jtouley/health-data-registry/issues/new?template=contract-finding.yml"}
+      - {property: licences, value: ["unresolved: publisher terms not yet read"]}
+      - property: pendingInputs
+        value:
+          - {id: detroit_ryan_white, licence: "unresolved: publisher terms not yet read", fillsFrom: "tasks 78-80 (not catalogued yet)"}
+      - property: openQuestions
+        value:
+          - "Not catalogued yet: which Ryan White reports for the Detroit area, from which publisher."
+  - name: mi_detroit_ehe
+    description: "Detroit and Wayne County Ending the HIV Epidemic (EHE) data. Programme data, NOT surveillance. Draft stub."
+    type: tables
+    version: 0.1.0
+    contractId: mi_detroit_ehe
+    inputContracts:
+      - {id: detroit_ehe, version: 0.1.0}
+    context:
+      constraints:
+        - constraint: "Detroit and Out-Wayne stay separate series wherever the publisher splits them; never add them together."
+        - constraint: "Programme data, not surveillance: never present it as the number of people diagnosed."
+    customProperties:
+      - {property: tier, value: public}
+      - {property: hosting, value: none}
+      - {property: stub, value: true}
+      - {property: dataKind, value: programme}
+      - {property: countedUnit, value: "unresolved: from the publisher's codebook once catalogued"}
+      - {property: releaseTag, value: "release-<run date>"}
+      - property: sla
+        value:
+          refresh: irregular
+          release: Once hosted, in the next release after the publisher updates.
+          support: Best effort by one maintainer; no guaranteed response time.
+      - {property: feedback, value: "https://github.com/jtouley/health-data-registry/issues/new?template=contract-finding.yml"}
+      - {property: licences, value: ["unresolved: publisher terms not yet read"]}
+      - property: pendingInputs
+        value:
+          - {id: detroit_ehe, licence: "unresolved: publisher terms not yet read", fillsFrom: "tasks 78-80 (not catalogued yet)"}
+      - property: openQuestions
+        value:
+          - "Not catalogued yet: which EHE reports, from which publisher."
+  - name: mi_ahead_wayne
+    description: "AHEAD (America's HIV Epidemic Analysis Dashboard) indicators for Wayne County. Draft stub."
+    type: tables
+    version: 0.1.0
+    contractId: mi_ahead_wayne
+    inputContracts:
+      - {id: ahead_wayne, version: 0.1.0}
+    context:
+      constraints:
+        - constraint: "Detroit and Out-Wayne stay separate series wherever the publisher splits them; never add them together."
+    customProperties:
+      - {property: tier, value: public}
+      - {property: hosting, value: none}
+      - {property: stub, value: true}
+      - {property: dataKind, value: unresolved}
+      - {property: countedUnit, value: "unresolved: from the publisher's codebook once catalogued"}
+      - {property: releaseTag, value: "release-<run date>"}
+      - property: sla
+        value:
+          refresh: irregular
+          release: Once hosted, in the next release after the publisher updates.
+          support: Best effort by one maintainer; no guaranteed response time.
+      - {property: feedback, value: "https://github.com/jtouley/health-data-registry/issues/new?template=contract-finding.yml"}
+      - {property: licences, value: ["unresolved: AHEAD terms not yet read"]}
+      - property: pendingInputs
+        value:
+          - {id: ahead_wayne, licence: "unresolved: AHEAD terms not yet read", fillsFrom: "tasks 78-80 and the AHEAD download (not catalogued yet)"}
+      - property: openQuestions
+        value:
+          - "Not catalogued yet: waits for the AHEAD download."
+          - "Which AHEAD indicators are surveillance and which are programme data."
+  - name: mi_aidsvu
+    description: "AIDSVu Michigan data. Private tier only, never public. Draft stub."
+    type: tables
+    version: 0.1.0
+    contractId: mi_aidsvu
+    inputContracts:
+      - {id: aidsvu_michigan, version: 0.1.0}
+    context:
+      constraints:
+        - constraint: "Detroit and Out-Wayne stay separate series wherever the publisher splits them; never add them together."
+        - constraint: "Private tier: never published or copied into a public port."
+    customProperties:
+      - {property: tier, value: private}
+      - {property: hosting, value: none}
+      - {property: stub, value: true}
+      - {property: dataKind, value: unresolved}
+      - {property: countedUnit, value: "unresolved: from the publisher's codebook once catalogued"}
+      - {property: releaseTag, value: "release-<run date>"}
+      - property: sla
+        value:
+          refresh: irregular
+          release: Once hosted, in the next release after the publisher updates.
+          support: Best effort by one maintainer; no guaranteed response time.
+      - {property: feedback, value: "https://github.com/jtouley/health-data-registry/issues/new?template=contract-finding.yml"}
+      - {property: licences, value: ["unresolved: AIDSVu terms not yet read"]}
+      - property: pendingInputs
+        value:
+          - {id: aidsvu_michigan, licence: "unresolved: AIDSVu terms not yet read", fillsFrom: "tasks 78-80 (not catalogued yet)"}
+      - property: openQuestions
+        value:
+          - "Not catalogued yet: which AIDSVu files, under which terms of use."
+  - name: mi_detroit_dhd_sti_annual
+    description: "Detroit Health Department Epidemiology Dashboard yearly STI figures for Detroit and Michigan. Private tier (no terms of reuse stated). Draft stub."
+    type: tables
+    version: 0.1.0
+    contractId: mi_detroit_dhd_sti_annual
+    inputContracts:
+      - {id: detroit_dhd_epi_annual, version: 0.1.0}
+    context:
+      constraints:
+        - constraint: "Detroit and Out-Wayne stay separate series wherever the publisher splits them; never add them together."
+        - constraint: "Michigan includes Detroit: never add the two."
+    customProperties:
+      - {property: tier, value: private}
+      - {property: hosting, value: none}
+      - {property: stub, value: true}
+      - {property: dataKind, value: surveillance}
+      - {property: countedUnit, value: "unresolved: from the publisher's codebook once catalogued"}
+      - {property: releaseTag, value: "release-<run date>"}
+      - property: sla
+        value:
+          refresh: annual
+          release: Once hosted, in the next release after the publisher updates.
+          support: Best effort by one maintainer; no guaranteed response time.
+      - {property: feedback, value: "https://github.com/jtouley/health-data-registry/issues/new?template=contract-finding.yml"}
+      - {property: licences, value: ["no-terms-stated"]}
+      - property: pendingInputs
+        value:
+          - {id: detroit_dhd_epi_annual, licence: "no-terms-stated", fillsFrom: "PR #19 (feat/michigan-tableau)"}
+      - property: openQuestions
+        value:
+          - "Fills from PR #19 once it merges; the dashboard's HIV chart is not read yet and may hold programme data."
+customProperties:
+  - property: combine
+    value: grouped-never-merged
+team:
+  name: health-data-registry
+  members:
+    - username: jtouley
+      role: owner
+support:
+  - channel: contract-finding
+    url: https://github.com/jtouley/health-data-registry/issues/new?template=contract-finding.yml
+    tool: ticket
+    scope: issues
+    description: A finding about one port's contract; triaged into contract:<dataset> issues.

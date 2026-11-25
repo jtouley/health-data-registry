@@ -1,0 +1,45 @@
+name: Contract finding
+description: Something one dataset's or data product port's contract gets wrong or leaves out. Every port's feedback channel.
+title: "contract:<dataset>: "
+labels: [contract-finding]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        One finding per issue. The weekly triage groups findings into `contract:<dataset>` issues; a maintainer answers
+        each with a citation from the publisher before any number changes. Don't paste patient information, and don't
+        paste the question a clinician asked: describe the finding only. A result that is simply wrong can also go in
+        a [Wrong number](https://github.com/jtouley/health-data-registry/issues/new?template=wrong-number.yml) report.
+  - type: input
+    id: dataset
+    attributes:
+      label: Dataset or port
+      description: The catalog id (e.g. cdc_nndss_weekly) or product/port (e.g. michigan-hiv/mi_aidsvu).
+    validations: {required: true}
+  - type: input
+    id: column
+    attributes:
+      label: Column or label
+      description: The contract column, or the publisher's label, the finding is about. Leave empty if it is about the whole source.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of finding
+      options:
+        - data_defect
+        - label_rename
+        - coverage_gap
+        - metric_bug
+        - source_request
+    validations: {required: true}
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: What you saw and where the publisher says otherwise, with a link to its codebook, table or notes and the date you read it.
+    validations: {required: true}
+  - type: input
+    id: run
+    attributes:
+      label: Run id or version
+      description: The eval run id, snapshot version or release tag (release-<run date>) the finding comes from, if any.

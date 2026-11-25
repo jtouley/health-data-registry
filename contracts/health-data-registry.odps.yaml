@@ -2,6 +2,8 @@
 # catalogued source; its contract is the ODCS file in this folder whose id is the port's contractId. Follows the
 # Bitol ODPS v1.1.0.
 # tests/test_publish.py checks every port against the catalog and contracts, so the two never drift apart.
+# `health-data-registry validate` checks this file against the vendored ODPS v1.1.0 JSON schema and product.py's
+# rules: every port names its tier, hosting, release tag, SLA, feedback channel and its sources' licences.
 apiVersion: v1.1.0
 kind: DataProduct
 id: health-data-registry-hub
@@ -72,6 +74,16 @@ outputPorts:
     contractId: cdc_haicviz_cdi
     customProperties:
       - {property: hosted, value: true}
+      - {property: tier, value: public}
+      - {property: hosting, value: public-hub}
+      - {property: releaseTag, value: "release-<run date>"}
+      - property: sla
+        value:
+          refresh: annual
+          release: In the next weekly hub release after the publisher updates, once every source passes its checks.
+          support: Best effort by one maintainer; no guaranteed response time. Wrong-number reports come first.
+      - {property: feedback, value: "https://github.com/jtouley/health-data-registry/issues/new?template=contract-finding.yml"}
+      - {property: licences, value: [public-domain-us-federal]}
   - name: cdc_nhsn_ar_hai
     description: NHSN antimicrobial resistance in healthcare-associated infections, 2011-2025.
     type: tables
@@ -79,6 +91,16 @@ outputPorts:
     contractId: cdc_nhsn_ar_hai
     customProperties:
       - {property: hosted, value: true}
+      - {property: tier, value: public}
+      - {property: hosting, value: public-hub}
+      - {property: releaseTag, value: "release-<run date>"}
+      - property: sla
+        value:
+          refresh: annual
+          release: In the next weekly hub release after the publisher updates, once every source passes its checks.
+          support: Best effort by one maintainer; no guaranteed response time. Wrong-number reports come first.
+      - {property: feedback, value: "https://github.com/jtouley/health-data-registry/issues/new?template=contract-finding.yml"}
+      - {property: licences, value: [public-domain-us-federal]}
   - name: cdc_nndss_weekly
     description: NNDSS weekly provisional counts of notifiable infectious diseases.
     type: tables
@@ -86,6 +108,16 @@ outputPorts:
     contractId: cdc_nndss_weekly
     customProperties:
       - {property: hosted, value: true}
+      - {property: tier, value: public}
+      - {property: hosting, value: public-hub}
+      - {property: releaseTag, value: "release-<run date>"}
+      - property: sla
+        value:
+          refresh: weekly
+          release: In the next weekly hub release after the publisher updates, once every source passes its checks.
+          support: Best effort by one maintainer; no guaranteed response time. Wrong-number reports come first.
+      - {property: feedback, value: "https://github.com/jtouley/health-data-registry/issues/new?template=contract-finding.yml"}
+      - {property: licences, value: [public-domain-us-federal]}
   - name: cdc_respnet
     description: RESP-NET hospitalization rates and clinical data (COVID-NET, FluSurv-NET, RSV-NET).
     type: tables
@@ -93,6 +125,16 @@ outputPorts:
     contractId: cdc_respnet
     customProperties:
       - {property: hosted, value: true}
+      - {property: tier, value: public}
+      - {property: hosting, value: public-hub}
+      - {property: releaseTag, value: "release-<run date>"}
+      - property: sla
+        value:
+          refresh: weekly
+          release: In the next weekly hub release after the publisher updates, once every source passes its checks.
+          support: Best effort by one maintainer; no guaranteed response time. Wrong-number reports come first.
+      - {property: feedback, value: "https://github.com/jtouley/health-data-registry/issues/new?template=contract-finding.yml"}
+      - {property: licences, value: [public-domain-us-federal]}
   - name: census_county_pop
     description: Census Bureau county and state resident population estimates, the denominator for rates.
     type: tables
@@ -100,6 +142,16 @@ outputPorts:
     contractId: census_county_pop
     customProperties:
       - {property: hosted, value: true}
+      - {property: tier, value: public}
+      - {property: hosting, value: public-hub}
+      - {property: releaseTag, value: "release-<run date>"}
+      - property: sla
+        value:
+          refresh: annual
+          release: In the next weekly hub release after the publisher updates, once every source passes its checks.
+          support: Best effort by one maintainer; no guaranteed response time. Wrong-number reports come first.
+      - {property: feedback, value: "https://github.com/jtouley/health-data-registry/issues/new?template=contract-finding.yml"}
+      - {property: licences, value: [public-domain-us-federal]}
   - name: who_gho_tb_incidence
     description: WHO estimated tuberculosis incidence. Listed, not hosted (non-commercial terms).
     type: tables
@@ -107,6 +159,16 @@ outputPorts:
     contractId: who_gho_tb_incidence
     customProperties:
       - {property: hosted, value: false}
+      - {property: tier, value: private}
+      - {property: hosting, value: live}
+      - {property: releaseTag, value: "none: read live per question, never released"}
+      - property: sla
+        value:
+          refresh: annual
+          release: "Never released: read live from the publisher per question and kept only in memory."
+          support: Best effort by one maintainer; no guaranteed response time. Wrong-number reports come first.
+      - {property: feedback, value: "https://github.com/jtouley/health-data-registry/issues/new?template=contract-finding.yml"}
+      - {property: licences, value: [WHO-dataset-terms]}
 customProperties:
   - property: hub
     value: One Hugging Face dataset; each source in its own folder (<source>/data/<source>.parquet) with its card.
@@ -121,3 +183,8 @@ support:
   - channel: issues
     url: https://github.com/jtouley/health-data-registry/issues
     description: Questions, wrong-number reports and dataset requests
+  - channel: contract-finding
+    url: https://github.com/jtouley/health-data-registry/issues/new?template=contract-finding.yml
+    tool: ticket
+    scope: issues
+    description: A finding about one port's contract (a wrong label, a missing code, a coverage gap); triaged into contract:<dataset> issues.

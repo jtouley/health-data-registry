@@ -1,0 +1,258 @@
+# Output port contract: abstract text under restrictive licences (product id-conference-abstracts), private tier.
+# Hosted only in private Hugging Face datasets, never on the public hub (hard rule 10). A draft stub until its
+# sources (PR #29, PR #30) merge.
+apiVersion: v3.2.0
+kind: DataContract
+id: id_abstracts_text
+name: ID conference abstracts, text (private tier)
+version: 0.1.0
+status: draft
+domain: research_landscape
+description:
+  purpose: The text of conference abstracts whose licence doesn't allow a public copy (CROI, ESCMID and others,
+    and CC BY-NC-ND supplements), so the server can quote a short excerpt beside the link.
+  usage: Read only by the server, which shows a short excerpt with the abstract's link and licence. Never exported,
+    never published, never joined to the public index's files.
+  limitations: Private tier. Each row keeps its own licence; text whose licence allows no copy at all is not held
+    (link only).
+schema:
+- name: id_abstracts_text
+  physicalName: id_abstracts_text
+  physicalType: table
+  logicalType: object
+  description: One row per abstract with text held under a restrictive licence.
+  dataGranularityDescription: conference x year x abstract
+  customProperties:
+  - property: totalRows
+    value: none
+  - property: tableShape
+    value: registry
+  properties:
+  - name: conference
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: Which conference the abstract was presented at, by the source's own conference code.
+    customProperties:
+    - property: role
+      value: dimension
+    quality:
+    - name: conference_not_null
+      description: Every row has a conference.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: year
+    physicalType: INTEGER
+    logicalType: integer
+    required: true
+    description: The conference year the abstract was presented in.
+    customProperties:
+    - property: role
+      value: dimension
+    - property: conformedKey
+      value: {dimension: dim_time, grain: year}
+    quality:
+    - name: year_not_null
+      description: Every row has a year.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: route
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: 'How the record was found: doi (journal supplement DOI metadata) or site (the conference''s own
+      abstract pages).'
+    customProperties:
+    - property: role
+      value: dimension
+    quality:
+    - name: route_not_null
+      description: Every row has a route.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+    - name: route_accepted_values
+      description: 'route is one of doi, site.'
+      type: library
+      metric: invalidValues
+      arguments: {validValues: [doi, site]}
+      mustBe: 0
+      dimension: conformity
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: accepted_values}
+  - name: source_dataset
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The catalogued source the row comes from, whose contract, licence and caveats apply to it.
+    customProperties:
+    - property: role
+      value: dimension
+    quality:
+    - name: source_dataset_not_null
+      description: Every row has a source dataset.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: abstract_number
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: The abstract or poster number the conference gives it, as published.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: doi
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: The abstract's DOI where it has one; empty otherwise.
+    customProperties:
+    - property: role
+      value: attribute
+  - name: abstract_text
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The abstract's text as published, markup removed. Private tier, never published.
+    customProperties:
+    - property: role
+      value: attribute
+    - property: tier
+      value: private
+    quality:
+    - name: abstract_text_not_null
+      description: Every row has a abstract text.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: abstract_licence
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The licence or terms the text is held under, as the source states them (e.g. CC BY-NC-ND 4.0, or
+      the conference's own terms).
+    customProperties:
+    - property: role
+      value: attribute
+    quality:
+    - name: abstract_licence_not_null
+      description: Every row has a abstract licence.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: link_url
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: Where to read the abstract at its source; every excerpt shows it.
+    customProperties:
+    - property: role
+      value: attribute
+    quality:
+    - name: link_url_not_null
+      description: Every row has a link url.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: source_url
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The address the text was read from.
+    customProperties:
+    - property: role
+      value: attribute
+    quality:
+    - name: source_url_not_null
+      description: Every row has a source url.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: raw_sha256
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: sha256 of the raw bytes the text was read from.
+    customProperties:
+    - property: role
+      value: attribute
+    quality:
+    - name: raw_sha256_not_null
+      description: Every row has a raw sha256.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: retrieved_at
+    physicalType: TIMESTAMP
+    logicalType: timestamp
+    required: true
+    description: When the text was read from its source (UTC).
+    customProperties:
+    - property: role
+      value: attribute
+    quality:
+    - name: retrieved_at_not_null
+      description: Every row has a retrieved at.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+customProperties:
+- property: tier
+  value: private
+- property: unreliableRule
+  value:
+    kind: none
+    description: 'None: abstract text holds no rates or counts, so no value is marked unreliable.'
+- property: fingerprints
+  value:
+  - {version: 0.1.0, interface: 36736fd6dfdc3f7bbef35d486aed14142d6a89424cd7f006288534d4b7bd12a3, docs: b58ba579e4460806cbbe9f1abeab3c6470498ea3da07fe452e3bc5b59a93bc5b}
+- property: openQuestions
+  value:
+  - 'Fills from PR #30 (croi_abstracts_text) and from the private-tier rows of PR #29''s DOI sources (abstract_tier
+    private) once they merge; ESCMID and other conferences join as they are catalogued.'
+  - 'Which private Hugging Face dataset holds each conference''s text (PR #30 names
+    health-data-registry-private-croi-abstracts-text for CROI) is confirmed when the datasets are created.'

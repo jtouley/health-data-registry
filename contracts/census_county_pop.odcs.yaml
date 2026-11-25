@@ -16,7 +16,9 @@ description:
 servers:
   - id: www2_census_gov
     server: www2.census.gov
-    type: https
+    type: custom
+    format: csv
+    encoding: ISO-8859-1
     location: https://www2.census.gov/programs-surveys/popest/datasets/2020-2025/counties/totals/co-est2025-alldata.csv
     description: "One comma-separated file, Latin-1 encoded (for example the n with tilde in Dona Ana County is byte F1), one header row, no paging, no key. The raw bytes are kept unchanged. The https_csv adapter then pivots the file from wide to long as a purely structural step: each row becomes six records, one per year, carrying the seven identifying columns (SUMLEV, REGION, DIVISION, STATE, COUNTY, STNAME, CTYNAME) unchanged, YEAR = the four digits at the end of the column name, and POPESTIMATE = the text of that row's POPESTIMATE<YEAR> column exactly as published. No value is changed, computed, rounded or dropped by the pivot; the other columns (births, deaths, migration, rates) are kept in the raw bytes and not read."
 schema:

@@ -1,0 +1,162 @@
+# Output port contract: mi_ahead_wayne (product michigan-hiv). A draft stub: its source is not catalogued yet, so no
+# measure is declared and nothing is hosted. Every number-changing fact is an open question (hard rule 1).
+apiVersion: v3.2.0
+kind: DataContract
+id: mi_ahead_wayne
+name: "AHEAD: America's HIV Epidemic Analysis Dashboard, Wayne County"
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "AHEAD's indicators for Wayne County, Michigan, each kept as its own series."
+  usage: One series of the Michigan HIV product, read on its own with its own counted unit; never added to or merged
+    with another port's figures.
+  limitations: 'Draft stub. Data kind: unresolved: which AHEAD indicators are surveillance and which are programme data is read from AHEAD''s own definitions. Measures and their counted unit are declared only from the
+    publisher''s own codebook once the source is catalogued.'
+schema:
+- name: mi_ahead_wayne
+  physicalName: mi_ahead_wayne
+  physicalType: table
+  logicalType: object
+  description: One row per place, period and published figure, as the publisher lays it out (to be confirmed).
+  customProperties:
+  - property: totalRows
+    value: none
+  - property: tableShape
+    value: unresolved
+  properties:
+  - name: place
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The place exactly as the publisher names it. Detroit and Out-Wayne stay separate rows wherever the
+      publisher splits them; they are never added together here.
+    customProperties:
+    - property: role
+      value: dimension
+    quality:
+    - name: place_not_null
+      description: Every row has a place.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: place_key
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: The place's FIPS code, from a reviewed mapping of the publisher's place name; empty where the place
+      has no FIPS code of its own (e.g. Out-Wayne).
+    customProperties:
+    - property: role
+      value: attribute
+    - property: conformedKey
+      value: {dimension: dim_place, vocabulary: FIPS/ISO3, assignment: reviewed_mapping}
+  - name: period
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The time the figure covers, as the publisher states it (e.g. a calendar year).
+    customProperties:
+    - property: role
+      value: dimension
+    - property: conformedKey
+      value: {dimension: dim_time, grain: as_published}
+    quality:
+    - name: period_not_null
+      description: Every row has a period.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: condition_concept_id
+    physicalType: VARCHAR
+    logicalType: string
+    required: false
+    description: The condition the figure is about, as a MeSH descriptor id (the id the surveillance contracts
+      use), from a reviewed mapping of the publisher's label.
+    customProperties:
+    - property: role
+      value: attribute
+    - property: conformedKey
+      value: {dimension: dim_concept, vocabulary: MeSH, assignment: reviewed_mapping}
+  - name: source_url
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: The address the figure was read from.
+    customProperties:
+    - property: role
+      value: attribute
+    quality:
+    - name: source_url_not_null
+      description: Every row has a source url.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: raw_sha256
+    physicalType: VARCHAR
+    logicalType: string
+    required: true
+    description: sha256 of the raw bytes the figure was read from.
+    customProperties:
+    - property: role
+      value: attribute
+    quality:
+    - name: raw_sha256_not_null
+      description: Every row has a raw sha256.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+  - name: retrieved_at
+    physicalType: TIMESTAMP
+    logicalType: timestamp
+    required: true
+    description: When the figure was read from the publisher (UTC).
+    customProperties:
+    - property: role
+      value: attribute
+    quality:
+    - name: retrieved_at_not_null
+      description: Every row has a retrieved at.
+      type: library
+      metric: nullValues
+      mustBe: 0
+      dimension: completeness
+      severity: error
+      customProperties:
+      - {property: dbtTest, value: not_null}
+customProperties:
+- property: tier
+  value: public
+- property: dataKind
+  value: 'unresolved: which AHEAD indicators are surveillance and which are programme data is read from AHEAD''s own definitions'
+- property: countedUnit
+  value: 'unresolved: from the publisher''s codebook once catalogued'
+- property: unreliableRule
+  value:
+    kind: none
+    description: 'Not yet read: the publisher''s suppression rule is an open question until the source is catalogued.'
+- property: fingerprints
+  value:
+  - {version: 0.1.0, interface: 833003e0ab9fce8629d2c93676a9e71aef2f3675197092747dab81146e5663f8, docs: a2ab1de609d1f3834cab17810c24741934bd2a91e89cff2c5c3ef0968e19ebe3}
+- property: openQuestions
+  value:
+  - 'Not catalogued yet: waits for tasks 78-80 and the AHEAD download.'
+  - 'Licence: AHEAD''s terms of reuse are not yet read; until they are, nothing is hosted.'
+  - 'countedUnit: each AHEAD indicator''s unit (count, percent, rate) comes from AHEAD''s own definitions.'
+  - 'Does AHEAD split Detroit from Out-Wayne? Where it does, they stay separate series.'
