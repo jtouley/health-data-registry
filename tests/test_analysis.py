@@ -16,7 +16,7 @@ import pytest
 
 from health_data_registry import analysis, stats, tools
 from health_data_registry.query import Engine, QueryRefused
-from health_data_registry.registry import Registry, load_registry
+from health_data_registry.registry import LOGICAL_TYPES, Registry, load_registry
 from health_data_registry.store import build_snapshot, write_ndjson
 from tests.conftest import raw_fetch
 
@@ -66,7 +66,7 @@ status: draft
 
 def prop(name: str, typ: str, role: str, desc: str = "toy column", required: bool = False) -> str:
     return (
-        f"      - {{name: {name}, physicalType: {typ}, logicalType: x, required: {str(required).lower()}, "
+        f"      - {{name: {name}, physicalType: {typ}, logicalType: {sorted(LOGICAL_TYPES[typ])[0]}, required: {str(required).lower()}, "
         f"description: {desc}, customProperties: [{{property: role, value: {role}}}]}}\n"
     )
 
@@ -95,7 +95,7 @@ schema:
     customProperties:
       - {property: totalRows, value: "upper(area) = 'US RESIDENTS'"}
     properties:
-      - {name: area, physicalType: VARCHAR, logicalType: x, required: true, description: toy column,
+      - {name: area, physicalType: VARCHAR, logicalType: string, required: true, description: toy column,
          customProperties: [{property: role, value: dimension},
                             {property: partialPlaces, value: {"NEW YORK": "excludes New York City"}}]}
 """
@@ -110,9 +110,9 @@ CASES_SEMANTIC = """\
 dataset: toy_weekly
 version: 0.1.0
 dimensions:
-  - {name: state, column: area, type: categorical}
-  - {name: year, column: year, type: time}
-  - {name: week, column: week, type: time}
+  - {name: state, column: area, type: categorical, non_additive: false}
+  - {name: year, column: year, type: time, non_additive: false}
+  - {name: week, column: week, type: time, non_additive: false}
 measures:
   - {name: wk, column: wk, kind: count}
   - {name: ytd, column: ytd, kind: running_count}
@@ -156,8 +156,8 @@ POP_SEMANTIC = """\
 dataset: toy_pop
 version: 0.1.0
 dimensions:
-  - {name: state, column: state, type: categorical}
-  - {name: year, column: year, type: time}
+  - {name: state, column: state, type: categorical, non_additive: false}
+  - {name: year, column: year, type: time, non_additive: false}
 measures:
   - {name: population, column: population, kind: count}
 metrics:
@@ -193,9 +193,9 @@ AGE_SEMANTIC = """\
 dataset: toy_age
 version: 0.1.0
 dimensions:
-  - {name: state, column: state, type: categorical}
-  - {name: year, column: year, type: time}
-  - {name: age, column: age_group, type: categorical}
+  - {name: state, column: state, type: categorical, non_additive: false}
+  - {name: year, column: year, type: time, non_additive: false}
+  - {name: age, column: age_group, type: categorical, non_additive: false}
 measures:
   - {name: cases, column: cases, kind: count}
   - {name: population, column: population, kind: count}
@@ -900,3 +900,96 @@ def test_nhsn_declares_the_publishers_suppression_rule() -> None:
         analysis.unreliable_rule(reg.get("cdc_nhsn_ar_hai")) is None
     )  # the publisher blanks the cells itself
     assert all(ds.contract.unreliable.kind in ("none", "publisher_suppressed") for ds in reg)
+
+
+# ---------------------------------------------------------------------------------- several labels (review round)
+
+TOTAL_SERIES = (
+    "  - {condition: legionellosis_total, label: 'Legionellosis, Total', metric: annual, measure: cases,\n"
+    "     location_dimension: state, time_dimension: year}\n"
+    "  - {condition: legionellosis_total, label: 'Legionellosis, Total', metric: weekly, measure: cases,\n"
+    "     location_dimension: state, time_dimension: year, week_dimension: week}\n"
+)
+
+
+@pytest.fixture
+def two_labels(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Registry, Engine]:
+    """A total label beside its part (both read the same toy counts, so a sum would show as double)."""
+    monkeypatch.setattr(sys.modules[__name__], "CASES_SEMANTIC", CASES_SEMANTIC + TOTAL_SERIES)
+    return build(tmp_path)
+
+
+def test_check_signal_refuses_several_labels_and_names_them(two_labels: tuple[Registry, Engine]) -> None:
+    reg, eng = two_labels
+    out = analysis.check_signal(reg, eng, condition="legionellosis", location="Michigan", year=2024, week=20,
+                                fmt="json")  # fmt: skip
+    assert out["refused"] == "ambiguous_condition"
+    assert out["did_you_mean"] == ["Legionellosis (toy_weekly)", "Legionellosis, Total (toy_weekly)"]
+    one = analysis.check_signal(reg, eng, condition="Legionellosis, Total", location="Michigan", year=2024,
+                                week=20, fmt="json")  # fmt: skip
+    assert "rows" in one
+
+
+def test_total_label_never_added_to_its_part_in_rates_or_trends(two_labels: tuple[Registry, Engine]) -> None:
+    reg, eng = two_labels
+    rate = analysis.get_rate(
+        reg, eng, condition="legionellosis", year=2023, locations=["Michigan"], fmt="json"
+    )
+    cols = rate["columns"]
+    got = sorted((r[cols.index("condition")], r[cols.index("cases")]) for r in rate["rows"])
+    assert got == [
+        ("Legionellosis", annual("MICHIGAN", 2023)),
+        ("Legionellosis, Total", annual("MICHIGAN", 2023)),
+    ]
+    trend = analysis.get_trend(reg, eng, condition="legionellosis", location="Michigan", fit_on="counts",
+                               fmt="json")  # fmt: skip
+    labels = [r[trend["columns"].index("condition")] for r in trend["rows"]]
+    assert sorted(set(labels)) == ["Legionellosis", "Legionellosis, Total"]
+    one = analysis.get_trend(reg, eng, condition="Legionellosis, Total", location="Michigan", fit_on="counts",
+                             fmt="json")  # fmt: skip
+    apc = trend["columns"].index("annual_percent_change")
+    both = {r[apc] for r in trend["rows"] if r[1] == "Legionellosis, Total"}
+    assert both == {r[apc] for r in one["rows"]}  # fitted on its own counts, not on the two added
+
+
+def _animal(monkeypatch: pytest.MonkeyPatch) -> None:
+    from health_data_registry.registry import Dataset
+
+    monkeypatch.setattr(
+        Dataset,
+        "not_a_human_case_count",
+        lambda self, label: "rabid animals, not people" if label == "Legionellosis, Total" else None,
+    )
+
+
+def test_rates_refuse_counts_that_are_not_people(
+    two_labels: tuple[Registry, Engine], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reg, eng = two_labels
+    _animal(monkeypatch)
+    for out in (
+        analysis.get_rate(reg, eng, condition="Legionellosis, Total", year=2023, fmt="json"),
+        analysis.compare_rates(reg, eng, condition="Legionellosis, Total", location="Ohio", year=2023,
+                               other_location="Michigan", fmt="json"),
+        analysis.get_trend(reg, eng, condition="Legionellosis, Total", location="Michigan", fmt="json"),
+    ):  # fmt: skip
+        assert out["refused"] == "not_a_human_count", out
+        assert "'Legionellosis, Total' counts rabid animals, not people" in out["message"]
+    counts = analysis.get_trend(reg, eng, condition="Legionellosis, Total", location="Michigan", fit_on="counts",
+                                fmt="json")  # fmt: skip
+    assert "rows" in counts
+    # Mixed with a human count: its rows keep the count but get no rate, and the trend fits only the human one.
+    mixed = analysis.get_rate(
+        reg, eng, condition="legionellosis", year=2023, locations=["Michigan"], fmt="json"
+    )
+    cols = mixed["columns"]
+    by = {r[cols.index("condition")]: r for r in mixed["rows"]}
+    animal = by["Legionellosis, Total"]
+    assert animal[cols.index("rate_per_100k")] is None and animal[cols.index("cases")] == annual(
+        "MICHIGAN", 2023
+    )
+    assert "counts rabid animals, not people, so no rate per 100,000 people" in animal[cols.index("flags")]
+    assert by["Legionellosis"][cols.index("rate_per_100k")] is not None
+    trend = analysis.get_trend(reg, eng, condition="legionellosis", location="Michigan", fmt="json")
+    assert {r[1] for r in trend["rows"]} == {"Legionellosis"}
+    assert "Not fitted on rates: 'Legionellosis, Total' counts rabid animals, not people." in trend["notes"]

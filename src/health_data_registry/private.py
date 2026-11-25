@@ -1,7 +1,8 @@
 """The private tier: per-source stores for sources whose terms forbid public redistribution.
 
-A source is private-tier when its catalog entry says ``hosting: private`` (and its contract agrees). Its rows
-live only in that source's own store, never in the public lake area, a public release or git:
+A source is private-tier when its catalog entry says ``private_store: true`` (and its contract says
+``tier: private``). Its rows live only in that source's own store, never in the public lake area, a public
+release or git:
 
     lake/private/<source_id>/<partition>.jsonl      written by the maintainer's crawl (CLI or API only)
     lake/private/<source_id>/<partition>.manifest.json   its row count, sha256 (its version), completeness
@@ -119,8 +120,7 @@ def require_private(ds: Dataset) -> None:
     if not is_private(ds):
         raise PrivateRefused(
             "not_private_tier",
-            f"{ds.id} is not a private-tier source (its catalog hosting is {ds.entry.tier}), so it has no "
-            "private store",
+            f"{ds.id} is not a private-tier source (its tier is {ds.entry.tier}), so it has no private store",
         )
 
 

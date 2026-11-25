@@ -1,5 +1,6 @@
-"""Command line: serve, refresh, fetch, export-public, check-contracts, validate, eval, publication-outlook,
-index-croi, purge-private, find-prior-work, harvest-doi, sitemaps snapshot, and the analysis tools."""
+"""Command line: serve [--http], refresh, fetch, export-public, check-contracts, validate, eval,
+publication-outlook, sitemaps snapshot, harvest-doi, index-croi, purge-private, find-prior-work, and the
+analysis tools."""
 
 from __future__ import annotations
 
@@ -14,9 +15,10 @@ from health_data_registry.store import FetchLog, lake_root
 
 
 def _fetcher(registry: Registry, log: FetchLog | None = None):  # type: ignore[no-untyped-def]
-    from health_data_registry.crawl import fetcher
+    from health_data_registry.crawl import fetcher, shared_robots
 
-    return fetcher(registry, log)
+    # One access policy for the whole command: the pace and any block hold across every dataset it reads.
+    return fetcher(registry, log, robots=shared_robots(registry))
 
 
 def refresh(registry: Registry, ids: Sequence[str], *, max_rows: int | None, lake: Path) -> int:
@@ -35,6 +37,36 @@ def refresh(registry: Registry, ids: Sequence[str], *, max_rows: int | None, lak
             print(f"FAIL {dataset_id}: {e}", file=sys.stderr)
             continue
         print(f"ok   {dataset_id}: {m.row_count} rows, snapshot {m.snapshot_id}")
+    return 1 if failed else 0
+
+
+def validate(registry: Registry, lake: Path) -> int:
+    """Every entry loaded and cross-checked (load_registry did that); then each local snapshot's condition labels
+    against the catalog's list. A label the catalog doesn't list fails: add it from the publisher's codebook."""
+    from health_data_registry.query import Engine
+    from health_data_registry.tools import unlisted_condition_labels
+
+    for ds in registry:
+        print(
+            f"ok   {ds.id}: contract {ds.contract.version} ({ds.entry.status}), {len(ds.semantic.metrics)} metrics"
+        )
+    engine = Engine(registry=registry, lake=lake, hub=None, fetch_at_run_time=False)
+    failed = 0
+    for ds_id, extra in unlisted_condition_labels(registry, engine).items():
+        if extra is None:
+            print(f"skip {ds_id}: no local snapshot, so its condition labels weren't checked")
+        elif isinstance(extra, str):
+            failed += 1
+            print(f"FAIL {ds_id}: {extra}", file=sys.stderr)
+        elif extra:
+            failed += 1
+            print(
+                f"FAIL {ds_id}: the snapshot has condition labels the catalog doesn't list: "
+                + "; ".join(repr(x) for x in extra),
+                file=sys.stderr,
+            )
+        else:
+            print(f"ok   {ds_id}: every condition label in the snapshot is catalogued")
     return 1 if failed else 0
 
 
@@ -185,11 +217,20 @@ def run_eval(sealed: Path, run: Path | None) -> int:
 
 
 ANALYSIS_COMMANDS = ("get-rate", "compare-rates", "get-trend", "age-adjust", "check-signal")
+ROW_COMMANDS = ("get-series", "get-aligned-with-gbd", "get-provenance", "query-sql")
+_YEARS: list[tuple[str, dict[str, Any]]] = [
+    ("--location", {"action": "append"}), ("--year-start", {"type": int}), ("--year-end", {"type": int})
+]  # fmt: skip
 
 
 def _add_analysis_commands(sub: Any) -> None:
-    """The analysis tools on the command line: the same functions the MCP tools call, the same output."""
+    """The row-returning tools on the command line: the same functions the MCP tools call, the same output and
+    the same pages (--page N, with --pin from the previous page's Next line)."""
     specs: dict[str, list[tuple[str, dict[str, Any]]]] = {
+        "get-series": [*_YEARS, ("--measure", {}), ("--source-id", {})],
+        "get-aligned-with-gbd": list(_YEARS),
+        "get-provenance": [("--year", {"type": int})],
+        "query-sql": [],
         "get-rate": [("--year", {"type": int, "required": True}), ("--location", {"action": "append"})],
         "compare-rates": [("--location", {"required": True}), ("--year", {"type": int, "required": True}),
                           ("--other-location", {}), ("--other-year", {"type": int})],
@@ -200,40 +241,54 @@ def _add_analysis_commands(sub: Any) -> None:
         "check-signal": [("--location", {"required": True}), ("--year", {"type": int, "required": True}),
                          ("--week", {"type": int, "required": True})],
     }  # fmt: skip
+    first = {"get-provenance": "source_id", "query-sql": "sql"}
     for name, opts in specs.items():
-        sp = sub.add_parser(name, help=f"analysis: {name.replace('-', '_')} (same as the MCP tool)")
-        sp.add_argument("condition")
+        sp = sub.add_parser(name, help=f"{name.replace('-', '_')} (same as the MCP tool, same pages)")
+        sp.add_argument(first.get(name, "condition"))
         for flag, kw in opts:
             sp.add_argument(flag, **kw)
+        sp.add_argument("--page", type=int, default=None, help="page of a long answer (1-based)")
+        sp.add_argument("--pin", default=None, help="the pin from the previous page's Next line")
         sp.add_argument("--json", action="store_true", help="structured output instead of CSV")
 
 
 def run_analysis(registry: Registry, a: argparse.Namespace) -> int:
     import json
 
-    from health_data_registry import analysis
+    from health_data_registry import analysis, tools
     from health_data_registry.query import Engine
 
     eng = Engine(registry=registry, lake=lake_root())
     fmt: Literal["csv", "json"] = "json" if a.json else "csv"
+    pg: dict[str, Any] = {"page": a.page, "pin": a.pin, "fmt": fmt}
     calls: dict[str, Callable[[], Any]] = {
         "get-rate": lambda: analysis.get_rate(
-            registry, eng, condition=a.condition, year=a.year, locations=a.location or [], fmt=fmt
+            registry, eng, condition=a.condition, year=a.year, locations=a.location or [], **pg
         ),
         "compare-rates": lambda: analysis.compare_rates(
             registry, eng, condition=a.condition, location=a.location, year=a.year,
-            other_location=a.other_location, other_year=a.other_year, fmt=fmt,
+            other_location=a.other_location, other_year=a.other_year, **pg,
         ),
         "get-trend": lambda: analysis.get_trend(
             registry, eng, condition=a.condition, location=a.location, year_start=a.year_start,
-            year_end=a.year_end, include_provisional=a.include_provisional, fit_on=a.fit_on, fmt=fmt,
+            year_end=a.year_end, include_provisional=a.include_provisional, fit_on=a.fit_on, **pg,
         ),
         "age-adjust": lambda: analysis.age_adjust(
-            registry, eng, condition=a.condition, location=a.location, year=a.year, fmt=fmt
+            registry, eng, condition=a.condition, location=a.location, year=a.year, **pg
         ),
         "check-signal": lambda: analysis.check_signal(
-            registry, eng, condition=a.condition, location=a.location, year=a.year, week=a.week, fmt=fmt
+            registry, eng, condition=a.condition, location=a.location, year=a.year, week=a.week, **pg
         ),
+        "get-series": lambda: tools.get_series(
+            registry, eng, condition=a.condition, locations=a.location or [], year_start=a.year_start,
+            year_end=a.year_end, measure=a.measure, source_id=a.source_id, **pg,
+        ),
+        "get-aligned-with-gbd": lambda: tools.get_aligned_with_gbd(
+            registry, eng, condition=a.condition, locations=a.location or [], year_start=a.year_start,
+            year_end=a.year_end, **pg,
+        ),
+        "get-provenance": lambda: tools.get_provenance(registry, eng, source_id=a.source_id, year=a.year, **pg),
+        "query-sql": lambda: tools.query_sql(eng, a.sql, **pg),
     }  # fmt: skip
     out = calls[a.cmd]()
     print(
@@ -266,7 +321,16 @@ def publication_outlook(a: argparse.Namespace) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="health-data-registry", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("serve", help="run the MCP server on stdio")
+    sv = sub.add_parser(
+        "serve", help="run the MCP server on stdio, or with --http the hosted read-only server"
+    )
+    sv.add_argument(
+        "--http", action="store_true", help="Streamable HTTP for the hosted connector (hub releases only)"
+    )
+    sv.add_argument(
+        "--host", default="127.0.0.1", help="with --http: address to listen on (0.0.0.0 serves publicly)"
+    )
+    sv.add_argument("--port", type=int, default=7860, help="with --http: port (a Space's app_port)")
     r = sub.add_parser("refresh", help="fetch datasets from their publishers into the local lake")
     r.add_argument("datasets", nargs="*")
     r.add_argument("--all", action="store_true")
@@ -350,20 +414,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     except RegistryError as e:
         print(f"registry error: {e}", file=sys.stderr)
         return 2
+    if a.cmd == "serve" and a.http:
+        from health_data_registry.hosted import main as serve_http
+
+        serve_http(host=a.host, port=a.port)
+        return 0
     if a.cmd == "serve":
         from health_data_registry.server import main as serve
 
         serve()
         return 0
     if a.cmd == "validate":
-        for ds in registry:
-            print(
-                f"ok   {ds.id}: contract {ds.contract.version} ({ds.entry.status}), {len(ds.semantic.metrics)} metrics"
-            )
-        return 0
+        return validate(registry, lake_root())
     if a.cmd == "eval":
         return run_eval(a.sealed, a.run)
-    if a.cmd in ANALYSIS_COMMANDS:
+    if a.cmd in ANALYSIS_COMMANDS + ROW_COMMANDS:
         return run_analysis(registry, a)
     if a.cmd == "index-croi":
         from health_data_registry.croi_index import DEFAULT_YEARS

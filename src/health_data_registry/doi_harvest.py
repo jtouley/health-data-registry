@@ -2,7 +2,7 @@
 
     health-data-registry harvest-doi <conference> [--year YYYY] [--max-records N] [--no-enrich]
 
-A conference is one catalog entry (portal ``doi``, hosting: private): ``source.conference`` is its key and
+A conference is one catalog entry (portal ``doi``, ``private_store: true``): ``source.conference`` is its key and
 ``source.supplements`` say, per year, where its abstracts are in Crossref (ISSN, volume, issue, page and DOI
 patterns), whether there is one DOI per abstract or one per congress, the text policy (by licence, or link only
 for a subscriber-only supplement) and whether the route is verified (an unverified year harvests one record).
@@ -63,7 +63,7 @@ PROVENANCE_COLUMNS: dict[str, tuple[str, str, str]] = {
 # What a stored row keeps from an enriching API that couldn't be read this run.
 _TEXT_COLUMNS = ("abstract_text", "abstract_tier", "abstract_licence")
 _ID_COLUMNS = ("pubmed_pmid", "pmcid")
-# The columns every research-index row shares with the CROI index (croi_index.records), so
+# The columns every research-index row shares with the CROI index (croi_index.records on the CROI branch), so
 # all conferences land in one index: the abstract's id, year, title, authors as published, session, links and
 # our rule-based tags.
 RESEARCH_INDEX_COLUMNS: tuple[str, ...] = (
@@ -287,7 +287,7 @@ def harvest(
     if get is None:
         # Only this source's hosts: OpenAlex and Europe PMC are reachable from this fetcher alone.
         hosts = ds.entry.source.hosts
-        robots = Robots(hosts, budget_s=CRAWL_DELAY_BUDGET_S, min_interval_s=doi.MIN_INTERVAL_S)
+        robots = Robots(hosts, budget_s=CRAWL_DELAY_BUDGET_S, api_intervals=doi.MIN_INTERVAL_S)
         get = fetcher(registry, FetchLog(lake, ds.id), robots=robots, hosts=hosts)
     client = _Client(get, lake, ds, summary)
 

@@ -17,12 +17,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import duckdb
 import pytest
 
 from health_data_registry import tools
 from health_data_registry.query import Engine, QueryRefused, compile_metric
 from health_data_registry.registry import Registry, RegistryError, load_registry
+from health_data_registry.staging import PublisherDataRefused
 from health_data_registry.store import build_snapshot, write_ndjson
 from tests.conftest import CATALOG as BASE_CATALOG
 from tests.conftest import raw_fetch, write_registry
@@ -69,9 +69,9 @@ SEMANTIC = """\
 dataset: toy_cases
 version: 0.1.0
 dimensions:
-  - {name: state, column: area, type: categorical}
-  - {name: year, column: year, type: time}
-  - {name: week, column: week, type: time}
+  - {name: state, column: area, type: categorical, non_additive: false}
+  - {name: year, column: year, type: time, non_additive: false}
+  - {name: week, column: week, type: time, non_additive: false}
 measures:
   - {name: wk, column: wk, kind: count}
   - {name: ytd, column: ytd, kind: running_count}
@@ -384,8 +384,12 @@ def test_a_flag_column_cant_be_missing_coded(tmp_path: Path) -> None:
 
 
 def test_text_counts_with_a_fraction_stop_the_load(tmp_path: Path) -> None:
-    with pytest.raises(duckdb.Error, match="ytd: a value has a fraction"):
+    with pytest.raises(
+        PublisherDataRefused,
+        match="^toy_cases: the publisher's data has a value in ytd that has a fraction, so it isn't a whole count$",
+    ):
         _setup(tmp_path, [rec("Michigan", 2025, 1, 1, "1.5", None)])
+    assert not list(tmp_path.rglob("data.duckdb"))  # nothing kept
 
 
 def test_compiled_running_total_sql_is_exact(tmp_path: Path) -> None:
@@ -402,9 +406,9 @@ def test_compiled_running_total_sql_is_exact(tmp_path: Path) -> None:
 
 
 SEQ_SEMANTIC = SEMANTIC.replace(
-    "  - {name: week, column: week, type: time}\n",
-    "  - {name: week, column: week, type: time}\n  - {name: epi_seq, column: week, type: time}\n"
-    "  - {name: span_id, column: year, type: time}\n",
+    "  - {name: week, column: week, type: time, non_additive: false}\n",
+    "  - {name: week, column: week, type: time, non_additive: false}\n  - {name: epi_seq, column: week, type: time, non_additive: false}\n"
+    "  - {name: span_id, column: year, type: time, non_additive: false}\n",
 ).replace(
     "  - {name: weekly,",
     "  - name: by_seq\n    description: Running total by another order\n    measure: ytd\n"

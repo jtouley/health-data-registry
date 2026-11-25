@@ -12,8 +12,10 @@ from health_data_registry.registry import Registry, RegistryError, load_registry
 from tests.conftest import CONTRACT, SEMANTIC, write_registry
 
 MULTI = SEMANTIC.replace(
-    "{name: condition, column: condition, type: categorical, description: Condition}",
-    '{name: condition, column: condition, type: categorical, separator: "; ", description: Conditions}',
+    "{name: condition, column: condition, type: categorical, non_additive: true, "
+    'non_additive_reason: "each is a different condition", description: Condition}',
+    '{name: condition, column: condition, type: categorical, separator: "; ", non_additive: true, '
+    'non_additive_reason: "each is a different condition", description: Conditions}',
 )
 
 
@@ -50,7 +52,11 @@ def test_a_multi_valued_dimension_is_never_grouped_or_filtered(tmp_path: Path) -
         with pytest.raises(QueryRefused) as e:
             compile_metric(ds, "case_count", **kw)  # type: ignore[arg-type]
         assert e.value.code == "multi_valued_dimension" and "several values" in str(e.value)
-    assert compile_metric(ds, "case_count", group_by=["state"]).sql
+    # Other dimensions are not refused as multi-valued. (A sum by state alone is still refused, by hard rule 2
+    # (#49): it would add across conditions, which can neither be pinned nor grouped here.)
+    with pytest.raises(QueryRefused) as other:
+        compile_metric(ds, "case_count", group_by=["state"])
+    assert other.value.code == "non_additive"
 
 
 @pytest.mark.parametrize(
@@ -59,15 +65,18 @@ def test_a_multi_valued_dimension_is_never_grouped_or_filtered(tmp_path: Path) -
         (MULTI, "multi-valued dimension condition"),  # a series filters on it
         (
             SEMANTIC.replace(
-                "{name: year, column: year, type: time, description: MMWR year}",
-                '{name: year, column: year, type: time, separator: ";", description: MMWR year}',
+                "{name: year, column: year, type: time, non_additive: false, description: MMWR year}",
+                '{name: year, column: year, type: time, separator: ";", non_additive: false, '
+                "description: MMWR year}",
             ),
             "only a categorical dimension",
         ),
         (
             SEMANTIC.replace(
-                "{name: condition, column: condition, type: categorical, description: Condition}",
-                '{name: condition, column: condition, type: categorical, separator: " ", description: C}',
+                "{name: condition, column: condition, type: categorical, non_additive: true, "
+                'non_additive_reason: "each is a different condition", description: Condition}',
+                '{name: condition, column: condition, type: categorical, separator: " ", non_additive: true, '
+                'non_additive_reason: "each is a different condition", description: C}',
             ),
             "only a categorical dimension",
         ),

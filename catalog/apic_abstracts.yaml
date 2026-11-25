@@ -26,6 +26,7 @@ licence:
   redistribution: false
   terms_url: https://www.crossref.org/documentation/retrieve-metadata/rest-api/
 hosting: private
+private_store: true
 citation: <authors>. <title>. American Journal of Infection Control <volume>(<issue>):<pages>. https://doi.org/<doi>
   (abstract, APIC <year>; metadata via Crossref, accessed <retrieved_at>).
 source:

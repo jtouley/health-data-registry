@@ -7,16 +7,27 @@ reads it live (live.py).
 
 from __future__ import annotations
 
+import logging
+import random
 import tempfile
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 from urllib.robotparser import RobotFileParser
 
-from health_data_registry.registry import Dataset, Registry, is_government_host
+from health_data_registry.registry import Dataset, Registry, Source, is_government_host
+
+if TYPE_CHECKING:
+    from health_data_registry.browser_fetch import BrowserResult
+    from health_data_registry.fetch import FetchResult
+
 from health_data_registry.store import FetchLog, Manifest, RawFetch, build_snapshot, write_ndjson, write_raw
+
+logger = logging.getLogger(__name__)
 
 RETRIES = 4
 FETCH_TIMEOUT_S = 180.0
@@ -25,18 +36,40 @@ ROBOTS_TIMEOUT_S = 30.0
 # more than that is refused in plain words rather than stalling a refresh or a clinician's question.
 CRAWL_DELAY_BUDGET_S = 240.0
 ROBOTS_AGENT = "health-data-registry"
-# The longest Retry-After a run waits out (a 503 from a busy API); a longer one stops the fetch in plain words so it
-# can be asked again later. A 429 is a block (BLOCK_STATUSES), never waited out.
+# The least time between two page loads on a host the access policy targets (a government host, or a host read
+# with the browser): the maintainer's access policy. Other hosts keep only their robots.txt crawl delay.
+MIN_INTERVAL_S = 10.0
+# A host's answer that means it refuses this client: a block, final for the rest of the run. The one exception
+# (owner decision, 25 Nov 2026): such an answer to a government host's robots.txt is overridden (Robots).
+BLOCK_STATUSES = frozenset({401, 403})
+# "Too many requests" (owner decision, 25 Nov 2026): on every host, government or not, a 429 is backed off and
+# asked again (its Retry-After when given, else exponential back-off with jitter, never sooner than the host's
+# pace), at most RATE_LIMIT_TRIES times; only then does the host count as blocked for the run, with its status.
+RATE_LIMITED = 429
+RATE_LIMIT_TRIES = 5
+# The longest single wait a fetch makes for a busy publisher (a 429's or 503's Retry-After, or a back-off); a longer
+# one stops the fetch in plain words so it can be asked again later.
 MAX_RETRY_AFTER_S = 300.0
-# A host that answers with one of these has refused this client (the owner's access policy, as in PR #19's
-# crawl.Robots): nothing more is asked of it for the rest of the run. RFC 9309's "4xx means allowed" is not applied
-# to them. The one exception (owner decision, 25 Nov 2026): such an answer on a government host's robots.txt is
-# overridden (crawling goes on at GOVERNMENT_MIN_INTERVAL_S and the override is recorded). On a data page it
-# stops the crawl on every host: access controls are never worked around.
-BLOCK_STATUSES = frozenset({401, 403, 429})
-GOVERNMENT_MIN_INTERVAL_S = 10.0
+
+
+def backoff(
+    attempt: int,
+    retry_after: float | None,
+    *,
+    floor: float = 0.0,
+    jitter: Callable[[float], float] = lambda base: random.uniform(0.0, base / 2),  # noqa: S311 - not crypto
+) -> float:
+    """How long to wait before asking a busy host again: its Retry-After when given, else 2, 4, 8 ... seconds plus
+    up to half as much jitter; never less than ``floor`` (the host's pace)."""
+    if retry_after is not None:
+        return max(retry_after, floor)
+    base = float(2 ** (attempt + 1))
+    return max(base + jitter(base), floor)
+
 
 Getter = Callable[[str], RawFetch]
+# The path of the answer that carries a Tableau view's data.
+TABLEAU_DATA = "/bootstrapSession/"
 
 
 class LiveOnly(ValueError):
@@ -48,40 +81,72 @@ class PrivateTier(LiveOnly):
 
 
 class Robots:
-    """Each publisher host's robots.txt, read once per run: which paths may be fetched and how far apart.
+    """Each publisher host's robots.txt, read once per run, the pace of page loads, and the hosts that blocked us.
+
+    Access policy (the maintainer's decision, recorded in the catalog as ``source.government_host`` and accepted
+    only for hosts on registry's reviewed list of government suffixes and domains):
+
+    - A host the policy targets (a government host, or one read with the browser, ``paced_hosts``): at least
+      ``min_interval_s`` (10 s) between two page loads, or the host's robots.txt crawl delay when that is longer.
+      The pace is per page load: a browser load's own scripts and data request follow the page within the load.
+      Fetching robots.txt counts as a request, so the first page waits its turn after it. Our own floor is not
+      charged to ``budget_s``; only the extra a crawl delay asks for is.
+    - Every other host: its robots.txt crawl delay, if any, charged to ``budget_s``.
+    - A host that is not a government host: a path its robots.txt disallows is never fetched, by fetch.py or by
+      the browser (``allowed`` is checked on each of the page's own requests).
+    - A government host: a robots.txt disallow does not stop the fetch; it is logged, kept in ``overridden``,
+      and the caller records it in the fetch log and the manifest. Everything else still applies.
+    - A block is final: a 401 or 403 on a page, on every host, or on robots.txt, on a host that is not a
+      government host, puts the host in ``blocked``, and nothing more is asked of it for the rest of the run.
+    - A 429 (owner decision, 25 Nov 2026), on every host: backed off and asked again (Retry-After, else
+      exponential back-off with jitter, never sooner than the host's pace), up to RATE_LIMIT_TRIES times; only a
+      429 that persists counts as a refusal, handled as a 401 or 403 is.
+    - A government host's robots.txt answered with 401, 403 or 429 (owner decision, 25 Nov 2026) is handled like
+      a disallow under the government-host policy: the crawl goes on with the honest user agent at the host's
+      pace (at least ``min_interval_s``), and ``robots_overrides`` records "robots_overridden (robots.txt
+      <status>)" for the fetch log and the manifest. A block on one of its pages is never overridden.
+    - ``api_intervals``: a per-host floor from an API's own published rate limit (e.g. Crossref's public pool,
+      one list query a second), charged to ``budget_s`` like a crawl delay.
 
     A robots.txt that can't be found (404 and other 4xx) allows everything, as the standard says (RFC 9309); one
     that can't be read (a timeout, a 5xx) is retried on the next fetch and nothing is assumed until then except
-    that the fetch itself goes ahead. A block is final (the owner's access policy): a 401, 403 or 429 on robots.txt
-    puts the host in ``blocked``, and nothing more is asked of it for the rest of the run, except on a government
-    host (``government_hosts``, only hosts on registry's reviewed list): there the answer is overridden, the host
-    is paced at GOVERNMENT_MIN_INTERVAL_S or more, and ``overridden`` records "robots_overridden (robots.txt
-    <status>)" for the fetch log and the manifest. The fetcher blocks a host that answers a data page with one
-    of those statuses, government host or not.
+    that the fetch itself goes ahead.
     """
 
     def __init__(
         self,
         hosts: frozenset[str],
         *,
+        government_hosts: frozenset[str] = frozenset(),
+        paced_hosts: frozenset[str] = frozenset(),
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
         budget_s: float = CRAWL_DELAY_BUDGET_S,
-        min_interval_s: Mapping[str, float] | None = None,
-        government_hosts: frozenset[str] = frozenset(),
+        min_interval_s: float = MIN_INTERVAL_S,
+        api_intervals: Mapping[str, float] | None = None,
+        jitter: Callable[[float], float] | None = None,
     ) -> None:
+        self.jitter = jitter
         self.hosts, self.sleep, self.clock, self.budget = hosts, sleep, clock, budget_s
-        # Per-host floor on the gap between requests, from an API's own published rate limit (e.g. Crossref's
-        # public pool: one list query a second); robots.txt's crawl delay wins when it asks for more.
-        self.min_interval = dict(min_interval_s or {})
+        self.api_intervals = dict(api_intervals or {})
+        # Checked here too, not only in the catalog model: robots.txt is switched off only for a listed host.
+        self.government = frozenset(h.lower() for h in government_hosts if is_government_host(h))
+        self.paced = self.government | frozenset(h.lower() for h in paced_hosts)
+        self.min_interval = min_interval_s
         self.rules: dict[str, RobotFileParser] = {}
         self.last: dict[str, float] = {}
         self.waited = 0.0
+        self.overridden: list[str] = []
+        self.robots_overrides: list[str] = []  # government hosts whose refused robots.txt was overridden
         self.blocked: set[str] = set()
-        # Checked here too, not only in the catalog model: the override applies only to a listed host.
-        self.government = frozenset(h.lower() for h in government_hosts if is_government_host(h))
-        self.overridden: list[str] = []  # one plain line per override, for the fetch log and the manifest
-        self.paced: set[str] = set()  # government hosts read under the override, at GOVERNMENT_MIN_INTERVAL_S
+
+    def block(self, host: str, status: int | None) -> None:
+        """Remember that ``host`` refused this client: nothing more is asked of it in this run."""
+        if host not in self.blocked:
+            logger.warning(
+                "%s blocked this client (status %s); nothing more is fetched from it", host, status
+            )
+        self.blocked.add(host)
 
     def _refuse_if_blocked(self, host: str) -> None:
         from health_data_registry.fetch import FetchRefused
@@ -94,96 +159,180 @@ class Robots:
             )
 
     def _rules(self, host: str) -> RobotFileParser | None:
+        from health_data_registry import deadline
         from health_data_registry.fetch import FetchRefused, fetch
 
         if host in self.rules:
             return self.rules[host]
         rp = RobotFileParser()
-        try:
-            r = fetch(f"https://{host}/robots.txt", allowed_hosts=self.hosts, timeout=ROBOTS_TIMEOUT_S)
-            status = r.status
-        except FetchRefused as e:  # the fetcher raises for every status but 200
-            if e.status is None:
-                return None  # can't be read now (timeout, refused connection): asked again on the next fetch
-            status = e.status
-        if status in BLOCK_STATUSES and host in self.government:
-            self.overridden.append(
-                f"robots_overridden (robots.txt {status}): {host} refused its robots.txt; read under the "
-                f"government-host policy at {GOVERNMENT_MIN_INTERVAL_S:g} s or more between requests"
+        for attempt in range(RATE_LIMIT_TRIES):
+            retry_after = None
+            try:
+                r = fetch(
+                    f"https://{host}/robots.txt",
+                    allowed_hosts=self.hosts,
+                    timeout=deadline.cap(ROBOTS_TIMEOUT_S),
+                )
+                status, body = r.status, r.content
+            except FetchRefused as e:
+                if e.status is None:
+                    return None  # can't be read now: asked again on the next fetch
+                status, body, retry_after = e.status, b"", e.retry_after
+            finally:
+                # robots.txt was a request too: the page waits its turn after it
+                self.last[host] = self.clock()
+            if status != RATE_LIMITED or attempt == RATE_LIMIT_TRIES - 1:
+                break
+            floor = self.min_interval if host in self.paced else 0.0
+            wait = (
+                backoff(attempt, retry_after, floor=floor)
+                if self.jitter is None
+                else backoff(attempt, retry_after, floor=floor, jitter=self.jitter)
             )
-            self.min_interval[host] = max(self.min_interval.get(host, 0.0), GOVERNMENT_MIN_INTERVAL_S)
-            self.paced.add(host)
+            if wait > MAX_RETRY_AFTER_S:
+                break  # longer than any wait we make: handled below like an exhausted 429
+            left = deadline.remaining()
+            if left is not None and left <= wait:
+                raise deadline.DeadlineExceeded()  # a hosted call never waits past its deadline
+            logger.info("robots.txt at %s answered 429; asking again in %.0f s", host, wait)
+            self.sleep(wait)
+        blocking = status in BLOCK_STATUSES or status == RATE_LIMITED
+        if blocking and host in self.government:
+            # Owner decision, 25 Nov 2026: on a government host this is handled like a disallow under the
+            # government-host policy, not a block. The host is paced (it is in ``paced``); the override is recorded.
+            logger.info("robots.txt at %s answered %s; read under the government-host policy", host, status)
+            self.robots_overrides.append(
+                f"robots_overridden (robots.txt {status}): {host} refused its robots.txt; read under the "
+                f"government-host policy, at least {self.min_interval:g} s between requests"
+            )
             rp.parse([])
-        elif status in BLOCK_STATUSES:
-            self.blocked.add(host)
+        elif blocking:
+            self.block(host, status)
             raise FetchRefused(
                 "blocked",
-                f"{host} refused this program's request for its robots.txt (status {status}), so nothing is "
-                "fetched from it in this run. This is recorded and not worked around.",
+                f"{host} refused this program's request for its robots.txt (status {status}"
+                + (f", after {RATE_LIMIT_TRIES} tries with back-off" if status == RATE_LIMITED else "")
+                + "), so nothing is fetched from it in this run. This is recorded and not worked around.",
                 status=status,
             )
         elif status == 200:
-            rp.parse(r.content.decode("utf-8", "replace").splitlines())
+            rp.parse(body.decode("utf-8", "replace").splitlines())
         elif 400 <= status < 500:
-            rp.parse([])  # no robots.txt (404, 410, ...): no rules
+            rp.parse([])
         else:
-            return None  # failing (5xx): asked again on the next fetch
+            return None
         self.rules[host] = rp
         return rp
 
-    def wait_turn(self, url: str) -> None:
-        """Refuse a path robots.txt disallows; otherwise wait out the host's crawl delay, within the budget."""
+    def allowed(self, url: str) -> bool:
+        """May the browser make this request? A blocked host never; a government host yes; else its robots.txt."""
+        from health_data_registry.fetch import FetchRefused
+
+        host = (urlsplit(url).hostname or "").lower()
+        if host in self.blocked:
+            return False
+        if host in self.government:
+            return True
+        try:
+            rp = self._rules(host)
+        except FetchRefused:
+            return False
+        return rp is None or rp.can_fetch(ROBOTS_AGENT, url)
+
+    def wait_turn(self, url: str) -> bool:
+        """Refuse a blocked host, or a path robots.txt disallows (not on a government host); then wait out the
+        host's pace, within the budget. Returns True when robots.txt disallowed the path and the government-host
+        policy overrode it.
+        """
+        from health_data_registry import deadline
         from health_data_registry.fetch import FetchRefused
 
         host = (urlsplit(url).hostname or "").lower()
         self._refuse_if_blocked(host)
         rp = self._rules(host)
+        overridden = False
         if rp is not None and not rp.can_fetch(ROBOTS_AGENT, url):
-            raise FetchRefused(
-                "robots_disallowed",
-                f"The publisher's robots.txt at {host} asks automated tools not to read this address, so it was "
-                "not fetched.",
-            )
-        # An API's own rate limit applies even while its robots.txt can't be read.
-        crawl_delay = float(rp.crawl_delay(ROBOTS_AGENT) or 0) if rp is not None else 0.0
-        delay = max(crawl_delay, self.min_interval.get(host, 0.0))
+            if host not in self.government:
+                raise FetchRefused(
+                    "robots_disallowed",
+                    f"The publisher's robots.txt at {host} asks automated tools not to read this address, so it "
+                    "was not fetched.",
+                )
+            logger.info("robots.txt at %s disallows %s; fetched under the government-host policy", host, url)
+            self.overridden.append(url)
+            overridden = True
+        crawl_delay = float((rp.crawl_delay(ROBOTS_AGENT) if rp is not None else None) or 0)
+        floor = self.min_interval if host in self.paced else 0.0
+        delay = max(floor, crawl_delay, self.api_intervals.get(host, 0.0))
         if host in self.last and delay > 0:
             now = self.clock()
             due = self.last[host] + delay - now
             if due > 0:
-                # The government-host floor is our own pace, not the host's ask: it is not charged to the budget.
-                ours = (
-                    max(0.0, self.last[host] + GOVERNMENT_MIN_INTERVAL_S - now) if host in self.paced else 0.0
-                )
+                left = deadline.remaining()
+                if left is not None and left <= due:  # inside a hosted call: never sleep past its deadline
+                    raise deadline.DeadlineExceeded()
+                ours = max(0.0, self.last[host] + floor - now)
                 charged = due - ours
                 if self.waited + charged > self.budget:
                     raise FetchRefused(
                         "crawl_delay_budget",
-                        f"The publisher's robots.txt at {host} asks for {delay:g} seconds between requests, more "
-                        "than this run may wait in total, so the rest was not fetched. Try again later.",
+                        f"The publisher's robots.txt at {host} asks for {crawl_delay:g} seconds between requests, "
+                        "more than this run may wait in total, so the rest was not fetched. Try again later.",
                     )
                 self.sleep(due)
                 self.waited += charged
         self.last[host] = self.clock()
+        return overridden
 
 
-def government_hosts(registry: Registry) -> frozenset[str]:
-    """The catalog's government hosts (``source.government_host``, only hosts on registry's reviewed list)."""
-    return frozenset(d.entry.source.host for d in registry if d.entry.source.government_host)
+def policy_for(registry: Registry, *, sleep: Callable[[float], None] = time.sleep) -> Robots:
+    """A new access policy for the registry's hosts: its government hosts and its browser hosts are paced."""
+    return Robots(
+        registry.hosts,
+        government_hosts=frozenset(d.entry.source.host for d in registry if d.entry.source.government_host),
+        paced_hosts=frozenset(d.entry.source.host for d in registry if d.entry.source.browser),
+        sleep=sleep,
+    )
 
 
-class PolicyGetter:
-    """A Getter that keeps the access policy it fetched under, so a refresh can record its overrides."""
+_SHARED: dict[tuple[frozenset[str], frozenset[str], frozenset[str]], Robots] = {}
 
-    def __init__(self, get: Getter, robots: Robots | None) -> None:
-        self._get, self.robots = get, robots
+
+def shared_robots(registry: Registry) -> Robots:
+    """One access policy per process for this registry's hosts, so the pace and blocks hold across datasets, runs
+    and clinicians' questions (refresh of several datasets, and the server's live reads, share it)."""
+    p = policy_for(registry)
+    key = (p.hosts, p.government, p.paced)
+    return _SHARED.setdefault(key, p)
+
+
+def _source_for(registry: Registry, url: str) -> Source | None:
+    """The catalog entry a URL belongs to (the longest catalogued URL it starts with), so the browser and the
+    portal are decided per dataset, never for a whole host."""
+    best: tuple[int, Source] | None = None
+    for d in registry:
+        s = d.entry.source
+        for base in (s.api_url.rstrip("/"), s.landing_url.rstrip("/")):
+            # a whole path segment: ".../views/Toy" is not the base of ".../views/Toy2"
+            within = url == base or url[len(base) : len(base) + 1] in ("/", "?", "#")
+            if url.startswith(base) and within and (best is None or len(base) > best[0]):
+                best = (len(base), s)
+    return best[1] if best else None
+
+
+@dataclass
+class PoliteGetter:
+    """A getter for catalogued publisher URLs under the access policy (see ``fetcher``)."""
+
+    get: Getter
+    # URLs fetched in this getter's life although robots.txt disallowed them (the government-host policy); the
+    # caller writes them into the manifest's notes.
+    overridden: list[str]
+    # One line per government host whose robots.txt answered 401, 403 or 429 and was overridden (owner decision).
+    robots_overrides: list[str] = field(default_factory=list)
 
     def __call__(self, url: str) -> RawFetch:
-        return self._get(url)
-
-    @property
-    def overridden(self) -> list[str]:
-        return list(self.robots.overridden) if self.robots is not None else []
+        return self.get(url)
 
 
 def fetcher(
@@ -192,86 +341,174 @@ def fetcher(
     *,
     sleep: Callable[[float], None] = time.sleep,
     robots: Robots | None | bool = True,
+    browser: Callable[..., BrowserResult] | None = None,
     max_retry_after_s: float = MAX_RETRY_AFTER_S,
     hosts: frozenset[str] | None = None,
-) -> PolicyGetter:
-    """A getter for catalogued publisher URLs that honours robots.txt, retries slow publishers and logs every
-    attempt. `robots=True` (the default) reads each host's robots.txt; tests pass False or their own Robots.
+    jitter: Callable[[float], float] = lambda base: random.uniform(0.0, base / 2),  # noqa: S311 - not crypto
+) -> PoliteGetter:
+    """A getter for catalogued publisher URLs that paces the hosts the policy targets, honours robots.txt (by the
+    access policy), stops at a block, retries slow publishers and logs every attempt. `robots=True` (the default)
+    builds a new policy; the CLI and the server pass `shared_robots(registry)`; tests pass False or their own.
 
-    A 503 is retried after the publisher's Retry-After (or a doubling back-off when it gives none); a Retry-After
-    longer than ``max_retry_after_s`` stops the fetch instead of waiting. A 401, 403 or 429 on a data page blocks
-    the host for the rest of the run, government host or not (BLOCK_STATUSES). ``hosts`` narrows the allowlist to
-    one dataset's hosts (a DOI harvest's enrich hosts are reachable only from its own fetcher)."""
+    A URL whose catalog entry says `browser: true` is read with the browser fetcher; for a Tableau source the
+    getter returns the view's captured bootstrapSession answer (the data), not the page around it, under the
+    view's own URL (the session URL it was captured from is kept in the fetch log beside it).
+
+    A 429, on every host, is asked again after its Retry-After (else exponential back-off with ``jitter``), never
+    sooner than the host's pace; after RATE_LIMIT_TRIES of them the host is blocked for the run. A 503 is retried
+    after its Retry-After (or the usual back-off). A wait longer than ``max_retry_after_s`` stops the fetch in plain
+    words. ``hosts`` narrows the allowlist to one dataset's hosts (a DOI harvest's enrich hosts are reachable only
+    from its own fetcher).
+
+    Inside a call deadline (deadline.call_deadline, the hosted server), every attempt is capped by what is left of
+    the budget and no retry starts once the budget can't cover its back-off: the call stops with
+    deadline.DeadlineExceeded instead of retrying past it.
+    """
+    from health_data_registry import deadline
     from health_data_registry.fetch import FetchRefused, fetch
 
     hosts = registry.hosts if hosts is None else hosts
-    policy = (
-        Robots(hosts, sleep=sleep, government_hosts=government_hosts(registry))
-        if robots is True
-        else robots or None
-    )
+    policy = policy_for(registry, sleep=sleep) if robots is True else robots or None
+    blocked = policy.blocked if policy is not None else set()
+    paced = (policy or policy_for(registry)).paced  # retries back off at the pace even without robots.txt
+    overridden: list[str] = []
+    robots_notes = policy.robots_overrides if policy is not None else []
 
-    def wait_turn(url: str) -> None:
-        if policy is None:
-            return
-        seen = len(policy.overridden)
+    def one(url: str, timeout: float) -> FetchResult:
+        host = (urlsplit(url).hostname or "").lower()
+        src = _source_for(registry, url)
+        if src is None or not src.browser:
+            return fetch(url, allowed_hosts=hosts, headers={"Accept": "application/json"}, timeout=timeout)
+        from health_data_registry.browser_fetch import browser_fetch
+
+        tableau = src.portal == "tableau"
+        run = browser or browser_fetch
+        got = run(
+            url,
+            allowed_hosts=hosts,
+            capture=[TABLEAU_DATA] if tableau else [],
+            timeout=timeout,
+            allow=policy.allowed if policy is not None else None,
+        )
+        if not tableau:
+            return got.page
+        data = [c for c in got.captured if c.status == 200 and c.content]
+        if not data:
+            raise FetchRefused("no_data", f"The dashboard at {host} opened but sent no data for this view.")
+        return data[-1]
+
+    def block(host: str, status: int | None) -> None:
+        if policy is not None:
+            policy.block(host, status)
+        else:
+            blocked.add(host)
+
+    def get(url: str) -> RawFetch:
+        host = (urlsplit(url).hostname or "").lower()
+        note = None
         try:
-            policy.wait_turn(url)
+            if host in blocked:
+                raise FetchRefused(
+                    "blocked",
+                    f"{host} refused this program's requests earlier in this run, so it is not asked again. This "
+                    "is recorded and not worked around.",
+                )
+            seen = len(robots_notes)
+            if policy is not None and policy.wait_turn(url):
+                overridden.append(url)
+                note = "robots_overridden: robots.txt disallows this address; fetched under the government-host policy"
+            for new in robots_notes[seen:]:
+                note = new.split(":", 1)[0]  # "robots_overridden (robots.txt <status>)"
+                if log is not None:
+                    log.record(
+                        f"https://{host}/robots.txt", ok=False, when=datetime.now(UTC), error=new, note=note
+                    )
         except FetchRefused as e:
             if log is not None:
                 log.record(url, ok=False, when=datetime.now(UTC), http_status=e.status, error=str(e))
             raise
-        if log is not None:
-            host = (urlsplit(url).hostname or "").lower()
-            for note in policy.overridden[seen:]:
-                log.record(f"https://{host}/robots.txt", ok=False, when=datetime.now(UTC), error=note)
-
-    def get(url: str) -> RawFetch:
-        for attempt in range(RETRIES):
-            # Every attempt, retries included, waits its turn: a retry never comes sooner than the crawl delay.
-            wait_turn(url)
+        slow = limited = 0  # failed attempts so far: slow or unreachable (RETRIES), too many requests (429s)
+        while True:
             when = datetime.now(UTC)
+            budget = deadline.cap(FETCH_TIMEOUT_S)  # raises DeadlineExceeded when nothing is left
             try:
-                r = fetch(
-                    url, allowed_hosts=hosts, headers={"Accept": "application/json"}, timeout=FETCH_TIMEOUT_S
-                )
+                r = one(url, budget)
             except FetchRefused as e:
-                if log is not None:
-                    log.record(url, ok=False, when=when, http_status=e.status, error=str(e))
-                if e.code == "http_error" and e.status in BLOCK_STATUSES:
-                    host = (urlsplit(url).hostname or "").lower()
-                    if policy is not None:
-                        policy.blocked.add(host)
-                    raise FetchRefused(
+                if e.status == RATE_LIMITED:
+                    # Owner decision, 25 Nov 2026: a 429 is backed off and asked again on every host; the host is
+                    # blocked for the run only after RATE_LIMIT_TRIES of them, with its status recorded.
+                    limited += 1
+                    if log is not None:
+                        log.record(url, ok=False, when=when, http_status=e.status, error=str(e), note=note)
+                    if limited >= RATE_LIMIT_TRIES:
+                        block(host, e.status)
+                        raise FetchRefused(
+                            "blocked",
+                            f"{host} kept answering that it had too many requests (status 429) after "
+                            f"{RATE_LIMIT_TRIES} tries with back-off, so nothing more is fetched from it in this run. "
+                            "This is recorded and not worked around.",
+                            status=e.status,
+                        ) from None
+                    floor = MIN_INTERVAL_S if host in paced else 0.0
+                    wait = backoff(limited - 1, e.retry_after, floor=floor, jitter=jitter)
+                    if wait > max_retry_after_s:
+                        raise FetchRefused(
+                            "rate_limited", _busy(registry, url, wait), status=e.status, retry_after=wait
+                        ) from None
+                    left = deadline.remaining()
+                    if left is not None and left <= wait:
+                        raise deadline.DeadlineExceeded() from e
+                    sleep(wait)
+                    continue
+                if e.status in BLOCK_STATUSES and e.code != "blocked":
+                    # fetch.py calls a 401/403 an http_error; under the access policy it is a block.
+                    e = FetchRefused(
                         "blocked",
                         f"{host} refused this program's request (status {e.status}), so nothing more is fetched "
                         "from it in this run. This is recorded and not worked around.",
                         status=e.status,
-                    ) from e
-                # A slow, busy or briefly unreachable publisher is retried; a refused URL or host never is.
+                    )
+                if e.code == "blocked":
+                    block(host, e.status)
+                if log is not None:
+                    log.record(url, ok=False, when=when, http_status=e.status, error=str(e), note=note)
+                # A slow, busy or briefly unreachable publisher is retried, never sooner than the pace allows; a
+                # refused URL or host, and a block, never are.
                 busy = e.code == "http_error" and e.status == 503
-                if (e.code not in ("timeout", "connect_failed") and not busy) or attempt == RETRIES - 1:
-                    raise
-                wait = e.retry_after if busy and e.retry_after is not None else 2 ** (attempt + 1)
+                slow += 1
+                if (e.code not in ("timeout", "connect_failed") and not busy) or slow >= RETRIES:
+                    left = deadline.remaining()
+                    if e.code == "timeout" and left is not None and left <= 0:
+                        raise deadline.DeadlineExceeded() from e
+                    raise e from None
+                wait = MIN_INTERVAL_S * 2 ** (slow - 1) if host in paced else 2.0**slow
+                if busy and e.retry_after is not None:
+                    wait = max(wait, e.retry_after)
                 if wait > max_retry_after_s:
                     raise FetchRefused(
                         "rate_limited", _busy(registry, url, wait), status=e.status, retry_after=wait
-                    ) from e
+                    ) from None
+                left = deadline.remaining()
+                if left is not None and left <= wait:
+                    raise deadline.DeadlineExceeded() from e
                 sleep(wait)
                 continue
             if r.status != 200:
                 msg = f"the publisher answered with status {r.status} instead of the data"
                 if log is not None:
-                    log.record(url, ok=False, when=when, http_status=r.status, size=len(r.content), error=msg)
+                    log.record(url, ok=False, when=when, http_status=r.status, size=len(r.content), error=msg,
+                               note=note)  # fmt: skip
                 raise RuntimeError(f"{url}: {msg}")
+            capture = r.final_url if r.final_url != url else None
             if log is not None:
-                log.record(
-                    url, ok=True, when=when, http_status=r.status, size=len(r.content), sha256=r.sha256
-                )
-            return RawFetch(url=r.final_url, content=r.content, sha256=r.sha256, retrieved_at=r.retrieved_at)
-        raise RuntimeError(f"{url}: no response")  # pragma: no cover - the loop returns or raises
+                log.record(url, ok=True, when=when, http_status=r.status, size=len(r.content), sha256=r.sha256,
+                           note=note, capture_url=capture)  # fmt: skip
+            # The catalogued address is the source URL (hard rule 8): for a dashboard that is the view, never the
+            # one-time session URL the data were captured from, which is kept beside it.
+            return RawFetch(url=url, content=r.content, sha256=r.sha256, retrieved_at=r.retrieved_at,
+                            capture_url=capture)  # fmt: skip
 
-    return PolicyGetter(get, policy)
+    return PoliteGetter(get=get, overridden=overridden, robots_overrides=robots_notes)
 
 
 def _busy(registry: Registry, url: str, wait: float) -> str:
@@ -286,6 +523,21 @@ def _busy(registry: Registry, url: str, wait: float) -> str:
         f"{who} is busy and asked us to wait {when} before asking again, so nothing was fetched. Ask again "
         f"after that, or use the source's own page in the meantime{page}."
     )
+
+
+def override_notes(get: Getter) -> list[str]:
+    """Plain-words manifest notes for what a getter read under the government-host policy: addresses robots.txt
+    disallowed, and government hosts whose robots.txt answered 401, 403 or 429 (owner decision, 25 Nov 2026)."""
+    notes = list(dict.fromkeys(getattr(get, "robots_overrides", []) or []))
+    urls = list(dict.fromkeys(getattr(get, "overridden", []) or []))
+    if urls:
+        notes.append(
+            "Access policy: the publisher's robots.txt disallows "
+            + ", ".join(urls)
+            + "; it is a government host, so it was read under the maintainer's government-host policy (paced, with "
+            "an honest user agent, and recorded in the fetch log)."
+        )
+    return notes
 
 
 def refresh_dataset(ds: Dataset, lake: Path, get: Getter, *, max_rows: int | None = None) -> Manifest:
@@ -311,14 +563,22 @@ def refresh_dataset(ds: Dataset, lake: Path, get: Getter, *, max_rows: int | Non
     lake.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         fetches, files = [], []
+        layouts: dict[str, str] = {}
         fields = sorted({c.source_field for c in ds.contract.columns})
         for i, page in enumerate(pages(ds.entry, get, max_rows=max_rows, fields=fields)):
             write_raw(lake, [page.fetch])  # keep the bytes on disk now, not in memory
             f = page.fetch
+            layouts.update(page.layout)
             fetches.append(RawFetch(url=f.url, content=b"", sha256=f.sha256, retrieved_at=f.retrieved_at))
             nd = Path(tmp) / f"page-{i:05d}.ndjson"
             write_ndjson(nd, page.records)
             files.append(nd)
-        # A government host's robots.txt that was overridden is recorded with the snapshot (owner decision).
-        notes = get.overridden if isinstance(get, PolicyGetter) else []
-        return build_snapshot(lake, ds, fetches, files, partial=max_rows is not None, notes=notes)
+        return build_snapshot(
+            lake,
+            ds,
+            fetches,
+            files,
+            partial=max_rows is not None,
+            layouts=layouts,
+            notes=override_notes(get),
+        )

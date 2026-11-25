@@ -1,0 +1,1 @@
+WITH t AS (SELECT state, year FROM pop) SELECT t.state, count(*) FROM t JOIN deaths d ON d.state = t.state AND d.year = t.year GROUP BY ALL

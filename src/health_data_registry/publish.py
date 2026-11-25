@@ -621,7 +621,7 @@ def _parquet_rows(path: Path) -> int:
 
 
 def public_sources(registry: Registry) -> list[Dataset]:
-    """Every source the public hub carries, hosted or listed. Private-tier sources (``hosting: private``) are
+    """Every source the public hub carries, hosted or listed. Private-store sources (``private_store: true``) are
     left out entirely: not even a card, since their rows live only in their own private stores (private.py)."""
     return [ds for ds in registry if ds.entry.tier != "private"]
 

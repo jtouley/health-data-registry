@@ -3,7 +3,8 @@
 IDWeek (Open Forum Infectious Diseases), SHEA Spring (Antimicrobial Stewardship & Healthcare Epidemiology),
 APIC (American Journal of Infection Control) and ICID (International Journal of Infectious Diseases) publish
 their abstracts as journal supplements, one DOI per abstract. This adapter reads them from three open
-bibliographic APIs, never from the publishers' sites:
+bibliographic APIs, never from the publishers' sites; they are primary-source routes for DOI records, not
+aggregators (ADR 0014, the maintainer's decision of 25 Nov 2026):
 
 - Crossref REST (api.crossref.org): ``/journals/<ISSN>/works`` filtered by publication date, paged with
   ``cursor``; each item is kept only if it passes the supplement's structural filters (volume, issue, page

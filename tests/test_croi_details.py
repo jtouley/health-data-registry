@@ -221,4 +221,4 @@ def test_read_rows_needs_owner_and_token(
     assert tokens == ["hf_read"]
     with pytest.raises(private.PrivateRefused) as e:
         private.read_rows(tmp_path, registry.get("cdc_nndss_weekly"))
-    assert e.value.code == "not_private_tier" and "hosting is public" in str(e.value)
+    assert e.value.code == "not_private_tier" and "tier is public" in str(e.value)

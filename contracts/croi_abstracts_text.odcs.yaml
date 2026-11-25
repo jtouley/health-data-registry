@@ -2,7 +2,7 @@ apiVersion: v3.2.0
 kind: DataContract
 id: croi_abstracts_text
 name: CROI conference abstracts (abstract text, private store)
-version: 0.1.0
+version: 0.1.1
 status: draft
 domain: research_landscape
 description:
@@ -89,12 +89,25 @@ schema:
       value: attribute
   - name: retrieved_at
     physicalType: VARCHAR
-    logicalType: timestamp
+    logicalType: string
     required: true
-    description: When the page was read (ISO 8601, UTC).
+    description: Date and time (UTC) this registry read the abstract's page on CROI's site; the
+      'accessed' date to cite. Always filled, stored as text such as 2026-11-24T12:00:00+00:00.
     customProperties:
     - property: role
       value: attribute
+    quality:
+    - id: retrieved_at_filled
+      type: sql
+      description: Every row has the time its page was read (croi_index writes it on every row).
+      query: "SELECT COUNT(*) FROM {object} WHERE retrieved_at IS NULL OR trim(retrieved_at) = ''"
+      mustBe: 0
+    - id: retrieved_at_format
+      type: sql
+      description: The crawler writes this time in UTC to the second, as YYYY-MM-DDTHH:MM:SS+00:00
+        (croi_index, isoformat with timespec seconds); any other form is a data failure.
+      query: "SELECT COUNT(*) FROM {object} WHERE retrieved_at IS NOT NULL AND NOT regexp_full_match(retrieved_at, '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+]00:00')"
+      mustBe: 0
   - name: page_sha256
     physicalType: VARCHAR
     logicalType: string
@@ -111,7 +124,7 @@ customProperties:
     excerpts with the link
 - property: redistribution
   value: false
-- property: hosting
+- property: tier
   value: private
 - property: attribution
   value: Abstract text © CROI Foundation; personal, non-commercial use only. Read it in full on CROI's site.

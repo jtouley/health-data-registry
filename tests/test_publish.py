@@ -102,11 +102,11 @@ def test_export_leaves_private_tier_sources_out(tmp_path: Path) -> None:
     root = write_hub_registry(tmp_path / "reg")
     listed = (root / "catalog" / "toy_listed.yaml").read_text()
     (root / "catalog" / "toy_private.yaml").write_text(
-        listed.replace("toy_listed", "toy_private") + "hosting: private\n"
+        listed.replace("toy_listed", "toy_private") + "hosting: private\nprivate_store: true\n"
     )
     (root / "contracts" / "toy_private.odcs.yaml").write_text(
         CONTRACT.replace("toy_cases", "toy_private").replace(
-            "customProperties:\n", "customProperties:\n  - {property: hosting, value: private}\n", 1
+            "customProperties:\n", "customProperties:\n  - {property: tier, value: private}\n", 1
         )
     )
     (root / "semantic" / "toy_private.yaml").write_text(SEMANTIC.replace("toy_cases", "toy_private"))
@@ -381,7 +381,7 @@ def test_private_hosting_is_listed_not_hosted_and_refused_if_staged(tmp_path: Pa
     cat = root / "catalog" / "toy_cases.yaml"
     cat.write_text(cat.read_text().replace("hosting: public\n", ""))
     reg = load_registry(root)
-    assert reg.get("toy_cases").entry.hosting is None and not reg.get("toy_cases").entry.hosted
+    assert reg.get("toy_cases").entry.hosting == "private"
     lake = make_lake(tmp_path / "lake", reg, tmp_path)
     out = tmp_path / "hub"
     stage(reg, lake, out, run_date=RUN, repo=None)

@@ -18,8 +18,14 @@ from typing import Any
 import duckdb
 import yaml
 
+from health_data_registry.registry import SemanticModel, unpinned_non_additive
+
 ROOT = Path(__file__).resolve().parents[2]
 TIMEOUT_S = 60
+
+
+class NonAdditive(AssertionError):
+    """The metric would add up values that overlap or count different things; the compiler refuses it."""
 
 
 def load(dataset_id: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -89,7 +95,17 @@ def duckdb_metric(
     metric: str,
     filters: Mapping[str, Any],
 ) -> float | None:
-    """Compute a metric the way the semantic model says: rename and cast per contract, then SQL."""
+    """Compute a metric the way the semantic model says: rename and cast per contract, then SQL.
+
+    The compiler's guard applies here too: a summed metric whose non-additive dimensions are neither pinned by its
+    own filters nor by `filters` raises NonAdditive, as compile_metric refuses it, so a live check never asserts a
+    sum the product won't compute.
+    """
+    model = SemanticModel.model_validate(sem)
+    pinned = [d.name for d in model.dimensions if d.column in filters]
+    loose = unpinned_non_additive(model, model.metric(metric), pinned)
+    if loose:
+        raise NonAdditive(f"{metric} would add up across {', '.join(loose)}")
     props = properties(con)
     db = duckdb.connect()
     db.execute("CREATE TABLE raw (j JSON)")

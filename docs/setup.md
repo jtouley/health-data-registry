@@ -24,10 +24,10 @@ Never put patient information in any chat, whichever tools you use.
   [IHME GBD](#ihme-gbd-connector)).
 
 > [!NOTE]
-> The hosted server is a preview. Until the open data hub's first data release, CDC and Census questions get a
-> plain message saying the release isn't out yet; WHO questions are answered today, read live from WHO. If you
-> can't add a custom connector, use the [one-time install](#one-time-install-on-your-computer-for-now) in Claude
-> Desktop or [Claude Code](#claude-code).
+> This tool is an early version. It answers CDC questions from a public copy of CDC's data that it keeps (for
+> example C. auris in Michigan, checked 25 November 2026), and WHO questions directly from WHO. If you can't add a
+> custom connector, use the [one-time install](#one-time-install-on-your-computer-for-now) in Claude Desktop or
+> [Claude Code](#claude-code).
 
 ## Claude on the web or Claude Desktop
 
@@ -56,8 +56,8 @@ This is the main path. It needs no terminal and no install.
 6. **Ask one question,** for example: "Use health-data-registry: what was WHO's estimate of tuberculosis
    incidence in South Africa each year since 2015?"
    You should see a table, then lines saying where the numbers came from, when, and WHO's terms. A question about
-   CDC data (for example legionellosis in Michigan) gets a plain message that the hub's first release isn't out
-   yet, until it is.
+   CDC data, for example "How many clinical C. auris cases did Michigan report each year from 2022 to 2025?",
+   gets the yearly counts with CDC as the source.
 
 Screenshots of these steps are coming.
 
@@ -100,8 +100,8 @@ minutes. You will type three commands into a **terminal**, the window
 where you type commands to your computer.
 
 There is no data to download. The tool reads CDC and Census data from the open health data hub when you ask, and
-WHO data live from WHO; every answer names the release or the date it came from. Until the hub's first data
-release is published, the tool says so plainly instead of answering.
+WHO data live from WHO; every answer names the release or the date it came from. If the hub can't be reached,
+or has no release to read, the tool says which, plainly, instead of answering.
 
 Prefer to be guided? Paste the [Walk me through an install](helpers.md#walk-me-through-an-install) helper into
 any Claude chat, with "health-data-registry" as the tool, and Claude will take you through these steps one at a
@@ -243,8 +243,11 @@ Run the [Something's wrong](helpers.md#somethings-wrong) helper and describe wha
 - **Claude Desktop says the tool failed (one-time install):** check the path in step 5, then quit Claude
   Desktop fully and open it again. Claude Desktop's own logs are in `~/Library/Logs/Claude` (Mac) or
   `%APPDATA%\Claude\logs` (Windows); you can paste the last lines into a chat and ask Claude what they mean.
-- **An answer says the hub "has no published release yet":** the open data hub's first release isn't out; try
-  again later. Nothing was guessed in the meantime.
+- **An answer says the hub "could not be reached":** the open data hub didn't answer just then. Check your
+  internet connection and try again in a few minutes, or ask a WHO question, which is read live.
+- **An answer says the hub "has no published release yet":** the hub this tool is set to read has never published
+  data, so trying again won't help. Nothing was guessed. Run the [Something's wrong](helpers.md#somethings-wrong)
+  helper, and tell whoever installed it or [open an issue](https://github.com/jtouley/health-data-registry/issues).
 - **A number looks wrong:** ask Claude to show the provenance (`get_provenance`) and check it against the
   publisher's page it links to. If the publisher's page disagrees, trust the publisher and
   [open an issue](https://github.com/jtouley/health-data-registry/issues).

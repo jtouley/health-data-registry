@@ -6,38 +6,86 @@ so a clinician (or a grader) can check the number without trusting the model tha
 
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 import duckdb
 
-from health_data_registry.registry import Column, Dataset, Metric, Registry, label_key
+from health_data_registry import deadline
+from health_data_registry.registry import (
+    Column,
+    Dataset,
+    Metric,
+    Registry,
+    Uncertainty,
+    is_single_value,
+    label_key,
+    unpinned_non_additive,
+)
 from health_data_registry.sql_guard import GuardedQuery, guard_sql, harden, run_guarded
-from health_data_registry.store import Manifest, latest_snapshot
+from health_data_registry.store import Manifest, latest_snapshot, snapshot_dir
 
 MAX_ROWS = 5000
+MAX_PINNED = 2  # engines kept on older pinned versions, so the next page of an answer needn't rebuild one
+LOADED_VALUES_TIMEOUT_S = 5.0  # describe_dataset never waits longer than this for one column's values
 FilterValue = str | int | float | bool | Sequence[str | int | float | bool]
 
 
-class QueryRefused(ValueError):
-    """The question can't be answered this way; the message says why in plain words."""
+# What to do next after each kind of decline, in plain words. Every refusal carries one (DEFAULT_NEXT_STEP when
+# its code has none of its own), so a clinician is never left at a dead end.
+DEFAULT_NEXT_STEP = "Ask suggest_datasets with your whole question to see which sources can answer it."
+NEXT_STEPS: dict[str, str] = {
+    "unknown_condition": "Open describe_dataset for a source search_datasets lists, pick one of its condition "
+    "labels, and ask again with that label.",
+    "filter_matched_nothing": "Ask again with one of the values listed as available.",
+    "no_snapshot": "Run the Something's wrong helper, which walks you through loading this source again.",
+    "no_place_breakdown": "Ask again without places, or ask which sources report by state.",
+    "too_many_rows": "Ask again for fewer places or a shorter span of years.",
+    "no_sex_split": "Ask again without sex.",
+    "index_not_built": "Search PubMed for the condition and place in the meantime.",
+    "no_denominator": "Use get_series for the counts, or a rate the source publishes (describe_dataset says).",
+    "ambiguous_condition": "Ask again with the full label of one series as the condition.",
+    "nothing_to_compare": "Ask again with other_location or other_year.",
+    "no_rate": "Use get_rate to see which places and years have both a count and a population.",
+    "too_few_points": "Ask for a longer span of years, or use get_series to read the counts.",
+    "would_combine_rates": "Use describe_dataset to see the filters, and ask for one published group at a time.",
+    "publisher_unreachable": "Try again in a few minutes.",
+    "publisher_bad_table": "Try again later; if it keeps happening, run the Something's wrong helper.",
+    "needs_single_value": "Ask for the year's total, or for one week.",
+    "non_additive": "Use describe_dataset to see the values, then ask again for one of them, or ask to see each "
+    "one on its own row.",
+    "not_a_human_count": "Use get_series to read these counts as published; they are not cases in people, so "
+    "there is no rate per 100,000 people.",
+    "bad_page": "Ask for page=1, or leave page out.",
+    "no_such_page": "Ask for a page the answer has, or leave page out for page 1.",
+    "bad_pin": "Copy the Next line from the previous page exactly, or ask again without page and pin.",
+    "page_data_changed": "Ask the same question again without page and pin, and set the older pages aside.",
+    "page_rows_changed": "Ask the same question again without page and pin, and set the older pages aside.",
+    "too_slow": "Try again in a few minutes, or narrow the question: one condition, fewer places or fewer years.",
+    "busy": "Try again in a minute.",
+    "too_large": "Ask again for fewer columns or one measure.",
+}
 
-    def __init__(self, code: str, message: str) -> None:
+
+def next_step_for(code: str | None) -> str:
+    return NEXT_STEPS.get(code or "", DEFAULT_NEXT_STEP)
+
+
+class QueryRefused(ValueError):
+    """The question can't be answered this way; the message says why in plain words, next_step what to do."""
+
+    def __init__(self, code: str, message: str, next_step: str | None = None) -> None:
         super().__init__(message)
         self.code = code
+        self.next_step = next_step or next_step_for(code)
 
 
 def _q(ident: str) -> str:
     return '"' + ident.replace('"', '""') + '"'
-
-
-def _single(value: Any) -> bool:
-    """A filter that pins a dimension to exactly one value."""
-    if value is None:
-        return False
-    return len(value) == 1 if isinstance(value, list | tuple) else True
 
 
 @dataclass(frozen=True)
@@ -67,12 +115,22 @@ def compile_metric(
     measure = sem.measure(metric.measure)
     dims = {d.name: d for d in sem.dimensions}
     for d in metric.single_value_of:
-        if d in group_by or not _single((filters or {}).get(d)):
+        if measure.kind == "running_count":
+            if d in group_by or not is_single_value((filters or {}).get(d)):
+                raise QueryRefused(
+                    "needs_single_value",
+                    f"{metric.name} is a running total, so it is read at one {d}: filter {d} to a single value "
+                    f"(normally the latest) and don't group by it. Adding up the running totals of several {d}s "
+                    "would count the same cases many times.",
+                )
+        # A count whose values of d overlap (Michigan includes Detroit) or are different things (conditions): each
+        # answer row holds one value of d, by a filter to one value or by grouping by it; never added across them.
+        elif d not in group_by and not is_single_value((filters or {}).get(d)):
             raise QueryRefused(
                 "needs_single_value",
-                f"{metric.name} is a running total, so it is read at one {d}: filter {d} to a single value "
-                f"(normally the latest) and don't group by it. Adding up the running totals of several {d}s would "
-                "count the same cases many times.",
+                f"{metric.name} is never added up across {d}s: they overlap or count different things (for example "
+                f"a state's count already includes its cities). Filter {d} to one value, or group by {d} to get one "
+                "row each.",
             )
 
     def dim(name: str) -> str:
@@ -135,10 +193,30 @@ def compile_metric(
             period_params.append(end)
 
     group_cols = [dim(g) for g in group_by]
+    # Hard rule 2: a sum never adds across a dimension whose values overlap or count different things.
+    loose = unpinned_non_additive(
+        sem, metric, [*group_by, *(d for d, v in (filters or {}).items() if is_single_value(v))]
+    )
+    if loose:
+        # Plain words only (hard rule 12): each dimension's clinical description and the reason its values can't
+        # be added, never the metric's or the dimension's internal name.
+        what = "; ".join(
+            f"{dims[d].description.rstrip('.')} ({dims[d].non_additive_reason or ''})".replace(" ()", "")
+            for d in loose
+        )
+        one = "one of them" if len(loose) == 1 else "one value of each"
+        raise QueryRefused(
+            "non_additive",
+            "These counts would be added up across groups that overlap or count different things: "
+            f"{what}. Adding them together would count the same cases twice or mix different things into one "
+            f"number, so nothing is added. Ask for {one}, or ask to see each one on its own row.",
+            f"Use describe_dataset on {ds.id} to see the values you can choose, then ask again for {one}, or ask "
+            "to see each one on its own row.",
+        )
     select_dims = [f"{_q(c)} AS {_q(g)}" for g, c in zip(group_by, group_cols, strict=True)]
     m_col = _q(measure.column)
     bounds: list[tuple[str, str]] = []
-    if metric.uncertainty:
+    if isinstance(metric.uncertainty, Uncertainty):
         bounds = [
             ("lower", sem.measure(metric.uncertainty.lower).column),
             ("upper", sem.measure(metric.uncertainty.upper).column),
@@ -200,13 +278,34 @@ def compile_metric(
         sel = [*select_dims, f"{m_col} AS {_q(metric.name)}", *(f"{_q(c)} AS {_q(b)}" for b, c in bounds)]
         if flag:
             sel.append(f"{_q(flag.name)} AS flag")
+        # An empty published cell is a gap, never a silent blank (hard rule 2): not_published says so per row,
+        # beside the publisher's flag where the contract has one.
+        sel.append(f"{m_col} IS NULL AS not_published")
+        out_cols = [*out_cols, "not_published"]
         sql = f"SELECT {', '.join(sel)} FROM {table}{where_sql}"  # noqa: S608 - quoted contract identifiers, bound values
         if group_cols:
             sql += " ORDER BY ALL"
-        method = f"{measure.name} as published ({measure.kind}); not summed." + (
-            " Lower and upper are the publisher's own uncertainty bounds." if bounds else ""
+        method = (
+            f"{measure.name} as published ({measure.kind}); not summed. A row whose published cell is empty says "
+            "so in not_published (suppressed or not published), never a blank read as a value."
+        ) + (
+            " Lower and upper are the publisher's own uncertainty bounds."
+            if bounds
+            else f" No uncertainty bounds: {metric.uncertainty_reason}"
+            if metric.uncertainty == "none"
+            else ""
         )
     return CompiledMetric(sql=sql, params=params, columns=out_cols, method=method)
+
+
+def non_additive_columns(ds: Dataset) -> frozenset[str]:
+    """Columns a sum in query_sql must filter to one value or group by: the semantic model's non_additive
+    dimensions, and every categorical dimension a model leaves undeclared (fail closed)."""
+    return frozenset(
+        d.column
+        for d in ds.semantic.dimensions
+        if d.non_additive or (d.non_additive is None and d.type == "categorical")
+    )
 
 
 def _lit(value: str) -> str:
@@ -265,7 +364,7 @@ def _compile_cumulative(
     loose = [
         d.name
         for d in sem.dimensions
-        if d.type == "categorical" and d.name not in group_by and not _single(filters.get(d.name))
+        if d.type == "categorical" and d.name not in group_by and not is_single_value(filters.get(d.name))
     ]
     if loose:
         raise QueryRefused(
@@ -412,7 +511,8 @@ class Engine:
     A redistributable source comes from the local lake when it holds a snapshot (maintainers, CI), else from the
     published hub release (downloaded on first use, checked against its sha256, bounded cache). A restricted
     source (e.g. WHO GHO) is served live: fetched from the publisher per request, held in memory for at most
-    live.LIVE_TTL_S, and never written to disk (see live.py).
+    live.LIVE_TTL_S (live.DASHBOARD_TTL_S for a dashboard read with the browser, stated in its provenance), and
+    never written to disk (see live.py).
     """
 
     registry: Registry
@@ -427,8 +527,18 @@ class Engine:
     _live: dict[str, Any] = field(default_factory=dict)  # dataset id -> live.LiveTable (memory only)
     _live_failed: set[str] = field(default_factory=set)  # live tables that could not be loaded (refused once)
     _private: dict[str, Any] = field(default_factory=dict)  # dataset id -> (records, Manifest), memory only
+    # Lake snapshots to read instead of LATEST (dataset id -> snapshot id): a later page pinned to older data.
+    lake_pins: dict[str, str] = field(default_factory=dict)
+    # The sources the current call has read, in order (paging.respond clears it per call and reads it after).
+    touched: dict[str, None] = field(default_factory=dict)
+    _pinned: OrderedDict[tuple[tuple[str, tuple[str, str | None]], ...], Engine] = field(
+        default_factory=OrderedDict
+    )
 
     def connect(self) -> duckdb.DuckDBPyConnection:
+        # Every read starts here: a call past its deadline (one the hosted guard gave up on) stops before it
+        # touches the connection, so it never uses the engine alongside the next call.
+        deadline.check()
         if self._con is not None:
             return self._con
         from health_data_registry.live import load_live
@@ -451,13 +561,17 @@ class Engine:
                 if table is None:
                     continue  # restricted sources are never read from disk, even a maintainer's lake
                 try:
-                    load_live(con, ds, table.records)
+                    report = load_live(con, ds, table.records)
                 except Exception:  # noqa: BLE001 - one bad publisher table must not break the other sources
                     del self._live[ds.id]
                     self._live_failed.add(ds.id)
                     continue
-                manifest = table.manifest
-            elif (found := latest_snapshot(self.lake, ds.id)) is not None:
+                manifest = replace(
+                    table.manifest,
+                    notes=[*table.manifest.notes, *report.notes()],
+                    silver=report.as_dict(),
+                )
+            elif (found := self._lake_snapshot(ds.id)) is not None:
                 path, manifest = found
                 alias = f"snap_{ds.id}"
                 db = str(path / "data.duckdb").replace("'", "''")
@@ -478,6 +592,13 @@ class Engine:
         self._con = con
         return con
 
+    def _lake_snapshot(self, dataset_id: str) -> tuple[Path, Manifest] | None:
+        sid = self.lake_pins.get(dataset_id)
+        if sid is None:
+            return latest_snapshot(self.lake, dataset_id)
+        path = snapshot_dir(self.lake, dataset_id, sid)
+        return (path, Manifest.read(path / "manifest.json")) if (path / "manifest.json").is_file() else None
+
     def _reconnect(self) -> None:
         if self._con is not None:
             self._con.close()
@@ -487,6 +608,7 @@ class Engine:
 
     def _obtain(self, ds: Dataset) -> bool:
         """Bring one source in: from the hub release, or live from the publisher (memory only)."""
+        from health_data_registry.deadline import DeadlineExceeded
         from health_data_registry.hub import HubError
 
         if ds.entry.tier == "private":
@@ -504,12 +626,15 @@ class Engine:
             return True
         if not self.fetch_at_run_time:
             return False
-        from health_data_registry.crawl import fetcher
+        from health_data_registry.crawl import fetcher, shared_robots
         from health_data_registry.live import fetch_live
 
-        get = self.getter or fetcher(self.registry, None)
+        # One access policy per server process: two live sources on one host keep its pace between them.
+        get = self.getter or fetcher(self.registry, None, robots=shared_robots(self.registry))
         try:
             self._live[ds.id] = fetch_live(ds, get)
+        except DeadlineExceeded:
+            raise  # the hosted call's budget ran out: its own plain message, not "unreachable"
         except Exception as e:  # noqa: BLE001 - any publisher failure becomes one plain refusal
             raise QueryRefused(
                 "publisher_unreachable",
@@ -595,6 +720,8 @@ class Engine:
                 "read (a value did not match its column), so no numbers are shown for it. Other sources are not "
                 "affected. Try again later; if it keeps happening, run the Something's wrong helper.",
             )
+        if m is not None:
+            self.touched[dataset_id] = None
         if m is None:
             raise QueryRefused(
                 "no_snapshot",
@@ -602,6 +729,81 @@ class Engine:
                 "publisher is read), so there are no numbers to show.",
             )
         return m
+
+    def _serves(self, pins: Mapping[str, tuple[str, str | None]]) -> bool:
+        """Does this engine read exactly these versions (snapshot id, hub release tag) of these sources?"""
+        for dataset_id, version in pins.items():
+            if dataset_id not in self.registry.datasets:
+                return False
+            try:
+                m = self.manifest(dataset_id)
+            except QueryRefused:
+                return False
+            if (m.snapshot_id, m.release_ref) != version:
+                return False
+        return True
+
+    def _hub_at(self, pins: Mapping[str, tuple[str, str | None]]) -> Any:
+        """The hub read at the pinned release tag, when the pins name one and this hub can be read at another."""
+        from health_data_registry.hub import RELEASE_TAG, Hub
+
+        refs = {r for _, r in pins.values() if r}
+        if not refs or self.hub is None:
+            return self.hub
+        ref = refs.pop()
+        # One answer reads one release; a local hub copy has only its own; and a pin may only name a tagged
+        # release, never a bare commit (which could be any unreleased or pull-request commit of the hub).
+        if refs or not self.hub.is_remote or not RELEASE_TAG.fullmatch(ref):
+            return None
+        if self.hub.revision() == ref:
+            return self.hub
+        return Hub(url=f"{self.hub.url.split('@')[0]}@{ref}", cache=self.cache, max_bytes=self.hub.max_bytes,
+                   api=self.hub.api)  # fmt: skip
+
+    def at(self, pins: Mapping[str, tuple[str, str | None]]) -> Engine | None:
+        """An engine that reads exactly the pinned versions (this one when it does), or None when they are gone.
+
+        A later page names the versions its first page read. This engine serves them if it still does; otherwise
+        an engine on the pinned hub release or lake snapshot (kept for the next page, at most two) serves them;
+        restricted sources are never re-read for an old page, because their copies are never kept.
+        """
+        key = tuple(sorted(pins.items()))
+        try:
+            if self._serves(pins):
+                return self
+            if key in self._pinned:
+                self._pinned.move_to_end(key)
+                return self._pinned[key]
+            hub = self._hub_at(pins)
+            if hub is None and any(r for _, r in pins.values()):
+                return None
+            alt = Engine(registry=self.registry, lake=self.lake, hub=hub, cache=self.cache, fetch_at_run_time=False,
+                         getter=self.getter, lake_pins={i: s for i, (s, r) in pins.items() if r is None})  # fmt: skip
+            if not alt._serves(pins):
+                alt.close(release_hub=alt.hub is not self.hub)
+                return None
+        except deadline.DeadlineExceeded:
+            raise  # out of time is not "the data changed" (DeadlineExceeded is an OSError)
+        except (QueryRefused, ValueError, OSError):  # an old release that can't be read is gone
+            return None
+        self._pinned[key] = alt
+        while len(self._pinned) > MAX_PINNED:
+            _, old = self._pinned.popitem(last=False)
+            old.close(release_hub=old.hub is not self.hub)
+        return alt
+
+    def engines(self) -> list[Engine]:
+        """This engine and the pinned ones it keeps: every connection a call may be using."""
+        return [self, *self._pinned.values()]
+
+    def close(self, *, release_hub: bool = True) -> None:
+        """Close the connection and (unless another engine shares the hub) give back the hub files its views
+        read, so the cache may evict them."""
+        if self._con is not None:
+            self._con.close()
+            self._con = None
+        if release_hub and hasattr(self.hub, "release_files"):
+            self.hub.release_files()
 
     def provenance(self, dataset_id: str) -> dict[str, Any]:
         """Where a source's numbers come from, without downloading anything: origin, contract, product, release."""
@@ -679,15 +881,15 @@ class Engine:
             if len(keys) != len(set(keys)):
                 raise QueryRefused(
                     "would_combine_rates",
-                    f"{metric} is a {ds.semantic.measure(m.measure).kind} and more than one published value "
-                    f"matches some {', '.join(group_by)} groups. Rates and estimates can't be added up: "
-                    "filter or group by the other dimensions too (describe_dataset lists them).",
+                    "More than one published figure matches some of the groups asked for. Each published figure "
+                    "is read on its own and never added to another, so nothing is shown rather than one picked "
+                    "at random.",
                 )
         elif m.aggregation == "none" and len(rows) > 1:
-            dims = ", ".join(d.name for d in ds.semantic.dimensions)
             raise QueryRefused(
                 "would_combine_rates",
-                f"{metric} is published per group and can't be added up; choose group_by from: {dims}.",
+                "This figure is published separately for each group and is never added up, so one figure "
+                "can't be given for all of them together.",
             )
         method = (
             f"{manifest.notes[0]} {cm.method}" if manifest.origin in ("publisher", "private") else cm.method
@@ -707,10 +909,40 @@ class Engine:
         )  # noqa: S608 - quoted contract identifiers
         return [r[0] for r in rows if r[0] is not None]
 
+    def loaded_values(
+        self, dataset_id: str, column: str, timeout_s: float = LOADED_VALUES_TIMEOUT_S
+    ) -> list[Any] | None:
+        """The values a column takes in a copy that is already on this computer, or None when there is none.
+
+        Never downloads or reads the publisher (describe_dataset is a catalog lookup), and gives up after
+        timeout_s, so a slow or broken copy can't hold up the answer."""
+        ds = self.registry.get(dataset_id)
+        try:
+            con = self.connect()
+        except (duckdb.Error, OSError):
+            return None
+        if dataset_id not in self.manifests or column not in ds.contract.column_names:
+            return None
+        timer = threading.Timer(timeout_s, con.interrupt)
+        timer.start()
+        try:
+            rows = con.execute(f"SELECT DISTINCT {_q(column)} FROM {_q(dataset_id)} ORDER BY 1").fetchall()  # noqa: S608 - quoted contract identifiers
+        except (duckdb.Error, OSError):
+            return None
+        finally:
+            timer.cancel()
+        return [r[0] for r in rows if r[0] is not None]
+
     def query_sql(self, sql: str) -> dict[str, Any]:
         self.connect()
         available = {ds.id: ds.contract.column_names for ds in self.registry}
-        q: GuardedQuery = guard_sql(sql, allowed_tables=available, max_rows=MAX_ROWS)
+        q: GuardedQuery = guard_sql(
+            sql,
+            allowed_tables=available,
+            max_rows=MAX_ROWS,
+            ordered=True,
+            non_additive={ds.id: non_additive_columns(ds) for ds in self.registry},
+        )
         for t in sorted(q.tables):
             if t in self.registry.datasets:
                 self.manifest(t)  # brings a hub or run-time source onto this computer on first use

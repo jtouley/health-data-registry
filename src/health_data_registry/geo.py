@@ -53,3 +53,23 @@ def place(text: str) -> Place | None:
     if key in _ALIASES:
         key = _ALIASES[key].lower()
     return _BY_KEY.get(key)
+
+
+def containing_state(text: str) -> Place | None:
+    """The state a smaller place is written in ("Travis County, Texas", "Travis County TX"), or None.
+
+    Read only from the words given: the last comma-separated part, else the last one or two words, must name a
+    state. A bare county or city name is never guessed into a state, and a state name alone is not "contained".
+    """
+    raw = str(text).strip()
+    if place(raw) is not None:
+        return None
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    candidates = [parts[-1]] if len(parts) > 1 else []
+    words = raw.replace(",", " ").split()
+    candidates += [" ".join(words[-n:]) for n in (3, 2, 1) if len(words) > n]
+    for c in candidates:
+        p = place(c)
+        if p is not None and p.level == "state":
+            return p
+    return None

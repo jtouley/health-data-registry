@@ -16,6 +16,7 @@ licence:
   redistribution: false
   terms_url: https://www.croiconference.org/
 hosting: private
+private_store: true
 citation: "Conference on Retroviruses and Opportunistic Infections (CROI) <year>, abstract <abstract_number>: <title>. <page_url> (accessed <retrieved_at>)."
 source:
   portal: croi
