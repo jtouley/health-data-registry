@@ -508,23 +508,142 @@ def test_calls_without_a_signed_session_share_one_bucket() -> None:
     )  # an issued id has its own
 
 
-def test_a_stuck_worker_never_keeps_the_engine_past_its_deadline(
+def test_a_stuck_worker_poisons_the_engine_until_it_ends(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Issue #64: a timed-out worker can't change shared state after the next request starts.
+
+    The stuck worker writes to shared state when it finally wakes. Until then every new call is refused (plainly,
+    at once), so no request starts while it could still write; once it has ended, calls run again.
+    """
     import threading
 
     monkeypatch.setattr(hosted, "GRACE_S", 0.05)
     release = threading.Event()
+    shared: list[str] = []
+
+    def stuck() -> str:
+        release.wait(5)
+        shared.append("written by the stale worker")
+        return "late"
+
     guard = CallGuard(cfg(tmp_path, tool_timeout_s=0.1), Metrics())
-    out = guard("q", lambda: release.wait(5) and "late", "csv")
+    out = guard("q", stuck, "csv")
     assert out == hosted.tools.refusal(DeadlineExceeded(0.1), "csv")
     assert not guard._lock.locked() and guard._owner is None  # taken back from the stuck worker
+    assert guard.poisoned()
     start = time.monotonic()
-    assert guard("q", lambda: "next", "csv") == "next"  # the next call runs at once, not BUSY
-    assert time.monotonic() - start < 0.1
-    release.set()  # the stuck worker finishes later and must not release a lock it no longer holds
-    time.sleep(0.05)
+    ran: list[str] = []
+    refused = guard("q", lambda: ran.append("next") or "next", "json")  # type: ignore[func-returns-value]
+    assert refused == {"message": hosted.POISONED, "refused": "busy", "next_step": "Try again in a minute."}
+    assert not ran and time.monotonic() - start < 0.1  # refused at once, before any engine work
+    assert ("q", "poisoned", "<1s") in guard.metrics.counts
+    release.set()  # the stuck worker finishes, writes, and must not release a lock it no longer holds
+    for _ in range(100):
+        if not guard.poisoned():
+            break
+        time.sleep(0.01)
+    assert shared == ["written by the stale worker"]  # it wrote before any later request started
     assert guard("q", lambda: "again", "csv") == "again" and not guard._lock.locked()
+
+
+def test_a_call_that_waited_for_the_engine_is_refused_if_it_became_poisoned(tmp_path: Path) -> None:
+    import threading
+
+    guard = CallGuard(cfg(tmp_path, tool_timeout_s=2), Metrics())
+    guard._lock.acquire()
+    stuck = threading.Thread(target=time.sleep, args=(0.3,))
+    result: list[Any] = []
+    waiter = threading.Thread(target=lambda: result.append(guard("q", lambda: "ran", "csv")))
+    waiter.start()
+    time.sleep(0.1)  # the call is now waiting for the engine
+    stuck.start()
+    guard._stuck.append(stuck)
+    guard._lock.release()
+    waiter.join(3)
+    assert result and "still stopping an earlier question" in result[0]
+    stuck.join()
+    assert not guard.poisoned() and guard._stuck == []
+
+
+def test_the_guard_is_poisoned_by_an_unreaped_child_or_a_straggling_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Iso:
+        bad = True
+
+        def poisoned(self) -> bool:
+            return self.bad
+
+    class Eng:
+        isolation = Iso()
+
+    guard = CallGuard(cfg(tmp_path), Metrics(), Eng())
+    assert guard.poisoned()
+    out = guard("q", lambda: "never", "csv")
+    assert isinstance(out, str) and out.startswith(hosted.POISONED)
+    Eng.isolation.bad = False
+    assert not guard.poisoned() and guard("q", lambda: "ok", "csv") == "ok"
+    monkeypatch.setattr(hosted, "stragglers", lambda: 1)
+    assert guard.poisoned()
+    monkeypatch.setattr(hosted, "stragglers", lambda: 0)
+    assert not CallGuard(cfg(tmp_path), Metrics(), object()).poisoned()
+
+
+def test_a_poisoned_engine_is_logged_once_shown_on_health_and_restarts_after_a_while(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """PR #92 review: work that never ends poisoned the engine for good, with nothing logged or restarted."""
+
+    class Iso:
+        bad = True
+
+        def poisoned(self) -> bool:
+            return self.bad
+
+    class Eng:
+        isolation = Iso()
+
+    now = [100.0]
+    exits: list[str] = []
+    guard = CallGuard(cfg(tmp_path, poisoned_exit_s=60), Metrics(), Eng(), clock=lambda: now[0],
+                      exit_fn=lambda: exits.append("exit"))  # fmt: skip
+    with caplog.at_level("WARNING", logger=hosted.METRICS_LOGGER):
+        assert guard.poisoned() and guard.poisoned()
+        onset = [r for r in caplog.records if "engine poisoned:" in r.getMessage()]
+        assert len(onset) == 1 and "a query process did not stop" in onset[0].getMessage()
+        now[0] = 130.0
+        status = guard.poison_status()
+        assert status["poisoned"] and status["poisoned_for_s"] == 30.0 and status["poisoned_since"]
+        assert status["poisoned_reasons"] == ["a query process did not stop when it was killed"]
+        assert exits == []
+        now[0] = 161.0
+        assert guard.poisoned() and exits == ["exit"]  # past poisoned_exit_s: the process exits
+        Eng.isolation.bad = False
+        assert not guard.poisoned()
+        assert any("no longer poisoned" in r.getMessage() for r in caplog.records)
+    assert guard.poison_status() == {"poisoned": False, "poisoned_since": None, "poisoned_for_s": None,
+                                     "poisoned_reasons": [], "restarts_after_s": 60}  # fmt: skip
+
+
+def test_the_warm_start_measures_whether_the_memory_limit_holds(tmp_path: Path) -> None:
+    measured: list[bool] = []
+
+    class Iso:
+        def measure(self) -> bool:
+            measured.append(True)
+            return True
+
+    class Eng:
+        hub = None
+        isolation = Iso()
+
+        def connect(self) -> None:
+            raise OSError("no hub")  # a failed warm-up still measures
+
+    state = hosted.Hosted(cfg(tmp_path), None, Eng(), CallGuard(cfg(tmp_path), Metrics()), None, Metrics())  # type: ignore[arg-type]
+    state.warm_up()
+    assert measured == [True] and state.warm["done"] is True
 
 
 def test_the_guard_interrupts_pinned_engines_too(tmp_path: Path) -> None:

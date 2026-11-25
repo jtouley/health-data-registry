@@ -32,6 +32,7 @@ The README's images (`assets/readme/*.svg`, light and dark) come from one token 
 | `make install` | `uv sync` |
 | `make check` | `lint`, `typecheck`, `test` and `mutate`: the quick local loop, not all of CI |
 | `make precheck` | The pre-PR gate's local half: the CI checks plus a docs-drift check, stopping at the first failure ([below](#the-pre-pr-gate)) |
+| `make ratchet` | The Trusted gate's ratchet on `HEAD` against `BASE` (default `origin/main`), as the PR check will run it, without the required-check rule ([below](#the-trusted-gate)) |
 | `make lint` / `make fmt` | Ruff lint and format check / fix |
 | `make typecheck` | mypy, strict |
 | `make test` | Offline tests with coverage, one worker per core (pytest-xdist); fails under 85% (`COV_FLOOR`) |
@@ -148,9 +149,117 @@ any new commit on the PR branch, or a main that moved on, has no matching verdic
 Red on the pre-pr branch? Fix it there, run `make precheck` again, and push again. Fix-round commits and merges
 of main take the same path.
 
+**Making step 3 hard to skip.** Two things are meant to enforce it; the server rule is the one that will count, and
+it isn't on yet (tracked in [#138](https://github.com/jtouley/health-data-registry/issues/138)):
+
+- **On GitHub, once the maintainer applies it:** a ruleset on every branch except `main`, `pre-pr/**`, `wip/**`
+  and `dependabot/**` requires the "CI result" check. For a branch that isn't the default branch, GitHub then
+  refuses any push that moves the branch to a commit whose "CI result" hasn't already passed. Checks belong to the
+  commit, not the branch, so the commit that went green on `pre-pr/<branch>` pushes through and any other commit is
+  refused. `do_not_enforce_on_create` is off, so creating a PR branch is a push like any other: create it at the
+  green commit (`git push origin <green sha>:refs/heads/<branch>`). "Update branch" on GitHub makes a new,
+  unchecked commit and would be refused too; merge main locally and go through pre-pr. It needs `CI result`
+  from [#122](https://github.com/jtouley/health-data-registry/pull/122) first.
+- **Locally, today (fast feedback):** the `pre-push` hook (`make hooks` installs it; `scripts/pre_push_gate.py`)
+  refuses a push to a PR branch (any branch but `pre-pr/**`, `wip/**`, `dependabot/**` and `main`) unless that
+  exact commit has a completed, green run of `ci.yml` from a push to `pre-pr/**` (asked with `gh api`; any error
+  refuses the push), and runs ruff, mypy and the changed modules' tests before a push to `pre-pr/**`. It has gaps
+  pre-commit puts there: pre-commit runs pre-push hooks only for the first pushed ref that brings new commits, so
+  the hook doesn't run when you create a PR branch at a commit already on `pre-pr/`, and in a push of several refs
+  only the first is checked. It reads only `ci.yml`'s run: CodeQL and the other workflows on the pre-pr commit are
+  yours to check before you push.
+
 The actionlint and shellcheck hooks need `uv sync` first: both tools come from the locked dev environment
 (`actionlint-py` and `shellcheck-py`, pinned in `uv.lock`), and the `shellcheck-present` hook fails if shellcheck
 is missing, because actionlint would otherwise skip its shell checks silently.
+
+## The Trusted gate
+
+A pull request's own CI runs the pull request's copy of `ci.yml`, the Makefile, `scripts/` and `pyproject.toml`,
+so a pull request can edit the checks it is judged by. No person reviews pull requests here, so one check runs
+code the pull request cannot change: **Trusted gate**
+([`.github/workflows/trusted-gate.yml`](../../.github/workflows/trusted-gate.yml)). It runs on every pull request
+into `main`; it becomes a *required* check once the maintainer adds it to the `main` ruleset
+([#138](https://github.com/jtouley/health-data-registry/issues/138)).
+
+**How it stays trusted.** It runs on `pull_request_target`, so GitHub takes the workflow file from `main`, and it
+checks out `main`'s commit (main's tip when the run starts), never the pull request's. It fetches the pull
+request's commit as git objects and reads it as text (`git cat-file`, `git diff`), parsing Python with `ast`,
+workflows with `yaml.safe_load` and TOML with `tomllib`: nothing from the pull request is imported, installed or
+run. The token is `contents: read`, no secret is used, the uv cache is off, and only SHAs from the event payload
+reach a shell. One exception: in the merge queue (`merge_group`), GitHub runs the queued commit's copy of the
+workflow, so for a pull request that changes `trusted-gate.yml` the queue's result comes from that pull request's
+own YAML (the workflow's header comment says the same).
+
+The preferred enforcement is a ruleset "required workflows" rule that pins `trusted-gate.yml` to
+`refs/heads/main`: GitHub then runs main's copy on every pull request, whatever the pull request changes, and no
+other job can stand in for it. `ci.yml` is not pinned, so a pull request that changes CI is tested with its own
+CI; the ratchet is what stops that change from weakening the checks. GitHub offers that rule only in organisation
+rulesets, and this repository belongs to a user account, so the gate runs on `pull_request_target` instead. A
+status check is matched by name only, so the gate also fails a pull request that adds a second job reporting a
+required check's name, or a job whose name is an expression it can't resolve.
+
+**What it fails.** `python -m health_data_registry.ratchet` compares the pull request with its merge base and fails
+when the change:
+
+| Rule | Fails when the change | Allowlist? |
+|---|---|---|
+| threshold | lowers or removes a floor, fail-under or threshold in `pyproject.toml`, the Makefile, `scripts/`, the workflows or another tool config, or sets the coverage floor under 85 or the mutation floor under 70 anywhere there | no |
+| escape hatch | adds a skip, skipif or xfail mark, a test deselection or a pytest `-m`/`-k` filter, a no-cover or no-mutate pragma, a type-ignore or noqa comment, an inline mypy setting, a ruff, mypy, coverage, pytest or mutmut relaxation in `pyproject.toml`, a relaxing ruff or mypy flag, or a command whose failure is ignored | yes |
+| escape hatch (unreadable) | adds or changes a settings file beside `pyproject.toml` (`mypy.ini`, `setup.cfg`, `pytest.ini`, `tox.ini`, `.coveragerc`, a nested `ruff.toml` or `pyproject.toml`), puts a NUL byte in a script or config, or removes a TOML setting outright | no |
+| links | adds a symbolic link or a submodule, which the gate can't read through | no |
+| tests | leaves fewer collected tests (parametrized cases counted, literal lists and module-level constants) in the test modules it touches; moving or renaming a test is fine | yes, per test |
+| required check | removes or renames a check the ruleset requires, or adds another job reporting its name or a job with an unresolvable name; changes the `if:` of a required job or a job it needs, old or newly needed; drops a job from what a required job waits for; adds continue-on-error to one of them or their steps; adds an `if:` to one of their steps | `if:` only |
+| sealed sets | touches `eval/sealed/` | no |
+| hooks | adds the no-verify flag, the n flag of `git commit`, a hooks-path override or pre-commit's skip or allow-no-config variables; removes a hook from `.pre-commit-config.yaml` | only prose in Markdown, and a removed hook |
+| allowlist, gate files | changes the allowlist with anything else; changes the gate's own files with anything but files under `docs/` and `CHANGELOG.md` | no |
+| budgets | loosens `ci/budgets.yml`: raises a time budget, adds a key (a new budget is a new allowance), removes one, or deletes the file | no |
+| mutation | weakens a job that runs, gathers or checks mutation tests, in any workflow (the PR shards, the nightly run, the release gate's mutation check): removes it, makes it or a step conditional, adds continue-on-error, drops a mutation command from its steps, takes a schedule away from its workflow, or stops a job that waited for it (a release job, an aggregate) waiting for it | yes, except continue-on-error |
+
+The gate's own files are `trusted-gate.yml`, `src/health_data_registry/ratchet.py`, `tests/test_ratchet.py` and
+`src/health_data_registry/__init__.py`. Note that `SECURITY.md`, `CLAUDE.md` and this repository's other root
+Markdown files are not under `docs/`, so they can't come with a gate change.
+
+Each failure names the file and line and says what weakened. An allowlistable one prints the exact entry after
+`Allowlist entry:`; any other one prints its `Next step:`. The required checks come from the ruleset itself
+(`GET /repos/{owner}/{repo}/rules/branches/main`); if that call fails or names no check, the gate fails.
+`make ratchet` runs every rule but that one locally.
+
+**The allowlist** is [`.github/ratchet-allowlist.txt`](../../.github/ratchet-allowlist.txt): one
+`path :: exact stripped line` per entry (the file's header lists every entry shape). The gate reads it from
+`main`, and it changes only in a pull request that changes nothing else, so an entry takes effect only after its
+own pull request went through the review round and merged. Add the entry first, then the change that needs it;
+once the entry is on `main`, push or edit the pull request's title to run the gate again (re-running the old run
+reuses the `main` it started with).
+
+**What it cannot stop.** A pull request that changes the gate's own files is judged by `main`'s gate, but once it
+merges, the next pull request is judged by the changed gate; the gate only makes such a change stand alone
+([#141](https://github.com/jtouley/health-data-registry/issues/141)). It reads text, so it doesn't see a check
+weakened by logic (a test that asserts nothing, a step whose command is changed to `true`, a comparison flipped
+inside a script), and an allowlist entry needs no person, only its own pull request; one entry allows its line
+any number of times in that file ([#142](https://github.com/jtouley/health-data-registry/issues/142)). A job
+counts as a mutation job when its id, name, steps, env or reusable workflow mention mutation (`mutmut`, `mutate`,
+`mutation`); a release gate that checks mutation inside a script under another name is protected only by the
+threshold rule on that script's floor. Its verdict on a pull request is from the `main` it ran against: it doesn't
+run again when `main` moves, and the merge queue's run of a gate-changing pull request is self-reported (above).
+It runs only after the pull request is open, not in `make precheck`
+([#140](https://github.com/jtouley/health-data-registry/issues/140)).
+
+### When the gate itself is wrong
+
+The gate fails closed, and every pull request, a fix to the gate included, is judged by `main`'s copy. So a false
+positive on most diffs, a change in the ruleset API's answer, a broken action pin or a `uv sync --locked` failure
+on main's lock blocks every pull request. Only the maintainer can lift it:
+
+1. Open an issue recording what broke and the failing run.
+2. Stop requiring the check: Settings → Rules → Rulesets → `main`, remove `Trusted gate` from the required status
+   checks (or set the ruleset's enforcement to "Evaluate" for a broader outage). With the CLI, fetch the ruleset
+   (`gh api repos/jtouley/health-data-registry/rulesets/<id> > main-ruleset.json`), edit it, and write it back
+   (`gh api -X PUT repos/jtouley/health-data-registry/rulesets/<id> --input main-ruleset.json`).
+3. Land the fix through the normal cycle (precheck, pre-pr, one review round, one fix round).
+4. Put the check back the same way, confirm the next pull request gets a `Trusted gate` result, and close the
+   issue. [#130](https://github.com/jtouley/health-data-registry/issues/130) tracks committing the ruleset JSON
+   with its forward and rollback states.
 
 ## Architecture
 
