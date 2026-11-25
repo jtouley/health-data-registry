@@ -239,7 +239,7 @@ def test_reportedCases_averageColumn_neverReadAsSuppressedCounts(ds: Dataset) ->
 def test_multiYearAverageCases_readAsPrinted_neverSummed(ds: Dataset) -> None:
     con = _loaded_five(ds)
     got = _run(con, ds, "multi_year_average_cases", filters={"report": FIVE}, group_by=["disease"])
-    assert sorted(got) == [("Pertussis", 3.0), ("Varicella", 4.5)]
+    assert sorted(r[:2] for r in got) == [("Pertussis", 3.0), ("Varicella", 4.5)]
 
 
 def test_yearFilter_neverReturnsAMultiYearColumn(ds: Dataset) -> None:

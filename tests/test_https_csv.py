@@ -137,8 +137,8 @@ def test_source_rules() -> None:
 def test_weekly_series_rules() -> None:
     base = {
         "dataset": "d", "version": "1",
-        "dimensions": [{"name": "y", "column": "y", "type": "time"}, {"name": "w", "column": "w", "type": "time"},
-                       {"name": "c", "column": "c", "type": "categorical"}],
+        "dimensions": [{"name": "y", "column": "y", "type": "time", "non_additive": False}, {"name": "w", "column": "w", "type": "time", "non_additive": False},
+                       {"name": "c", "column": "c", "type": "categorical", "non_additive": False}],
         "measures": [{"name": "m", "column": "m", "kind": "count"}],
         "metrics": [{"name": "s", "description": "d", "measure": "m", "aggregation": "sum"},
                     {"name": "n", "description": "d", "measure": "m", "aggregation": "none"}],
