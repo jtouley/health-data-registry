@@ -93,8 +93,25 @@ flowchart LR
    extensions (ADR 0016), such as `wide_to_long`. They run in the one shared projection (`staging.py`), so the
    lake, the live read and the dbt model apply the same SQL. They may reshape, and so change the grain (one raw
    row makes a declared number of rows, checked on load), but they never compute a value or filter a row; the
-   contract's primary key includes any field they add to the grain. Business rules go in intermediate models, and
-   dimensions and one fact per source in marts.
+   contract's primary key includes any field they add to the grain. Business rules go in intermediate models (also
+   generated from the contracts), review queues in `flag_*` models, and dimensions and one fact per source in
+   marts. Each raw load is written once in the lake it lands in, records first, then a
+   `<snapshot_id>.meta.json` naming its fetches (URL, route, the browser capture URL for a dashboard, time,
+   sha256), robots overrides and its load mode (`rawLoad`: snapshot; an incremental load is refused until
+   staging supports it). In the weekly refresh each run starts from a fresh lake, so the records and their
+   metadata outlive the run only in the private raw archive (`HDR_RAW_DATASET`), beside the raw bytes and fetch
+   logs.
+   Each contract's quality rules run on every snapshot and live read (`quality.py`) and, as named dbt tests,
+   in the transform build. Contract SQL passes the same single-SELECT guard as `query_sql` when the contract
+   loads, and snapshots are checked on a read-only connection. A failed warn-severity check is a caveat on
+   answers. A failed error-severity check, an error-severity value rule with no values to judge, or a rule that
+   can't run keeps `LATEST` where it is and stops export-public (`QualityBlocked`); a rule that can't run is kept
+   apart for maintainers. A kept snapshot is judged again by the contract's current rules on every refresh and
+   export. The weekly refresh publishes a hub release only when the release gate (`release_gate.py`) finds a
+   complete build (every model built, at least one test run) with no failed or skipped node, no check that
+   couldn't run and no failed error-severity test or unit test; otherwise the release already served stays. The gate's state
+   (`SERVING`, `builds.jsonl`, `serving_log.jsonl`) is kept between runs in the private ops dataset
+   `<owner>/health-data-registry-ops-release-gate` (docs/dev/automation.md).
 5. **DuckDB read-only views.** `store.py` builds views over the snapshot from the contract. Connections are
    read-only.
 6. **Tools.** `get_series`, `get_aligned_with_gbd` and the other tools compile semantic-model metrics to SQL over

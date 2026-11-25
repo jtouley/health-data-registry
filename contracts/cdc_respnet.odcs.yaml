@@ -151,6 +151,9 @@ customProperties:
   - {property: licenceSource, value: "Socrata metadata licence 'Public Domain U.S. Government', https://www.usa.gov/government-works"}
   - {property: citation, value: "RESP-NET: Respiratory Virus Hospitalization Surveillance Network, Centers for Disease Control and Prevention. https://data.cdc.gov/d/kvib-3txy. Accessed on <date>."}
   - {property: refresh, value: weekly}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "Each refresh stores the complete table as a dated, append-only load. Incremental loading (only rows new or changed since the last load) waits for a reviewed row key and the publisher's update field."
   - {property: geographyBasis, value: "RESP-NET site catchment areas (dataset geographic coverage: RESP-NET Sites); the counties in each site are not listed in the dataset"}
   - {property: rateDenominator, value: "the catchment-area population of each site per 100,000; which census estimates and vintage are not stated (see openQuestions)"}
   - {property: unreliableRule, value: {kind: none, description: "None stated in the dataset metadata: no rate is marked unreliable or suppressed for small numbers."}}

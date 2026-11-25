@@ -684,7 +684,15 @@ def _refresh(ds: Dataset, lake: Path, get: Getter, *, max_rows: int | None) -> M
             f = page.fetch
             layouts.update(page.layout)
             provenance.update(page.provenance)
-            fetches.append(RawFetch(url=f.url, content=b"", sha256=f.sha256, retrieved_at=f.retrieved_at))
+            fetches.append(
+                RawFetch(
+                    url=f.url,
+                    content=b"",
+                    sha256=f.sha256,
+                    retrieved_at=f.retrieved_at,
+                    capture_url=f.capture_url,
+                )
+            )
             nd = Path(tmp) / f"page-{i:05d}.ndjson"
             write_ndjson(nd, page.records)
             files.append(nd)
@@ -697,4 +705,5 @@ def _refresh(ds: Dataset, lake: Path, get: Getter, *, max_rows: int | None) -> M
             layouts=layouts,
             notes=override_notes(get),
             provenance=provenance,
+            robots_overrides=list(getattr(get, "overridden", []) or []),
         )

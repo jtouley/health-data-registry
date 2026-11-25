@@ -39,6 +39,7 @@ from typing import Any
 
 import duckdb
 
+from health_data_registry.quality import QualityReport, rules_for, run_rules
 from health_data_registry.registry import CatalogEntry, Contract
 
 SILVER_METADATA_KEY = "health_data_registry.silver"
@@ -218,6 +219,55 @@ def stage(
     if not temp:
         _comment(con, contract, table)
     return StagingReport(row_count=int(row[0]) if row else 0, unlisted_codes=unlisted)
+
+
+@dataclass(frozen=True)
+class Staged:
+    """One staging run and the contract's quality rules run on its result."""
+
+    staging: StagingReport
+    quality: QualityReport
+
+    def notes(self) -> list[str]:
+        """Every plain-words note for answers from this table: unlisted codes, then data-check failures."""
+        return [*self.staging.notes(), *self.quality.caveats()]
+
+
+def stage_checked(
+    con: duckdb.DuckDBPyConnection,
+    contract: Contract,
+    source: str,
+    *,
+    table: str,
+    temp: bool = False,
+    present: set[str] | None = None,
+    entry: CatalogEntry | None = None,
+) -> Staged:
+    """Stage `source` into `table` (stage's checks, `present` included; with `entry`, after its staging
+    extensions, as stage_entry), then run every quality rule of the contract on it: the live path. Lake snapshots
+    are checked read-only after the file is closed (check_snapshot)."""
+    if entry is None:
+        report = stage(con, contract, source, table=table, temp=temp, present=present)
+    else:
+        report = stage_entry(con, entry, contract, source, table=table, temp=temp, present=present)
+
+    return Staged(report, run_rules(con, table, rules_for(contract)))
+
+
+def check_snapshot(path: str, contract: Contract, table: str) -> QualityReport:
+    """Run the contract's quality rules on a closed snapshot file, opened read-only and locked down.
+
+    Rule SQL comes from a contract, which may be model-drafted (hard rule 3): besides the guard that checked it
+    at load time, the file it runs on can't be written, and the connection can't reach files or the network.
+    """
+    from health_data_registry.sql_guard import harden
+
+    con = duckdb.connect(path, read_only=True)
+    try:
+        harden(con)
+        return run_rules(con, table, rules_for(contract))
+    finally:
+        con.close()
 
 
 def _comment(con: duckdb.DuckDBPyConnection, contract: Contract, table: str) -> None:

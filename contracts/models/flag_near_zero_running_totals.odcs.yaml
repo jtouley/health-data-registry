@@ -1,0 +1,75 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: flag_near_zero_running_totals
+name: Review queue - NNDSS year-to-date totals near zero after a normal year
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Lists NNDSS area, condition and year combinations whose year-to-date count at the year's latest week is at or below a small number while the year before had passed a larger one by the same MMWR week: a running total that may have been withdrawn, reset or left unreported (the Minnesota C. auris 2025 pattern in the NNDSS contract's open questions). A year in progress is compared week for week, so January is not set against a whole prior year."
+  usage: "A review queue for maintainers. It removes and changes nothing. The two thresholds are the dbt variables near_zero_ytd_max and near_zero_prior_year_min in transform/dbt_project.yml; they choose what to look at, never a number in an answer."
+  limitations: "A real fall to zero looks the same; only the publisher can say which it is."
+schema:
+  - name: flag_near_zero_running_totals
+    physicalName: flag_near_zero_running_totals
+    physicalType: table
+    logicalType: object
+    description: "One row per reporting area (summary rows such as TOTAL and the census divisions left out), condition and MMWR year whose year-to-date count at the year's latest published week is at or below near_zero_ytd_max, after the year before had reached near_zero_prior_year_min by the same MMWR week (or its last published week before it); the two thresholds are dbt variables. An area is matched across years ignoring case, edge spaces and dots, and a renamed area (the NNDSS contract's renamedLabels on states) is joined to its earlier name; conditions are compared exactly as published."
+    customProperties:
+      - {property: layer, value: flag}
+      - {property: totalRows, value: none}
+      - {property: tableShape, value: registry}
+    properties:
+      - name: states
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Reporting area, as NNDSS spells it in that year's latest week; two spellings in that week: the alphabetically last, with that spelling's counts."
+        customProperties: [{property: role, value: dimension}]
+      - name: label
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Condition, as NNDSS names it."
+        customProperties: [{property: role, value: dimension}]
+      - name: year
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "MMWR year whose running total is near zero."
+        customProperties: [{property: role, value: dimension}]
+      - name: latest_week
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "The latest MMWR week published for this area, condition and year, where the running total is read."
+        customProperties: [{property: role, value: attribute}]
+      - name: ytd
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Year-to-date count at that week, as published (empty when the publisher left it empty)."
+        customProperties: [{property: role, value: attribute}]
+      - name: ytd_flag
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "The publisher's flag on that year-to-date count, as published."
+        customProperties: [{property: role, value: attribute}]
+      - name: prior_year_ytd
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "The year before's year-to-date count at the same MMWR week (or its last published week before it), as published."
+        customProperties: [{property: role, value: attribute}]
+      - name: reason
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Why the row is in the queue, in plain words."
+        customProperties: [{property: role, value: attribute}]
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None: a review queue, not published numbers."}}
+  - property: openQuestions
+    value:
+      - "The thresholds (at most 1 this year after at least 10 the year before) are a starting point for review, not a codebook fact; a maintainer confirms or changes them."

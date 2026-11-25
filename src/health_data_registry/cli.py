@@ -74,7 +74,41 @@ def validate(registry: Registry, lake: Path) -> int:
     return 1 if failed else 0
 
 
-def export_public(registry: Registry, to: str, *, lake: Path, run_date: str | None) -> int:
+def gate(a: Any) -> int:
+    """The release gate: the expected models and tests come from the contracts, and the build id from its inputs
+    (the lake's LATEST snapshots, the contracts and the commit). Anything unreadable holds the release."""
+    import os
+
+    from health_data_registry.release_gate import (
+        GateInputMissing,
+        build_inputs,
+        expected_from,
+        run,
+        run_confirm,
+    )
+
+    ops = a.ops or lake_root() / "ops"
+    try:
+        registry = load_registry()
+        expected = expected_from(registry)
+        commit = a.commit or os.environ.get("GITHUB_SHA")
+        if not commit:  # without the code's commit, builds of different code would share one build id
+            raise ValueError("no commit was given (--commit, or GITHUB_SHA in CI)")
+        inputs = build_inputs(registry, lake_root(), commit)
+    except (RegistryError, GateInputMissing, ValueError) as e:
+        print(f"The release is held: the contracts or the lake could not be read ({e}).", file=sys.stderr)
+        return 1
+    if a.confirm:
+        ok, message = run_confirm(a.target, ops, a.confirm, expected=expected, inputs=inputs)
+    else:
+        ok, message = run(a.target, ops, expected=expected, inputs=inputs, run_date=a.run_date)
+    print(message, file=sys.stdout if ok else sys.stderr)
+    return 0 if ok else 1
+
+
+def export_public(
+    registry: Registry, to: str, *, lake: Path, run_date: str | None, tag_file: Path | None = None
+) -> int:
     from health_data_registry.publish import PublishCheckFailed, export_public
 
     try:
@@ -84,6 +118,8 @@ def export_public(registry: Registry, to: str, *, lake: Path, run_date: str | No
         return 1
     for line in result.summary():
         print(line)
+    if tag_file is not None and result.tag:  # only a hub upload is tagged; the gate confirms this exact tag
+        tag_file.write_text(result.tag + "\n", encoding="utf-8")
     return 0
 
 
@@ -294,6 +330,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     ex.add_argument("--to", required=True, help="hf://datasets/<org>/<name>, or a local directory")
     ex.add_argument("--run-date", default=None, help="YYYY-MM-DD; defaults to today (UTC)")
+    ex.add_argument(
+        "--tag-file",
+        type=Path,
+        default=None,
+        help="write the release tag to this file once the release is uploaded and tagged (or already published)",
+    )
     sub.add_parser("check-contracts", help="check each publisher still serves the fields its contract reads")
     sub.add_parser("validate", help="load and cross-check every catalog entry, contract and semantic model")
     ev = sub.add_parser(
@@ -328,9 +370,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         "snapshot", help="take this week's copy of each seed sitemap and upload it to the private ops dataset"
     )
     sitemaps.add_arguments(snap)
+    g = sub.add_parser(
+        "gate", help="serve a hub release only if its transform build passed every error-severity test"
+    )
+    g.add_argument("--target", type=Path, default=Path("transform/target"), help="dbt's target directory")
+    g.add_argument("--ops", type=Path, default=None, help="where builds and the serving log live (lake/ops)")
+    g.add_argument(
+        "--confirm",
+        metavar="TAG",
+        default=None,
+        help="after the upload: record the tag export-public created as served (only a build that passed)",
+    )
+    g.add_argument(
+        "--run-date",
+        default=None,
+        help="YYYY-MM-DD: the run date the release must carry; recorded with a pass, checked on --confirm",
+    )
+    g.add_argument(
+        "--commit",
+        default=None,
+        help="the code commit the build ran from (default: $GITHUB_SHA); part of the build's content hash",
+    )
     a = p.parse_args(argv)
     if a.cmd == "publication-outlook":  # reads only the packaged base rates, not the registry
         return publication_outlook(a)
+    if a.cmd == "gate":
+        return gate(a)
+
     if a.cmd == "sitemaps":  # reads only the seed list, not the registry
         return sitemaps.snapshot(a, error=snap.error)
     try:
@@ -362,7 +428,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             lake=lake_root(),
         )  # fmt: skip
     if a.cmd == "export-public":
-        return export_public(registry, a.to, lake=lake_root(), run_date=a.run_date)
+        return export_public(registry, a.to, lake=lake_root(), run_date=a.run_date, tag_file=a.tag_file)
     if a.cmd == "fetch":
         return refresh(registry, [a.source], max_rows=a.max_rows, lake=lake_root())
     ids = sorted(registry.datasets) if a.all else list(a.datasets)

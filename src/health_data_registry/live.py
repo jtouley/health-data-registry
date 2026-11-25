@@ -24,7 +24,7 @@ from typing import Any
 import duckdb
 
 from health_data_registry.registry import Dataset
-from health_data_registry.staging import StagingReport, raw_fields, stage_entry
+from health_data_registry.staging import Staged, raw_fields, stage_checked
 from health_data_registry.store import Manifest, RawFetch
 
 LIVE_TTL_S = 600.0  # how long parsed publisher records stay in memory; never written to disk
@@ -123,7 +123,7 @@ def fetch_live(ds: Dataset, get: Any) -> LiveTable:
     return LiveTable(records=records, manifest=m, fetched=time.monotonic(), dashboard=ds.entry.source.browser)
 
 
-def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[str, Any]]) -> StagingReport:
+def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[str, Any]]) -> Staged:
     """Stage records into an in-memory silver table named after the dataset (the same step as the lake).
 
     Refuses a file-backed connection: the source's terms forbid keeping a copy (ADR 0009), so this checks the
@@ -155,6 +155,8 @@ def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[st
                 [[r.get(f) for f in fields] for r in records],
             )
         present = {k for r in records for k in r} or None
-        return stage_entry(con, ds.entry, ds.contract, q(raw), table=ds.id, temp=True, present=present)
+        return stage_checked(
+            con, ds.contract, q(raw), table=ds.id, temp=True, present=present, entry=ds.entry
+        )
     finally:
         con.execute(f"DROP TABLE IF EXISTS {q(raw)}")
