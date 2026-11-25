@@ -13,6 +13,9 @@ sources:
     meta:
       raw_contract_version: 0.1.0
       contract: contracts/cdc_haicviz_cdi.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
       plugin: hdr_raw
       source_fields:
       - grouping
@@ -65,6 +68,9 @@ sources:
     meta:
       raw_contract_version: 0.1.0
       contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
       plugin: hdr_raw
       source_fields:
       - age_category
@@ -183,6 +189,9 @@ sources:
     meta:
       raw_contract_version: 0.1.0
       contract: contracts/cdc_nndss_weekly.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
       plugin: hdr_raw
       source_fields:
       - label
@@ -286,6 +295,9 @@ sources:
     meta:
       raw_contract_version: 0.1.0
       contract: contracts/cdc_respnet.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
       plugin: hdr_raw
       source_fields:
       - age_category
@@ -369,6 +381,9 @@ sources:
     meta:
       raw_contract_version: 0.1.0
       contract: contracts/census_county_pop.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
       plugin: hdr_raw
       source_fields:
       - COUNTY

@@ -47,8 +47,9 @@ import duckdb
 import yaml
 
 from health_data_registry.product import Port, load_ports
+from health_data_registry.quality import blocked_message
 from health_data_registry.registry import Dataset, Registry
-from health_data_registry.store import SNAPSHOT_FILES, Manifest, latest_snapshot, sha256_file
+from health_data_registry.store import SNAPSHOT_FILES, Manifest, judge_snapshot, latest_snapshot, sha256_file
 
 HF_PREFIX = "hf://datasets/"
 STAGING = Path("build") / "hub"
@@ -847,6 +848,10 @@ def check_release(registry: Registry, lake: Path, out: Path) -> list[str]:
             )
         if snap.partial:
             problems.append(f"{ds.id}: the snapshot is a partial development sample, not the full table")
+        # The contract's current rules, run again on the file: a LATEST from before the rules has no record,
+        # and one from before a rule edit has a stale one.
+        elif blocked := blocked_message(ds.id, judge_snapshot(snap_dir, ds)):
+            problems.append(blocked)
         if snap.row_count <= 0:
             problems.append(f"{ds.id}: the snapshot has no rows; an empty table is never published")
         # Every file the manifest names is there with its hash.

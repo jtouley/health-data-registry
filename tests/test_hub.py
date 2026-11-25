@@ -220,6 +220,9 @@ def test_cache_is_bounded(tmp_path: Path, reg: Registry, released: Path) -> None
     h = Hub(url=str(released), cache=cache, max_bytes=8_000)
     local, _ = h.snapshot(reg.get("toy_cases"))
     assert local.is_file() and not stale.exists()
+    assert local.stat().st_mode & 0o222 == 0  # verified copies are read-only: no query child can truncate one
+    again, _ = Hub(url=str(released), cache=cache, max_bytes=8_000).snapshot(reg.get("toy_cases"))
+    assert again == local and again.is_file()  # a fresh copy replaces a read-only one
     total = sum(p.stat().st_size for p in (cache / "hub").rglob("*") if p.is_file())
     assert total <= 8_000 or [p for p in (cache / "hub").rglob("*") if p.is_file()] == [local]
     assert hub.evict(tmp_path / "missing", 0, set()) == []
@@ -262,7 +265,11 @@ def test_remote_hub_uses_hf_download(tmp_path: Path, reg: Registry, released: Pa
         calls.append((repo, filename, kw))
         target = Path(kw["local_dir"]) / filename
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(released / filename, target)
+        part = target.with_name(
+            target.name + ".incomplete"
+        )  # as huggingface_hub does: a temp file, then a move
+        shutil.copyfile(released / filename, part)
+        part.replace(target)
         return str(target)
 
     import huggingface_hub
@@ -795,6 +802,26 @@ def test_a_slow_release_lookup_ends_by_the_call_deadline(tmp_path: Path) -> None
     with deadline.call_deadline(0.2), pytest.raises(deadline.DeadlineExceeded):
         h.revision()
     assert time.monotonic() - start < 1.5 and h._rev is None
+
+
+def test_a_helper_that_outlives_its_call_is_a_straggler_until_it_ends() -> None:
+    """A late hub download may still write the cache: the hosted guard takes no question while one runs."""
+    import threading
+    import time
+
+    from health_data_registry import deadline
+
+    done = threading.Event()
+    base = deadline.stragglers()
+    with deadline.call_deadline(0.05), pytest.raises(deadline.DeadlineExceeded):
+        deadline.bounded(lambda: done.wait(5))
+    assert deadline.stragglers() == base + 1
+    done.set()
+    for _ in range(100):
+        if deadline.stragglers() == base:
+            break
+        time.sleep(0.01)
+    assert deadline.stragglers() == base
 
 
 def test_bounded_and_check_outside_and_inside_a_deadline(monkeypatch: Any) -> None:

@@ -17,7 +17,7 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 | `make install` | `uv sync` |
 | `make check` | lint, typecheck, test, mutate: the quick local loop, not all of CI |
 | `make precheck` | The pre-PR gate's local half: the CI checks plus a generated-files drift check, stopping at the first failure; run before every pre-pr push |
-| `make hooks` | Install the pre-commit hooks (`uv run pre-commit install`); once per checkout |
+| `make hooks` | Install the pre-commit and pre-push hooks (`uv run pre-commit install`); once per checkout |
 | `make test` | Offline tests with coverage, one worker per core (pytest-xdist; floor 85%) |
 | `make test-network` | Live publisher checks in `tests/integration` (marker `network`) |
 | `make smoke` | The C. auris in Michigan journey through the MCP server on a synthetic lake, scored with `eval/scorer.py` (marker `smoke`; [docs/dev/README.md](docs/dev/README.md#smoke-journey)) |
@@ -29,9 +29,11 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 | `make check-contracts` | Check each publisher still serves the fields its contract reads |
 | `make contracts` | Regenerate `transform/`'s raw sources, staging models and every model's schema from `contracts/`; CI fails if the committed files differ |
 | `make transform` | `dbt build` (models and tests) on the synthetic fixtures in `tests/fixtures/transform/`, as CI runs it |
+| `make ratchet` | The Trusted gate's ratchet on `HEAD` against `BASE`, without the required-check rule ([docs/dev/README.md](docs/dev/README.md#the-trusted-gate)) |
 | `make eval` | Verify the sealed sets; never run or read the held-out pool while developing |
 | `uv run health-data-registry refresh <id> [--max-rows N]` | One dataset; `--max-rows` marks the snapshot partial |
 | `uv run health-data-registry validate` | Cross-check every catalog entry, contract and semantic model |
+| `uv run health-data-registry gate <release>` | Serve a hub release only if its dbt build passed every error-severity test; logs to `lake/ops/` |
 
 ## How changes land
 
@@ -56,6 +58,19 @@ One review round, one fix round, merge, then follow-ups. We don't get stuck in r
      (hard rule 13).
    - Fix-round pushes follow the same path. Merging main into a branch is a change like any other: precheck, then
      pre-pr, then the PR branch.
+   - Locally, the `pre-push` hook (`make hooks`, `scripts/pre_push_gate.py`) refuses a push to a PR branch (any
+     branch but `pre-pr/**`, `wip/**`, `dependabot/**` and `main`) whose commit has no green `ci.yml` run on
+     pre-pr, and runs ruff, mypy and the changed modules' tests before a pre-pr push. It doesn't run when a branch
+     is created at a commit the remote already has, so checking the pre-pr run is still yours. The server rule
+     meant to enforce this, a ruleset requiring "CI result" on PR branches, isn't applied yet
+     ([#138](https://github.com/jtouley/health-data-registry/issues/138)).
+   - Every PR into main also runs the **Trusted gate**, from main's copy, never the PR's (a required check once
+     [#138](https://github.com/jtouley/health-data-registry/issues/138) is done): it fails a PR
+     that lowers a coverage or mutation floor, adds a skip, pragma, type-ignore, noqa or lint relaxation not in
+     `.github/ratchet-allowlist.txt`, drops tests, loosens a required check or `ci/budgets.yml`, weakens a mutation
+     job (PR, nightly or release gate), touches `eval/sealed/` or bypasses the hooks
+     ([docs/dev/README.md](docs/dev/README.md#the-trusted-gate)). An allowlist entry lands first, in a PR
+     that changes nothing else.
 
    Every commit carries the required trailers, and the PR body names the skills used and what each changed.
    Every commit, by people, agents and the lead, goes through the pre-commit hooks (`make hooks`); `--no-verify`
@@ -101,7 +116,7 @@ One review round, one fix round, merge, then follow-ups. We don't get stuck in r
 ```text
 src/health_data_registry/
   cli.py          serve [--http], refresh <dataset>|--all, fetch <source>, export-public --to, check-contracts, validate,
-                  eval, publication-outlook, and the analysis tools (get-rate, compare-rates, get-trend,
+                  eval, gate, publication-outlook, and the analysis tools (get-rate, compare-rates, get-trend,
                   age-adjust, check-signal)
   server.py       the MCP server (stdio): registers the tools (listed below) and the helper prompts; wraps
                   every failure as a plain-words refusal
@@ -111,6 +126,7 @@ src/health_data_registry/
                   own flags carried through
   stats.py        pure statistics for analysis.py (standard library only, each method with its published source)
   publication.py  publication outlook: per-conference base rates from publication_base_rates.yaml
+  ratchet.py      CI only, not used by the server: the Trusted gate's ratchet (docs/dev/README.md#the-trusted-gate)
   helpers.py      the clinician workflows: MCP prompts, and the source of docs/helpers.md and the
                   template's Claude Code skills (template/.claude/skills/)
   distribution.py the plugin (plugin/), its marketplace, the Claude Projects kit, and the generated tool lists
@@ -125,10 +141,17 @@ src/health_data_registry/
                   reads)
   staging.py      the one contract-driven typed projection (names, types, missing codes, required, code
                   lists); the lake, the live read and the generated dbt staging models all use it
-  transform_gen.py  `make contracts`: writes transform/'s raw sources, staging models and model schemas;
-                  deletes only its own stale files in staging/ and refuses on anything hand-written there
+  transform_gen.py  `make contracts`: writes transform/'s raw sources, staging and intermediate models,
+                  every model schema, the contract rules as dbt tests and the unmapped-labels queue; deletes
+                  only its own stale files in staging/ and refuses on anything hand-written there
   dbt_raw.py      the dbt-duckdb plugin: each raw source is the full load LATEST names, with snapshot id and
                   raw sha256 on every row; empty, with a warning, when there is none
+  quality.py      runs each contract's ODCS quality rules (with dimension and severity), a has-rows check and
+                  fill-rate checks on every snapshot and live read; rule SQL passes sql_guard and runs read-only;
+                  data failures become caveats, rule errors stay apart for maintainers
+  release_gate.py the release gate: passes a hub release only after a complete, clean dbt build, and records it
+                  served only after its upload; ops/builds.jsonl, ops/serving_log.jsonl and ops/SERVING, kept in
+                  the private ops dataset health-data-registry-ops-release-gate
   crawl.py        fetch one source into a lake (refresh, fetch, and run-time fetches)
   publish.py      export-public to the open data hub: cards, licence, manifest, pre-publish checks, tag
   hosted.py       serve --http: stateless Streamable HTTP for the claude.ai connector; hub releases and live only,
@@ -146,12 +169,14 @@ contracts/        one ODCS v3.2.0 contract per dataset, the ODPS data product, a
                   model computed in dbt (e.g. the MMWR calendar)
 semantic/         one dbt-style semantic model per dataset
 transform/        the dbt project on DuckDB (dbt-duckdb): models/staging/ generated from contracts/ (never edit),
-                  then intermediate (business rules, flag_* review queues) and marts (dims, one fact per
-                  source). Every input is a raw source or a control-plane export with an ODCS contract: no
-                  seeds, no data files (a test enforces it); CI's synthetic lake is tests/fixtures/transform/
+                  then intermediate/ (generated: total rows, place keys, renamed labels, partial places, flag
+                  meanings, every contract rule as a named dbt test), flag/ (review queues that remove nothing)
+                  and marts (dims, one fact per source). Every input is a raw source or a control-plane export
+                  with an ODCS contract: no seeds, no data files (a test enforces it); CI's synthetic lake is
+                  tests/fixtures/transform/
 eval/sealed/      held-out blind sets, hash-sealed, when present; don't read them while developing
 tests/            synthetic data only; tests/golden holds golden SQL; tests/integration the live `network` checks
-scripts/          mutate_changed.py, write_template.py (make docs, make kit)
+scripts/          mutate_changed.py, write_template.py (make docs, make kit), pre_push_gate.py (the pre-push hook)
 plugin/, template/, packaging/, npm/
                   generated plugin and template; MCP Registry, mcpb and npm packaging
 docs/             setup.md, helpers.md and tools.md (clinicians), dev/ (developers), architecture.md,

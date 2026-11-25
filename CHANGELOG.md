@@ -64,6 +64,19 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- The Trusted gate (`.github/workflows/trusted-gate.yml`, `python -m health_data_registry.ratchet`, `make
+  ratchet`): a check a pull request cannot edit, run from main's copy on `pull_request_target` with a read-only
+  token, reading the pull request as data only (a required check once the `main` ruleset lists it, #138). It fails
+  a change that lowers a coverage, mutation or other floor, adds a skip, pragma, type-ignore, noqa or lint
+  relaxation not in `.github/ratchet-allowlist.txt`, adds a settings file beside `pyproject.toml`, a symbolic link
+  or a submodule, drops tests, removes or loosens a required check, touches `eval/sealed/`, adds a way around the
+  git hooks or removes a hook, loosens `ci/budgets.yml` (a new key included), or weakens a job that runs mutation
+  tests (PR shards, the nightly run, the release gate's mutation check).
+- A `pre-push` hook (`scripts/pre_push_gate.py`, installed by `make hooks`): a push to a pull request branch (any
+  branch but `pre-pr/**`, `wip/**`, `dependabot/**` and `main`) is refused unless that exact commit already
+  passed CI on a `pre-pr/` branch, and a push to `pre-pr/**` first runs ruff, mypy and the changed modules' tests.
+  Create a PR branch at the green commit (`git push origin <sha>:refs/heads/<branch>`), and merge main locally
+  instead of using GitHub's "Update branch".
 - `serve --http`: the hosted, read-only connector over stateless Streamable HTTP (hub releases and live reads
   only), with one deadline per tool call, a result-size cap, rate limits per MCP session and overall, and no
   request content in any log; `space/` for a Hugging Face Docker Space and `docs/dev/hosting.md`.
@@ -78,6 +91,14 @@ All notable changes to this project are documented here. The format follows
   spends no token; pins carry the answer's row count and row-key hash and may name only release tags; hub
   downloads end by the call deadline and a stuck call never holds the engine past it; `serve --http` binds to
   127.0.0.1 by default with Host and Origin checks; `query_sql` adds tie-breakers to its own `ORDER BY`.
+- Hosted query isolation (#64, #74 item 1): every query runs in a child process with an OS memory limit
+  (`HDR_QUERY_MEMORY_MB`), a hard kill at the deadline and a capped JSON reply (`HDR_QUERY_RESULT_MB`), so a
+  long `lpad` or `repeat` call is stopped and can't exhaust the server's memory. Anything that outlives its call
+  poisons the engine until it ends: new calls get a plain BUSY refusal, `/healthz` answers 503 with the cause and
+  since when, and after `HDR_POISONED_EXIT_S` (900 s) the server exits so it can be started afresh. Each child
+  gets only the tables its query reads and none of the server's environment, and `/healthz` reports whether the
+  memory limit was measured to hold. No page of an answer goes over `HDR_PAGE_CHARS`: pages are measured and
+  re-cut, and a single row too long for any page, even in a one-row answer, is refused in plain words.
 - Condition vocabulary: each catalog entry lists the publisher's own condition labels (`conditions:`, with
   where they come from), and `get_series`, `get_rate` and `get_trend` accept any of them through the semantic
   model's `generic_series`, with the same aggregation rules as the named series. `validate` fails when a local

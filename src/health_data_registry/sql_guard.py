@@ -317,6 +317,15 @@ def _parse(sql: str) -> exp.Query:
     return tree
 
 
+def require_single_select(sql: str) -> None:
+    """Raise SqlRefused unless DuckDB's own parser sees exactly one SELECT in ``sql``.
+
+    For SQL that does not go through :func:`guard_sql` at run time (contract quality rules, which the guard
+    checked when the contract loaded): a second statement or a write never reaches the engine.
+    """
+    _require_single_select(sql)
+
+
 def _require_single_select(sql: str) -> None:
     """DuckDB's own parser must see exactly one SELECT (defence in depth against a misparse)."""
     try:

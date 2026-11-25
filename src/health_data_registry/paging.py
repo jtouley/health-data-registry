@@ -4,7 +4,8 @@ Every tool that returns rows answers through `respond`, so stdio, the hosted HTT
 page the same way:
 
 - The page budget (HDR_PAGE_CHARS, default 120,000 characters) counts both copies a client receives: the text
-  block and its structured copy. A page never goes over it (unless one row alone does).
+  block and its structured copy. A page never goes over it: pages are cut from estimated row sizes, then each page
+  is measured and the cut redone when one is over. A row too long to fit on any page is refused in plain words.
 - When the full answer fits, it comes back as before, plus its provenance. When it doesn't, page 1 comes back with
   rows, a header ("Page 1 of N: rows 1–k of T. The full answer has T rows."), a Next line naming the exact call for
   the next page, and the guidance to fetch every page and save the rows to one CSV file or artifact.
@@ -294,16 +295,42 @@ def _render_page(res: Result, lo: int, hi: int, page: int, bounds: Sequence[tupl
 
 
 def plan(res: Result, fmt: Fmt, budget: int, render: Callable[[int, int, int, list[tuple[int, int]]], Out]) -> list[tuple[int, int]]:  # fmt: skip
-    """Page bounds such that every page renders within `budget`; depends only on the rows and the notes.
+    """Page bounds for the rows; depends only on the rows and the notes, so the same data gives the same pages.
 
-    Row costs are exact (a row adds exactly its cost to a page, plus 2 for the first row of a JSON page), and a
-    page without rows is measured at its widest (every number at its most digits, with a Next line and as the
-    last page), so the rows that fit in what is left always fit. A row too long for any page gets a page alone.
+    The cut is a heuristic: row costs are estimates (a CSV row's line, a JSON row at its indent), and a page
+    without rows is measured at its widest (every number at its most digits, with a Next line and as the last
+    page). So the plan is then checked: every page with more than one row is rendered and measured, and when one
+    is over `budget` the cut is redone with that much less room, until none is. A row too long for any page still
+    gets a page of its own, over budget; `respond` refuses that page in plain words rather than send it.
     """
     costs = [_row_cost(r, fmt) for r in res.rows]
     n = len(res.rows) + 1
     widest = max(wire_size(render(n, n, n - 1, [(0, 0)] * n)), wire_size(render(n, n, n, [(0, 0)] * n)))
-    return cut(costs, budget // 2 - widest // 2 - (2 if fmt == "json" else 0))
+    room = budget // 2 - widest // 2 - (2 if fmt == "json" else 0)
+    while True:
+        bounds = cut(costs, room)
+        over = max(
+            (
+                wire_size(render(lo, hi, i + 1, bounds)) - budget
+                for i, (lo, hi) in enumerate(bounds)
+                if hi - lo > 1
+            ),
+            default=0,
+        )
+        if over <= 0:
+            return bounds
+        # Both copies count, so the text shrinks by half the overshoot, and by at least a tenth of the room each
+        # pass: a steady overshoot of a few characters (a page number gaining a digit) ends in a few passes.
+        room -= max(1, over // 2, room // 10)
+
+
+def row_too_long(size: int, limit: int) -> str:
+    """The plain refusal for a page that is one row too long to send, whatever the page budget allows."""
+    return (
+        f"One row of this answer is too long to send in a reply (about {size:,} characters; a page may be "
+        f"{limit:,}), so nothing was sent. Ask again for fewer columns or one measure, or use describe_dataset to "
+        "see which columns hold long text."
+    )
 
 
 # ------------------------------------------------------------------------------------------------ respond
@@ -371,6 +398,8 @@ def respond(
     def render(lo: int, hi: int, n: int, bounds: list[tuple[int, int]]) -> Out:
         return _render_page(res, lo, hi, n, bounds, tool, args, token, downloads, fmt)
 
+    if len(res.rows) <= 1:  # one row too long for a page: no cut can help, and it is never sent over budget
+        return message(row_too_long(wire_size(whole), limit), fmt, refused="too_large")
     bounds = plan(res, fmt, limit, render)
     n = page or 1
     if n > len(bounds):
@@ -383,10 +412,12 @@ def respond(
             fmt,
             refused="no_such_page",
         )
-    if len(bounds) == 1:
-        return whole
+    # Even a plan of one page is rendered and measured: `whole` is already over the limit.
     lo, hi = bounds[n - 1]
-    return render(lo, hi, n, bounds)
+    out = render(lo, hi, n, bounds)
+    if wire_size(out) > limit:  # only a page of one row can be over (plan re-cuts the rest): never sent
+        return message(row_too_long(wire_size(out), limit), fmt, refused="too_large")
+    return out
 
 
 def paged(tool: str) -> Callable[[Callable[..., Result | Out]], Callable[..., Out]]:

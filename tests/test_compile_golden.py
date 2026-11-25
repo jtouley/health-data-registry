@@ -321,7 +321,20 @@ def test_build_snapshot_manifest_and_pointer(est: tuple[Registry, Engine, Path],
     path, read = found
     assert read == m
     assert read.files == {name: sha256_file(path / name) for name in ("data.duckdb", "data.parquet")}
-    assert json.loads((path / "manifest.json").read_text()) == {
+    written = json.loads((path / "manifest.json").read_text())
+    quality = written.pop("quality")
+    # The volume check, then a fill-rate check per optional column that is not a flag column (a flag is empty
+    # wherever its count is published); this fixture fills them all, and its contract has no rules.
+    assert quality["tool"] == "contract-rules" and quality["rule_errors"] == []
+    assert {r["test"]: r["status"] for r in quality["results"]} == {
+        "has_rows": "pass",
+        **{
+            f"fill_rate_{c.name}": "pass"
+            for c in reg.get("toy_cases").contract.columns
+            if not c.required and c.flag_for is None
+        },
+    }
+    assert written == {
         "files": read.files,
         "dataset": "toy_cases",
         "snapshot_id": m.snapshot_id,
@@ -342,7 +355,6 @@ def test_build_snapshot_manifest_and_pointer(est: tuple[Registry, Engine, Path],
         "release_contract_version": None,
         "release_files": {},
         "notes": [],
-        "quality": {},
         "silver": {"layout_version": "1", "row_count": 4, "unlisted_codes": {}},
         "layouts": {},
     }

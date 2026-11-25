@@ -9,7 +9,7 @@ from __future__ import annotations
 import contextlib
 import threading
 from collections import OrderedDict
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -27,6 +27,7 @@ from health_data_registry.registry import (
     label_key,
     unpinned_non_additive,
 )
+from health_data_registry.registry import label_key_sql as registry_label_key_sql
 from health_data_registry.sql_guard import GuardedQuery, guard_sql, harden, run_guarded
 from health_data_registry.store import Manifest, latest_snapshot, snapshot_dir
 
@@ -72,6 +73,7 @@ NEXT_STEPS: dict[str, str] = {
     "lake_unverified": "Run the Something's wrong helper. A maintainer can rebuild the source's local copy "
     "with refresh, or remove that source's folder from the local lake so the published release is read "
     "instead.",
+    "too_much_memory": "Ask again for fewer columns, fewer groups or a shorter span of years.",
 }
 
 # query_sql's own refusals (sql_guard.SqlRefused) reuse the codes too_large and too_slow for a different cause than
@@ -321,7 +323,7 @@ def _lit(value: str) -> str:
 
 def label_key_sql(expr: str, renamed: Sequence[tuple[str, str]] = ()) -> str:
     """SQL for registry.label_key, then the contract's renamed labels mapped onto the label they continue."""
-    key = f"regexp_replace(upper(trim(CAST({expr} AS VARCHAR))), '[.]', '', 'g')"
+    key = registry_label_key_sql(expr)
     if not renamed:
         return key
     whens = " ".join(f"WHEN {_lit(label_key(a))} THEN {_lit(label_key(b))}" for a, b in renamed)
@@ -547,6 +549,10 @@ class Engine:
     _pinned: OrderedDict[tuple[tuple[str, tuple[str, str | None]], ...], Engine] = field(
         default_factory=OrderedDict
     )
+    # isolation.Isolation: run every query in a killable child process (the hosted server). None runs queries on
+    # this engine's own connection (stdio, the CLI): see isolation.py for why.
+    isolation: Any = None
+    _sources: list[Any] = field(default_factory=list)  # isolation.Source per table, as connect() set them up
 
     def connect(self) -> duckdb.DuckDBPyConnection:
         # Every read starts here: a call past its deadline (one the hosted guard gave up on) stops before it
@@ -554,22 +560,29 @@ class Engine:
         deadline.check()
         if self._con is not None:
             return self._con
+        from health_data_registry.isolation import Source
         from health_data_registry.live import load_live
 
         con = duckdb.connect(":memory:")
         parquet: list[str] = []
         self._lake_refused.clear()
+        sources: list[Source] = []
         for ds in self.registry:
             if ds.entry.tier == "private":
                 held = self._private.get(ds.id)
                 if held is None:
                     continue  # read from its private store (private.read_rows) when first asked
                 try:
-                    load_live(con, ds, held[0])  # in memory only, like a live table
+                    staged = load_live(con, ds, held[0])  # in memory only, like a live table
                 except Exception:  # noqa: BLE001 - one bad store must not break the other sources
                     del self._private[ds.id]
                     continue
-                manifest = held[1]
+                manifest = replace(  # its data checks reach answers as caveats, as a live table's do
+                    held[1],
+                    notes=[*held[1].notes, *staged.notes()],
+                    silver=staged.staging.as_dict(),
+                    quality=staged.quality.as_dict(),
+                )
             elif not ds.entry.licence.redistribution:
                 table = self._live.get(ds.id)
                 if table is None:
@@ -583,12 +596,15 @@ class Engine:
                 manifest = replace(
                     table.manifest,
                     notes=[*table.manifest.notes, *report.notes()],
-                    silver=report.as_dict(),
+                    silver=report.staging.as_dict(),
+                    quality=report.quality.as_dict(),
                 )
+                sources.append(Source("live", ds.id, ds=ds, records=table.records))
             elif (found := self._lake_snapshot(ds)) is not None:
                 path, manifest = found
                 if not self._attach_lake(con, ds, path, manifest):
                     continue
+                sources.append(Source("attach", ds.id, path=str(path / "data.duckdb")))
             elif ds.id in self._hub_files and not self._hub_intact(self._hub_files[ds.id][0]):
                 del self._hub_files[
                     ds.id
@@ -599,11 +615,13 @@ class Engine:
                 lit = str(file).replace("'", "''")
                 con.execute(f"CREATE VIEW {_q(ds.id)} AS SELECT * FROM read_parquet('{lit}')")  # noqa: S608 - quoted identifier, verified cache path
                 parquet.append(str(file))
+                sources.append(Source("parquet", ds.id, path=str(file)))
             else:
                 continue
             self.manifests[ds.id] = manifest
         harden(con, allowed_paths=parquet)
         self._con = con
+        self._sources = sources
         return con
 
     def _lake_refusal(self, ds: Dataset, message: str) -> QueryRefused:
@@ -674,6 +692,39 @@ class Engine:
             return bool(check(file)) if check is not None else file.is_file()
         except OSError:
             return False  # unreadable: downloaded and checked again on next use
+
+    def _run(
+        self, sql: str, params: Sequence[Any] = (), *, limit: int | None = None, guarded: GuardedQuery | None = None,
+        timeout_s: float | None = None, tables: Collection[str] = (),
+    ) -> tuple[list[str], list[Any]]:  # fmt: skip
+        """Run one query: in a killable child process when this engine has an Isolation, else on the connection.
+
+        `guarded` runs through sql_guard.run_guarded (query_sql); otherwise `sql` is trusted SQL this module built,
+        with bound `params`, reading `tables`. Returns (columns, rows), at most `limit` rows (all when None). The
+        child gets only the tables the query reads (a guarded query's own), so a large or broken table elsewhere
+        never slows or fails it.
+        """
+        con = self.connect()
+        if self.isolation is None:
+            if guarded is not None:
+                cols, got = run_guarded(con, guarded)
+                return cols, list(got)
+            cur = con.execute(sql, list(params))
+            cols = [d[0] for d in cur.description or []]
+            return cols, cur.fetchall() if limit is None else cur.fetchmany(limit)
+        from health_data_registry.isolation import DEFAULT_JOB_TIMEOUT_S, IsolationRefused, Job
+
+        reads = set(guarded.tables if guarded is not None else tables)
+        job = Job(tuple(s for s in self._sources if s.dataset_id in reads), sql=sql, params=tuple(params),
+                  limit=limit, guarded=guarded,
+                  timeout_s=timeout_s or (20.0 if guarded is not None else DEFAULT_JOB_TIMEOUT_S))  # fmt: skip
+        try:
+            return self.isolation.run(job, deadline.remaining())  # type: ignore[no-any-return]
+        except IsolationRefused as e:
+            left = deadline.remaining()
+            if e.code == "too_slow" and left is not None and left <= 0:
+                raise deadline.DeadlineExceeded() from e  # the call's own budget ran out: its own message
+            raise QueryRefused(e.code, e.message) from e
 
     def _reconnect(self) -> None:
         if self._con is not None:
@@ -854,7 +905,7 @@ class Engine:
             if hub is None and any(r for _, r in pins.values()):
                 return None
             alt = Engine(registry=self.registry, lake=self.lake, hub=hub, cache=self.cache, fetch_at_run_time=False,
-                         getter=self.getter, lake_pins={i: s for i, (s, r) in pins.items() if r is None})  # fmt: skip
+                         getter=self.getter, isolation=self.isolation, lake_pins={i: s for i, (s, r) in pins.items() if r is None})  # fmt: skip
             if not alt._serves(pins):
                 alt.close(release_hub=alt.hub is not self.hub)
                 return None
@@ -944,8 +995,7 @@ class Engine:
         ds = self.registry.get(dataset_id)
         manifest = self.manifest(dataset_id)
         cm = compile_metric(ds, metric, filters=filters, group_by=group_by, period=period)
-        con = self.connect()
-        rows = con.execute(cm.sql + f" LIMIT {MAX_ROWS + 1}", cm.params).fetchall()
+        _, rows = self._run(cm.sql + f" LIMIT {MAX_ROWS + 1}", cm.params, tables=(dataset_id,))
         m = ds.semantic.metric(metric)
         if m.aggregation == "none" and group_by:
             keys = [tuple(r[: len(group_by)]) for r in rows]
@@ -973,11 +1023,8 @@ class Engine:
         self.manifest(dataset_id)
         if column not in ds.contract.column_names:
             raise QueryRefused("unknown_column", f"{dataset_id} has no column {column}")
-        rows = (
-            self.connect()
-            .execute(f"SELECT DISTINCT {_q(column)} FROM {_q(dataset_id)} ORDER BY 1")  # noqa: S608 - quoted contract identifiers
-            .fetchall()
-        )  # noqa: S608 - quoted contract identifiers
+        sql = f"SELECT DISTINCT {_q(column)} FROM {_q(dataset_id)} ORDER BY 1"  # noqa: S608 - quoted contract identifiers
+        _, rows = self._run(sql, tables=(dataset_id,))
         return [r[0] for r in rows if r[0] is not None]
 
     def loaded_values(
@@ -994,10 +1041,22 @@ class Engine:
             return None
         if dataset_id not in self.manifests or column not in ds.contract.column_names:
             return None
+        sql = f"SELECT DISTINCT {_q(column)} FROM {_q(dataset_id)} ORDER BY 1"  # noqa: S608 - quoted contract identifiers
+        if self.isolation is not None:
+            try:
+                _, rows = self._run(sql, timeout_s=timeout_s, tables=(dataset_id,))
+            except QueryRefused as e:
+                if e.code == "busy":  # a poisoned engine: the clinician is told, and no further child starts
+                    raise
+                return None  # slow, too big or broken here: describe_dataset carries on without the values
+            except OSError:
+                return None
+            # A DeadlineExceeded isn't caught: the call's whole budget is gone, so the call ends with its message.
+            return [r[0] for r in rows if r[0] is not None]
         timer = threading.Timer(timeout_s, con.interrupt)
         timer.start()
         try:
-            rows = con.execute(f"SELECT DISTINCT {_q(column)} FROM {_q(dataset_id)} ORDER BY 1").fetchall()  # noqa: S608 - quoted contract identifiers
+            rows = con.execute(sql).fetchall()
         except (duckdb.Error, OSError):
             return None
         finally:
@@ -1018,8 +1077,7 @@ class Engine:
         for t in sorted(q.tables):
             if t in self.registry.datasets:
                 self.manifest(t)  # brings a hub or run-time source onto this computer on first use
-        con = self.connect()
-        cols, rows = run_guarded(con, q)
+        cols, rows = self._run(q.sql, guarded=q)
         ids = sorted(t for t in q.tables if t in self.manifests)
         notices = [
             n

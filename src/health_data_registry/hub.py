@@ -28,6 +28,7 @@ release would add them, and are not in place yet.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import math
@@ -448,6 +449,7 @@ class Hub:
             local_root = self.cache / "hub" / "local" / Path(self.url).resolve().name
             got = local_root / path_in_repo
             got.parent.mkdir(parents=True, exist_ok=True)
+            got.unlink(missing_ok=True)  # a verified copy is read-only (snapshot); a fresh copy replaces it
             shutil.copyfile(src, got)
         os.utime(got)  # most recently used
         evict(self.cache / "hub", self.max_bytes, keep={got.resolve(), *self.in_use()})
@@ -499,6 +501,9 @@ class Hub:
                 "it was not used. It may have been damaged in transit; ask again to download it afresh, and "
                 "report it if it keeps happening.",
             )
+        # Verified: read-only from now on, so no query child can truncate it.
+        with contextlib.suppress(OSError):
+            local.chmod(0o444)
         self._hold(local.resolve())  # the server's views read this file from now on
         self._verified[local.resolve()] = str(meta["sha256"])
         allowed = set(Manifest.__dataclass_fields__)
