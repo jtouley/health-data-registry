@@ -21,12 +21,42 @@ MAX_ROWS = 5000
 FilterValue = str | int | float | bool | Sequence[str | int | float | bool]
 
 
-class QueryRefused(ValueError):
-    """The question can't be answered this way; the message says why in plain words."""
+# What to do next after each kind of decline, in plain words. Every refusal carries one (DEFAULT_NEXT_STEP when
+# its code has none of its own), so a clinician is never left at a dead end.
+DEFAULT_NEXT_STEP = "Ask suggest_datasets with your whole question to see which sources can answer it."
+NEXT_STEPS: dict[str, str] = {
+    "unknown_condition": "Open describe_dataset for a source search_datasets lists, pick one of its condition "
+    "labels, and ask again with that label.",
+    "filter_matched_nothing": "Ask again with one of the values listed as available.",
+    "no_snapshot": "Run the Something's wrong helper, which walks you through turning it back on.",
+    "no_place_breakdown": "Ask again without places, or use list_sources(geography_level='state') to find a "
+    "source with values by state.",
+    "too_many_rows": "Ask again for fewer places or a shorter span of years.",
+    "no_sex_split": "Ask again without sex.",
+    "index_not_built": "Search PubMed for the condition and place in the meantime.",
+    "no_denominator": "Use get_series for the counts, or a rate the source publishes (describe_dataset says).",
+    "ambiguous_condition": "Ask again with the full label of one series as the condition.",
+    "nothing_to_compare": "Ask again with other_location or other_year.",
+    "no_rate": "Use get_rate to see which places and years have both a count and a population.",
+    "too_few_points": "Ask for a longer span of years, or use get_series to read the counts.",
+    "would_combine_rates": "Use describe_dataset to see the filters, and ask for one published group at a time.",
+    "publisher_unreachable": "Try again in a few minutes.",
+    "publisher_bad_table": "Try again later; if it keeps happening, run the Something's wrong helper.",
+    "needs_single_value": "Read a running total at one week (normally the latest), never across weeks.",
+}
 
-    def __init__(self, code: str, message: str) -> None:
+
+def next_step_for(code: str | None) -> str:
+    return NEXT_STEPS.get(code or "", DEFAULT_NEXT_STEP)
+
+
+class QueryRefused(ValueError):
+    """The question can't be answered this way; the message says why in plain words, next_step what to do."""
+
+    def __init__(self, code: str, message: str, next_step: str | None = None) -> None:
         super().__init__(message)
         self.code = code
+        self.next_step = next_step or next_step_for(code)
 
 
 def _q(ident: str) -> str:

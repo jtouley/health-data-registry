@@ -25,6 +25,7 @@ from health_data_registry.tools import (
     provenance_note,
     refusal,
     series_for,
+    unknown_condition,
 )
 
 PER = 100_000.0
@@ -341,13 +342,8 @@ def _no_population(fmt: Fmt) -> Out:
     )
 
 
-def _unknown(condition: str, what: str, fmt: Fmt) -> Out:
-    return message(
-        f"No loaded source reports '{condition}' as {what}. Use list_sources or suggest_datasets to see what is "
-        "available.",
-        fmt,
-        refused="unknown_condition",
-    )
+def _unknown(registry: Registry, condition: str, what: str, fmt: Fmt) -> Out:
+    return unknown_condition(registry, condition, fmt, what)
 
 
 # ---------------------------------------------------------------------------------- get_rate
@@ -456,7 +452,7 @@ def get_rate(
     if not _population_series(registry):
         return _no_population(fmt)
     if not series_for(registry, condition, "cases"):
-        return _unknown(condition, "case counts", fmt)
+        return _unknown(registry, condition, "case counts", fmt)
     try:
         rows, unmatched, used = _rate_rows(registry, engine, condition, locations, year, year)
         notes = _source_notes(engine, used)
@@ -514,7 +510,7 @@ def compare_rates(
     if not _population_series(registry):
         return _no_population(fmt)
     if not series_for(registry, condition, "cases"):
-        return _unknown(condition, "case counts", fmt)
+        return _unknown(registry, condition, "case counts", fmt)
     try:
         a_rows, _, used_a = _rate_rows(registry, engine, condition, [location], year, year)
         b_rows, _, used_b = _rate_rows(registry, engine, condition, [loc_b], year_b, year_b)
@@ -640,7 +636,7 @@ def get_trend(
         return message('fit_on must be "rates" or "counts".', fmt, refused="bad_fit_on")
     matches = series_for(registry, condition, "cases")
     if not matches:
-        return _unknown(condition, "case counts", fmt)
+        return _unknown(registry, condition, "case counts", fmt)
     cols = ["location", "condition", "years", "points_used", "annual_percent_change", "lower_95", "upper_95",
             "fit_on", "case_definition_from", "left_out", "dispersion", "source_id"]  # fmt: skip
     table: list[list[Any]] = []

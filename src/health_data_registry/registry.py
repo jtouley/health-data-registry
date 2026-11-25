@@ -158,6 +158,57 @@ IdArea = Literal[
 ]
 
 
+AliasReview = Literal["publisher_codebook", "pending_maintainer_review", "maintainer_reviewed"]
+
+
+class ConditionAlias(_Strict):
+    """Another name for one of the publisher's condition labels (hard rule 1).
+
+    An alias comes only from the publisher's own codebook (review publisher_codebook, with its URL in source) or
+    from a declaration a maintainer reviews (pending_maintainer_review until they do). Never from eval or trial
+    wording.
+    """
+
+    alias: str
+    label: str
+    source: str
+    review: AliasReview
+
+
+class Conditions(_Strict):
+    """The publisher's own condition labels for one dataset: the vocabulary get_series accepts.
+
+    `dimension` is the semantic-model dimension that holds the label (None when the whole dataset is one
+    condition). `labels` are copied exactly as the publisher writes them, and `source` says where the list comes
+    from (the codebook or the contract's documented list). `validate` fails when a snapshot holds a label that
+    is not listed here.
+    """
+
+    dimension: str | None = None
+    source: str = ""
+    labels: list[str] = Field(default_factory=list)
+    aliases: list[ConditionAlias] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _consistent(self) -> Conditions:
+        if len(set(self.labels)) != len(self.labels):
+            raise ValueError("conditions.labels lists a label twice")
+        if any(not str(x).strip() for x in self.labels):
+            raise ValueError("conditions.labels has an empty label")
+        if self.labels and not self.source.strip():
+            raise ValueError("conditions.source must say where the labels come from (codebook or contract)")
+        if self.dimension is not None and not self.labels:
+            raise ValueError("conditions.dimension is set but no labels are listed")
+        for a in self.aliases:
+            if a.label not in self.labels:
+                raise ValueError(
+                    f"alias {a.alias!r} points to {a.label!r}, which is not in conditions.labels"
+                )
+            if not a.source.strip():
+                raise ValueError(f"alias {a.alias!r} needs a source (codebook URL or reviewed declaration)")
+        return self
+
+
 class CatalogEntry(_Strict):
     id: str
     title: str
@@ -178,6 +229,7 @@ class CatalogEntry(_Strict):
     codebook_url: str
     caveats: list[str] = Field(default_factory=list)
     gbd: Gbd = Field(default_factory=Gbd)
+    conditions: Conditions = Field(default_factory=Conditions)
     contract: str
     semantic_model: str
     status: Literal["draft", "reviewed"]
@@ -539,6 +591,31 @@ class Series(_Strict):
     age_dimension: str | None = None
 
 
+class GenericSeries(_Strict):
+    """A series for ANY of the catalog's condition labels: the same metric, places and years as a named series,
+    with the condition dimension pinned to one publisher label at query time (bind). It reads the source's count
+    measure through a reviewed metric, so every aggregation rule of that metric still applies: a frequency count
+    summed without total rows, a running total read at one week, a rate never summed."""
+
+    metric: str
+    measure: SeriesMeasure
+    filters: dict[str, str | int | list[str | int]] = Field(default_factory=dict)
+    location_dimension: str | None = None
+    place_coverage: str | None = None
+    time_dimension: str
+    case_status: str | None = None
+    case_definition: str | None = None
+    week_dimension: str | None = None
+    age_dimension: str | None = None
+
+    def bind(self, label: str, dimension: str | None) -> Series:
+        """The series for one publisher label: the template with `dimension` filtered to exactly that label."""
+        fields = self.model_dump()
+        if dimension is not None:
+            fields["filters"] = {**self.filters, dimension: label}
+        return Series(condition=label, label=label, **fields)
+
+
 class SemanticModel(_Strict):
     dataset: str
     version: str
@@ -546,6 +623,8 @@ class SemanticModel(_Strict):
     measures: list[Measure]
     metrics: list[Metric]
     series: list[Series] = Field(default_factory=list)
+    # Templates for any catalogued condition label (catalog conditions.labels), pinned on conditions.dimension.
+    generic_series: list[GenericSeries] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _rules(self) -> SemanticModel:
@@ -589,7 +668,8 @@ class SemanticModel(_Strict):
                         raise ValueError(f"metric {metric.name} uncertainty names unknown measure {b}")
         dims = {d.name: d for d in self.dimensions}
         metrics = {m.name: m for m in self.metrics}
-        for ser in self.series:
+        templates = [g.bind("(any catalogued condition)", None) for g in self.generic_series]
+        for ser in [*self.series, *templates]:
             met = metrics.get(ser.metric)
             if met is None:
                 raise ValueError(f"series {ser.condition} names unknown metric {ser.metric}")
@@ -652,6 +732,38 @@ class Dataset:
     @property
     def id(self) -> str:
         return self.entry.id
+
+    @property
+    def condition_labels(self) -> list[str]:
+        """The publisher's own condition labels, as catalogued."""
+        return list(self.entry.conditions.labels)
+
+    def label_for(self, text: str) -> str | None:
+        """The catalogued label `text` names exactly (or through a declared alias), compared ignoring case,
+        punctuation and repeated spaces; None if it names none."""
+        if text in self.entry.conditions.labels:
+            return text
+        want = norm_label(text)
+        for label in self.entry.conditions.labels:
+            if norm_label(label) == want:
+                return label
+        return next((a.label for a in self.entry.conditions.aliases if norm_label(a.alias) == want), None)
+
+    def condition_series(self, label: str) -> list[Series]:
+        """Series for one catalogued label: the generic templates pinned to it, or, for a dataset that is one
+        condition throughout (no condition dimension), its own named series."""
+        if label not in self.entry.conditions.labels:
+            raise KeyError(label)
+        dim = self.entry.conditions.dimension
+        if dim is None:
+            return list(self.semantic.series)
+        return [g.bind(label, dim) for g in self.semantic.generic_series]
+
+
+def norm_label(text: str) -> str:
+    """A label compared ignoring case, punctuation and repeated spaces ("Jamestown Canyon  virus" = "jamestown
+    canyon virus")."""
+    return re.sub(r"[^a-z0-9]+", " ", str(text).lower()).strip()
 
 
 @dataclass(frozen=True)
@@ -771,6 +883,23 @@ def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticMode
     loc = entry.gbd.location_column
     if loc is not None and loc not in cols:
         raise RegistryError(f"{entry.id}: gbd.location_column {loc} is not a contract column")
+    cond = entry.conditions
+    dims = {d.name: d for d in semantic.dimensions}
+    if cond.dimension is not None and (
+        cond.dimension not in dims or dims[cond.dimension].type != "categorical"
+    ):
+        raise RegistryError(
+            f"{entry.id}: conditions.dimension {cond.dimension!r} is not a categorical dimension of the semantic model"
+        )
+    if semantic.generic_series and cond.dimension is None:
+        raise RegistryError(
+            f"{entry.id}: generic_series needs conditions.dimension, the dimension each label is pinned on"
+        )
+    for g in semantic.generic_series:
+        if cond.dimension in g.filters:
+            raise RegistryError(
+                f"{entry.id}: a generic series may not fix {cond.dimension}; the label asked for pins it"
+            )
     for c in contract.columns:
         if c.flag_for is not None and c.flag_for not in cols:
             raise RegistryError(f"{entry.id}: {c.name} flags unknown column {c.flag_for}")

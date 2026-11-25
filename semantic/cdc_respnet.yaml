@@ -69,3 +69,11 @@ series:
     location_dimension: site
     time_dimension: week_ending
     case_status: "laboratory-confirmed"
+# Any virus network in the catalog (conditions.labels): the weekly observed rate, as published, never added.
+generic_series:
+  - metric: weekly_hospitalization_rate
+    measure: rate
+    filters: {age_group: "Overall", sex: "All", race_ethnicity: "All"}
+    location_dimension: site
+    time_dimension: week_ending
+    case_status: "laboratory-confirmed"

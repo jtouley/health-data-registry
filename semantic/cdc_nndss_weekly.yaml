@@ -272,3 +272,28 @@ series:
     time_dimension: mmwr_year
     week_dimension: mmwr_week
     case_status: "as published (NNDSS does not split confirmed and probable here)"
+# Any condition label in the catalog (conditions.labels) reads through these templates, pinned on the condition
+# dimension: the same running-total rules as the named series above (read at one week, never weeks added up).
+generic_series:
+  - metric: annual_cases
+    measure: cases
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+  - metric: us_resident_annual_cases
+    measure: cases
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+  - metric: weekly_cases
+    measure: cases
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    week_dimension: mmwr_week
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+  - metric: us_resident_weekly_cases
+    measure: cases
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    week_dimension: mmwr_week
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"

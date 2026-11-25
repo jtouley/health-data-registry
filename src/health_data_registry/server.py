@@ -111,7 +111,7 @@ def build_server(registry: Registry | None = None, engine: Engine | None = None)
         return _safe(
             lambda: tools.search_datasets(
                 reg, topic=topic, id_area=id_area, geography=geography, year_start=year_start, year_end=year_end,
-                fmt=fmt,
+                engine=eng, fmt=fmt,
             ),
             fmt,
         )  # fmt: skip
@@ -125,7 +125,7 @@ def build_server(registry: Registry | None = None, engine: Engine | None = None)
     @mcp.tool(annotations=READ_ONLY)
     def suggest_datasets(question: str, fmt: Fmt = "csv") -> Out:
         """For a research question in plain words: which sources can answer it, which can't and why."""
-        return _safe(lambda: tools.suggest_datasets(reg, question, fmt=fmt), fmt)
+        return _safe(lambda: tools.suggest_datasets(reg, question, engine=eng, fmt=fmt), fmt)
 
     @mcp.tool(annotations=READ_ONLY)
     def get_series(
