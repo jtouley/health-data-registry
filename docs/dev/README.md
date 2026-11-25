@@ -17,7 +17,7 @@ make check              # what CI runs
 make hooks              # once: uv run pre-commit install (pre-commit and pre-push hooks)
 ```
 
-Every commit, by people, subagents and the lead, goes through these hooks; `--no-verify` is never used. Unfinished
+Every commit, by people, agents and the lead, goes through these hooks; `--no-verify` is never used. Unfinished
 work is not committed to the PR branch: it stays uncommitted or goes on a separate WIP branch until it passes the hooks.
 
 ## Commands
@@ -34,10 +34,10 @@ The README's images (`assets/readme/*.svg`, light and dark) come from one token 
 | `make precheck` | The pre-PR gate's local half: the CI checks plus a docs-drift check, stopping at the first failure ([below](#the-pre-pr-gate)) |
 | `make lint` / `make fmt` | Ruff lint and format check / fix |
 | `make typecheck` | mypy, strict |
-| `make test` | Offline tests with coverage; fails under 85% (`COV_FLOOR`) |
+| `make test` | Offline tests with coverage, one worker per core (pytest-xdist); fails under 85% (`COV_FLOOR`) |
 | `make test-network` | Live publisher tests in `tests/integration` (marker `network`) |
 | `make smoke` | The C. auris in Michigan reference journey on a synthetic lake (marker `smoke`; see [Smoke journey](#smoke-journey)) |
-| `make mutate` | Mutation tests on modules changed since `BASE` (default `origin/main`); fails under 70% killed (`MUTATION_FLOOR`) |
+| `make mutate` | Mutation tests on the functions changed since `BASE` (default `origin/main`); fails under 70% killed (`MUTATION_FLOOR`) |
 | `make docs` | Regenerate `docs/helpers.md` from `src/health_data_registry/helpers.py` |
 | `make refresh` | `health-data-registry refresh --all` into the local lake |
 | `make serve` | Run the MCP server on stdio |
@@ -103,7 +103,7 @@ A pull request's CI should pass the first time. So a commit is checked twice bef
 1. **`make precheck`** runs the CI checks locally plus a docs-drift check, and stops at the first failure: all
    pre-commit hooks (actionlint with shellcheck included), lint, typecheck, tests with the coverage floor, the
    smoke journey, the Projects kit build, the docs drift check (`make docs`, then nothing may change), and
-   mutation tests on the modules changed since `BASE` (default `origin/main`), one step per shard as CI shards
+   mutation tests on the functions changed since `BASE` (default `origin/main`), one step per shard as CI shards
    them, then the 70% floor on the total. Each step prints a PASS or FAIL line, and a summary follows. It checks
    the working tree, so commit first: CI checks the commit you push. It runs on macOS's bash 3.2 as well.
 2. **Push to `pre-pr/<branch>`** (`git push origin HEAD:pre-pr/<branch>`). CI and CodeQL run on every push to
@@ -169,19 +169,29 @@ Everything a clinician reads (tool descriptions, helpers, refusals) follows the 
 - **Network tests.** `tests/integration/test_live_<dataset>.py` fetch a small slice from the publisher at test time,
   write nothing to disk and are marked `network`. `make test` and CI's test job leave them out; run
   `make test-network` when you change an adapter, a contract or the fetcher.
-- **Mutation tests.** `scripts/mutate_changed.py` runs mutmut on the modules changed since the merge base and
-  prints each mutant it did not kill. A survivor means the tests would not notice that change: add or sharpen a
-  test, or say in the PR why the mutant is equivalent. Every status but `killed` (and `caught by type check`)
-  lowers the score, `no tests` and `skipped` included. `make mutate` is part of `make check`. CI runs the same
-  check on every PR in shards: `--list` names the shards of the changed modules, one job per shard runs mutmut,
-  and the aggregate job applies the 70% floor to the summed counts and lists every mutant not killed. A module
-  is one shard, or, when its estimated mutants exceed a shard's size (`SHARD_TARGET`, smaller for
-  `registry.py`), several named `<module>#<k>of<n>@<split>`: split by function, and a big function by the last
-  digit of its mutant numbers, so each shard takes about 10 to 20 minutes (the job's limit is 40). The split
-  comes from the module's source alone, read with the same Python 3.12 in `--list` and in every shard; `<split>`
-  is a hash of it, and a shard refuses an id whose hash differs from its own split, so an edit made after
-  `--list` (in CI or during precheck) fails the shard instead of running the wrong mutants. Each shard also
-  checks that every mutant of its module falls in exactly one shard. Functions mutmut never mutates (under
+- **Mutation tests.** `scripts/mutate_changed.py` runs mutmut on the functions changed since the merge base and
+  prints each mutant it did not kill. A function is changed when it holds an added, edited or deleted line, or
+  reads a module-level name that a changed line defines (an allowlist entry, a limit, an import), directly or
+  through names built from it; every method of a class whose attributes changed counts too, and so does every
+  function of a new file. mutmut mutates function bodies only, so a change to a docstring or a comment makes no
+  mutant, and the list names any changed module left with nothing to test. A survivor means the tests would not
+  notice that change: add or sharpen a test, or say in the PR why the mutant is equivalent. Every status but
+  `killed` (and `caught by type check`) lowers the score, `no tests` and `skipped` included. `make mutate` is part
+  of `make check`. CI runs the same check on every PR in shards: `--list` names the shards of the changed
+  functions, one job per shard runs mutmut (at most 6 at once per run), and the aggregate job applies the 70%
+  floor to the summed counts and lists every mutant not killed. The list job resolves the merge base once and
+  hands it to every shard, so they scope to the same functions. Each shard generates mutants for its own module
+  only, and mutmut's stats run covers only the test files that reach that module: by import, directly or through
+  other modules, scripts/ and tools/ included, or by loading a file by path (a test left out can only lower the
+  score). Shards are named `<module>#<k>of<n>@<split>`: the changed functions, split by function, and a big
+  function by the last digit of its mutant numbers, to about 3 minutes of mutants each (`SHARD_TARGET`, smaller
+  for `registry.py`; the job's limit is 12 minutes). The split comes from the module's source and the changed
+  functions alone, read with the same Python 3.12 in `--list` and in every shard; `<split>` is a hash of it, and a
+  shard refuses an id whose hash differs from its own split, so an edit made after `--list` (in CI or during
+  precheck) fails the shard instead of running the wrong mutants. Each shard also checks that every mutant of its
+  module falls in exactly one shard. While a shard runs, `pyproject.toml` carries its `only_mutate` and test
+  selection; a run stopped with Ctrl-C or SIGTERM restores it, and if a killed run leaves it edited, the next run
+  refuses to start until you restore the file. Functions mutmut never mutates (under
   `# pragma: no mutate`, for instance) carry no weight, and `@overload` stubs count with their function. It
   fails if any shard failed its baseline, left mutants not checked, interrupted or crashed, found a mutant in no
   shard, or left no report, or if only some shards of a module were expected. A module with no mutable
