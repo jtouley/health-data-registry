@@ -38,7 +38,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Final
 
@@ -47,6 +47,8 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
 from sqlglot.optimizer.scope import Scope, traverse_scope
+
+from health_data_registry.registry import label_key
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +190,7 @@ def guard_sql(
     allowed_tables: Mapping[str, frozenset[str]],
     declared_joins: frozenset[frozenset[str]] = frozenset(),
     max_rows: int = 5000,
+    non_additive: Mapping[str, frozenset[str]] | None = None,
     ordered: bool = False,
 ) -> GuardedQuery:
     """Check ``sql`` and return the SQL that may run.
@@ -198,6 +201,9 @@ def guard_sql(
             case-insensitively, as DuckDB's do.
         declared_joins: pairs of table names a contract declares joinable.
         max_rows: the most rows the outer query may return; a larger or missing LIMIT becomes this.
+        non_additive: catalogued table name -> the columns whose values overlap or count different things
+            (the semantic model's non_additive dimensions). A sum over such a table must filter each of them
+            to one value or group by it, the same rule the metric compiler applies (hard rule 2).
         ordered: give the outer query a total order, so the rows and the rows the LIMIT keeps come in the same
             order on every run (answers cut into pages need that): ``ORDER BY ALL`` when it has no ORDER BY, and
             otherwise every output column after its own keys as tie-breakers.
@@ -210,6 +216,9 @@ def guard_sql(
         raise ValueError(f"max_rows must be positive, got {max_rows!r}")
     tables = {name.casefold(): frozenset(c.casefold() for c in cols) for name, cols in allowed_tables.items()}
     joins = frozenset(frozenset(t.casefold() for t in pair) for pair in declared_joins)
+    loose = {
+        name.casefold(): frozenset(c.casefold() for c in cols) for name, cols in (non_additive or {}).items()
+    }
 
     tree = _parse(sql)
     _check_nodes(tree)
@@ -220,6 +229,7 @@ def guard_sql(
         _check_scope_sources(scope, tables, used)
         _check_columns(scope, tables)
         _check_joins(scope, tables, joins)
+        _check_sums(scope, tables, loose)
     limit = _apply_limit(tree, max_rows)
     if ordered:
         _total_order(tree)
@@ -528,6 +538,137 @@ def _check_joins(
                             f"The tables {a} and {b} can't be combined: their contracts don't declare a join "
                             "between them, so rows may not line up. Query each one on its own.",
                         )
+
+
+# Aggregates that add values up. Other aggregates (count, avg, min, max) don't add a column's values together.
+_SUM_FUNCTIONS: Final = frozenset({"fsum", "sumkahan", "kahan_sum"})
+
+
+def _bare(node: exp.Expr) -> exp.Expr:
+    while isinstance(node, exp.Lower | exp.Upper | exp.Trim | exp.Paren):
+        node = node.this
+    return node
+
+
+def _conjuncts(node: exp.Expr) -> Iterator[exp.Expr]:
+    node = node.unnest()
+    if isinstance(node, exp.And):
+        yield from _conjuncts(node.left)
+        yield from _conjuncts(node.right)
+    else:
+        yield node
+
+
+def pinned_columns(condition: exp.Expr | None) -> frozenset[tuple[str, str]]:
+    """(qualifier, column) pairs a condition fixes to one value, both casefolded ('' when unqualified).
+
+    A column is pinned by `column = 'literal'` (the column may be wrapped in lower, upper or trim) or by
+    `column IN (...)` whose literals are one label spelled several ways (registry.label_key: case, edge
+    spaces and dots, e.g. 'US RESIDENTS' and 'U.S. RESIDENTS'), joined by AND. Anything under OR or NOT, or a
+    comparison with several different values, pins nothing. The metric compiler (registry.filter_pins) and
+    query_sql both use this one rule.
+    """
+    pinned: set[tuple[str, str]] = set()
+    if condition is None:
+        return frozenset()
+    for c in _conjuncts(condition):
+        if isinstance(c, exp.EQ):
+            pair = [_bare(c.left), _bare(c.right)]
+        elif isinstance(c, exp.In) and c.expressions and not c.args.get("query"):
+            values = c.expressions
+            if not all(isinstance(v, exp.Literal) for v in values):
+                continue
+            if len({label_key(v.name) for v in values}) != 1:
+                continue
+            pair = [_bare(c.this), values[0]]
+        else:
+            continue
+        cols = [x for x in pair if isinstance(x, exp.Column)]
+        if len(cols) == 1 and any(isinstance(x, exp.Literal) for x in pair):
+            pinned.add((cols[0].table.casefold(), cols[0].name.casefold()))
+    return frozenset(pinned)
+
+
+def _is_sum(node: exp.Expr) -> bool:
+    return isinstance(node, exp.Sum) or (
+        isinstance(node, exp.Anonymous) and str(node.name).casefold() in _SUM_FUNCTIONS
+    )
+
+
+def _grouped_columns(select: exp.Select) -> set[tuple[str, str]]:
+    """(qualifier, column) pairs a SELECT groups by: by column, output alias, position or GROUP BY ALL."""
+    group = select.args.get("group")
+    if group is None:
+        return set()
+    outputs = select.expressions
+    keys: list[exp.Expr] = list(group.expressions)
+    if group.args.get("all"):
+        keys += [o for o in outputs if not o.find(exp.AggFunc)]
+    aliases = {o.alias.casefold(): o.this for o in outputs if isinstance(o, exp.Alias)}
+    out: set[tuple[str, str]] = set()
+    for key in keys:
+        position = _literal_int(key)
+        if position is not None and 1 <= position <= len(outputs):
+            key = outputs[position - 1]
+        if isinstance(key, exp.Alias):
+            key = key.this
+        key = _bare(key)
+        if isinstance(key, exp.Column) and not key.table and key.name.casefold() in aliases:
+            key = _bare(aliases[key.name.casefold()])
+        if isinstance(key, exp.Column):
+            out.add((key.table.casefold(), key.name.casefold()))
+    return out
+
+
+def _check_sums(
+    scope: Scope, tables: Mapping[str, frozenset[str]], loose: Mapping[str, frozenset[str]]
+) -> None:
+    """Hard rule 2 for typed SQL: a sum never adds across values that overlap or count different things.
+
+    Every column the semantic model marks non-additive, in each catalogued table the summing SELECT reads, must
+    be filtered to one value in WHERE (pinned_columns) or grouped by (GROUP BY, or PARTITION BY for a window
+    sum). A sum over a subquery or CTE built from such a table is refused: its rows can't be traced back here.
+    """
+    select = scope.expression
+    if not isinstance(select, exp.Select) or not loose:
+        return
+    sums = [
+        n for n in select.walk() if _is_sum(n) and n.find_ancestor(exp.Select, exp.SetOperation) is select
+    ]
+    if not sums:
+        return
+    where = select.args.get("where")
+    pinned = pinned_columns(where.this if where is not None else None)
+    grouped = _grouped_columns(select)
+    for alias, (_node, source) in scope.selected_sources.items():
+        if not isinstance(source, exp.Table):
+            if any(loose.get(t) for t in _reachable(source, tables)):
+                raise SqlRefused(
+                    "non_additive",
+                    "This query adds up rows of an inner query or WITH table, so it can't be checked that "
+                    "values which overlap or count different things (a Total row beside its parts, different "
+                    "conditions) are kept apart. Add up directly from the catalogued table instead.",
+                )
+            continue
+        cols = loose.get(source.name.casefold(), frozenset())
+        for n in sums:
+            window = n.find_ancestor(exp.Window)
+            held = set(grouped)
+            if window is not None and window.find_ancestor(exp.Select) is select:
+                held |= {
+                    (p.table.casefold(), p.name.casefold())
+                    for p in (_bare(x) for x in window.args.get("partition_by") or [])
+                    if isinstance(p, exp.Column)
+                }
+            missing = sorted(c for c in cols if not ({("", c), (alias.casefold(), c)} & (pinned | held)))
+            if missing:
+                raise SqlRefused(
+                    "non_additive",
+                    f"This query adds up {source.name} across {', '.join(missing)}, whose values overlap or "
+                    "count different things (a Total row beside its parts, or different conditions), so the "
+                    "sum would count the same cases twice or mix different things. Filter each of them to one "
+                    "value in WHERE, or add it to GROUP BY to get one row per value.",
+                )
 
 
 def _literal_int(node: exp.Expr | None) -> int | None:

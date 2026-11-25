@@ -54,9 +54,9 @@ EST_SEMANTIC = """\
 dataset: toy_cases
 version: 0.2.0
 dimensions:
-  - {name: where, column: place, type: categorical}
-  - {name: week_ending, column: day, type: time}
-  - {name: season, column: season, type: time}
+  - {name: where, column: place, type: categorical, non_additive: false}
+  - {name: week_ending, column: day, type: time, non_additive: false}
+  - {name: season, column: season, type: time, non_additive: false}
 measures:
   - {name: cases, column: n, kind: count, description: cases reported}
   - {name: estimate, column: est, kind: estimate}
@@ -64,7 +64,7 @@ measures:
   - {name: high, column: hi, kind: upper_bound}
 metrics:
   - {name: total, description: Cases, measure: cases, aggregation: sum}
-  - {name: total_all_rows, description: Cases with totals, measure: cases, aggregation: sum, exclude_total_rows: false, filters: ["place <> 'X'"]}
+  - {name: total_all_rows, description: Cases with totals, measure: cases, aggregation: sum, exclude_total_rows: false, filters: ["place = 'A'"]}
   - name: est_value
     description: Estimate
     measure: estimate
@@ -132,7 +132,7 @@ def test_sum_with_total_rows_kept_and_metric_filter(est: tuple[Registry, Engine,
     assert cm.sql == (
         'SELECT CASE WHEN count(*) FILTER (WHERE "n" IS NULL) = 0 THEN sum("n") END AS "total_all_rows", '
         'count(*) FILTER (WHERE "n" IS NULL) AS suppressed_rows, string_agg(DISTINCT "n_flag", \', \' ORDER BY '
-        '"n_flag") FILTER (WHERE "n" IS NULL) AS flag FROM "toy_cases" WHERE (place <> \'X\')'
+        '"n_flag") FILTER (WHERE "n" IS NULL) AS flag FROM "toy_cases" WHERE (place = \'A\')'
     )
     assert cm.method == (
         "Sum of cases (cases reported). A group with any suppressed or missing value has no total (never a partial "
@@ -147,18 +147,21 @@ def test_estimates_are_read_with_their_bounds_and_flag(est: tuple[Registry, Engi
                         period={"dimension": "week_ending", "start": "2025-01-05"})  # fmt: skip
     assert cm.sql == (
         'SELECT "place" AS "where", "day" AS "week_ending", "est" AS "est_value", "lo" AS "lower", "hi" AS "upper", '
-        '"est_flag" AS flag FROM "toy_cases" WHERE "day" >= CAST(? AS DATE) ORDER BY ALL'
+        '"est_flag" AS flag, "est" IS NULL AS not_published FROM "toy_cases" WHERE "day" >= CAST(? AS DATE) '
+        "ORDER BY ALL"
     )
     assert cm.params == ["2025-01-05"]
-    assert cm.columns == ["where", "week_ending", "est_value", "lower", "upper", "flag"]
+    assert cm.columns == ["where", "week_ending", "est_value", "lower", "upper", "flag", "not_published"]
     assert cm.method == (
-        "estimate as published (estimate); not summed. Lower and upper are the publisher's own uncertainty bounds."
+        "estimate as published (estimate); not summed. A row whose published cell is empty says so in "
+        "not_published (suppressed or not published), never a blank read as a value. Lower and upper are the "
+        "publisher's own uncertainty bounds."
     )
     out = eng.query_metric("toy_cases", "est_value", group_by=["where", "week_ending"],
                            period={"dimension": "week_ending", "start": "2025-01-05"})  # fmt: skip
     assert [r[:2] + r[2:] for r in out["rows"]] == [
-        ["A", out["rows"][0][1], 2.5, 2.0, 3.0, "*"],
-        ["B", out["rows"][1][1], 0.5, 0.1, 0.9, None],
+        ["A", out["rows"][0][1], 2.5, 2.0, 3.0, "*", False],
+        ["B", out["rows"][1][1], 0.5, 0.1, 0.9, None, False],
     ]
     assert str(out["rows"][0][1]) == "2025-01-11"
     assert out["uncertainty"] == "Uncertainty bounds are shown only where the publisher gives them."
@@ -205,22 +208,25 @@ def test_refusals_say_exactly_why(est: tuple[Registry, Engine, Path], kwargs: di
     assert (e.value.code, str(e.value)) == (code, msg)
 
 
-def test_rates_refusals_name_the_dimensions(est: tuple[Registry, Engine, Path]) -> None:
+def test_rates_refusals_are_plain_words(est: tuple[Registry, Engine, Path]) -> None:
+    """Hard rule 12: the refusal names no metric, measure kind or dimension; the next step says what to do."""
     _, eng, _ = est
     with pytest.raises(QueryRefused) as e:
         eng.query_metric("toy_cases", "est_value")
     assert (e.value.code, str(e.value)) == (
         "would_combine_rates",
-        "est_value is published per group and can't be added up; choose group_by from: where, week_ending, season.",
+        "This figure is published separately for each group and is never added up, so one figure can't be given "
+        "for all of them together.",
     )
     with pytest.raises(QueryRefused) as e:
         eng.query_metric("toy_cases", "est_value", group_by=["where"])
     assert str(e.value) == (
-        "est_value is a estimate and more than one published value matches some where groups. Rates and "
-        "estimates can't be added up: filter or group by the other dimensions too (describe_dataset lists them)."
+        "More than one published figure matches some of the groups asked for. Each published figure is read on "
+        "its own and never added to another, so nothing is shown rather than one picked at random."
     )
+    assert e.value.next_step.startswith("Use describe_dataset")
     one = eng.query_metric("toy_cases", "est_value", filters={"where": "B"})
-    assert one["rows"] == [[0.5, 0.1, 0.9, None]]
+    assert one["rows"] == [[0.5, 0.1, 0.9, None, False]]
 
 
 def test_envelope_and_source_are_exact(est: tuple[Registry, Engine, Path]) -> None:
@@ -287,7 +293,9 @@ def test_envelope_cuts_at_the_cap_and_says_so(
 
 
 def test_surveillance_counts_say_they_have_no_interval(registry: Registry, lake: Path) -> None:
-    out = Engine(registry=registry, lake=lake).query_metric("toy_cases", "case_count")
+    out = Engine(registry=registry, lake=lake).query_metric(
+        "toy_cases", "case_count", filters={"condition": "Legionellosis"}
+    )
     assert out["uncertainty"] == "Observed counts carry no uncertainty interval."
 
 

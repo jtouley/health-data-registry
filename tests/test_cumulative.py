@@ -69,9 +69,9 @@ SEMANTIC = """\
 dataset: toy_cases
 version: 0.1.0
 dimensions:
-  - {name: state, column: area, type: categorical}
-  - {name: year, column: year, type: time}
-  - {name: week, column: week, type: time}
+  - {name: state, column: area, type: categorical, non_additive: false}
+  - {name: year, column: year, type: time, non_additive: false}
+  - {name: week, column: week, type: time, non_additive: false}
 measures:
   - {name: wk, column: wk, kind: count}
   - {name: ytd, column: ytd, kind: running_count}
@@ -406,9 +406,9 @@ def test_compiled_running_total_sql_is_exact(tmp_path: Path) -> None:
 
 
 SEQ_SEMANTIC = SEMANTIC.replace(
-    "  - {name: week, column: week, type: time}\n",
-    "  - {name: week, column: week, type: time}\n  - {name: epi_seq, column: week, type: time}\n"
-    "  - {name: span_id, column: year, type: time}\n",
+    "  - {name: week, column: week, type: time, non_additive: false}\n",
+    "  - {name: week, column: week, type: time, non_additive: false}\n  - {name: epi_seq, column: week, type: time, non_additive: false}\n"
+    "  - {name: span_id, column: year, type: time, non_additive: false}\n",
 ).replace(
     "  - {name: weekly,",
     "  - name: by_seq\n    description: Running total by another order\n    measure: ytd\n"

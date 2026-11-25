@@ -16,7 +16,16 @@ from typing import Any
 import duckdb
 
 from health_data_registry import deadline
-from health_data_registry.registry import Column, Dataset, Metric, Registry, label_key
+from health_data_registry.registry import (
+    Column,
+    Dataset,
+    Metric,
+    Registry,
+    Uncertainty,
+    is_single_value,
+    label_key,
+    unpinned_non_additive,
+)
 from health_data_registry.registry import label_key_sql as registry_label_key_sql
 from health_data_registry.sql_guard import GuardedQuery, guard_sql, harden, run_guarded
 from health_data_registry.store import Manifest, latest_snapshot, snapshot_dir
@@ -48,6 +57,8 @@ NEXT_STEPS: dict[str, str] = {
     "publisher_unreachable": "Try again in a few minutes.",
     "publisher_bad_table": "Try again later; if it keeps happening, run the Something's wrong helper.",
     "needs_single_value": "Ask for the year's total, or for one week.",
+    "non_additive": "Use describe_dataset to see the values, then ask again for one of them, or ask to see each "
+    "one on its own row.",
     "not_a_human_count": "Use get_series to read these counts as published; they are not cases in people, so "
     "there is no rate per 100,000 people.",
     "bad_page": "Ask for page=1, or leave page out.",
@@ -78,13 +89,6 @@ def _q(ident: str) -> str:
     return '"' + ident.replace('"', '""') + '"'
 
 
-def _single(value: Any) -> bool:
-    """A filter that pins a dimension to exactly one value."""
-    if value is None:
-        return False
-    return len(value) == 1 if isinstance(value, list | tuple) else True
-
-
 @dataclass(frozen=True)
 class CompiledMetric:
     sql: str
@@ -113,7 +117,7 @@ def compile_metric(
     dims = {d.name: d for d in sem.dimensions}
     for d in metric.single_value_of:
         if measure.kind == "running_count":
-            if d in group_by or not _single((filters or {}).get(d)):
+            if d in group_by or not is_single_value((filters or {}).get(d)):
                 raise QueryRefused(
                     "needs_single_value",
                     f"{metric.name} is a running total, so it is read at one {d}: filter {d} to a single value "
@@ -122,7 +126,7 @@ def compile_metric(
                 )
         # A count whose values of d overlap (Michigan includes Detroit) or are different things (conditions): each
         # answer row holds one value of d, by a filter to one value or by grouping by it; never added across them.
-        elif d not in group_by and not _single((filters or {}).get(d)):
+        elif d not in group_by and not is_single_value((filters or {}).get(d)):
             raise QueryRefused(
                 "needs_single_value",
                 f"{metric.name} is never added up across {d}s: they overlap or count different things (for example "
@@ -184,10 +188,30 @@ def compile_metric(
             period_params.append(end)
 
     group_cols = [dim(g) for g in group_by]
+    # Hard rule 2: a sum never adds across a dimension whose values overlap or count different things.
+    loose = unpinned_non_additive(
+        sem, metric, [*group_by, *(d for d, v in (filters or {}).items() if is_single_value(v))]
+    )
+    if loose:
+        # Plain words only (hard rule 12): each dimension's clinical description and the reason its values can't
+        # be added, never the metric's or the dimension's internal name.
+        what = "; ".join(
+            f"{dims[d].description.rstrip('.')} ({dims[d].non_additive_reason or ''})".replace(" ()", "")
+            for d in loose
+        )
+        one = "one of them" if len(loose) == 1 else "one value of each"
+        raise QueryRefused(
+            "non_additive",
+            "These counts would be added up across groups that overlap or count different things: "
+            f"{what}. Adding them together would count the same cases twice or mix different things into one "
+            f"number, so nothing is added. Ask for {one}, or ask to see each one on its own row.",
+            f"Use describe_dataset on {ds.id} to see the values you can choose, then ask again for {one}, or ask "
+            "to see each one on its own row.",
+        )
     select_dims = [f"{_q(c)} AS {_q(g)}" for g, c in zip(group_by, group_cols, strict=True)]
     m_col = _q(measure.column)
     bounds: list[tuple[str, str]] = []
-    if metric.uncertainty:
+    if isinstance(metric.uncertainty, Uncertainty):
         bounds = [
             ("lower", sem.measure(metric.uncertainty.lower).column),
             ("upper", sem.measure(metric.uncertainty.upper).column),
@@ -249,13 +273,34 @@ def compile_metric(
         sel = [*select_dims, f"{m_col} AS {_q(metric.name)}", *(f"{_q(c)} AS {_q(b)}" for b, c in bounds)]
         if flag:
             sel.append(f"{_q(flag.name)} AS flag")
+        # An empty published cell is a gap, never a silent blank (hard rule 2): not_published says so per row,
+        # beside the publisher's flag where the contract has one.
+        sel.append(f"{m_col} IS NULL AS not_published")
+        out_cols = [*out_cols, "not_published"]
         sql = f"SELECT {', '.join(sel)} FROM {table}{where_sql}"  # noqa: S608 - quoted contract identifiers, bound values
         if group_cols:
             sql += " ORDER BY ALL"
-        method = f"{measure.name} as published ({measure.kind}); not summed." + (
-            " Lower and upper are the publisher's own uncertainty bounds." if bounds else ""
+        method = (
+            f"{measure.name} as published ({measure.kind}); not summed. A row whose published cell is empty says "
+            "so in not_published (suppressed or not published), never a blank read as a value."
+        ) + (
+            " Lower and upper are the publisher's own uncertainty bounds."
+            if bounds
+            else f" No uncertainty bounds: {metric.uncertainty_reason}"
+            if metric.uncertainty == "none"
+            else ""
         )
     return CompiledMetric(sql=sql, params=params, columns=out_cols, method=method)
+
+
+def non_additive_columns(ds: Dataset) -> frozenset[str]:
+    """Columns a sum in query_sql must filter to one value or group by: the semantic model's non_additive
+    dimensions, and every categorical dimension a model leaves undeclared (fail closed)."""
+    return frozenset(
+        d.column
+        for d in ds.semantic.dimensions
+        if d.non_additive or (d.non_additive is None and d.type == "categorical")
+    )
 
 
 def _lit(value: str) -> str:
@@ -314,7 +359,7 @@ def _compile_cumulative(
     loose = [
         d.name
         for d in sem.dimensions
-        if d.type == "categorical" and d.name not in group_by and not _single(filters.get(d.name))
+        if d.type == "categorical" and d.name not in group_by and not is_single_value(filters.get(d.name))
     ]
     if loose:
         raise QueryRefused(
@@ -750,15 +795,15 @@ class Engine:
             if len(keys) != len(set(keys)):
                 raise QueryRefused(
                     "would_combine_rates",
-                    f"{metric} is a {ds.semantic.measure(m.measure).kind} and more than one published value "
-                    f"matches some {', '.join(group_by)} groups. Rates and estimates can't be added up: "
-                    "filter or group by the other dimensions too (describe_dataset lists them).",
+                    "More than one published figure matches some of the groups asked for. Each published figure "
+                    "is read on its own and never added to another, so nothing is shown rather than one picked "
+                    "at random.",
                 )
         elif m.aggregation == "none" and len(rows) > 1:
-            dims = ", ".join(d.name for d in ds.semantic.dimensions)
             raise QueryRefused(
                 "would_combine_rates",
-                f"{metric} is published per group and can't be added up; choose group_by from: {dims}.",
+                "This figure is published separately for each group and is never added up, so one figure "
+                "can't be given for all of them together.",
             )
         method = f"{manifest.notes[0]} {cm.method}" if manifest.origin == "publisher" else cm.method
         return envelope(ds, manifest, cm.columns, rows, sql=cm.sql, params=cm.params, method=method)
@@ -803,7 +848,13 @@ class Engine:
     def query_sql(self, sql: str) -> dict[str, Any]:
         self.connect()
         available = {ds.id: ds.contract.column_names for ds in self.registry}
-        q: GuardedQuery = guard_sql(sql, allowed_tables=available, max_rows=MAX_ROWS, ordered=True)
+        q: GuardedQuery = guard_sql(
+            sql,
+            allowed_tables=available,
+            max_rows=MAX_ROWS,
+            ordered=True,
+            non_additive={ds.id: non_additive_columns(ds) for ds in self.registry},
+        )
         for t in sorted(q.tables):
             if t in self.registry.datasets:
                 self.manifest(t)  # brings a hub or run-time source onto this computer on first use
