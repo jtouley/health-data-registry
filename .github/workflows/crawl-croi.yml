@@ -1,13 +1,16 @@
 # CROI abstract index: a slow, resumable crawl at CROI's own robots.txt crawl delay (120 s today).
 #
-# A year is ~1,400 requests, about 47 hours at 120 s, so it is crawled in slices: each run is one job of at
-# most ~4.7 hours of requests (CROI_MAX_REQUESTS) inside the 6-hour job limit, four runs a day.
+# A year is ~1,400 requests, about 47 hours at 120 s, so it is crawled in slices: each run crawls for at most
+# `minutes` (default 300) inside the 6-hour job limit, four runs a day, and is then stopped. The listing runner
+# (listing.py, private_listing.py) writes each page's data before its checkpoint, so a stopped slice resumes
+# where it left off with identical rows (tests/test_croi_listing.py kills it after every write).
 #
 # Between runs the state lives in PRIVATE Hugging Face datasets, never in the Actions cache. Their names come
 # from naming.py (docs/dev/naming.md), with <owner> from vars.HDR_PRIVATE_HF_OWNER (default jtouley):
 #   <owner>/health-data-registry-ops-croi-crawl
-#       lake/crawl_state/ (checkpoint and the polite client's last-request time), the fetch log and the
-#       metadata rows so far (private/croi_abstracts_index/)
+#       lake/private/_crawl/ (checkpoints, the pages read and their parsed items, and the last-request time),
+#       the fetch log and the metadata rows so far (private/croi_abstracts_index/). The pages read hold abstract
+#       text, so this dataset is private like the text dataset, and checked so before every upload.
 #   <owner>/health-data-registry-private-croi-abstracts-index   metadata rows, read by the hosted server
 #   <owner>/health-data-registry-private-croi-abstracts-text    abstract text: private tier only, never public
 # The maintainer creates the state and text datasets: the restore step fails if either is missing, so a fresh
@@ -15,8 +18,9 @@
 # private dataset of HDR_PRIVATE_HF_OWNER (it would create the index dataset private if it were missing) and
 # refuses if Hugging Face reports it public: `hf upload --private` is ignored for an existing repo.
 #
-# robots.txt is read first on every run by `index-croi` (polite.py), and its Crawl-delay and Disallow rules
-# are obeyed. Only one CROI crawl runs at a time (concurrency group croi-crawl).
+# robots.txt is read first by the shared fetch core (crawl.fetcher), and its Crawl-delay and Disallow rules are
+# obeyed, never faster than the catalog's 120 s (source.min_interval_s). Only one CROI crawl runs at a time
+# (concurrency group croi-crawl; and one crawler per host on a machine, access.HostLock).
 #
 # Public metadata: only a catalog entry with `hosting: public` (registry.CatalogEntry) is planned by the weekly
 # refresh or given data files by export-public, whose pre-publish check refuses data staged for any other source.
@@ -26,7 +30,8 @@
 # Secrets: HF_TOKEN (HF_CRAWL_TOKEN, if set, overrides it with a token limited to the three datasets above). It is
 # set only on the restore and save steps, never on the crawl step that parses CROI's pages.
 #
-# `index-croi` is on the wip/croi-index branch and not merged yet: until it is, each run skips with a notice.
+# `crawl-listing` (the crawler factory's private-store listing runner) must be on the branch: until it is merged,
+# each run skips with a notice.
 name: CROI crawl
 
 on:
@@ -40,8 +45,8 @@ on:
         required: false
         default: ""
         type: string
-      max_requests:
-        description: "Requests this slice (blank: 140, about 4.7 h at 120 s)"
+      minutes:
+        description: "Minutes this slice may crawl (blank: 300; at most 320, inside the 6 h job limit)"
         required: false
         default: ""
         type: string
@@ -64,7 +69,7 @@ jobs:
       HDR_PRIVATE_HF_OWNER: ${{ vars.HDR_PRIVATE_HF_OWNER }}
       PRIVATE_OWNER: ${{ vars.HDR_PRIVATE_HF_OWNER || 'jtouley' }}
       YEAR_IN: ${{ inputs.year || vars.HDR_CROI_YEAR || '2025' }}
-      MAX_IN: ${{ inputs.max_requests || '140' }}
+      MINUTES_IN: ${{ inputs.minutes || '300' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -82,8 +87,8 @@ jobs:
           HAS_TOKEN: ${{ (secrets.HF_CRAWL_TOKEN || secrets.HF_TOKEN) && 'true' || 'false' }}
         run: |
           go=true
-          if ! uv run --no-sync health-data-registry index-croi --help >/dev/null 2>&1; then
-            echo "::notice::index-croi is not on this branch yet (it is on wip/croi-index). Skipping the crawl."
+          if ! uv run --no-sync health-data-registry crawl-listing --help >/dev/null 2>&1; then
+            echo "::notice::crawl-listing is not on this branch yet. Skipping the crawl."
             go=false
           elif [ "$HAS_TOKEN" != "true" ]; then
             echo "::notice::No HF_TOKEN secret: the crawl state can't be kept between runs, so nothing is crawled."
@@ -93,8 +98,8 @@ jobs:
             echo "::error::year must be four digits, e.g. 2025"
             exit 1
           fi
-          if ! [[ "$MAX_IN" =~ ^[1-9][0-9]{0,2}$ ]] || [ "$MAX_IN" -gt 160 ]; then
-            echo "::error::max_requests must be 1 to 160 (160 x 120 s is 5.3 h, inside the 6 h job limit)"
+          if ! [[ "$MINUTES_IN" =~ ^[1-9][0-9]{0,2}$ ]] || [ "$MINUTES_IN" -gt 320 ]; then
+            echo "::error::minutes must be 1 to 320 (inside the 6 h job limit, with time left to save the state)"
             exit 1
           fi
           # Every repo name comes from naming.py, which also refuses a bad HDR_PRIVATE_HF_OWNER.
@@ -107,7 +112,7 @@ jobs:
           {
             echo "go=$go"
             echo "year=$YEAR_IN"
-            echo "max=$MAX_IN"
+            echo "minutes=$MINUTES_IN"
             echo "state_repo=$state_repo"
             echo "index_repo=$index_repo"
             echo "text_repo=$text_repo"
@@ -125,28 +130,35 @@ jobs:
         run: |
           mkdir -p lake/private/croi_abstracts_text
           uv run --no-sync hf download "$STATE_DATASET" --repo-type dataset --local-dir lake \
-            --include "crawl_state/*" --include "fetch_log/*" --include "private/croi_abstracts_index/*"
+            --include "private/_crawl/*" --include "fetch_log/*" --include "private/croi_abstracts_index/*"
           uv run --no-sync hf download "$TEXT_REPO" --repo-type dataset \
-            --local-dir lake/private/croi_abstracts_text --include "*.jsonl"
+            --local-dir lake/private/croi_abstracts_text --include "*.jsonl" --include "*.json"
           rm -rf lake/.cache lake/private/croi_abstracts_text/.cache
-          ls -R lake/crawl_state 2>/dev/null || echo "no checkpoint yet: starting the year from page 1"
+          ls lake/private/_crawl/crawl_state/listing/*/ 2>/dev/null || echo "no checkpoint yet: starting from page 1"
           # Keep the index dataset name in the log, so a wrong owner is easy to see.
           echo "metadata dataset: $INDEX_REPO"
 
-      # The slice: robots.txt first, then one request per crawl delay, checkpoint after each request.
-      # The step timeout is below the job's, so the state is still uploaded if the slice overruns.
+      # The slice: robots.txt first, then one request per crawl delay, data before each checkpoint. `timeout`
+      # stops it after the slice's minutes (exit 124: resumable, not a failure); the step timeout is below the
+      # job's, so the state is still uploaded.
       - name: Crawl one slice
         id: crawl
         if: steps.gate.outputs.go == 'true'
         timeout-minutes: 330
         env:
           YEAR: ${{ steps.gate.outputs.year }}
-          MAX_REQUESTS: ${{ steps.gate.outputs.max }}
+          MINUTES: ${{ steps.gate.outputs.minutes }}
         run: |
           # pipefail: a failed crawl fails the step, not tee's exit code.
           set -o pipefail
-          uv run --no-sync health-data-registry index-croi --year "$YEAR" --max-requests "$MAX_REQUESTS" \
-            | tee crawl-summary.txt
+          status=0
+          timeout --signal=TERM "${MINUTES}m" uv run --no-sync health-data-registry crawl-listing \
+            croi_abstracts_index --years "$YEAR" | tee crawl-summary.txt || status=$?
+          if [ "$status" -eq 124 ]; then
+            echo "::notice::The slice's ${MINUTES} minutes are up; the next run carries on from the checkpoint."
+          elif [ "$status" -ne 0 ]; then
+            exit "$status"  # a stop that needs a maintainer (a changed page, a collision, a block): never silent
+          fi
           if grep -q "the year is complete" crawl-summary.txt; then
             echo "::notice::CROI $YEAR is fully indexed. Set HDR_CROI_YEAR to the next year, or disable this workflow."
           fi
@@ -164,17 +176,18 @@ jobs:
             uv run --no-sync python -m health_data_registry.naming assert-private "$repo"
           done
           msg="CROI crawl state, run ${GITHUB_RUN_ID}"
-          # State and metadata so far (no abstract text) to the ops dataset.
+          # Crawl state (the pages read hold abstract text: private only) and metadata so far to the ops dataset.
           uv run --no-sync hf upload "$STATE_DATASET" lake . --repo-type dataset --private \
-            --include "crawl_state/*" --include "fetch_log/*" --include "private/croi_abstracts_index/*" \
-            --exclude "*.tmp" --commit-message "$msg"
+            --include "private/_crawl/*" --include "fetch_log/*" --include "private/croi_abstracts_index/*" \
+            --exclude "*.part" --exclude "*.tmp" --commit-message "$msg"
+          # Each store with its coverage record (which years are complete) and partition manifests.
           if [ -d lake/private/croi_abstracts_index ]; then
             uv run --no-sync hf upload "$INDEX_REPO" lake/private/croi_abstracts_index . --repo-type dataset \
-              --private --include "*.jsonl" --commit-message "$msg"
+              --private --include "*.jsonl" --include "*.json" --exclude "*.part" --commit-message "$msg"
           fi
           if [ -n "$(ls -A lake/private/croi_abstracts_text 2>/dev/null)" ]; then
             uv run --no-sync hf upload "$TEXT_REPO" lake/private/croi_abstracts_text . --repo-type dataset \
-              --private --include "*.jsonl" --commit-message "$msg"
+              --private --include "*.jsonl" --include "*.json" --exclude "*.part" --commit-message "$msg"
           fi
 
       - name: Public metadata gate

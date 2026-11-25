@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from health_data_registry import private, research_tags
+from health_data_registry.adapters import capabilities
 from health_data_registry.adapters import doi_abstracts as doi
 from health_data_registry.fetch import FetchRefused
 from health_data_registry.registry import (
@@ -63,7 +64,7 @@ PROVENANCE_COLUMNS: dict[str, tuple[str, str, str]] = {
 # What a stored row keeps from an enriching API that couldn't be read this run.
 _TEXT_COLUMNS = ("abstract_text", "abstract_tier", "abstract_licence")
 _ID_COLUMNS = ("pubmed_pmid", "pmcid")
-# The columns every research-index row shares with the CROI index (croi_index.records on the CROI branch), so
+# The columns every research-index row shares with the CROI index (the CROI listing crawl, private_listing.py), so
 # all conferences land in one index: the abstract's id, year, title, authors as published, session, links and
 # our rule-based tags.
 RESEARCH_INDEX_COLUMNS: tuple[str, ...] = (
@@ -88,7 +89,7 @@ def conferences(registry: Registry) -> dict[str, Dataset]:
     return {
         ds.entry.source.conference: ds
         for ds in registry
-        if ds.entry.source.portal == "doi" and ds.entry.source.conference
+        if capabilities(ds.entry).runner == "harvest" and ds.entry.source.conference
     }
 
 

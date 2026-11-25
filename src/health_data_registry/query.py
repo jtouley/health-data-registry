@@ -15,7 +15,7 @@ from typing import Any
 
 import duckdb
 
-from health_data_registry import deadline
+from health_data_registry import deadline, private
 from health_data_registry.registry import (
     Column,
     Dataset,
@@ -612,8 +612,8 @@ class Engine:
         from health_data_registry.hub import HubError
 
         if ds.entry.tier == "private":
-            if ds.entry.source.portal == "croi":
-                return False  # CROI's stores are read by find_prior_work only (excerpts with links), never as tables
+            if private.excerpts_only(ds):
+                return False  # read by find_prior_work only (short excerpts with links), never as a table
             self._private[ds.id] = self._read_private(ds)
             return True
         if ds.entry.licence.redistribution:
@@ -821,7 +821,7 @@ class Engine:
                 "publisher": f"{ds.entry.publisher}, read live at {m.retrieved_at[:16]} UTC and not stored",
                 "private": f"the source's private store, version {m.snapshot_id} (never published)",
             }.get(m.origin, m.origin)
-        elif ds.entry.tier == "private" and ds.entry.source.portal == "croi":
+        elif ds.entry.tier == "private" and private.excerpts_only(ds):
             origin = (
                 f"this source's private store (its terms forbid public copies), read only by find_prior_work as "
                 f"short excerpts with links; when that is empty, links to {ds.entry.publisher}'s own pages"

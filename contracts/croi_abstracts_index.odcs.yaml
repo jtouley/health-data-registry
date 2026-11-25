@@ -2,7 +2,7 @@ apiVersion: v3.2.0
 kind: DataContract
 id: croi_abstracts_index
 name: CROI conference abstracts (metadata index)
-version: 0.1.1
+version: 0.2.0
 status: draft
 domain: research_landscape
 description:
@@ -37,7 +37,7 @@ schema:
     query: SELECT count(*) FROM (SELECT abstract_number, year FROM {object} GROUP BY abstract_number, year HAVING
       count(DISTINCT page_url) > 1)
     mustBe: 0
-    description: One CROI page per abstract number and year. The crawler enforces it as it writes (croi_index.py);
+    description: One CROI page per abstract number and year. The crawl enforces it as it writes (private_listing.py keeps the first page per key);
       a second page with a number already stored for that year is recorded as a collision in the coverage record
       and never written over the first, and the year stays incomplete, so a collision is reported, never
       overwritten.
@@ -88,6 +88,7 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - {property: sourceField, value: "Authors"}
   - name: session_type
     physicalType: VARCHAR
     logicalType: string
@@ -104,6 +105,7 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - {property: sourceField, value: "Session Title"}
   - name: category
     physicalType: VARCHAR
     logicalType: string
@@ -169,6 +171,7 @@ schema:
     customProperties:
     - property: role
       value: attribute
+    - {property: mayBeEmpty, value: true}
   - name: retrieved_at
     physicalType: VARCHAR
     logicalType: string
@@ -181,13 +184,13 @@ schema:
     quality:
     - id: retrieved_at_filled
       type: sql
-      description: Every row has the time its page was read (croi_index writes it on every row).
+      description: Every row has the time its page was read (the listing runner, private_listing.py, adds it to every row).
       query: "SELECT COUNT(*) FROM {object} WHERE retrieved_at IS NULL OR trim(retrieved_at) = ''"
       mustBe: 0
     - id: retrieved_at_format
       type: sql
       description: The crawler writes this time in UTC to the second, as YYYY-MM-DDTHH:MM:SS+00:00
-        (croi_index, isoformat with timespec seconds); any other form is a data failure.
+        (private_listing.py, isoformat with timespec seconds); any other form is a data failure.
       query: "SELECT COUNT(*) FROM {object} WHERE retrieved_at IS NOT NULL AND NOT regexp_full_match(retrieved_at, '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+]00:00')"
       mustBe: 0
   - name: page_sha256
@@ -207,6 +210,8 @@ customProperties:
   value: false
 - property: tier
   value: private
+- property: servedAs
+  value: excerpts_with_links
 - property: attribution
   value: Index of abstracts presented at the Conference on Retroviruses and Opportunistic Infections (CROI). Abstract
     text © CROI Foundation, on CROI's site.

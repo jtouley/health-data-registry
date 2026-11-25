@@ -1,5 +1,5 @@
 """Command line: serve [--http], refresh, fetch, export-public, check-contracts, validate, eval,
-publication-outlook, sitemaps snapshot, harvest-doi, index-croi, purge-private, find-prior-work, and the
+publication-outlook, sitemaps snapshot, harvest-doi, crawl-listing, purge-private, find-prior-work, and the
 analysis tools."""
 
 from __future__ import annotations
@@ -50,6 +50,11 @@ def validate(registry: Registry, lake: Path) -> int:
         print(
             f"ok   {ds.id}: contract {ds.contract.version} ({ds.entry.status}), {len(ds.semantic.metrics)} metrics"
         )
+        if ds.entry.source.portal is not None:
+            print(
+                f"warn {ds.id}: source.portal is the older name of source.type and is read for one more release; "
+                f"write type: {ds.entry.source.kind}"
+            )
     engine = Engine(registry=registry, lake=lake, hub=None, fetch_at_run_time=False)
     failed = 0
     for ds_id, extra in unlisted_condition_labels(registry, engine).items():
@@ -85,16 +90,13 @@ def export_public(registry: Registry, to: str, *, lake: Path, run_date: str | No
 
 def check_contracts(registry: Registry) -> int:
     """Does each publisher still serve every field its contract reads? (The nightly drift check.)"""
-    from health_data_registry.adapters import publisher_fields
+    from health_data_registry.adapters import capabilities, publisher_fields
 
     get = _fetcher(registry)
     bad = 0
     for ds in registry:
-        if ds.entry.source.portal == "croi":
-            print(f"skip {ds.id}: CROI pages are checked by the parser on every crawl (index-croi)")
-            continue
-        if ds.entry.source.portal == "doi":
-            print(f"skip {ds.id}: harvested by DOI; every harvest checks the APIs' answers as it reads them")
+        if capabilities(ds.entry).checks_layout_on_read:
+            print(f"skip {ds.id}: its adapter type checks the publisher's layout on every read")
             continue
         try:
             served = publisher_fields(ds.entry, get)
@@ -120,22 +122,21 @@ def parse_years(text: str) -> list[int]:
     return list(range(first, last + 1))
 
 
-def index_croi(registry: Registry, years: Sequence[int], *, max_requests: int | None, lake: Path) -> int:
-    from health_data_registry.croi_index import MIN_YEARS, index_years
+def crawl_listing(registry: Registry, source_id: str, years: Sequence[int] | None, *, lake: Path) -> int:
+    """A private-store listing source (html_table, shape listing), year by year, into its private stores."""
+    from health_data_registry.private import PrivateRefused
+    from health_data_registry.private_listing import crawl_into_private
+    from health_data_registry.registry import UnknownDataset
 
     try:
-        summaries = index_years(registry, lake, years, max_requests=max_requests)
-    except ValueError as e:
-        print(f"index-croi stopped: {e}", file=sys.stderr)
+        runs = crawl_into_private(registry, lake, source_id, years)
+    except (ValueError, PrivateRefused, UnknownDataset) as e:
+        print(f"crawl-listing stopped: {e}", file=sys.stderr)
         return 1
-    for summary in summaries:
-        for line in summary.lines():
+    for run in runs:
+        for line in run.lines():
             print(line)
-    if len(set(years)) < MIN_YEARS:
-        print(
-            f"note: the index's bar is at least {MIN_YEARS} complete CROI years; this run asked for {len(set(years))}"
-        )
-    return 0 if summaries and all(s.ok for s in summaries) else 1
+    return 0 if runs and all(r.ok for r in runs) else 1
 
 
 def purge_private(source_id: str, *, lake: Path) -> int:
@@ -355,17 +356,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     ev.add_argument("--sealed", type=Path, default=Path("eval/sealed"))
     ev.add_argument("--run", type=Path, default=None, help="JSON lines of a client's answers")
-    ic = sub.add_parser(
-        "index-croi",
-        help="index one CROI year into its private store, at CROI's robots.txt crawl delay (resumable)",
+    cl = sub.add_parser(
+        "crawl-listing",
+        help="crawl a private-store listing source (e.g. croi_abstracts_index) into its private stores, year by "
+        "year, at the site's own pace (resumable)",
     )
-    yrs = ic.add_mutually_exclusive_group()
-    yrs.add_argument("--year", type=int, help="one conference year")
-    yrs.add_argument(
-        "--years", help="a range of conference years, e.g. 2022-2026 (default: the five most recent)"
-    )
-    ic.add_argument(
-        "--max-requests", type=int, default=None, help="stop after this many requests (robots.txt included)"
+    cl.add_argument("source_id")
+    cl.add_argument(
+        "--years", help="a year (2025) or a range (2022-2026); default: every year its catalog lists"
     )
     pp = sub.add_parser(
         "purge-private", help="delete every private copy of one source (local area and its hub dataset)"
@@ -430,15 +428,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_eval(a.sealed, a.run)
     if a.cmd in ANALYSIS_COMMANDS + ROW_COMMANDS:
         return run_analysis(registry, a)
-    if a.cmd == "index-croi":
-        from health_data_registry.croi_index import DEFAULT_YEARS
-
+    if a.cmd == "crawl-listing":
         try:
-            years = [a.year] if a.year else parse_years(a.years) if a.years else list(DEFAULT_YEARS)
+            years = parse_years(a.years) if a.years else None
         except ValueError as e:
-            print(f"index-croi stopped: {e}. Give a year (2025) or a range (2022-2026).", file=sys.stderr)
+            print(f"crawl-listing stopped: {e}. Give a year (2025) or a range (2022-2026).", file=sys.stderr)
             return 1
-        return index_croi(registry, years, max_requests=a.max_requests, lake=lake_root())
+        return crawl_listing(registry, a.source_id, years, lake=lake_root())
     if a.cmd == "purge-private":
         return purge_private(a.source_id, lake=lake_root())
     if a.cmd == "find-prior-work":

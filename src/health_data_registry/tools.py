@@ -1333,10 +1333,10 @@ def _rule_tags(rules: dict[str, tuple[str, ...]], text: str) -> set[str]:
 
 def _matches(want: str, tags: str, *texts: str) -> bool:
     """A row matches when its rule-based tags include the asked term's tag, or the words appear in it."""
-    from health_data_registry.adapters import croi
+    from health_data_registry import research_tags as rt
 
-    asked = _rule_tags({**croi.CONDITION_RULES, **croi.DESIGN_RULES, **croi.DATA_SOURCE_RULES,
-                        **croi.GEOGRAPHY_RULES}, want)  # fmt: skip
+    asked = _rule_tags({**rt.CONDITION_RULES, **rt.DESIGN_RULES, **rt.DATA_SOURCE_RULES,
+                        **rt.GEOGRAPHY_RULES}, want)  # fmt: skip
     have = {t.strip() for t in (tags or "").split(";") if t.strip()}
     if asked & have:
         return True
@@ -1358,21 +1358,34 @@ def excerpt(text: str, limit: int = EXCERPT_CHARS) -> str:
     return body[:cap].rsplit(" ", 1)[0] + " …"
 
 
+def _crawl_years(ds: Dataset) -> list[int]:
+    """The years the source's own crawl covers by default (its listing's years), or none."""
+    from health_data_registry.private_listing import NotAListing, years_of
+
+    try:
+        return years_of(ds.entry)
+    except NotAListing:
+        return []
+
+
 def incomplete_years(
-    coverage: dict[str, dict[str, Any]], held: set[int], lo: int | None, hi: int | None
+    coverage: dict[str, dict[str, Any]],
+    held: set[int],
+    lo: int | None,
+    hi: int | None,
+    *,
+    default_years: Sequence[int] = (),
+    first_year: int = 1900,
 ) -> list[str]:
     """Each asked-for year the index can't vouch for, in plain words: a year is complete only when its
     coverage record says the abstracts read, and the distinct abstracts stored, equal the listing's own total.
     A year with rows but no record, or asked for (or one of the index's default years, when no years are asked)
     and never indexed, is incomplete too. Runs of years never indexed are named as one range."""
-    from health_data_registry import croi_index
-    from health_data_registry.adapters import croi
-
     recorded = {int(k[5:]): v for k, v in coverage.items() if k.startswith("year=") and k[5:].isdigit()}
     if lo is None and hi is None:
-        years = held | set(recorded) | set(croi_index.DEFAULT_YEARS)
+        years = held | set(recorded) | set(default_years)
     else:
-        first = lo if lo is not None else croi.FIRST_YEAR
+        first = lo if lo is not None else first_year
         last = hi if hi is not None else max(held | set(recorded) | {first})
         years = set(range(first, last + 1))
     out: list[str] = []
@@ -1470,7 +1483,10 @@ def find_prior_work(
             "CROI abstracts: the full text and posters are on CROI's site; open each link to read them. "
             f"Abstracts held in this index by year: {coverage}."
         )
-        incomplete += incomplete_years(private.read_coverage(lake, ds) or {}, set(per_year), lo, hi)
+        incomplete += incomplete_years(
+            private.read_coverage(lake, ds) or {}, set(per_year), lo, hi,
+            default_years=_crawl_years(ds), first_year=ds.entry.years.start,
+        )  # fmt: skip
         if text_found is None:
             notes.append(
                 "Excerpts aren't available here (the private text store is empty or was deleted), so only the links "

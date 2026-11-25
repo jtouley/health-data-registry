@@ -19,18 +19,60 @@ hosting: private
 private_store: true
 citation: "Conference on Retroviruses and Opportunistic Infections (CROI) <year>, abstract <abstract_number>: <title>. <page_url> (accessed <retrieved_at>)."
 source:
-  portal: croi
+  type: html_table
   host: www.croiconference.org
   dataset: search-abstracts
   landing_url: https://www.croiconference.org/search-abstracts/
   api_url: https://www.croiconference.org/search-abstracts/
+  # CROI's robots.txt asks for 120 s between requests (read 24 Nov 2026); the crawl never goes faster, whatever
+  # robots.txt says later. The listing and the abstract pages are the only paths read; poster PDFs never are.
+  min_interval_s: 120
+  scope_paths: ["/abstract/[a-z0-9][a-z0-9-]*-[0-9]{4}(-[a-z]+)?/"]
+  # One crawl builds both private stores (croi_abstracts_index and croi_abstracts_text share this block exactly).
+  # Structure read 24 Nov 2026: 10 results a listing page, "1277 Results" above them; on each abstract page the
+  # heading "<number> - <title>", the body in the article's entry-content, and a sidebar of labelled blocks.
+  html_table:
+    shape: listing
+    listing:
+      url_template: "https://{host}/search-abstracts/page/{page}/?aa=&at=&an=&sn=&kw=&yr={year}&st=&q=1"
+      years: {first: 2022, last: 2026}  # owner rule: at least the five most recent conference years
+      page_size: 10
+      item_link_selector: "div#abstract-search-results-list div.post-entry-content h3.entry-title a"
+      item_path_pattern: "/abstract/[a-z0-9][a-z0-9-]*-[0-9]{4}(-[a-z]+)?/"
+      results_count_selector: "p.abstract-search-results-count"
+      results_count_pattern: "(?i)\\s*([0-9,]+)\\s+results?\\s*"
+      fields: {heading: "h1.entry-title"}
+  extensions:
+    - {name: block_text, hook: parse, args: {fields: {body: "article.abstract div.entry-content"}}}
+    - name: sidebar_fields
+      hook: parse
+      args:
+        block_selector: "div.abstract-sidebar-content"
+        label_selector: "h4"
+        value_selector: "div.abstract-sidebar-text"
+        labels: ["Abstract Number", "Session Title", "Authors"]
+        required: ["Abstract Number"]
+    - name: page_attributes
+      hook: parse
+      args:
+        fields:
+          session_type: {selector: "article.abstract", kind: class_prefix, class_prefix: "abstract-session-type-", exactly_one: true}
+          category: {selector: "article.abstract", kind: class_prefix, class_prefix: "abstract-category-", exactly_one: true}
+          poster_url: {selector: "a[title]", where: {title: "Download Poster"}, kind: href, href_prefix: "https://www.croiconference.org/"}
+    - {name: number_title_split, hook: staging, args: {field: heading, number_field: abstract_number, title_field: title, check_field: "Abstract Number"}}
+    - {name: slug_to_words, hook: staging, args: {fields: [session_type, category]}}
+    - name: rule_tags
+      hook: staging
+      args:
+        text_fields: [title, body]
+        columns: {condition_tags: conditions, design_tags: designs, data_source_tags: data_sources, geography_tags: geography}
 codebook_url: https://www.croiconference.org/search-abstracts/
 caveats:
   - "Metadata index; abstract text © CROI Foundation, personal non-commercial use, linked not hosted. Read each abstract and poster on CROI's site through its link."
   - "Kept in this source's private store only, until the maintainer confirms the metadata may be redistributed; never in a public release."
   - "Condition, design, data-source and geography tags come from fixed word rules over the title and text, not from a model; a missing tag doesn't mean the topic is absent."
   - "An abstract is not a peer-reviewed paper; many are never published in full."
-  - "Crawled at CROI's own pace (one request per robots.txt crawl delay, 120 s), at least the five most recent conference years. A year counts as indexed only when every abstract CROI's listing counts has been read; until then find_prior_work names the year as incomplete and never reports 'no match' for it."
+  - "Crawled with `health-data-registry crawl-listing croi_abstracts_index` at CROI's own pace (one request per robots.txt crawl delay, 120 s), at least the five most recent conference years. A year counts as indexed only when every abstract CROI's listing counts has been read; until then find_prior_work names the year as incomplete and never reports 'no match' for it."
 contract: contracts/croi_abstracts_index.odcs.yaml
 semantic_model: semantic/croi_abstracts_index.yaml
 status: draft

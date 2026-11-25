@@ -39,7 +39,7 @@ ends green with a notice and does nothing. Each starts working on its next run a
 
 | Workflow | Waits for | Check |
 |---|---|---|
-| `crawl-croi.yml` | `index-croi` (CROI crawler, `wip/croi-index`) | `health-data-registry index-croi --help` |
+| `crawl-croi.yml` | `crawl-listing` (the crawler factory's private listing runner, PR #30) | `health-data-registry crawl-listing --help` |
 | `crawl-doi.yml` | `scripts/crawl_doi.py` (DOI harvester, `feat/doi-harvest`) | the file exists |
 | `sitemaps.yml` | `browser_fetch.py` (browser fetcher, `feat/michigan-tableau`) | the module imports; until then it uses plain HTTPS, which michigan.gov refuses from cloud servers, so expect the "Sitemap refresh blocked" issue |
 | `deploy-space.yml` | `space/` (the hosted server) at the release tag | `space/README.md` exists at the tag |
@@ -83,13 +83,15 @@ in about two days.
 
 Each run:
 
-1. Checks that `index-croi` exists. It is on the `wip/croi-index` branch and **not merged yet**; until it is,
+1. Checks that `crawl-listing` exists. It comes with PR #30 and is **not merged yet**; until it is,
    every run skips with a notice. It also skips if no token is set, since the state can't be kept.
 2. Restores the state from private Hugging Face datasets (never the Actions cache, which evicts entries unused
    for 7 days). If a dataset is missing or unreadable, the run fails and crawls nothing, so a fresh checkpoint
    can never overwrite the real one.
-3. Runs `health-data-registry index-croi --year <year> --max-requests <n>`. It reads robots.txt first on every
-   run and obeys its Crawl-delay and Disallow rules; it writes a checkpoint after every request.
+3. Runs `health-data-registry crawl-listing croi_abstracts_index --years <year>` for at most `minutes`
+   (default 300), then stops it. The shared fetch core reads robots.txt first and obeys its Crawl-delay and
+   Disallow rules, never faster than the catalog's 120 s; each page's data is written before its checkpoint, so
+   a stopped slice resumes with identical rows.
 4. Uploads the state, even if the slice failed or hit its step timeout, after checking each dataset is private.
    A failed crawl fails the run (`set -o pipefail` before the `tee`).
 
@@ -97,7 +99,7 @@ The names come from `naming.py` ([naming.md](naming.md)); `<owner>` is `HDR_PRIV
 
 | Private dataset | Holds |
 |---|---|
-| `<owner>/health-data-registry-ops-croi-crawl` | `crawl_state/` (checkpoint and last-request time), `fetch_log/`, metadata rows so far |
+| `<owner>/health-data-registry-ops-croi-crawl` | `private/_crawl/` (checkpoints, the pages read, which hold abstract text, and the last-request time), `fetch_log/`, metadata rows so far |
 | `<owner>/health-data-registry-private-croi-abstracts-index` | Metadata rows, read by the hosted server (`private.py`) |
 | `<owner>/health-data-registry-private-croi-abstracts-text` | Abstract text. Private tier only; never in a public release |
 
@@ -290,12 +292,12 @@ The same steps run locally from a checkout: `make refresh`, `make check-contract
 `uv run health-data-registry export-public --to build/release-preview` (stages and checks without uploading),
 `uv run health-data-registry sitemaps snapshot --fetcher http --seed kentcounty` (it writes to
 `<HDR_PRIVATE_HF_OWNER>/health-data-registry-ops-sitemaps` unless `--repo` says otherwise), and, once merged,
-`uv run health-data-registry index-croi --year 2025 --max-requests 10` and
+`uv run health-data-registry crawl-listing croi_abstracts_index --years 2025` and
 `uv run python scripts/crawl_doi.py idweek`.
 
 ## Open risks
 
-- `index-croi`, `scripts/crawl_doi.py` and `browser_fetch.py` aren't merged; their workflows skip or
+- `crawl-listing`, `scripts/crawl_doi.py` and `browser_fetch.py` aren't merged; their workflows skip or
   fall back until they are. Check the CLI flags and step outputs still match when each merges.
 - The sitemap job installs Playwright through the `browser` extra; if the Michigan PR names the extra
   differently, that step fails and the blocked issue says so.

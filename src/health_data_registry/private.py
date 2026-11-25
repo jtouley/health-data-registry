@@ -436,6 +436,15 @@ def read_rows(lake: Path, ds: Dataset, *, downloader: Downloader | None = None) 
     return PrivateRows(rows, "hub", manifests, _hub_revision.get(repo)) if rows else None
 
 
+EXCERPTS_ONLY = "excerpts_with_links"
+
+
+def excerpts_only(ds: Dataset) -> bool:
+    """A private store whose contract says ``servedAs: excerpts_with_links``: its rows reach a fellow only as
+    find_prior_work's short excerpts beside the publisher's link, never as a table (query_sql, describe)."""
+    return is_private(ds) and contract_terms(ds).get("servedAs") == EXCERPTS_ONLY
+
+
 def contract_terms(ds: Dataset) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for item in ds.contract.raw.get("customProperties") or []:

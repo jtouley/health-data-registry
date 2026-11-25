@@ -115,6 +115,15 @@ def test_get_rate_refusal_is_plain(pop: tuple[Registry, Engine], tmp_path: Path)
     assert out["refused"] == "no_snapshot" and "has reading data turned off" in out["message"]
 
 
+def _snapshot_id(lake: Path) -> str:
+    """The toy snapshot's id: it hashes the method digest (ADR 0016) as well as the raw bytes and versions."""
+    from health_data_registry.store import latest_snapshot
+
+    found = latest_snapshot(lake, "toy_cases")
+    assert found is not None
+    return found[1].snapshot_id
+
+
 def test_list_sources_exact(registry: Registry, lake: Path) -> None:
     eng = Engine(registry=registry, lake=lake)
     out = _json(tools.list_sources(registry, eng, fmt="json"))
@@ -125,7 +134,7 @@ def test_list_sources_exact(registry: Registry, lake: Path) -> None:
                   "Centers for Disease Control and Prevention", "2022-2024", "nation state", "weekly", "2026-11-24",
                   "draft", "0.1.0", "the local lake (a maintainer's copy)", "https://data.cdc.gov/d/toy0-toy0",
                   "2026-11-24T12:00:00", "227232863363b7f6d297ffab7de67fbf91f8890d5c439fd8f6baa52464a41c9d",
-                  "snapshot 20261124T120000Z-c1d38a70c53f; contract 0.1.0",
+                  f"snapshot {_snapshot_id(lake)}; contract 0.1.0",
                   "public-domain-us-federal (https://www.cdc.gov/other/agencymaterials.html)",
                   "CDC. Toy table. https://data.cdc.gov/d/toy0-toy0", "draft"]],
         "notes": ["review = draft means no maintainer has checked this source's contract yet."],

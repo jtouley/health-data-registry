@@ -4,8 +4,13 @@ The research index (CROI and the DOI-published conferences: IDWeek, SHEA Spring,
 abstract the same way, from its title and, where we hold it, its text. A tag is a hint for finding prior work,
 not a fact about the study: a missing tag doesn't mean the topic is absent (ADR 0006: no model output is stored).
 
-The condition, design, data-source and geography rules are the CROI adapter's (wip/croi-index), with conditions
-for healthcare-associated infection and stewardship added for the infection-prevention meetings.
+The same rules run in two places: here in Python for the DOI harvest, and as SQL in the shared staging
+projection for sources that name the ``rule_tags`` extension (CROI's listing crawl). Every pattern is written
+for both engines (Python's ``re`` and RE2): no look-around, no back-reference.
+
+Rules ignore case, except acronyms that are also everyday words ("art", "prep", "pep", "tb", "sti"), which match
+only as written in capitals, inside ``(?-i:...)``; a fellow's own search words are matched without case
+(tools.py).
 """
 
 from __future__ import annotations
@@ -13,15 +18,21 @@ from __future__ import annotations
 import re
 
 CONDITION_RULES: dict[str, tuple[str, ...]] = {
-    "hiv": (r"\bhiv\b", r"\bpwh\b", r"\bplwh\b", r"antiretroviral", r"\bart\b"),
-    "hiv_prevention": (r"\bprep\b", r"pre-exposure prophylaxis", r"\bpep\b", r"lenacapavir", r"cab-la"),
+    "hiv": (r"\bhiv\b", r"\bpwh\b", r"\bplwh\b", r"antiretroviral", r"(?-i:\bART\b)"),
+    "hiv_prevention": (
+        r"(?-i:\bP[Rr][Ee]P\b)",
+        r"pre-exposure prophylaxis",
+        r"(?-i:\bPEP\b)",
+        r"lenacapavir",
+        r"cab-la",
+    ),
     "hepatitis_b": (r"hepatitis b", r"\bhbv\b"),
     "hepatitis_c": (r"hepatitis c", r"\bhcv\b"),
-    "tuberculosis": (r"tuberculosis", r"\btb\b", r"mycobacterium"),
+    "tuberculosis": (r"tuberculosis", r"(?-i:\bTB\b)", r"mycobacterium"),
     "covid19": (r"covid", r"sars-cov-2"),
     "mpox": (r"\bmpox\b", r"monkeypox"),
     "syphilis": (r"syphilis",),
-    "stis": (r"gonorr", r"chlamydia", r"sexually transmitted", r"\bsti\b"),
+    "stis": (r"gonorr", r"chlamydia", r"sexually transmitted", r"(?-i:\bSTIs?\b)"),
     "cryptococcal": (r"cryptococ",),
     "hpv": (r"\bhpv\b", r"papillomavirus", r"anal cancer", r"cervical cancer"),
     "cmv": (r"\bcmv\b", r"cytomegalovirus"),
@@ -78,6 +89,21 @@ GEOGRAPHY_RULES: dict[str, tuple[str, ...]] = {
     p.lower().replace(" ", "_").replace("'", ""): (rf"\b{re.escape(p)}\b",) for p in _PLACES
 }
 _CASE_SENSITIVE_PLACES = frozenset({"usa", "uk"})
+
+
+# The rule sets by name, each with the tags whose rules keep case (the rule_tags extension names them).
+RULE_SETS: dict[str, tuple[dict[str, tuple[str, ...]], frozenset[str]]] = {
+    "conditions": (CONDITION_RULES, frozenset()),
+    "designs": (DESIGN_RULES, frozenset()),
+    "data_sources": (DATA_SOURCE_RULES, frozenset()),
+    "geography": (GEOGRAPHY_RULES, _CASE_SENSITIVE_PLACES),
+}
+
+
+def pattern(patterns: tuple[str, ...], *, case_sensitive: bool) -> str:
+    """One tag's rules as one pattern, for RE2 (DuckDB's regexp_matches): the same matches as ``tags`` makes."""
+    body = "|".join(f"(?:{p})" for p in patterns)
+    return body if case_sensitive else f"(?i){body}"
 
 
 def tags(
