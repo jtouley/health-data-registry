@@ -37,7 +37,7 @@ test-network: ## Tests that hit live publishers (network marker)
 mutate: ## Mutation tests on the modules changed since BASE (default origin/main); fails under MUTATION_FLOOR
 	$(UV) run python scripts/mutate_changed.py --base $(BASE) --floor $(MUTATION_FLOOR)
 
-docs: ## Regenerate docs/helpers.md, the template's skills, the plugin and the tool lists (README, docs/tools.md, CLAUDE.md)
+docs: ## Regenerate docs/helpers.md, the template's skills and the plugin from the workflows in code
 	$(UV) run python scripts/write_template.py
 
 kit: ## Build the Claude Projects kit into KIT_DIR (default dist/projects-kit, not committed)
