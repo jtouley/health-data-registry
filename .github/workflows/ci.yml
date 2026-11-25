@@ -88,8 +88,9 @@ jobs:
       - name: Tests with coverage
         run: make test
 
-  # The spec's reference journey (C. auris in Michigan) through the built MCP server on a synthetic lake, with the
-  # DEV trial questions scored by eval/scorer.py. Offline: no publisher, hub or secret is read.
+  # The project spec's reference journey (C. auris in Michigan; docs/dev/README.md#smoke-journey) through the
+  # built MCP server on a synthetic lake, with the DEV trial questions scored by eval/scorer.py. Offline, and
+  # enforced: tests/smoke/conftest.py fails any connection or DNS lookup off the runner. No secret is read.
   smoke:
     name: "Smoke: C. auris journey"
     runs-on: ubuntu-latest
