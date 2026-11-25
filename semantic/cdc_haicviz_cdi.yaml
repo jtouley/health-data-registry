@@ -1,23 +1,27 @@
 dataset: cdc_haicviz_cdi
 version: 0.1.0
+# non_additive (hard rule 2): topic is a count, a rate or a strain type (the contract: value's meaning depends on
+# topic); each view covers the same cases (contract, viewby); grouping holds all cases beside the epi-class split;
+# stratum holds the Total row beside its parts, and whether the strata of one view add up to it is not stated (an
+# open question in the contract), so each stratum is read on its own. Years are separate periods.
 dimensions:
-  - {name: year, column: yearname, type: time, description: "Surveillance year."}
-  - {name: topic, column: topic, type: categorical, description: "Case count, case rate per 100,000, or strain type."}
-  - {name: view, column: viewby, type: categorical, description: "Total, Age, Sex, Race or Ribotype breakdown."}
-  - {name: epi_grouping, column: grouping, type: categorical, description: "All cases, or split into healthcare- vs community-associated."}
-  - {name: stratum, column: series, type: categorical, description: "Specific stratum, e.g. 'HA - 65+ years' or 'Total'."}
+  - {name: year, column: yearname, type: time, non_additive: false, description: "Surveillance year."}
+  - {name: topic, column: topic, type: categorical, non_additive: true, description: "Case count, case rate per 100,000, or strain type."}
+  - {name: view, column: viewby, type: categorical, non_additive: true, description: "Total, Age, Sex, Race or Ribotype breakdown."}
+  - {name: epi_grouping, column: grouping, type: categorical, non_additive: true, description: "All cases, or split into healthcare- vs community-associated."}
+  - {name: stratum, column: series, type: categorical, non_additive: true, description: "Specific stratum, e.g. 'HA - 65+ years' or 'Total'."}
 measures:
   - {name: cdi_cases, column: value, kind: count, unit: "cases", description: "Number of C. difficile infection cases in EIP catchment areas."}
   - {name: cdi_rate, column: value, kind: rate, unit: "per 100,000 population", description: "C. difficile infection cases per 100,000 catchment population."}
 metrics:
   - name: cdi_cases_total
-    description: "Total C. difficile infection cases in a year across EIP surveillance sites, read from the published total row."
+    description: "Total C. difficile infection cases in a year across EIP surveillance sites, read from the published total row (one published cell, never re-added)."
     measure: cdi_cases
-    aggregation: sum
+    aggregation: none
     exclude_total_rows: false
     filters: ["lower(topic) = 'number of cases'", "viewby = 'Total'", "series = 'Total'"]
   - name: cdi_cases_by_epi_class
-    description: "C. difficile infection cases by healthcare-associated vs community-associated onset (group by stratum, or add the two)."
+    description: "C. difficile infection cases by healthcare-associated vs community-associated onset, one row per stratum (group by stratum or choose one)."
     measure: cdi_cases
     aggregation: sum
     exclude_total_rows: true

@@ -101,9 +101,9 @@ SEMANTIC = """\
 dataset: toy_cases
 version: 0.1.0
 dimensions:
-  - {name: state, column: reporting_area, type: categorical, description: Reporting area}
-  - {name: year, column: year, type: time, description: MMWR year}
-  - {name: condition, column: condition, type: categorical, description: Condition}
+  - {name: state, column: reporting_area, type: categorical, non_additive: false, description: Reporting area}
+  - {name: year, column: year, type: time, non_additive: false, description: MMWR year}
+  - {name: condition, column: condition, type: categorical, non_additive: true, description: Condition}
 measures:
   - {name: cases, column: cases, kind: count, unit: "1", description: reported cases}
   - {name: rate, column: rate_per_100k, kind: rate, unit: /100000, description: rate per 100k}

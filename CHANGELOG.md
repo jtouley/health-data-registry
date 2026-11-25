@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A summed count never adds up labels that overlap or count different things (hard rule 2). Semantic-model
+  dimensions say `non_additive: true` or `false` (NNDSS condition, NHSN phenotype, RESP-NET network and others),
+  and a sum that neither picks one value of such a dimension nor shows each value on its own row is declined in
+  plain words with a next step. Before, a weekly NNDSS count asked for without a condition added every label
+  together, including Confirmed, Probable and Total and animal rabies. The tools always picked one label, so
+  their answers don't change.
+- Every percent or estimate names the publisher's uncertainty bounds, or says `uncertainty: none` and why.
+  RESP-NET's ICU and in-hospital death percents say the table has no interval column, with an open question in
+  the contract. The CDI total case count is read as the one published cell instead of a sum.
+
 ### Added
 
 - Condition vocabulary: each catalog entry lists the publisher's own condition labels (`conditions:`, with

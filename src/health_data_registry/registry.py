@@ -7,9 +7,10 @@ that a metric would sum is a load error, not a warning, so a bad file can't reac
 
 from __future__ import annotations
 
+import functools
 import os
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -542,6 +543,11 @@ class Dimension(_Strict):
     column: str
     type: Literal["categorical", "time"]
     description: str = ""
+    # True when the dimension's values overlap (a Total or All row beside its parts, Confirmed + Probable = Total)
+    # or count different things (different conditions, a count beside a rate): a summed metric must then pin it to
+    # one value or group by it, never add across it (hard rule 2). A model with a summed metric says true or false
+    # for every dimension, so a new model can't forget.
+    non_additive: bool | None = None
 
 
 class Measure(_Strict):
@@ -555,6 +561,11 @@ class Measure(_Strict):
 class Uncertainty(_Strict):
     lower: str
     upper: str
+
+
+# Measure kinds a publisher may give an uncertainty range for: a metric reading one names its bound measures, or
+# says `uncertainty: none` with a reason, so a published range is never dropped silently (hard rule 2).
+UNCERTAIN_KINDS = frozenset({"estimate", "percent"})
 
 
 class Restatement(_Strict):
@@ -580,7 +591,9 @@ class Metric(_Strict):
     aggregation: Literal["sum", "none", "cumulative_latest"]
     exclude_total_rows: bool = True
     filters: list[str] = Field(default_factory=list)
-    uncertainty: Uncertainty | None = None
+    # The publisher's own bounds, or "none" with uncertainty_reason saying why there are none to return.
+    uncertainty: Uncertainty | Literal["none"] | None = None
+    uncertainty_reason: str | None = None
     order_by: str | None = None
     restated_by: Restatement | None = None
     # Dimensions a summed running total must be filtered to one value of (NNDSS year to date: the week), so
@@ -687,11 +700,15 @@ class SemanticModel(_Strict):
                 raise ValueError(
                     f"metric {metric.name}: order_by and restated_by only apply to cumulative_latest"
                 )
-            if metric.uncertainty:
-                for b in (metric.uncertainty.lower, metric.uncertainty.upper):
-                    if b not in measures:
-                        raise ValueError(f"metric {metric.name} uncertainty names unknown measure {b}")
+            _check_uncertainty(metric, m, measures)
         dims = {d.name: d for d in self.dimensions}
+        summed = [m.name for m in self.metrics if m.aggregation == "sum"]
+        undeclared = [d.name for d in self.dimensions if d.non_additive is None]
+        if summed and undeclared:
+            raise ValueError(
+                f"metric {summed[0]} adds up counts, so every dimension must say non_additive: true (its values "
+                f"overlap or count different things) or false; not declared on: {', '.join(undeclared)}"
+            )
         metrics = {m.name: m for m in self.metrics}
         templates = [g.bind("(any catalogued condition)", None) for g in self.generic_series]
         for ser in [*self.series, *templates]:
@@ -743,6 +760,82 @@ class SemanticModel(_Strict):
             if d.name == name:
                 return d
         raise KeyError(name)
+
+
+def _check_uncertainty(metric: Metric, m: Measure, measures: Mapping[str, Measure]) -> None:
+    """A percent or estimate names its publisher's bounds, or says there are none and why (hard rule 2)."""
+    u = metric.uncertainty
+    if u == "none":
+        if not (metric.uncertainty_reason or "").strip():
+            raise ValueError(
+                f"metric {metric.name}: uncertainty: none needs an uncertainty_reason saying why"
+            )
+        return
+    if metric.uncertainty_reason is not None:
+        raise ValueError(f"metric {metric.name}: uncertainty_reason only goes with uncertainty: none")
+    if u is None:
+        if m.kind in UNCERTAIN_KINDS:
+            raise ValueError(
+                f"metric {metric.name} reads a {m.kind}: name its uncertainty bound measures (uncertainty: "
+                "{lower, upper}), or say uncertainty: none with an uncertainty_reason"
+            )
+        return
+    for b, kind in ((u.lower, "lower_bound"), (u.upper, "upper_bound")):
+        bound = measures.get(b)
+        if bound is None:
+            raise ValueError(f"metric {metric.name} uncertainty names unknown measure {b}")
+        if bound.kind != kind:
+            raise ValueError(f"metric {metric.name} uncertainty {b} is a {bound.kind}, not a {kind}")
+
+
+@functools.cache
+def _pinned_columns(filters: tuple[str, ...]) -> frozenset[str]:
+    import sqlglot
+    from sqlglot import exp
+
+    def bare(node: exp.Expr) -> exp.Expr:
+        while isinstance(node, exp.Lower | exp.Upper | exp.Trim | exp.Paren):
+            node = node.this
+        return node
+
+    def conjuncts(node: exp.Expr) -> Iterator[exp.Expr]:
+        node = node.unnest()
+        if isinstance(node, exp.And):
+            yield from conjuncts(node.left)
+            yield from conjuncts(node.right)
+        else:
+            yield node
+
+    pinned: set[str] = set()
+    for f in filters:
+        for c in conjuncts(sqlglot.parse_one(f, dialect="duckdb", into=exp.Condition)):
+            if isinstance(c, exp.EQ):
+                pair = [bare(c.left), bare(c.right)]
+            elif isinstance(c, exp.In) and len(c.expressions) == 1:
+                pair = [bare(c.this), c.expressions[0]]
+            else:
+                continue
+            cols = [x for x in pair if isinstance(x, exp.Column)]
+            if len(cols) == 1 and any(isinstance(x, exp.Literal) for x in pair):
+                pinned.add(cols[0].name)
+    return frozenset(pinned)
+
+
+def filter_pins(filters: Sequence[str], dimensions: Sequence[Dimension]) -> frozenset[str]:
+    """Dimensions a metric's own reviewed filters fix to one value: `column = 'literal'` (the column may be wrapped
+    in lower, upper or trim) or `column IN ('one literal')`, joined by AND. Anything under OR or NOT, or a
+    comparison with several values, pins nothing."""
+    cols = _pinned_columns(tuple(filters))
+    return frozenset(d.name for d in dimensions if d.column in cols)
+
+
+def unpinned_non_additive(semantic: SemanticModel, metric: Metric, pinned: Iterable[str]) -> list[str]:
+    """The non-additive dimensions a summed metric would add across: neither fixed by its own filters nor in
+    `pinned` (the dimensions a question filters to one value or groups by). Empty for any other aggregation."""
+    if metric.aggregation != "sum":
+        return []
+    fixed = set(pinned) | filter_pins(metric.filters, semantic.dimensions)
+    return [d.name for d in semantic.dimensions if d.non_additive and d.name not in fixed]
 
 
 # --------------------------------------------------------------------------------------------- registry
@@ -937,6 +1030,20 @@ def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticMode
         if cond.dimension in g.filters:
             raise RegistryError(
                 f"{entry.id}: a generic series may not fix {cond.dimension}; the label asked for pins it"
+            )
+    # Every series of a summed metric pins or groups each non-additive dimension, so no question routed through
+    # it can add overlapping labels; the compiler refuses the same at run time for any other caller.
+    templates = [g.bind("(any catalogued condition)", cond.dimension) for g in semantic.generic_series]
+    for ser in [*semantic.series, *templates]:
+        fixed = [d for d, v in ser.filters.items() if not isinstance(v, list) or len(v) == 1]
+        grouped = [ser.time_dimension, ser.location_dimension, ser.week_dimension, ser.age_dimension]
+        loose = unpinned_non_additive(
+            semantic, semantic.metric(ser.metric), [*fixed, *(d for d in grouped if d)]
+        )
+        if loose:
+            raise RegistryError(
+                f"{entry.id}: series {ser.label} adds up {ser.metric} across {', '.join(loose)}, whose values "
+                "overlap or count different things; filter each to one value"
             )
     for c in contract.columns:
         if c.flag_for is not None and c.flag_for not in cols:

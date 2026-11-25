@@ -1,10 +1,15 @@
 dataset: cdc_nndss_weekly
 version: 0.1.0
+# non_additive (hard rule 2): condition is true, because labels overlap (Coccidioidomycosis, Confirmed + Probable =
+# Total) and some are not cases in people (Rabies, Animal; catalog not_a_human_case_count). reporting_area is
+# false: the contract's totalRows drops the summary areas from every sum that excludes totals, and its structural
+# check shows the remaining areas add up (51 state/DC rows + New York City = US RESIDENTS). Weeks and years are
+# separate periods; running totals are read at one week (single_value_of).
 dimensions:
-  - {name: reporting_area, column: states, type: categorical, description: "State, New York City, territory, census division or US summary area where the cases were reported (by residence)."}
-  - {name: mmwr_year, column: year, type: time, description: "MMWR (epidemiological) year."}
-  - {name: mmwr_week, column: week, type: time, description: "MMWR week within the year (1-52 or 53)."}
-  - {name: condition, column: label, type: categorical, description: "Nationally notifiable condition, e.g. Legionellosis or Candida auris, clinical."}
+  - {name: reporting_area, column: states, type: categorical, non_additive: false, description: "State, New York City, territory, census division or US summary area where the cases were reported (by residence)."}
+  - {name: mmwr_year, column: year, type: time, non_additive: false, description: "MMWR (epidemiological) year."}
+  - {name: mmwr_week, column: week, type: time, non_additive: false, description: "MMWR week within the year (1-52 or 53)."}
+  - {name: condition, column: label, type: categorical, non_additive: true, description: "Nationally notifiable condition, e.g. Legionellosis or Candida auris, clinical."}
 measures:
   - {name: cases_this_week, column: m1, kind: count, unit: "cases", description: "Cases reported in the MMWR week."}
   - {name: max_weekly_cases_prior_52_weeks, column: m2, kind: maximum, unit: "cases", description: "Highest weekly count in the previous 52 weeks; a maximum, never added up."}

@@ -53,9 +53,9 @@ EST_SEMANTIC = """\
 dataset: toy_cases
 version: 0.2.0
 dimensions:
-  - {name: where, column: place, type: categorical}
-  - {name: week_ending, column: day, type: time}
-  - {name: season, column: season, type: time}
+  - {name: where, column: place, type: categorical, non_additive: false}
+  - {name: week_ending, column: day, type: time, non_additive: false}
+  - {name: season, column: season, type: time, non_additive: false}
 measures:
   - {name: cases, column: n, kind: count, description: cases reported}
   - {name: estimate, column: est, kind: estimate}
@@ -286,7 +286,9 @@ def test_envelope_cuts_at_the_cap_and_says_so(
 
 
 def test_surveillance_counts_say_they_have_no_interval(registry: Registry, lake: Path) -> None:
-    out = Engine(registry=registry, lake=lake).query_metric("toy_cases", "case_count")
+    out = Engine(registry=registry, lake=lake).query_metric(
+        "toy_cases", "case_count", filters={"condition": "Legionellosis"}
+    )
     assert out["uncertainty"] == "Observed counts carry no uncertainty interval."
 
 

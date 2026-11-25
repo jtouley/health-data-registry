@@ -157,7 +157,7 @@ def test_a_result_over_the_cap_is_refused_not_cut(
         "toy_cases: Legionellosis has more than 1 rows for this question (every place, every period), so nothing "
         "is shown rather than a table cut off part way. Ask again for fewer places or a shorter span of years."
     ) in out["notes"]
-    raw = eng.query_metric("toy_cases", "case_count", group_by=["state"])
+    raw = eng.query_metric("toy_cases", "case_count", group_by=["state", "condition"])
     assert raw["truncated"] is True and raw["caveats"][0] == "Only the first 1 rows are shown."
 
 

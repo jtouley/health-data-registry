@@ -108,6 +108,7 @@ customProperties:
       - "Strain type rows: is value the percent of typed isolates with that ribotype, or a count? Unit not stated; no metric defined for it."
       - "Definitions of healthcare-associated vs community-associated (onset setting and look-back windows) are not on data.cdc.gov."
       - "Case rate denominators: which population estimates, and are rates crude? Assumed crude, not confirmed."
+      - "Do the strata of one view and grouping add up to its Total row (HA + CA = all cases; age groups that never overlap)? Not stated on data.cdc.gov. Until a maintainer confirms it, the semantic model marks stratum non_additive and each stratum is read on its own."
       - "'Number of Cases' rows for Total by epi class exist for 2011-2019 and 2022 under 'Epi Class' and for 2020-2021 under 'Epi class': confirm these are one series."
       - "Data end in 2022 although rowsUpdatedAt is 2025-05-13. Coverage after 2022 is unknown until the publisher says whether later years are lagged, withheld or not collected. Affects whether refresh should stay annual."
       - "Case definition: EIP CDI case definition (positive C. difficile toxin or molecular assay in a catchment resident, with the incident-case window) and its effective years are not in the data; add as caseDefinitions after a maintainer reads the EIP CDI methods."

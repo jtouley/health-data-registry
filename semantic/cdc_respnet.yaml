@@ -1,15 +1,18 @@
 dataset: cdc_respnet
 version: 0.1.0
+# non_additive (hard rule 2): the network holds Combined beside the three viruses; week_ending holds a season on
+# season rows; site, age, race and sex hold an all-groups value beside their parts; estimate_kind and rate_method
+# are different measures. Seasons are separate periods.
 dimensions:
-  - {name: virus_network, column: surveillance_network, type: categorical, description: "Which virus the hospitalizations are for, by surveillance network (from CDC's dataset description): COVID-NET is COVID-19, FluSurv-NET is influenza, RSV-NET is RSV, and Combined is the three together."}
-  - {name: season, column: season, type: categorical, description: "Respiratory season, e.g. 2025-26."}
-  - {name: week_ending, column: date, type: time, description: "Week-ending date (YYYY-MM-DD) for weekly rows; the season for season rows."}
-  - {name: site, column: state, type: categorical, description: "RESP-NET surveillance site, named by state: the site's catchment area, not necessarily the whole state. Overall or a network name means all sites combined."}
-  - {name: age_group, column: age_category, type: categorical, description: "Age group of hospitalized patients; Overall (rate rows) or All (clinical-outcome rows) for all ages. Labels differ between rate rows (e.g. '65+ yr') and clinical rows (e.g. '≥65 years'), so copy the label from the row type you filter."}
-  - {name: race_ethnicity, column: race, type: categorical, description: "Race and ethnicity group, or All. Labels differ between rate rows (e.g. 'Black, NH') and clinical-outcome rows (e.g. 'Non-Hispanic Black'), so copy the label from the row type you filter."}
-  - {name: sex, column: sex, type: categorical, description: "Sex of hospitalized patients: Female, Male, or All for both combined."}
-  - {name: estimate_kind, column: data_type, type: categorical, description: "Weekly rate, cumulative rate, or a clinical outcome percent."}
-  - {name: rate_method, column: rate_type, type: categorical, description: "Observed, age-adjusted or estimated."}
+  - {name: virus_network, column: surveillance_network, type: categorical, non_additive: true, description: "Which virus the hospitalizations are for, by surveillance network (from CDC's dataset description): COVID-NET is COVID-19, FluSurv-NET is influenza, RSV-NET is RSV, and Combined is the three together."}
+  - {name: season, column: season, type: categorical, non_additive: false, description: "Respiratory season, e.g. 2025-26."}
+  - {name: week_ending, column: date, type: time, non_additive: true, description: "Week-ending date (YYYY-MM-DD) for weekly rows; the season for season rows."}
+  - {name: site, column: state, type: categorical, non_additive: true, description: "RESP-NET surveillance site, named by state: the site's catchment area, not necessarily the whole state. Overall or a network name means all sites combined."}
+  - {name: age_group, column: age_category, type: categorical, non_additive: true, description: "Age group of hospitalized patients; Overall (rate rows) or All (clinical-outcome rows) for all ages. Labels differ between rate rows (e.g. '65+ yr') and clinical rows (e.g. '≥65 years'), so copy the label from the row type you filter."}
+  - {name: race_ethnicity, column: race, type: categorical, non_additive: true, description: "Race and ethnicity group, or All. Labels differ between rate rows (e.g. 'Black, NH') and clinical-outcome rows (e.g. 'Non-Hispanic Black'), so copy the label from the row type you filter."}
+  - {name: sex, column: sex, type: categorical, non_additive: true, description: "Sex of hospitalized patients: Female, Male, or All for both combined."}
+  - {name: estimate_kind, column: data_type, type: categorical, non_additive: true, description: "Weekly rate, cumulative rate, or a clinical outcome percent."}
+  - {name: rate_method, column: rate_type, type: categorical, non_additive: true, description: "Observed, age-adjusted or estimated."}
 measures:
   - {name: hospitalization_rate, column: estimate, kind: rate, unit: "per 100,000 population", description: "Laboratory-confirmed hospitalizations per 100,000 catchment population."}
   - {name: clinical_outcome_percent, column: estimate, kind: percent, unit: "%", description: "Percent of hospitalized patients with the outcome."}
@@ -38,12 +41,16 @@ metrics:
     aggregation: none
     exclude_total_rows: false
     filters: ["date_type = 'Season'", "data_type = 'Admitted to Intensive Care Unit'"]
+    uncertainty: none
+    uncertainty_reason: "the publisher's table has no interval column for these percents (contract columns); whether CDC publishes one elsewhere is an open question in the contract."
   - name: percent_in_hospital_death
     description: "Percent of hospitalized patients in the season who died in hospital."
     measure: clinical_outcome_percent
     aggregation: none
     exclude_total_rows: false
     filters: ["date_type = 'Season'", "data_type = 'In-Hospital Death'"]
+    uncertainty: none
+    uncertainty_reason: "the publisher's table has no interval column for these percents (contract columns); whether CDC publishes one elsewhere is an open question in the contract."
 series:
   - condition: "FluSurv-NET"
     label: "Influenza hospitalisations"

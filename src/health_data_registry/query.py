@@ -14,7 +14,15 @@ from typing import Any
 
 import duckdb
 
-from health_data_registry.registry import Column, Dataset, Metric, Registry, label_key
+from health_data_registry.registry import (
+    Column,
+    Dataset,
+    Metric,
+    Registry,
+    Uncertainty,
+    label_key,
+    unpinned_non_additive,
+)
 from health_data_registry.sql_guard import GuardedQuery, guard_sql, harden, run_guarded
 from health_data_registry.store import Manifest, latest_snapshot
 
@@ -44,6 +52,8 @@ NEXT_STEPS: dict[str, str] = {
     "publisher_unreachable": "Try again in a few minutes.",
     "publisher_bad_table": "Try again later; if it keeps happening, run the Something's wrong helper.",
     "needs_single_value": "Ask for the year's total, or for one week.",
+    "non_additive": "Use describe_dataset to see the values, then ask again for one of them, or ask to see each "
+    "one on its own row.",
     "not_a_human_count": "Use get_series to read these counts as published; they are not cases in people, so "
     "there is no rate per 100,000 people.",
 }
@@ -162,10 +172,26 @@ def compile_metric(
             period_params.append(end)
 
     group_cols = [dim(g) for g in group_by]
+    # Hard rule 2: a sum never adds across a dimension whose values overlap or count different things.
+    loose = unpinned_non_additive(
+        sem, metric, [*group_by, *(d for d, v in (filters or {}).items() if _single(v))]
+    )
+    if loose:
+        what = "; ".join(
+            f"{d} ({dims[d].description.rstrip('.')})" if dims[d].description else d for d in loose
+        )
+        raise QueryRefused(
+            "non_additive",
+            f"{metric.name} adds up counts, but these hold values that overlap or count different things: {what}. "
+            "Adding them together would count the same cases twice or mix different things into one number, so "
+            f"nothing is added. Choose one value of {' and '.join(loose)}, or show each value on its own row.",
+            f"Use describe_dataset on {ds.id} to see the values of {', '.join(loose)}, then ask again for one of "
+            "them, or ask to see each one on its own row.",
+        )
     select_dims = [f"{_q(c)} AS {_q(g)}" for g, c in zip(group_by, group_cols, strict=True)]
     m_col = _q(measure.column)
     bounds: list[tuple[str, str]] = []
-    if metric.uncertainty:
+    if isinstance(metric.uncertainty, Uncertainty):
         bounds = [
             ("lower", sem.measure(metric.uncertainty.lower).column),
             ("upper", sem.measure(metric.uncertainty.upper).column),
@@ -231,7 +257,11 @@ def compile_metric(
         if group_cols:
             sql += " ORDER BY ALL"
         method = f"{measure.name} as published ({measure.kind}); not summed." + (
-            " Lower and upper are the publisher's own uncertainty bounds." if bounds else ""
+            " Lower and upper are the publisher's own uncertainty bounds."
+            if bounds
+            else f" No uncertainty bounds: {metric.uncertainty_reason}"
+            if metric.uncertainty == "none"
+            else ""
         )
     return CompiledMetric(sql=sql, params=params, columns=out_cols, method=method)
 

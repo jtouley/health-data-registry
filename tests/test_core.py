@@ -148,11 +148,11 @@ def test_compile_refusals(registry: Registry, kwargs: dict, code: str) -> None:
 @given(value=st.text(min_size=1, max_size=40))
 def test_filter_values_are_bound_never_spliced(registry: Registry, value: str) -> None:
     ds = registry.get("toy_cases")
-    cm = compile_metric(ds, "case_count", filters={"state": value})
+    cm = compile_metric(ds, "case_count", filters={"state": value, "condition": "Legionellosis"})
     assert (
-        cm.sql == compile_metric(ds, "case_count", filters={"state": "x"}).sql
+        cm.sql == compile_metric(ds, "case_count", filters={"state": "x", "condition": "Legionellosis"}).sql
     )  # SQL never depends on the value
-    assert cm.params == [value]
+    assert cm.params == [value, "Legionellosis"]
 
 
 def test_no_snapshot_is_a_plain_refusal(registry: Registry, tmp_path: Path) -> None:
