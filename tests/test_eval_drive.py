@@ -111,9 +111,14 @@ class FakeSession:
         self.hang = hang
         self.calls: list[tuple[str, dict[str, Any] | None]] = []
         self.error: Exception | None = None
+        self.is_error = False
+        self.pages: list[str | None] = []
 
     async def list_tools(self, *, params: Any = None) -> types.ListToolsResult:
-        start = int(params.cursor) if params is not None else 0
+        cursor = params.cursor if params is not None else None
+        assert cursor not in self.pages, "the same page was asked for twice"
+        self.pages.append(cursor)
+        start = int(cursor) if cursor is not None else 0
         end = start + self.per_page
         nxt = str(end) if end < len(self.tools) else None
         return types.ListToolsResult(tools=self.tools[start:end], next_cursor=nxt)
@@ -124,7 +129,9 @@ class FakeSession:
             await anyio.sleep_forever()
         if self.error is not None:
             raise self.error
-        return types.CallToolResult(content=[types.TextContent(type="text", text=f"rows for {name}")])
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=f"rows for {name}")], is_error=self.is_error
+        )
 
 
 @asynccontextmanager
@@ -209,6 +216,8 @@ def connect(registry: Registry, lake: Path) -> drive.Connect:
         server_dir: Path, env: Any, errlog: TextIO
     ) -> AsyncIterator[tuple[ClientSession, str, str | None]]:
         _connect.env = dict(env)  # type: ignore[attr-defined]
+        _connect.server_dir = server_dir  # type: ignore[attr-defined]
+        _connect.errlog = errlog.name  # type: ignore[attr-defined]
         async with memory_session(registry, lake) as got:
             yield got
 
@@ -672,7 +681,7 @@ def test_read_questions_keeps_id_and_question_only(tmp_path: Path) -> None:
         {"id": "syn-1", "question": "first", "expected_class": "ANSWER", "expected_datasets": ["x"]},
         {"id": "syn-2", "question": "second", "notes": "label"},
     ]
-    f.write_text("\n".join(json.dumps(r) for r in rows) + "\n\n")
+    f.write_text(json.dumps(rows[0]) + "\n\n" + json.dumps(rows[1]) + "\n\n")
     # Act
     got = drive.read_questions(f)
     # Assert
@@ -931,6 +940,7 @@ def test_the_header_records_the_run(tmp_path: Path, run_env: dict[str, str], con
     assert head["server_instructions_sha256"] == hashlib.sha256(INSTRUCTIONS.encode()).hexdigest()
     system = api.requests[0]["system"]
     assert system.startswith(drive.read_prompt()[0].rstrip()) and INSTRUCTIONS.strip() in system
+    assert "\n## health-data-registry\n" in system
     assert connect.env == {"HDR_LAKE": run_env["HDR_LAKE"], "HTTPS_PROXY": "http://p:1"}  # type: ignore[attr-defined]
 
 
@@ -1066,3 +1076,432 @@ def test_scorer_readers_skip_the_drive_header() -> None:
 def test_answers_by_question_refuses_a_question_answered_twice() -> None:
     with pytest.raises(ScorerError, match="more than once"):
         answers_by_question([{"id": "syn-1", "answer": "a"}, {"id": "syn-1", "answer": "b"}])
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Edges: the deadline arithmetic, records and the command line
+
+
+def retry(
+    api: ScriptedAPI, clock: Callable[[], float], deadline: float, **limits: Any
+) -> tuple[Any, list[float]]:
+    waits: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        waits.append(seconds)
+
+    async def go() -> Any:
+        return await drive.create_with_retry(
+            api, {"messages": []}, deadline=deadline, limits=Limits(**limits), clock=clock, sleep=sleep
+        )
+
+    return anyio.run(go), waits
+
+
+@pytest.mark.parametrize(("now", "calls"), [(10.0, 0), (10.5, 0), (9.5, 1)])
+def test_create_with_retry_needs_time_left_before_a_request(now: float, calls: int) -> None:
+    # Arrange
+    api = ScriptedAPI(message(block_text("ok")))
+    # Act
+    if calls:
+        got, _ = retry(api, lambda: now, deadline=10.0)
+        assert got.content[0].text == "ok"
+    else:
+        with pytest.raises(drive.DeadlineReached):
+            retry(api, lambda: now, deadline=10.0)
+    # Assert
+    assert len(api.requests) == calls
+
+
+@pytest.mark.parametrize(("after", "waits"), [(100.0, None), (99.0, None), (97.0, [2.0])])
+def test_a_request_timeout_is_retried_only_with_time_left(after: float, waits: list[float] | None) -> None:
+    # Arrange: the first request hangs past its timeout, and the clock then reads `after`
+    times = iter([0.0, after, after, after])
+    calls = 0
+
+    class HangOnce(ScriptedAPI):
+        async def __call__(self, **request: Any) -> Message:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                await anyio.sleep_forever()
+            return await super().__call__(**request)
+
+    api = HangOnce(message(block_text("ok")))
+    # Act / Assert
+    if waits is None:
+        with pytest.raises(drive.DeadlineReached):
+            retry(api, lambda: next(times), deadline=100.0, api_timeout_s=0.05)
+        assert calls == 1
+    else:
+        got, slept = retry(api, lambda: next(times), deadline=100.0, api_timeout_s=0.05)
+        assert (got.content[0].text, slept, calls) == ("ok", waits, 2)
+
+
+def test_requests_that_keep_timing_out_stop_the_run() -> None:
+    # Arrange
+    api = ScriptedAPI(message(block_text("never")), hang=True)
+    # Act / Assert
+    with pytest.raises(DriveError, match=r"after 6 tries \(TimeoutError\)"):
+        retry(api, lambda: 0.0, deadline=1e9, api_timeout_s=0.01)
+    assert len(api.requests) == 6
+
+
+def test_a_wait_that_ends_exactly_at_the_deadline_ends_the_question() -> None:
+    # Arrange: the first wait is 2 seconds, and exactly 2 seconds are left
+    api = ScriptedAPI(api_error(anthropic.RateLimitError, 429), message(block_text("ok")))
+    # Act / Assert
+    with pytest.raises(drive.DeadlineReached):
+        retry(api, lambda: 0.0, deadline=2.0)
+    got, waits = retry(
+        ScriptedAPI(api_error(anthropic.RateLimitError, 429), message(block_text("ok"))),
+        lambda: 0.0,
+        deadline=2.5,
+    )
+    assert waits == [2.0] and got.content[0].text == "ok"
+
+
+def test_run_tool_measures_seconds_and_keeps_the_error_flag() -> None:
+    # Arrange
+    session = FakeSession()
+    session.is_error = True
+    times = iter([1.0, 3.1234567])
+
+    async def go() -> tuple[str, bool, float]:
+        return await drive.run_tool(session, "get_series", {"x": "1"}, 100.0, Limits(), lambda: next(times))
+
+    # Act
+    text, is_error, seconds = anyio.run(go)
+    # Assert
+    assert (text, is_error, seconds) == ("rows for get_series", True, 2.123)
+
+
+def test_run_tool_with_no_time_left_does_not_call() -> None:
+    # Arrange
+    session = FakeSession()
+
+    async def go() -> Any:
+        return await drive.run_tool(session, "get_series", {}, 5.0, Limits(), lambda: 5.0)
+
+    # Act / Assert
+    with pytest.raises(drive.DeadlineReached):
+        anyio.run(go)
+    assert session.calls == []
+
+
+def test_usage_sums_cache_tokens_and_skips_missing_fields() -> None:
+    # Arrange
+    total: dict[str, int] = {"input_tokens": 1}
+
+    class Partial:
+        output_tokens = 4
+
+    # Act
+    drive._usage(
+        total,
+        Message.model_validate(
+            {
+                **message().model_dump(),
+                "usage": {
+                    "input_tokens": 2,
+                    "output_tokens": 3,
+                    "cache_creation_input_tokens": 5,
+                    "cache_read_input_tokens": 7,
+                },
+            }
+        ).usage,
+    )
+    drive._usage(total, Partial())
+    # Assert
+    assert total == {
+        "input_tokens": 3,
+        "output_tokens": 7,
+        "cache_creation_input_tokens": 5,
+        "cache_read_input_tokens": 7,
+    }
+
+
+def test_text_joins_text_blocks_only() -> None:
+    m = message(block_text("a"), block_tool("get_series"), block_text("b "), stop="tool_use")
+    assert drive._text(m.content) == "a\nb"
+
+
+def test_records_keep_seconds_and_non_ascii_text(tmp_path: Path) -> None:
+    # Arrange
+    api = ScriptedAPI(
+        message(block_tool("get_series", {"x": "1"}), stop="tool_use"), message(block_text("Québec, ≥ 5"))
+    )
+    # Act
+    out, recorded = ask(api)
+    drive.prepare_out(tmp_path)
+    with (tmp_path / "f.jsonl").open("w", encoding="utf-8") as fh:
+        drive._write(fh, out.to_row())
+    # Assert
+    assert isinstance(recorded[0]["seconds"], float) and recorded[0]["seconds"] >= 0
+    assert "Québec, ≥ 5" in (tmp_path / "f.jsonl").read_text(encoding="utf-8")
+
+
+def test_drive_passes_its_clock_and_sleep_and_hashes_absent_instructions(tmp_path: Path) -> None:
+    # Arrange
+    api = ScriptedAPI(api_error(anthropic.RateLimitError, 429), message(block_text("ok")))
+    waits: list[float] = []
+    progress: list[str] = []
+
+    class Progress:
+        def write(self, text: str) -> None:
+            progress.append(text)
+
+        def flush(self) -> None:
+            pass
+
+    async def sleep(seconds: float) -> None:
+        waits.append(seconds)
+
+    async def go() -> list[Outcome]:
+        return await drive.drive(
+            [Question("syn-1", "q")],
+            FakeSession(),
+            api,
+            model=MODEL,
+            prompt="P.",
+            prompt_sha256="s",
+            server_name="srv",
+            instructions=None,
+            protocol="A",
+            limits=Limits(),
+            out_dir=tmp_path,
+            run_info={},
+            progress=Progress(),
+            clock=lambda: 0.0,
+            sleep=sleep,  # type: ignore[arg-type]
+        )
+
+    # Act
+    outcomes = anyio.run(go)
+    # Assert
+    assert waits == [2.0] and outcomes[0].answer == "ok" and progress == ["1/1 done\n"]
+    head = read_jsonl(tmp_path / "answers.jsonl")[0][DRIVE_HEADER_KEY]
+    assert head["server_instructions_sha256"] == hashlib.sha256(b"").hexdigest()
+    assert head["max_tokens"] == drive.MAX_TOKENS == 16000
+    assert api.requests[0]["system"] == "P."
+
+
+def test_drive_uses_its_clock_for_the_deadline(tmp_path: Path) -> None:
+    # Arrange: each reading of the clock is 1000 seconds later, so the question has no time
+    ticks = iter(range(0, 10**6, 1000))
+    api = ScriptedAPI(message(block_text("ok")))
+
+    async def go() -> list[Outcome]:
+        return await drive.drive(
+            [Question("syn-1", "q")],
+            FakeSession(),
+            api,
+            model=MODEL,
+            prompt="P.",
+            prompt_sha256="s",
+            server_name="srv",
+            instructions="I.",
+            protocol="A",
+            limits=Limits(question_timeout_s=10),
+            out_dir=tmp_path,
+            run_info={},
+            progress=open(tmp_path / "progress.txt", "w"),
+            clock=lambda: float(next(ticks)),  # noqa: SIM115
+        )
+
+    # Act
+    outcomes = anyio.run(go)
+    # Assert
+    assert outcomes[0].status == "deadline" and api.requests == []
+
+
+@pytest.mark.parametrize(
+    ("error", "message_"),
+    [
+        (
+            api_error(anthropic.AuthenticationError, 401),
+            "The Claude API did not accept the credentials. Check ANTHROPIC_API_KEY.",
+        ),
+        (
+            api_error(anthropic.NotFoundError, 404),
+            "The Claude API does not serve the model EVAL_MODEL names. Check EVAL_MODEL.",
+        ),
+    ],
+)
+def test_explain_exact_messages(error: Exception, message_: str) -> None:
+    assert drive.explain(error) == message_
+
+
+def test_require_lake_unset_exact_message() -> None:
+    with pytest.raises(DriveError) as err:
+        drive.require_lake({})
+    assert str(err.value) == "HDR_LAKE is not set. Point it at the lake the server should read."
+
+
+def test_prepare_out_names_every_file_it_finds(tmp_path: Path) -> None:
+    (tmp_path / "transcript.jsonl").write_text("")
+    (tmp_path / "answers.jsonl").write_text("")
+    with pytest.raises(DriveError, match="already holds transcript.jsonl, answers.jsonl. Pick"):
+        drive.prepare_out(tmp_path)
+
+
+def test_parser_defaults_types_and_help() -> None:
+    # Arrange
+    ap = drive.parser()
+    # Act
+    a = ap.parse_args(["--questions", "q", "--server-dir", "s", "--out", "o"])
+    b = ap.parse_args(
+        [
+            "--questions",
+            "q",
+            "--server-dir",
+            "s",
+            "--out",
+            "o",
+            "--protocol",
+            "B",
+            "--max-turns",
+            "3",
+            "--max-calls",
+            "4",
+            "--tool-timeout",
+            "1.5",
+            "--api-timeout",
+            "2.5",
+            "--question-timeout",
+            "9.5",
+        ]
+    )
+    help_text = " ".join(ap.format_help().split())
+    # Assert
+    assert (a.questions, a.server_dir, a.out, a.protocol) == (Path("q"), Path("s"), Path("o"), "A")
+    assert (a.max_turns, a.max_calls, a.tool_timeout, a.api_timeout, a.question_timeout) == (
+        12,
+        25,
+        120.0,
+        300.0,
+        900.0,
+    )
+    assert (b.protocol, b.max_turns, b.max_calls, b.tool_timeout, b.api_timeout, b.question_timeout) == (
+        "B",
+        3,
+        4,
+        1.5,
+        2.5,
+        9.5,
+    )
+    assert isinstance(b.max_calls, int) and isinstance(b.question_timeout, float)
+    assert help_text.startswith(
+        "usage: python -m eval.drive [-h] --questions QUESTIONS --server-dir SERVER_DIR --out OUT"
+    )
+    for phrase in (
+        "Ask each question through the MCP server with the Claude API (eval/README.md).",
+        "--questions QUESTIONS jsonl with id and question on each line",
+        "--server-dir SERVER_DIR the server checkout to run (uv sync'd)",
+        "--out OUT an empty directory for the run's files",
+        "--protocol {A,B} B hides and refuses query_sql",
+        "--max-calls MAX_CALLS",
+        "--tool-timeout TOOL_TIMEOUT",
+        "--api-timeout API_TIMEOUT",
+        "--question-timeout QUESTION_TIMEOUT",
+    ):
+        assert phrase in help_text
+
+
+@pytest.mark.parametrize("missing", ["--questions", "--server-dir", "--out"])
+def test_parser_requires_each_path(missing: str) -> None:
+    argv = {"--questions": "q", "--server-dir": "s", "--out": "o"}
+    with pytest.raises(SystemExit):
+        drive.parser().parse_args([x for k, v in argv.items() if k != missing for x in (k, v)])
+    with pytest.raises(SystemExit):
+        drive.parser().parse_args(["--questions", "q", "--server-dir", "s", "--out", "o", "--protocol", "a"])
+
+
+def test_main_maps_every_limit_flag_and_sums_statuses(
+    tmp_path: Path,
+    run_env: dict[str, str],
+    connect: drive.Connect,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Arrange
+    monkeypatch.setattr(drive.time, "gmtime", lambda: drive.time.struct_time((2026, 1, 2, 3, 4, 5, 4, 2, 0)))
+    api = ScriptedAPI(
+        message(block_text("ok")), message(block_tool("get_series", {"x": "1"}), stop="tool_use")
+    )
+    flags = [
+        "--max-turns",
+        "1",
+        "--max-calls",
+        "2",
+        "--tool-timeout",
+        "3",
+        "--api-timeout",
+        "4",
+        "--question-timeout",
+        "50",
+    ]
+    # Act
+    code, out = run_main(
+        tmp_path, run_env, connect, api, [{"id": "a", "question": "q"}, {"id": "b", "question": "q"}], *flags
+    )
+    # Assert
+    assert code == 0
+    head = read_jsonl(out / "answers.jsonl")[0][DRIVE_HEADER_KEY]
+    assert head["limits"] == {
+        "turns": 1,
+        "calls": 2,
+        "tool_timeout_s": 3.0,
+        "api_timeout_s": 4.0,
+        "question_timeout_s": 50.0,
+    }
+    assert head["started_at"] == "2026-01-02T03:04:05Z"
+    assert capsys.readouterr().out.splitlines()[-1] == "drive: answered 1, turn_cap 1"
+    assert connect.server_dir == (tmp_path / "server").resolve()  # type: ignore[attr-defined]
+    assert connect.errlog == str(out / "server.log")  # type: ignore[attr-defined]
+
+
+def test_main_reads_the_process_environment_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Arrange
+    monkeypatch.delenv("EVAL_MODEL", raising=False)
+    # Act
+    code = drive.main(["--questions", "q", "--server-dir", ".", "--out", str(tmp_path / "o")])
+    # Assert
+    assert code == 2 and "EVAL_MODEL is not set" in capsys.readouterr().err
+
+
+def test_main_builds_the_sdk_client_with_its_own_retries_off(
+    tmp_path: Path, run_env: dict[str, str], connect: drive.Connect, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Arrange
+    built: list[dict[str, Any]] = []
+    api = ScriptedAPI(message(block_text("ok")))
+
+    class FakeClient:
+        def __init__(self, **kwargs: Any) -> None:
+            built.append(kwargs)
+            self.messages = type("M", (), {"create": staticmethod(api)})()
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeClient)
+    qfile = tmp_path / "questions.jsonl"
+    qfile.write_text('{"id": "a", "question": "q"}\n')
+    server = git_checkout(tmp_path / "server")
+    # Act
+    code = drive.main(
+        [
+            "--questions",
+            str(qfile),
+            "--server-dir",
+            str(server),
+            "--out",
+            str(tmp_path / "out"),
+            "--api-timeout",
+            "7",
+        ],
+        env=run_env,
+        connect=connect,
+    )
+    # Assert
+    assert code == 0 and built == [{"max_retries": 0, "timeout": 7.0}] and len(api.requests) == 1

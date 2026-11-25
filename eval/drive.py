@@ -337,16 +337,15 @@ async def create_with_retry(
     sleep: Sleep,
 ) -> Any:
     """One API request, retried on overload and rate limits up to API_ATTEMPTS times, within the deadline."""
-    for attempt in range(API_ATTEMPTS):
+    attempt = 0
+    while True:
         remaining = deadline - clock()
         if remaining <= 0:
             raise DeadlineReached
         try:
             with anyio.fail_after(min(limits.api_timeout_s, remaining)):
                 return await create(**request)
-        except TimeoutError:
-            if deadline - clock() <= 0:
-                raise DeadlineReached from None
+        except TimeoutError:  # past the deadline, the wait below ends the question
             error: Exception = TimeoutError()
         except Exception as exc:  # the SDK's errors; anything not retryable stops the run
             if not is_retryable(exc):
@@ -361,7 +360,7 @@ async def create_with_retry(
         if clock() + wait >= deadline:
             raise DeadlineReached
         await sleep(wait)
-    raise AssertionError("unreachable")  # pragma: no cover
+        attempt += 1
 
 
 def _usage(total: dict[str, int], usage: Any) -> None:
@@ -442,7 +441,7 @@ async def ask(
                 return out
             results = []
             for block in (b for b in response.content if b.type == "tool_use"):
-                args = dict(block.input) if isinstance(block.input, Mapping) else {}
+                args = dict(block.input)  # the SDK parses tool input as a JSON object
                 why = refusal(block.name, setup.protocol, setup.offered, out.tool_calls, limits)
                 if why:
                     out.refused_calls.append({"tool": block.name, "args": args, "turn": out.turns})
@@ -663,9 +662,11 @@ def explain(exc: BaseException) -> str:
     return f"The run stopped ({type(exc).__name__}). Details are withheld: they could quote a question."
 
 
-def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
-    doc = __doc__ or ""
-    ap = argparse.ArgumentParser(prog="python -m eval.drive", description=doc.splitlines()[0])
+def parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog="python -m eval.drive",
+        description="Ask each question through the MCP server with the Claude API (eval/README.md).",
+    )
     ap.add_argument("--questions", required=True, type=Path, help="jsonl with id and question on each line")
     ap.add_argument("--server-dir", required=True, type=Path, help="the server checkout to run (uv sync'd)")
     ap.add_argument("--out", required=True, type=Path, help="an empty directory for the run's files")
@@ -676,7 +677,7 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     ap.add_argument("--tool-timeout", type=float, default=d.tool_timeout_s)
     ap.add_argument("--api-timeout", type=float, default=d.api_timeout_s)
     ap.add_argument("--question-timeout", type=float, default=d.question_timeout_s)
-    return ap.parse_args(argv)
+    return ap
 
 
 def main(
@@ -686,7 +687,7 @@ def main(
     create: CreateMessage | None = None,
     connect: Connect = stdio_connect,
 ) -> int:
-    a = parse_args(argv)
+    a = parser().parse_args(argv)
     env = os.environ if env is None else env
     try:
         require_model(env)
@@ -703,7 +704,7 @@ def main(
     root = logging.getLogger()
     root.addHandler(log)
     try:
-        if create is None:  # pragma: no cover - the real API; tests pass a scripted client
+        if create is None:  # the real API
             import anthropic
 
             # Retries are the driver's own (create_with_retry), so the SDK's are off.
