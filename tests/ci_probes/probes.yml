@@ -1,0 +1,61 @@
+# CI timing probes: fixed, tiny synthetic changes, each with the jobs a pull request's run must select for it and
+# the time it must fit. Like the eval questions, they pin behaviour: tests/test_ci_probes.py checks every probe's
+# selection offline on every run that can affect it (scripts/ci_impact.py, scripts/mutate_changed.py), and
+# `python scripts/ci_probe.py apply NAME` makes the change in a checkout, for a live timing run on a pre-pr branch.
+#
+# Each probe:
+#   edit: append (a line at the end of `path`), function (a comment line as the first line of `function`'s body
+#         in `path`), assignment (a line right after the line that starts `assigns` in `path`), or new_file (`path`
+#         with `text`).
+#   expect: the jobs a pull request's run selects while main has a merge queue (Changes, Checks and CI result
+#           always run), whether dbt runs in Checks, and whether the nightly mutation run makes shards for it.
+#   budget: seconds, push to every job done, queue excluded (ci/budgets.yml holds the per-job budgets).
+probes:
+  - name: docs-only
+    edit: append
+    path: README.md
+    text: "<!-- ci probe -->"
+    expect: {tests: false, dbt: false, mutation: false}
+    budget: 90
+
+  - name: contract-yaml
+    edit: append
+    path: contracts/cdc_nndss_weekly.odcs.yaml
+    text: "# ci probe"
+    expect: {tests: true, dbt: true, mutation: false}
+    budget: 180
+
+  - name: sql-guard-function
+    edit: function
+    path: src/health_data_registry/sql_guard.py
+    function: _parse
+    expect: {tests: true, dbt: true, mutation: true}
+    budget: 180
+
+  - name: registry-function
+    edit: function
+    path: src/health_data_registry/registry.py
+    function: require_attribution
+    expect: {tests: true, dbt: true, mutation: true}
+    budget: 180
+
+  # #114's review: an edit outside every function (the SQL sandbox's function allowlist) must still make mutants.
+  - name: sql-guard-constant
+    edit: assignment
+    path: src/health_data_registry/sql_guard.py
+    assigns: _FUNCTIONS
+    text: "    # ci probe"
+    expect: {tests: true, dbt: true, mutation: true}
+    budget: 180
+
+  - name: new-file
+    edit: new_file
+    path: src/health_data_registry/ci_probe_new.py
+    text: |
+      """A CI probe: a new module nothing imports yet."""
+
+
+      def double(x: int) -> int:
+          return x * 2
+    expect: {tests: false, dbt: false, mutation: true}
+    budget: 180
