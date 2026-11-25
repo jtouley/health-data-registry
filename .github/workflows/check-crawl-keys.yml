@@ -1,9 +1,9 @@
 # Manual check that the `crawl` environment's API keys work. Run it from the Actions tab on main.
 #
 #   main-only  refuses, and fails the run, unless it was started on main. It holds no secrets.
-#   check      in the GitHub environment `crawl`: one request to the Census API with CENSUS_API_KEY and one to
-#              CDC's Socrata portal with SOCRATA_APP_TOKEN. Each step prints one line, accepted or rejected,
-#              and the job fails if either key is missing or rejected.
+#   check      in the GitHub environment `crawl`: one request to the Census API with CENSUS_API_KEY, one to
+#              CDC's Socrata portal with SOCRATA_APP_TOKEN and one to OpenAlex with OPENALEX_API_KEY. Each step
+#              prints one line, accepted or rejected, and the job fails if any key is missing or rejected.
 #
 # What it never does: print a key, a request URL, response headers or a response body; put a key on a command
 # line (curl reads it from stdin, so it is not in the process list); check out the repository; use an action;
@@ -134,3 +134,39 @@ jobs:
           else
             echo "Socrata sent no throttle headers, so it does not show whether the token was applied; it accepted the token with no error."
           fi
+
+      - name: OpenAlex API key
+        # Runs even when an earlier step failed, so one run reports on every key.
+        if: ${{ !cancelled() }}
+        env:
+          OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}
+        run: |
+          set +x
+          if [ -z "$OPENALEX_API_KEY" ]; then
+            echo "::error::The crawl environment has no OPENALEX_API_KEY secret, or it is empty. Add it under Settings > Environments > crawl."
+            exit 1
+          fi
+          # Checked before the mask: a line break would split the mask and leave part of the key unmasked.
+          if [[ "$OPENALEX_API_KEY" =~ [[:space:][:cntrl:]] ]]; then
+            echo "::error::OPENALEX_API_KEY contains a space, line break or control character. Paste the key again without them."
+            exit 1
+          fi
+          echo "::add-mask::$OPENALEX_API_KEY"
+          # OpenAlex takes the key as the api_key query parameter. It goes in on stdin
+          # (--data-urlencode api_key@-, appended to the query by -G), never on the command line. Cursor paging
+          # needs a key, and a bad key gets 401, so a 200 means the key works. --globoff keeps curl from reading
+          # the URL as a pattern. The body is discarded.
+          rc=0
+          code=$(printf '%s' "$OPENALEX_API_KEY" | curl -sS --fail-with-body --proto '=https' --max-redirs 0 \
+            --max-time 30 --globoff -G --data-urlencode 'api_key@-' -o /dev/null -w '%{http_code}' \
+            'https://api.openalex.org/works?per-page=1&cursor=*') || rc=$?
+          if [ "$rc" -ne 0 ] && [ "$code" = "000" ]; then
+            echo "::error::OpenAlex key: not checked: api.openalex.org could not be reached (curl exit $rc). Try again later."
+            exit 1
+          fi
+          if [ "$code" = "200" ]; then
+            echo "OpenAlex key: accepted (HTTP 200)"
+            exit 0
+          fi
+          echo "::error::OpenAlex key: rejected (HTTP $code)"
+          exit 1
