@@ -6,6 +6,11 @@ fetches the publisher's response over HTTPS when a question needs it, keeps the 
 most LIVE_TTL_S seconds (a short-lived in-memory cache, so one question's several reads hit the publisher
 once), and normalises them into an in-memory DuckDB table with the same contract-driven projection as the lake.
 Every answer that uses them carries the publisher's attribution, the licence and its terms URL.
+
+A dashboard read with the browser (``source.browser``) costs far more: one page load per catalogued view, at
+least 10 s apart (crawl.Robots), so a six-view dashboard takes a few minutes to read. Its parsed records are kept
+in memory for DASHBOARD_TTL_S instead, still never on disk, and every answer says so in its provenance notes, with
+the time of the read. Only the first question in that time waits for the dashboard.
 """
 
 from __future__ import annotations
@@ -23,6 +28,28 @@ from health_data_registry.staging import StagingReport, stage
 from health_data_registry.store import Manifest, RawFetch
 
 LIVE_TTL_S = 600.0  # how long parsed publisher records stay in memory; never written to disk
+# How long a browser-read dashboard's records stay in memory (never on disk): its read takes minutes, its data
+# change daily at most (weekly, annual or archived for the four Michigan dashboards).
+DASHBOARD_TTL_S = 3600.0
+
+
+def ttl_s(ds: Dataset) -> float:
+    """How long this source's live records are kept in memory."""
+    return DASHBOARD_TTL_S if ds.entry.source.browser else LIVE_TTL_S
+
+
+def kept_note(ds: Dataset, retrieved_at: str) -> str:
+    """The provenance note that says how long a live read is reused, in plain words."""
+    minutes = round(ttl_s(ds) / 60)
+    why = (
+        "a dashboard takes a few minutes to read, so "
+        if ds.entry.source.browser
+        else "so one question's several lookups read the publisher once, "
+    )
+    return (
+        f"Read live from the publisher at {retrieved_at[:16].replace('T', ' ')} UTC; {why}this read is kept in this "
+        f"server's memory (never on disk) for up to {minutes} minutes and reused by answers in that time."
+    )
 
 
 def is_live(ds: Dataset) -> bool:
@@ -50,20 +77,25 @@ class LiveTable:
     records: list[dict[str, Any]]
     manifest: Manifest
     fetched: float  # time.monotonic() when fetched
+    dashboard: bool = False  # read with the browser: kept for DASHBOARD_TTL_S rather than LIVE_TTL_S
 
     def fresh(self, now: float | None = None) -> bool:
-        return ((now if now is not None else time.monotonic()) - self.fetched) < LIVE_TTL_S
+        ttl = DASHBOARD_TTL_S if self.dashboard else LIVE_TTL_S
+        return ((now if now is not None else time.monotonic()) - self.fetched) < ttl
 
 
 def fetch_live(ds: Dataset, get: Any) -> LiveTable:
     """Page through the publisher in memory and describe the result; nothing touches the disk."""
     from health_data_registry.adapters import pages
+    from health_data_registry.crawl import override_notes
 
     fields = sorted({c.source_field for c in ds.contract.columns})
     records: list[dict[str, Any]] = []
     fetches: list[RawFetch] = []
+    layouts: dict[str, str] = {}
     for page in pages(ds.entry, get, fields=fields):
         fetches.append(page.fetch)
+        layouts.update(page.layout)
         records += [{k: (None if v is None else str(v)) for k, v in r.items()} for r in page.records]
     if not fetches:
         raise ValueError(f"{ds.id}: the publisher returned nothing")
@@ -83,9 +115,10 @@ def fetch_live(ds: Dataset, get: Any) -> LiveTable:
         redistribution=False,
         partial=False,
         origin="publisher",
-        notes=[attribution(ds)],
+        notes=[attribution(ds), kept_note(ds, retrieved.isoformat()), *override_notes(get)],
+        layouts=layouts,
     )
-    return LiveTable(records=records, manifest=m, fetched=time.monotonic())
+    return LiveTable(records=records, manifest=m, fetched=time.monotonic(), dashboard=ds.entry.source.browser)
 
 
 def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[str, Any]]) -> StagingReport:

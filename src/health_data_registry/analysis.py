@@ -25,6 +25,8 @@ from health_data_registry.tools import (
     provenance_note,
     refusal,
     series_for,
+    spelling_notes,
+    unknown_condition,
 )
 
 PER = 100_000.0
@@ -341,12 +343,24 @@ def _no_population(fmt: Fmt) -> Out:
     )
 
 
-def _unknown(condition: str, what: str, fmt: Fmt) -> Out:
+def _unknown(registry: Registry, condition: str, what: str, fmt: Fmt) -> Out:
+    return unknown_condition(registry, condition, fmt, what)
+
+
+def _not_human(matches: Sequence[tuple[Dataset, Series]]) -> list[str]:
+    """For each matched label whose counts are not cases in people (the catalog says why), one plain line."""
+    return list(
+        dict.fromkeys(
+            f"'{s.label}' counts {why}" for ds, s in matches if (why := ds.not_a_human_case_count(s.label))
+        )
+    )
+
+
+def _no_human_rate(condition: str, why: list[str], fmt: Fmt) -> Out:
     return message(
-        f"No loaded source reports '{condition}' as {what}. Use list_sources or suggest_datasets to see what is "
-        "available.",
+        f"No rate per 100,000 people is given for '{condition}': " + "; ".join(why) + ".",
         fmt,
-        refused="unknown_condition",
+        refused="not_a_human_count",
     )
 
 
@@ -391,7 +405,10 @@ def _rate_rows(
             denom, pds = pop.get((o.place, o.year), (None, None))
             est = None
             part = partial_area(ds, s, o.raw_place)
-            if o.not_total:
+            not_human = ds.not_a_human_case_count(s.label)
+            if not_human:
+                flags.append(f"counts {not_human}, so no rate per 100,000 people")
+            elif o.not_total:
                 flags.append(f"{o.not_total}; no rate")
             elif o.value is None and o.suppressed:
                 flags.append(
@@ -455,11 +472,14 @@ def get_rate(
 ) -> Out:
     if not _population_series(registry):
         return _no_population(fmt)
-    if not series_for(registry, condition, "cases"):
-        return _unknown(condition, "case counts", fmt)
+    matches = series_for(registry, condition, "cases")
+    if not matches:
+        return _unknown(registry, condition, "case counts", fmt)
+    if all(ds.not_a_human_case_count(s.label) for ds, s in matches):
+        return _no_human_rate(condition, _not_human(matches), fmt)
     try:
         rows, unmatched, used = _rate_rows(registry, engine, condition, locations, year, year)
-        notes = _source_notes(engine, used)
+        notes = spelling_notes([r.label for r in rows]) + _source_notes(engine, used)
     except QueryRefused as e:
         return refusal(e, fmt)
     cols = ["location", "year", "condition", "cases", "population", "rate_per_100k", "lower_95", "upper_95",
@@ -513,8 +533,11 @@ def compare_rates(
         )
     if not _population_series(registry):
         return _no_population(fmt)
-    if not series_for(registry, condition, "cases"):
-        return _unknown(condition, "case counts", fmt)
+    matches = series_for(registry, condition, "cases")
+    if not matches:
+        return _unknown(registry, condition, "case counts", fmt)
+    if all(ds.not_a_human_case_count(s.label) for ds, s in matches):
+        return _no_human_rate(condition, _not_human(matches), fmt)
     try:
         a_rows, _, used_a = _rate_rows(registry, engine, condition, [location], year, year)
         b_rows, _, used_b = _rate_rows(registry, engine, condition, [loc_b], year_b, year_b)
@@ -640,7 +663,20 @@ def get_trend(
         return message('fit_on must be "rates" or "counts".', fmt, refused="bad_fit_on")
     matches = series_for(registry, condition, "cases")
     if not matches:
-        return _unknown(condition, "case counts", fmt)
+        return _unknown(registry, condition, "case counts", fmt)
+    if fit_on == "rates" and _not_human(matches):
+        if all(ds.not_a_human_case_count(s.label) for ds, s in matches):
+            return message(
+                f"No trend in rates per 100,000 people is given for '{condition}': "
+                + "; ".join(_not_human(matches))
+                + '. Ask again with fit_on="counts" for a trend in the counts themselves.',
+                fmt,
+                refused="not_a_human_count",
+            )
+        skipped = _not_human(matches)
+        matches = [(ds, s) for ds, s in matches if not ds.not_a_human_case_count(s.label)]
+    else:
+        skipped = []
     cols = ["location", "condition", "years", "points_used", "annual_percent_change", "lower_95", "upper_95",
             "fit_on", "case_definition_from", "left_out", "dispersion", "source_id"]  # fmt: skip
     table: list[list[Any]] = []
@@ -760,6 +796,9 @@ def get_trend(
         out_notes.append("Not fitted (fewer than 3 usable years): " + "; ".join(too_few) + ".")
     if no_denominator:
         out_notes.append("Not fitted (no population for every year): " + "; ".join(no_denominator) + ".")
+    if skipped:
+        out_notes.append("Not fitted on rates: " + "; ".join(skipped) + ".")
+    out_notes += spelling_notes([str(r[1]) for r in table])
     if fit_on == "counts":
         out_notes.append(
             "This is a trend in case counts: population growth or decline is not taken into account, so part of "
@@ -931,6 +970,15 @@ def check_signal(
             f"year, which this check doesn't handle yet. Ask for a week from {2 * WINDOW} to {52 - WINDOW}.",
             fmt,
             refused="week_out_of_range",
+        )
+    labels = list(dict.fromkeys(f"{s.label} ({ds.id})" for ds, s in matches))
+    if len(labels) > 1:
+        # Several labels match (e.g. "Q fever": Acute, Chronic and Total): one check has to use one of them.
+        return message(
+            f"'{condition}' matches {len(labels)} different weekly series, and a signal check uses one of them.",
+            fmt,
+            refused="ambiguous_condition",
+            did_you_mean=labels,
         )
     ds, s = matches[0]
     try:

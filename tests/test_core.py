@@ -178,10 +178,9 @@ def test_query_sql_guarded(lake: Path, registry: Registry) -> None:
 def test_search_datasets(registry: Registry) -> None:
     hit = tools.search_datasets(registry, topic="legionella in states", geography="state", fmt="json")
     assert hit["rows"][0][0] == "toy_cases"
-    assert "legionella" in hit["rows"][0][-1]
-    assert tools.search_datasets(registry, topic="cancer", fmt="json")["rows"] == []
-    assert tools.search_datasets(registry, geography="county", fmt="json")["rows"] == []
-    assert tools.search_datasets(registry, year_start=2030, fmt="json")["rows"] == []
+    assert "legionella" in hit["rows"][0][hit["columns"].index("why_it_fits")]
+    for kw in ({"topic": "cancer"}, {"geography": "county"}, {"year_start": 2030}):
+        assert tools.search_datasets(registry, fmt="json", **kw)["refused"] == "no_dataset_matched"
 
 
 def test_suggest_datasets_says_why_not(registry: Registry) -> None:
@@ -239,8 +238,9 @@ def test_get_series_mixed_measures_warns(lake: Path, registry: Registry) -> None
 
 def test_get_series_refusals(lake: Path, registry: Registry) -> None:
     eng = Engine(registry=registry, lake=lake)
-    assert "Conditions available now: Legionellosis, Syphilis" in tools.get_series(
-        registry, eng, condition="mumps"
+    assert tools.get_series(registry, eng, condition="mumps") == (
+        "No loaded source reports 'mumps'.\nNext step: Open describe_dataset for a source search_datasets lists, "
+        "pick one of its condition labels, and ask again with that label."
     )
     assert "both-sexes" in tools.get_series(registry, eng, condition="syphilis", sex="female")
 

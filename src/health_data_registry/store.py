@@ -51,10 +51,13 @@ _SNAPSHOT_ID = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{12}$")
 class RawFetch:
     """One publisher response, as fetched."""
 
-    url: str
+    url: str  # the catalogued address the bytes answer (for a dashboard, the view, never a one-time session URL)
     content: bytes
     sha256: str
     retrieved_at: datetime
+    # Where the bytes were actually captured when that differs from ``url`` (a dashboard's data request); kept in
+    # the fetch log beside the source URL, never cited.
+    capture_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -83,8 +86,11 @@ class Manifest:
     quality: dict[str, Any] = field(
         default_factory=dict
     )  # the release's data-test results (publish.quality_section)
-    # The silver staging run: layout version, rows, total rows, codes the contract doesn't list (staging.py).
+    # The staging run: layout version, rows, and codes the contract doesn't list (staging.py).
     silver: dict[str, Any] = field(default_factory=dict)
+    # Dashboard sources: the sha256 of each worksheet's column list read ("<view>/<worksheet>" -> sha256), so a
+    # redesign is visible in provenance as well as stopping the load.
+    layouts: dict[str, str] = field(default_factory=dict)
 
     @staticmethod
     def read(path: Path) -> Manifest:
@@ -129,7 +135,10 @@ class FetchLog:
         size: int | None = None,
         sha256: str | None = None,
         error: str | None = None,
+        note: str | None = None,
+        capture_url: str | None = None,
     ) -> dict[str, Any]:
+        """Append one attempt. ``note`` records an access-policy decision on it (e.g. a robots.txt override)."""
         row = {
             "source": self.source,
             "url": url,
@@ -139,6 +148,8 @@ class FetchLog:
             "bytes": size,
             "sha256": sha256,
             "error": None if ok else (error or "the fetch failed for an unknown reason"),
+            **({"note": note} if note else {}),
+            **({"capture_url": capture_url} if capture_url else {}),
         }
         target = self.path(when)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -189,6 +200,8 @@ def build_snapshot(
     records_files: Sequence[Path],
     *,
     partial: bool = False,
+    layouts: dict[str, str] | None = None,
+    notes: Sequence[str] = (),
 ) -> Manifest:
     """Normalise newline-delimited JSON record files (publisher field names, raw values) into a snapshot."""
     if not fetches:
@@ -227,7 +240,8 @@ def build_snapshot(
             licence=ds.entry.licence.id,
             redistribution=ds.entry.licence.redistribution,
             partial=partial,
-            notes=report.notes(),
+            layouts=dict(layouts or {}),
+            notes=[*notes, *report.notes()],
             silver=report.as_dict(),
         )
         (tmp / "manifest.json").write_text(json.dumps(asdict(manifest), indent=2) + "\n", encoding="utf-8")
