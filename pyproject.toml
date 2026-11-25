@@ -104,4 +104,6 @@ branch = true
 source_paths = ["src/health_data_registry/", "eval/"]
 also_copy = ["eval/dev/", "catalog/", "contracts/", "semantic/", "docs/", "licenses/", "template/", "plugin/", ".claude-plugin/", "scripts/", "tools/", "assets/", "pyproject.toml", "README.md", "CLAUDE.md"]
 pytest_add_cli_args = ["-m", "not network", "-x", "-q", "-p", "no:cacheprovider"]
+# The fuzz harness tests match known findings by the name of the sql_guard or adapter function an error is raised
+# in, which mutmut's trampolines rename; they test fuzz/ (never mutated), so mutmut leaves them out.
 pytest_add_cli_args_test_selection = ["tests/", "--ignore=tests/integration", "--ignore=tests/test_metamorphic.py", "--ignore=tests/test_fuzz_harnesses.py"]
