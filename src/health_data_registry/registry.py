@@ -388,6 +388,9 @@ class Column:
     # The flag code the publisher's codebook defines as "no reported cases" (NNDSS: '-'): an empty count with it
     # is read as zero, labelled so; it is never stored as a number (hard rule 1).
     no_cases_code: str | None = None
+    # The contract's reviewed declaration (customProperty expectedEmpty: true) that this column may be empty in
+    # every row by design, so no fill-rate check is generated for it.
+    expected_empty: bool = False
 
     def partial_note(self, label: str) -> str | None:
         """The contract's note when this place label covers only part of the place it is named after."""
@@ -406,9 +409,20 @@ class Column:
         return names.get(label_key(label), str(label))
 
 
+# The edge characters label_key trims, in Python and in SQL alike: space, tab, newline, vertical tab, form feed,
+# carriage return. str.strip() with no argument also trims other Unicode spaces, which DuckDB's trim() does not.
+LABEL_EDGE = " \t\n\v\f\r"
+
+
 def label_key(text: str) -> str:
-    """A publisher label compared ignoring case, edge spaces and dots (U.S. RESIDENTS = US RESIDENTS)."""
-    return str(text).strip().upper().replace(".", "")
+    """A publisher label compared ignoring case, edge whitespace and dots (U.S. RESIDENTS = US RESIDENTS)."""
+    return str(text).strip(LABEL_EDGE).upper().replace(".", "")
+
+
+def label_key_sql(expr: str) -> str:
+    """DuckDB SQL computing label_key of `expr` (an SQL expression): the same edge characters, case and dots."""
+    edge = " || ".join(["' '", *(f"chr({ord(c)})" for c in LABEL_EDGE[1:])])
+    return f"regexp_replace(upper(trim(CAST({expr} AS VARCHAR), {edge})), '[.]', '', 'g')"
 
 
 UNRELIABLE_KINDS = ("none", "min_count", "max_relative_ci_width", "publisher_suppressed")
@@ -465,9 +479,10 @@ class RawLoad:
     """How a source lands in raw (contract property rawLoad). Raw is append-only either way.
 
     snapshot: every fetch stores the complete table, dated (sources with no update keys: dashboards, files).
-    incremental: a fetch stores only rows new or changed since the last load, found by the publisher's own update
-    field (e.g. Socrata's :updated_at); staging keeps the latest version of each row by `key`, the contract's
-    reviewed row identity. A change in shape forces a full fetch.
+    incremental: planned, not supported yet. A fetch would store only rows new or changed since the last load,
+    found by the publisher's own update field (e.g. Socrata's :updated_at), and staging would keep the latest
+    version of each row by `key` (required contract columns). Staging keeps only the newest load today, so a
+    contract declaring it is refused when the registry loads rather than serving only the last delta.
     """
 
     mode: str = "snapshot"
@@ -476,7 +491,7 @@ class RawLoad:
     declared: bool = False
 
 
-def _raw_load(value: Any, where: str, columns: frozenset[str]) -> RawLoad:
+def _raw_load(value: Any, where: str, columns: frozenset[str], required: frozenset[str]) -> RawLoad:
     if value is None:
         return RawLoad()
     if not isinstance(value, Mapping) or value.get("mode") not in LOAD_MODES:
@@ -495,7 +510,18 @@ def _raw_load(value: Any, where: str, columns: frozenset[str]) -> RawLoad:
     unknown = [k for k in key if k not in columns]
     if unknown:
         raise RegistryError(f"{where}: rawLoad key names unknown column {unknown[0]}")
-    return RawLoad("incremental", key, updated, True)
+    optional = [k for k in key if k not in required]
+    if optional:
+        raise RegistryError(
+            f"{where}: rawLoad key column {optional[0]} must be required: a row with no key can't be matched "
+            "to its earlier version"
+        )
+    # Staging keeps only the newest load, so an incremental load would serve just the last delta: refused until
+    # staging keeps the latest version of each row by key.
+    raise RegistryError(
+        f"{where}: rawLoad mode incremental is declared but not supported yet (staging keeps only the newest "
+        "load); declare mode: snapshot"
+    )
 
 
 @dataclass(frozen=True)
@@ -643,6 +669,7 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
                 partial_places=pairs["partialPlaces"],
                 renamed_labels=pairs["renamedLabels"],
                 no_cases_code=None if zero is None else str(zero),
+                expected_empty=_expected_empty(cp.get("expectedEmpty"), f"{expected_id}.{name}"),
             )
         )
     if not cols:
@@ -666,7 +693,12 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
         geography_basis=_text(top_custom.get("geographyBasis")),
         rate_denominator=_text(top_custom.get("rateDenominator")),
         quality=_quality(doc, expected_id),
-        raw_load=_raw_load(top_custom.get("rawLoad"), expected_id, frozenset(names)),
+        raw_load=_raw_load(
+            top_custom.get("rawLoad"),
+            expected_id,
+            frozenset(names),
+            frozenset(c.name for c in cols if c.required),
+        ),
     )
 
 
@@ -677,6 +709,14 @@ def _quality(doc: Mapping[str, Any], where: str) -> tuple[Any, ...]:
         return parse_rules(doc, where)
     except QualityRuleInvalid as e:
         raise RegistryError(str(e)) from e
+
+
+def _expected_empty(value: Any, where: str) -> bool:
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise RegistryError(f"{where}: expectedEmpty is true or false")
+    return value
 
 
 def _text(value: Any) -> str | None:

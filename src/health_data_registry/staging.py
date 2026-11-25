@@ -185,6 +185,22 @@ def stage_checked(
     return Staged(report, run_rules(con, table, rules_for(contract)))
 
 
+def check_snapshot(path: str, contract: Contract, table: str) -> QualityReport:
+    """Run the contract's quality rules on a closed snapshot file, opened read-only and locked down.
+
+    Rule SQL comes from a contract, which may be model-drafted (hard rule 3): besides the guard that checked it
+    at load time, the file it runs on can't be written, and the connection can't reach files or the network.
+    """
+    from health_data_registry.sql_guard import harden
+
+    con = duckdb.connect(path, read_only=True)
+    try:
+        harden(con)
+        return run_rules(con, table, rules_for(contract))
+    finally:
+        con.close()
+
+
 def _comment(con: duckdb.DuckDBPyConnection, contract: Contract, table: str) -> None:
     """Carry the contract's descriptions into the DuckDB file, where tools and people can read them."""
     schema = (contract.raw.get("schema") or [{}])[0]

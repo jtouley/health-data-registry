@@ -395,7 +395,15 @@ def refresh_dataset(ds: Dataset, lake: Path, get: Getter, *, max_rows: int | Non
             write_raw(lake, [page.fetch])  # keep the bytes on disk now, not in memory
             f = page.fetch
             layouts.update(page.layout)
-            fetches.append(RawFetch(url=f.url, content=b"", sha256=f.sha256, retrieved_at=f.retrieved_at))
+            fetches.append(
+                RawFetch(
+                    url=f.url,
+                    content=b"",
+                    sha256=f.sha256,
+                    retrieved_at=f.retrieved_at,
+                    capture_url=f.capture_url,
+                )
+            )
             nd = Path(tmp) / f"page-{i:05d}.ndjson"
             write_ndjson(nd, page.records)
             files.append(nd)

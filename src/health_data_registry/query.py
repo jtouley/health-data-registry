@@ -15,6 +15,7 @@ from typing import Any
 import duckdb
 
 from health_data_registry.registry import Column, Dataset, Metric, Registry, label_key
+from health_data_registry.registry import label_key_sql as registry_label_key_sql
 from health_data_registry.sql_guard import GuardedQuery, guard_sql, harden, run_guarded
 from health_data_registry.store import Manifest, latest_snapshot
 
@@ -252,7 +253,7 @@ def _lit(value: str) -> str:
 
 def label_key_sql(expr: str, renamed: Sequence[tuple[str, str]] = ()) -> str:
     """SQL for registry.label_key, then the contract's renamed labels mapped onto the label they continue."""
-    key = f"regexp_replace(upper(trim(CAST({expr} AS VARCHAR))), '[.]', '', 'g')"
+    key = registry_label_key_sql(expr)
     if not renamed:
         return key
     whens = " ".join(f"WHEN {_lit(label_key(a))} THEN {_lit(label_key(b))}" for a, b in renamed)

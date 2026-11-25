@@ -313,10 +313,16 @@ def test_build_snapshot_manifest_and_pointer(est: tuple[Registry, Engine, Path],
     assert read == m
     written = json.loads((path / "manifest.json").read_text())
     quality = written.pop("quality")
-    # Every optional column gets a fill-rate check; this fixture fills them all, and its contract has no rules.
+    # The volume check, then a fill-rate check per optional column that is not a flag column (a flag is empty
+    # wherever its count is published); this fixture fills them all, and its contract has no rules.
     assert quality["tool"] == "contract-rules" and quality["rule_errors"] == []
     assert {r["test"]: r["status"] for r in quality["results"]} == {
-        f"fill_rate_{c.name}": "pass" for c in reg.get("toy_cases").contract.columns if not c.required
+        "has_rows": "pass",
+        **{
+            f"fill_rate_{c.name}": "pass"
+            for c in reg.get("toy_cases").contract.columns
+            if not c.required and c.flag_for is None
+        },
     }
     assert written == {
         "dataset": "toy_cases",
