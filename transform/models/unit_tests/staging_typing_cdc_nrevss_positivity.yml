@@ -1,8 +1,9 @@
 # Hand-written dbt unit test of the generated stg_cdc_nrevss_positivity typing (staging.typed_select): Socrata's
 # calendar_date text (or a bare date) reads as its Saturday, the percent becomes a number as sent (never
 # rescaled), and an empty or blank percent stays empty rather than reading as zero. A dbt unit test compares
-# values, not types: the DATE type itself is held by the model's enforced contract (data_type: date). Inputs are
-# SQL so the raw source needn't be loaded first. One file per source, as staging_typing.yml's header says.
+# values, not types: the DATE type itself is held by the staging model's enforced contract, generated from the
+# ODCS contract. Inputs are SQL so the raw source needn't be loaded first. One file per source, as
+# staging_typing.yml's header says.
 version: 2
 unit_tests:
 - name: stg_cdc_nrevss_positivity_week_reads_as_its_saturday_and_an_empty_percent_stays_empty
