@@ -934,6 +934,7 @@ def test_the_catalog_checks_doi_sources(tmp_path: Path) -> None:
     broken(lambda c: c["source"]["supplements"][0].update(doi_pattern="10.1093/OFID/.*"))
     broken(lambda c: c["licence"].update(redistribution=True, id="cc-by"))
     broken(lambda c: c.update(hosting="public"))
+    broken(lambda c: c["licence"].update(redistribution=True, id="public-domain-us-federal"))
     broken(lambda c: c["source"].update(portal="socrata"))
 
 

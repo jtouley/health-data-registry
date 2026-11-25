@@ -39,6 +39,43 @@ gbd:
     - {condition: "Carbapenem-resistant Enterobacter", cause: "Lower respiratory infections", pathogen: "Enterobacter spp"}  # GBD 2023 models Enterobacter spp only under LRI (checked with list_cause_pathogen_pairs, 2026-11-24)
     - {condition: "Carbapenem-resistant Acinetobacter", cause: "Other infectious diseases", pathogen: "Acinetobacter baumannii"}
     - {condition: "Carbapenem-resistant Pseudomonas aeruginosa", cause: "Other infectious diseases", pathogen: "Pseudomonas aeruginosa"}
+conditions:
+  dimension: phenotype
+  # Provenance: every distinct value of the phenotype column (the contract's organismResistance dimension) at
+  # https://data.cdc.gov/resource/7wz3-n6um.json, read 2026-11-24 (an exact structural fact from the publisher).
+  source: "CDC's own names for each organism and resistance pattern, exactly as published on data.cdc.gov (checked 24 Nov 2026). Definitions: https://arpsp.cdc.gov/resources/AR_PhenotypeDefinitions_NOV2026.pdf."
+  labels:
+    - "Aminoglycoside-resistant Pseudomonas aeruginosa"
+    - "Carbapenem-resistant Acinetobacter"
+    - "Carbapenem-resistant E.coli"
+    - "Carbapenem-resistant Enterobacter"
+    - "Carbapenem-resistant Enterobacterales"
+    - "Carbapenem-resistant Klebsiella"
+    - "Carbapenem-resistant Pseudomonas aeruginosa"
+    - "Cefepime-resistant Enterobacter"
+    - "Cephalosporin-resistant E.coli"
+    - "Cephalosporin-resistant Klebsiella"
+    - "Cephalosporin-resistant Pseudomonas aeruginosa"
+    - "Daptomycin-resistant Enterococcus faecalis"
+    - "Daptomycin-resistant Enterococcus faecium"
+    - "Daptomycin-resistant MRSA"
+    - "Fluoroquinolone-resistant E.coli"
+    - "Fluoroquinolone-resistant MRSA"
+    - "Fluoroquinolone-resistant Pseudomonas aeruginosa"
+    - "Linezolid-resistant MRSA"
+    - "MDR Acinetobacter"
+    - "MDR E.coli"
+    - "MDR Enterobacter"
+    - "MDR Klebsiella"
+    - "MDR Pseudomonas aeruginosa"
+    - "Methicillin-resistant Staphylococcus aureus"
+    - "Pip/Tazobactam-resistant Pseudomonas aeruginosa"
+    - "Vancomycin-resistant coagulase-negative Staphylococci"
+    - "Vancomycin-resistant Enterococcus faecalis"
+    - "Vancomycin-resistant Enterococcus faecium"
+    - "Vancomycin-resistant MRSA"
+  aliases: []
 contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
 semantic_model: semantic/cdc_nhsn_ar_hai.yaml
 status: draft
+hosting: public

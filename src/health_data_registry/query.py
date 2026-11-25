@@ -6,6 +6,7 @@ so a clinician (or a grader) can check the number without trusting the model tha
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,15 +19,47 @@ from health_data_registry.sql_guard import GuardedQuery, guard_sql, harden, run_
 from health_data_registry.store import Manifest, latest_snapshot
 
 MAX_ROWS = 5000
+LOADED_VALUES_TIMEOUT_S = 5.0  # describe_dataset never waits longer than this for one column's values
 FilterValue = str | int | float | bool | Sequence[str | int | float | bool]
 
 
-class QueryRefused(ValueError):
-    """The question can't be answered this way; the message says why in plain words."""
+# What to do next after each kind of decline, in plain words. Every refusal carries one (DEFAULT_NEXT_STEP when
+# its code has none of its own), so a clinician is never left at a dead end.
+DEFAULT_NEXT_STEP = "Ask suggest_datasets with your whole question to see which sources can answer it."
+NEXT_STEPS: dict[str, str] = {
+    "unknown_condition": "Open describe_dataset for a source search_datasets lists, pick one of its condition "
+    "labels, and ask again with that label.",
+    "filter_matched_nothing": "Ask again with one of the values listed as available.",
+    "no_snapshot": "Run the Something's wrong helper, which walks you through loading this source again.",
+    "no_place_breakdown": "Ask again without places, or ask which sources report by state.",
+    "too_many_rows": "Ask again for fewer places or a shorter span of years.",
+    "no_sex_split": "Ask again without sex.",
+    "index_not_built": "Search PubMed for the condition and place in the meantime.",
+    "no_denominator": "Use get_series for the counts, or a rate the source publishes (describe_dataset says).",
+    "ambiguous_condition": "Ask again with the full label of one series as the condition.",
+    "nothing_to_compare": "Ask again with other_location or other_year.",
+    "no_rate": "Use get_rate to see which places and years have both a count and a population.",
+    "too_few_points": "Ask for a longer span of years, or use get_series to read the counts.",
+    "would_combine_rates": "Use describe_dataset to see the filters, and ask for one published group at a time.",
+    "publisher_unreachable": "Try again in a few minutes.",
+    "publisher_bad_table": "Try again later; if it keeps happening, run the Something's wrong helper.",
+    "needs_single_value": "Ask for the year's total, or for one week.",
+    "not_a_human_count": "Use get_series to read these counts as published; they are not cases in people, so "
+    "there is no rate per 100,000 people.",
+}
 
-    def __init__(self, code: str, message: str) -> None:
+
+def next_step_for(code: str | None) -> str:
+    return NEXT_STEPS.get(code or "", DEFAULT_NEXT_STEP)
+
+
+class QueryRefused(ValueError):
+    """The question can't be answered this way; the message says why in plain words, next_step what to do."""
+
+    def __init__(self, code: str, message: str, next_step: str | None = None) -> None:
         super().__init__(message)
         self.code = code
+        self.next_step = next_step or next_step_for(code)
 
 
 def _q(ident: str) -> str:
@@ -67,12 +100,22 @@ def compile_metric(
     measure = sem.measure(metric.measure)
     dims = {d.name: d for d in sem.dimensions}
     for d in metric.single_value_of:
-        if d in group_by or not _single((filters or {}).get(d)):
+        if measure.kind == "running_count":
+            if d in group_by or not _single((filters or {}).get(d)):
+                raise QueryRefused(
+                    "needs_single_value",
+                    f"{metric.name} is a running total, so it is read at one {d}: filter {d} to a single value "
+                    f"(normally the latest) and don't group by it. Adding up the running totals of several {d}s "
+                    "would count the same cases many times.",
+                )
+        # A count whose values of d overlap (Michigan includes Detroit) or are different things (conditions): each
+        # answer row holds one value of d, by a filter to one value or by grouping by it; never added across them.
+        elif d not in group_by and not _single((filters or {}).get(d)):
             raise QueryRefused(
                 "needs_single_value",
-                f"{metric.name} is a running total, so it is read at one {d}: filter {d} to a single value "
-                f"(normally the latest) and don't group by it. Adding up the running totals of several {d}s would "
-                "count the same cases many times.",
+                f"{metric.name} is never added up across {d}s: they overlap or count different things (for example "
+                f"a state's count already includes its cities). Filter {d} to one value, or group by {d} to get one "
+                "row each.",
             )
 
     def dim(name: str) -> str:
@@ -406,7 +449,8 @@ class Engine:
     A redistributable source comes from the local lake when it holds a snapshot (maintainers, CI), else from the
     published hub release (downloaded on first use, checked against its sha256, bounded cache). A restricted
     source (e.g. WHO GHO) is served live: fetched from the publisher per request, held in memory for at most
-    live.LIVE_TTL_S, and never written to disk (see live.py).
+    live.LIVE_TTL_S (live.DASHBOARD_TTL_S for a dashboard read with the browser, stated in its provenance), and
+    never written to disk (see live.py).
     """
 
     registry: Registry
@@ -496,10 +540,11 @@ class Engine:
             return True
         if not self.fetch_at_run_time:
             return False
-        from health_data_registry.crawl import fetcher
+        from health_data_registry.crawl import fetcher, shared_robots
         from health_data_registry.live import fetch_live
 
-        get = self.getter or fetcher(self.registry, None)
+        # One access policy per server process: two live sources on one host keep its pace between them.
+        get = self.getter or fetcher(self.registry, None, robots=shared_robots(self.registry))
         try:
             self._live[ds.id] = fetch_live(ds, get)
         except Exception as e:  # noqa: BLE001 - any publisher failure becomes one plain refusal
@@ -692,6 +737,30 @@ class Engine:
             .execute(f"SELECT DISTINCT {_q(column)} FROM {_q(dataset_id)} ORDER BY 1")  # noqa: S608 - quoted contract identifiers
             .fetchall()
         )  # noqa: S608 - quoted contract identifiers
+        return [r[0] for r in rows if r[0] is not None]
+
+    def loaded_values(
+        self, dataset_id: str, column: str, timeout_s: float = LOADED_VALUES_TIMEOUT_S
+    ) -> list[Any] | None:
+        """The values a column takes in a copy that is already on this computer, or None when there is none.
+
+        Never downloads or reads the publisher (describe_dataset is a catalog lookup), and gives up after
+        timeout_s, so a slow or broken copy can't hold up the answer."""
+        ds = self.registry.get(dataset_id)
+        try:
+            con = self.connect()
+        except (duckdb.Error, OSError):
+            return None
+        if dataset_id not in self.manifests or column not in ds.contract.column_names:
+            return None
+        timer = threading.Timer(timeout_s, con.interrupt)
+        timer.start()
+        try:
+            rows = con.execute(f"SELECT DISTINCT {_q(column)} FROM {_q(dataset_id)} ORDER BY 1").fetchall()  # noqa: S608 - quoted contract identifiers
+        except (duckdb.Error, OSError):
+            return None
+        finally:
+            timer.cancel()
         return [r[0] for r in rows if r[0] is not None]
 
     def query_sql(self, sql: str) -> dict[str, Any]:

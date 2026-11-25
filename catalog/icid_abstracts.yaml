@@ -32,6 +32,7 @@ licence:
   redistribution: false
   terms_url: https://www.crossref.org/documentation/retrieve-metadata/rest-api/
 hosting: private
+private_store: true
 citation: <authors>. <title>. International Journal of Infectious Diseases <volume>(<issue>):<pages>. https://doi.org/<doi>
   (abstract, ICID <year>; metadata via Crossref, accessed <retrieved_at>).
 source:

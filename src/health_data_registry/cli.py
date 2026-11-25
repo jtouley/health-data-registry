@@ -1,5 +1,5 @@
 """Command line: serve, refresh, fetch, export-public, check-contracts, validate, eval, publication-outlook,
-harvest-doi, and the analysis tools."""
+sitemaps snapshot, harvest-doi, and the analysis tools."""
 
 from __future__ import annotations
 
@@ -14,9 +14,10 @@ from health_data_registry.store import FetchLog, lake_root
 
 
 def _fetcher(registry: Registry, log: FetchLog | None = None):  # type: ignore[no-untyped-def]
-    from health_data_registry.crawl import fetcher
+    from health_data_registry.crawl import fetcher, shared_robots
 
-    return fetcher(registry, log)
+    # One access policy for the whole command: the pace and any block hold across every dataset it reads.
+    return fetcher(registry, log, robots=shared_robots(registry))
 
 
 def refresh(registry: Registry, ids: Sequence[str], *, max_rows: int | None, lake: Path) -> int:
@@ -35,6 +36,36 @@ def refresh(registry: Registry, ids: Sequence[str], *, max_rows: int | None, lak
             print(f"FAIL {dataset_id}: {e}", file=sys.stderr)
             continue
         print(f"ok   {dataset_id}: {m.row_count} rows, snapshot {m.snapshot_id}")
+    return 1 if failed else 0
+
+
+def validate(registry: Registry, lake: Path) -> int:
+    """Every entry loaded and cross-checked (load_registry did that); then each local snapshot's condition labels
+    against the catalog's list. A label the catalog doesn't list fails: add it from the publisher's codebook."""
+    from health_data_registry.query import Engine
+    from health_data_registry.tools import unlisted_condition_labels
+
+    for ds in registry:
+        print(
+            f"ok   {ds.id}: contract {ds.contract.version} ({ds.entry.status}), {len(ds.semantic.metrics)} metrics"
+        )
+    engine = Engine(registry=registry, lake=lake, hub=None, fetch_at_run_time=False)
+    failed = 0
+    for ds_id, extra in unlisted_condition_labels(registry, engine).items():
+        if extra is None:
+            print(f"skip {ds_id}: no local snapshot, so its condition labels weren't checked")
+        elif isinstance(extra, str):
+            failed += 1
+            print(f"FAIL {ds_id}: {extra}", file=sys.stderr)
+        elif extra:
+            failed += 1
+            print(
+                f"FAIL {ds_id}: the snapshot has condition labels the catalog doesn't list: "
+                + "; ".join(repr(x) for x in extra),
+                file=sys.stderr,
+            )
+        else:
+            print(f"ok   {ds_id}: every condition label in the snapshot is catalogued")
     return 1 if failed else 0
 
 
@@ -252,9 +283,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     po.add_argument("--condition", default=None)
     po.add_argument("--geography", default=None)
     po.add_argument("--json", action="store_true", help="JSON instead of CSV")
+    from health_data_registry import sitemaps
+
+    sm = sub.add_parser("sitemaps", help="publisher sitemaps the crawlers start from")
+    sm_sub = sm.add_subparsers(dest="sitemaps_cmd", required=True)
+    snap = sm_sub.add_parser(
+        "snapshot", help="take this week's copy of each seed sitemap and upload it to the private ops dataset"
+    )
+    sitemaps.add_arguments(snap)
     a = p.parse_args(argv)
     if a.cmd == "publication-outlook":  # reads only the packaged base rates, not the registry
         return publication_outlook(a)
+    if a.cmd == "sitemaps":  # reads only the seed list, not the registry
+        return sitemaps.snapshot(a, error=snap.error)
     try:
         registry = load_registry()
     except RegistryError as e:
@@ -266,11 +307,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         serve()
         return 0
     if a.cmd == "validate":
-        for ds in registry:
-            print(
-                f"ok   {ds.id}: contract {ds.contract.version} ({ds.entry.status}), {len(ds.semantic.metrics)} metrics"
-            )
-        return 0
+        return validate(registry, lake_root())
     if a.cmd == "eval":
         return run_eval(a.sealed, a.run)
     if a.cmd in ANALYSIS_COMMANDS:

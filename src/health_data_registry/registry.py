@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -196,10 +196,50 @@ class Supplement(_Strict):
         return v
 
 
+class TableauView(_Strict):
+    """One dashboard view (the URL name after /views/<workbook>/) and the worksheets read from it.
+
+    Each worksheet maps to the sha256 of its column list (adapters/tableau.layout_hash), recorded when the
+    contract was written: a dashboard whose columns change no longer matches, and the load stops.
+    """
+
+    view: str
+    worksheets: dict[str, str]
+    # A count the chart carries as a number while the dashboard shows it suppressed on the same mark (its tooltip
+    # reads "<16"): count field -> the field whose marker suppresses it. Where that marker is shown, the count is
+    # read as suppressed (empty, with the marker in "<count> flag"), never as the number behind the chart.
+    suppressed_by: dict[str, str] = {}
+
+    @field_validator("suppressed_by")
+    @classmethod
+    def _suppressed_by(cls, v: dict[str, str]) -> dict[str, str]:
+        if any(not k.strip() or not m.strip() or k == m for k, m in v.items()):
+            raise ValueError("suppressed_by maps a count field to another field that carries its marker")
+        return v
+
+    @field_validator("view")
+    @classmethod
+    def _view(cls, v: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", v):
+            raise ValueError("view must be the view's URL name (letters, digits, - and _)")
+        return v
+
+    @field_validator("worksheets")
+    @classmethod
+    def _hashes(cls, v: dict[str, str]) -> dict[str, str]:
+        if not v or not all(re.fullmatch(r"[0-9a-f]{64}", h) for h in v.values()):
+            raise ValueError("worksheets must map each worksheet name to its 64-character layout sha256")
+        return v
+
+
+class Tableau(_Strict):
+    views: list[TableauView]
+
+
 # The reviewed list of what counts as a government host under the maintainer's access policy (robots.txt on such a
 # host does not stop the crawler; see crawl.Robots). One place in code: a catalog entry's `government_host: true`
 # is refused for any other host, so a typo or a copied entry can't switch robots.txt off for a commercial host.
-# Add a suffix or a domain only through review. (The same list as PR #19's registry, so the two merge as one.)
+# Add a suffix or a domain only through review.
 GOVERNMENT_HOST_SUFFIXES: tuple[str, ...] = (
     ".gov",  # US federal, state, county and city governments (.gov is restricted to US government bodies)
     ".mil",
@@ -226,13 +266,22 @@ def is_government_host(host: str) -> bool:
 
 
 class Source(_Strict):
-    portal: Literal["socrata", "who_gho", "https_csv", "doi"]
+    portal: Literal["socrata", "who_gho", "https_csv", "tableau", "doi"]
     host: str
     dataset: str
     landing_url: str
     api_url: str
     encoding: str = "utf-8"  # https_csv only: the file's text encoding, from the publisher's documentation
     reshape: Reshape | None = None  # https_csv only
+    tableau: Tableau | None = None  # tableau only: the views and worksheets read
+    # A government host (only a host on the reviewed list GOVERNMENT_HOST_SUFFIXES / GOVERNMENT_DOMAINS): by the
+    # maintainer's access policy a robots.txt disallow there does not stop the crawler, nor (owner decision,
+    # 25 Nov 2026) does a 401, 403 or 429 on its robots.txt: the crawl goes on with the honest user agent and at
+    # least 10 s between requests, and the override is recorded. Default false: robots.txt is honoured in full,
+    # and a 401/403/429 on it blocks the host for the run. A 401/403/429 on a data page blocks every host.
+    government_host: bool = False
+    # The host answers only a real browser (browser_fetch.py): Tableau Server views, michigan.gov behind Akamai.
+    browser: bool = False
     # doi only: the conference years, and the other bibliographic APIs read for the same DOIs (OpenAlex, Europe
     # PMC). Every host fetched is named here, so the fetcher's allowlist stays the catalog's.
     supplements: list[Supplement] = Field(default_factory=list)
@@ -240,11 +289,6 @@ class Source(_Strict):
     # doi only: the conference's short key (``harvest-doi <conference>``) and its name on every row.
     conference: str | None = None
     conference_name: str | None = None
-    # A government host (only a host on the reviewed list GOVERNMENT_HOST_SUFFIXES / GOVERNMENT_DOMAINS): by the
-    # maintainer's access policy a 401, 403 or 429 on its robots.txt does not stop the crawler (owner decision,
-    # 25 Nov 2026): the fetch goes ahead with the honest user agent and at least 10 s between requests, and the
-    # override is recorded. Default false: such an answer blocks the host for the run.
-    government_host: bool = False
 
     @field_validator("host")
     @classmethod
@@ -277,6 +321,10 @@ class Source(_Strict):
     def _csv_only(self) -> Source:
         if self.portal != "https_csv" and (self.reshape is not None or self.encoding != "utf-8"):
             raise ValueError("encoding and reshape apply only to the https_csv portal")
+        if (self.portal == "tableau") != (self.tableau is not None):
+            raise ValueError(
+                "a tableau source lists its views (tableau.views), and only a tableau source does"
+            )
         if self.government_host and not is_government_host(self.host):
             raise ValueError(
                 f"government_host is accepted only for hosts on the reviewed list of government suffixes and "
@@ -325,12 +373,13 @@ Shape = Literal[
 ]
 
 
-# Where a source's rows may live (ADR 0009, licences decide mirroring):
-#   public   redistribution allowed: snapshotted in the lake and published on the open data hub
+# Where a source's rows may live (ADR 0009, licences decide mirroring); CatalogEntry.tier. Whether the open data
+# release carries a public-tier source's files is a separate, reviewed choice (CatalogEntry.hosting).
+#   public   redistribution allowed: snapshotted in the lake (published only when `hosting: public`)
 #   live     redistribution forbidden: read from the publisher per question, in memory only, never stored
-#   private  redistribution forbidden: kept only in that source's own private store (lake/private/<id>/ locally,
-#            one private Hugging Face dataset per source for the hosted server), never in a public release
-Hosting = Literal["public", "live", "private"]
+#   private  redistribution forbidden, `private_store: true`: kept only in that source's own private store
+#            (lake/private/<id>/ locally, one private Hugging Face dataset per source for the hosted server)
+Tier = Literal["public", "live", "private"]
 
 
 # The hub's infectious-disease areas: one Hugging Face collection per area, and a tag on each dataset card.
@@ -345,6 +394,66 @@ IdArea = Literal[
     "enteric",
     "vector_borne",
 ]
+
+
+AliasReview = Literal["publisher_codebook", "pending_maintainer_review", "maintainer_reviewed"]
+
+
+class ConditionAlias(_Strict):
+    """Another name for one of the publisher's condition labels (hard rule 1).
+
+    An alias comes only from the publisher's own codebook (review publisher_codebook, with its URL in source) or
+    from a declaration a maintainer reviews (pending_maintainer_review until they do). Never from eval or trial
+    wording.
+    """
+
+    alias: str
+    label: str
+    source: str
+    review: AliasReview
+
+
+class Conditions(_Strict):
+    """The publisher's own condition labels for one dataset: the vocabulary get_series accepts.
+
+    `dimension` is the semantic-model dimension that holds the label (None when the whole dataset is one
+    condition). `labels` are copied exactly as the publisher writes them, and `source` says where the list comes
+    from (the codebook or the contract's documented list). `validate` fails when a snapshot holds a label that
+    is not listed here.
+    """
+
+    dimension: str | None = None
+    source: str = ""
+    labels: list[str] = Field(default_factory=list)
+    aliases: list[ConditionAlias] = Field(default_factory=list)
+    # Labels whose counts are not cases in people (animals, screening swabs), each with the reason in plain words,
+    # read from the label itself: get_rate, compare_rates and get_trend(fit_on="rates") give no rate per 100,000
+    # people for them.
+    not_a_human_case_count: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _consistent(self) -> Conditions:
+        if len(set(self.labels)) != len(self.labels):
+            raise ValueError("conditions.labels lists a label twice")
+        if any(not str(x).strip() for x in self.labels):
+            raise ValueError("conditions.labels has an empty label")
+        if self.labels and not self.source.strip():
+            raise ValueError("conditions.source must say where the labels come from (codebook or contract)")
+        if self.dimension is not None and not self.labels:
+            raise ValueError("conditions.dimension is set but no labels are listed")
+        for a in self.aliases:
+            if a.label not in self.labels:
+                raise ValueError(
+                    f"alias {a.alias!r} points to {a.label!r}, which is not in conditions.labels"
+                )
+            if not a.source.strip():
+                raise ValueError(f"alias {a.alias!r} needs a source (codebook URL or reviewed declaration)")
+        for label, why in self.not_a_human_case_count.items():
+            if label not in self.labels:
+                raise ValueError(f"not_a_human_case_count names {label!r}, which is not in conditions.labels")
+            if not why.strip():
+                raise ValueError(f"not_a_human_case_count for {label!r} needs a reason in plain words")
+        return self
 
 
 class CatalogEntry(_Strict):
@@ -367,25 +476,31 @@ class CatalogEntry(_Strict):
     codebook_url: str
     caveats: list[str] = Field(default_factory=list)
     gbd: Gbd = Field(default_factory=Gbd)
+    conditions: Conditions = Field(default_factory=Conditions)
     contract: str
     semantic_model: str
     status: Literal["draft", "reviewed"]
-    # Unset: public when the licence allows redistribution, else live. Set "private" to keep a restricted
-    # source in its own private store (store.private) instead of reading it live.
-    hosting: Hosting | None = None
+    # Whether the open data release may carry this source's data files. Private unless a maintainer's reviewed
+    # catalog change says public; only `hosting: public` is planned by the weekly refresh or published.
+    hosting: Literal["public", "private"] = "private"
+    # Where the rows live when the licence forbids redistribution: unset, they are read live from the publisher
+    # per question (live.py); true, they are kept only in the source's own private store (private.py), never in
+    # the public lake or a release. Needs `hosting: private` and a licence that forbids redistribution.
+    private_store: bool = False
 
     @property
-    def tier(self) -> Hosting:
-        if self.hosting is not None:
-            return self.hosting
+    def tier(self) -> Tier:
+        """Where the rows may live (Tier)."""
+        if self.private_store:
+            return "private"
         return "public" if self.licence.redistribution else "live"
 
     @model_validator(mode="after")
-    def _hosting_matches_licence(self) -> CatalogEntry:
-        if self.hosting == "public" and not self.licence.redistribution:
-            raise ValueError("hosting: public needs licence.redistribution: true")
-        if self.hosting in ("live", "private") and self.licence.redistribution:
-            raise ValueError(f"hosting: {self.hosting} is for sources whose licence forbids redistribution")
+    def _private_store_is_restricted(self) -> CatalogEntry:
+        if self.private_store and (self.licence.redistribution or self.hosting == "public"):
+            raise ValueError(
+                "private_store is for sources whose licence forbids redistribution (and hosting: private)"
+            )
         return self
 
     @field_validator("id")
@@ -394,6 +509,19 @@ class CatalogEntry(_Strict):
         if not _ID.fullmatch(v):
             raise ValueError("id must be snake_case, 2-63 chars")
         return v
+
+    @model_validator(mode="after")
+    def _public_needs_redistribution(self) -> CatalogEntry:
+        if self.hosting == "public" and not self.licence.redistribution:
+            raise ValueError(
+                f"hosting: public needs a licence that allows redistribution; {self.licence.id} does not"
+            )
+        return self
+
+    @property
+    def hosted(self) -> bool:
+        """True only for `hosting: public` (which also needs a licence that allows redistribution)."""
+        return self.hosting == "public"
 
 
 # --------------------------------------------------------------------------------------------- contract
@@ -713,7 +841,9 @@ class Metric(_Strict):
     order_by: str | None = None
     restated_by: Restatement | None = None
     # Dimensions a summed running total must be filtered to one value of (NNDSS year to date: the week), so
-    # every week's running total is never added up. The compiler refuses the metric otherwise.
+    # every week's running total is never added up. For a plain count, the dimensions whose values overlap or
+    # count different things (Detroit within Michigan; one condition and another): each answer row then holds one
+    # value of them, by a filter or by grouping. The compiler refuses the metric otherwise.
     single_value_of: list[str] = Field(default_factory=list)
 
 
@@ -745,6 +875,31 @@ class Series(_Strict):
     age_dimension: str | None = None
 
 
+class GenericSeries(_Strict):
+    """A series for ANY of the catalog's condition labels: the same metric, places and years as a named series,
+    with the condition dimension pinned to one publisher label at query time (bind). It reads the source's count
+    measure through a reviewed metric, so every aggregation rule of that metric still applies: a frequency count
+    summed without total rows, a running total read at one week, a rate never summed."""
+
+    metric: str
+    measure: SeriesMeasure
+    filters: dict[str, str | int | list[str | int]] = Field(default_factory=dict)
+    location_dimension: str | None = None
+    place_coverage: str | None = None
+    time_dimension: str
+    case_status: str | None = None
+    case_definition: str | None = None
+    week_dimension: str | None = None
+    age_dimension: str | None = None
+
+    def bind(self, label: str, dimension: str | None) -> Series:
+        """The series for one publisher label: the template with `dimension` filtered to exactly that label."""
+        fields = self.model_dump()
+        if dimension is not None:
+            fields["filters"] = {**self.filters, dimension: label}
+        return Series(condition=label, label=label, **fields)
+
+
 class SemanticModel(_Strict):
     dataset: str
     version: str
@@ -752,6 +907,8 @@ class SemanticModel(_Strict):
     measures: list[Measure]
     metrics: list[Metric]
     series: list[Series] = Field(default_factory=list)
+    # Templates for any catalogued condition label (catalog conditions.labels), pinned on conditions.dimension.
+    generic_series: list[GenericSeries] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _rules(self) -> SemanticModel:
@@ -795,7 +952,8 @@ class SemanticModel(_Strict):
                         raise ValueError(f"metric {metric.name} uncertainty names unknown measure {b}")
         dims = {d.name: d for d in self.dimensions}
         metrics = {m.name: m for m in self.metrics}
-        for ser in self.series:
+        templates = [g.bind("(any catalogued condition)", None) for g in self.generic_series]
+        for ser in [*self.series, *templates]:
             met = metrics.get(ser.metric)
             if met is None:
                 raise ValueError(f"series {ser.condition} names unknown metric {ser.metric}")
@@ -858,6 +1016,51 @@ class Dataset:
     @property
     def id(self) -> str:
         return self.entry.id
+
+    @property
+    def condition_labels(self) -> list[str]:
+        """The publisher's own condition labels, as catalogued."""
+        return list(self.entry.conditions.labels)
+
+    def labels_for(self, text: str) -> list[str]:
+        """Every catalogued label `text` names, exactly or through a declared alias, as the publisher writes them.
+
+        Labels are compared by spelling only (case, spaces and punctuation ignored), so a condition the publisher
+        spells two ways in different years ("Hepatitis B, acute" and "Hepatitis, B, acute") returns both labels.
+        Each stays its own series: the variants are never merged or dropped (hard rule 2)."""
+        labels = self.entry.conditions.labels
+        key = spelling_key(text)
+        targets = {key} | {
+            spelling_key(a.label) for a in self.entry.conditions.aliases if spelling_key(a.alias) == key
+        }
+        return [x for x in labels if spelling_key(x) in targets]
+
+    def not_a_human_case_count(self, label: str) -> str | None:
+        """Why this label's counts are not cases in people (so no rate per 100,000 people), or None."""
+        return self.entry.conditions.not_a_human_case_count.get(label)
+
+    def condition_series(self, label: str) -> list[Series]:
+        """Series for one catalogued label: the generic templates pinned to it, or, for a dataset that is one
+        condition throughout (no condition dimension), its own named series."""
+        if label not in self.entry.conditions.labels:
+            raise KeyError(label)
+        dim = self.entry.conditions.dimension
+        if dim is None:
+            return list(self.semantic.series)
+        return [g.bind(label, dim) for g in self.semantic.generic_series]
+
+
+def spelling_key(text: str) -> str:
+    """A label reduced to its letters and digits, lower case: two labels with the same key are the same words
+    spelled differently ("Hepatitis, B, acute" = "Hepatitis B, acute"; "SalmonellaParatyphi infection" = "Salmonella
+    Paratyphi infection"). Used to find every spelling, never to merge them."""
+    return re.sub(r"[^a-z0-9]+", "", str(text).lower())
+
+
+def norm_label(text: str) -> str:
+    """A label compared ignoring case, punctuation and repeated spaces ("Jamestown Canyon  virus" = "jamestown
+    canyon virus")."""
+    return re.sub(r"[^a-z0-9]+", " ", str(text).lower()).strip()
 
 
 @dataclass(frozen=True)
@@ -963,12 +1166,12 @@ def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticMode
     top = _custom(contract.raw.get("customProperties"))
     if "redistribution" in top and bool(top["redistribution"]) != entry.licence.redistribution:
         raise RegistryError(f"{entry.id}: the contract and the catalog disagree on redistribution")
-    if "hosting" in top and top["hosting"] != entry.tier:
+    if "tier" in top and top["tier"] != entry.tier:
         raise RegistryError(
-            f"{entry.id}: the contract says hosting {top['hosting']!r} but the catalog says {entry.tier!r}"
+            f"{entry.id}: the contract says tier {top['tier']!r} but the catalog says {entry.tier!r}"
         )
-    if entry.tier == "private" and top.get("hosting") != "private":
-        raise RegistryError(f"{entry.id}: a private-tier source's contract must say hosting: private too")
+    if entry.tier == "private" and top.get("tier") != "private":
+        raise RegistryError(f"{entry.id}: a private-store source's contract must say tier: private too")
     cols = contract.column_names
     if contract.total_rows:
         check_predicate(contract.total_rows, cols, where=f"{entry.id}: totalRows")
@@ -988,6 +1191,23 @@ def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticMode
     loc = entry.gbd.location_column
     if loc is not None and loc not in cols:
         raise RegistryError(f"{entry.id}: gbd.location_column {loc} is not a contract column")
+    cond = entry.conditions
+    dims = {d.name: d for d in semantic.dimensions}
+    if cond.dimension is not None and (
+        cond.dimension not in dims or dims[cond.dimension].type != "categorical"
+    ):
+        raise RegistryError(
+            f"{entry.id}: conditions.dimension {cond.dimension!r} is not a categorical dimension of the semantic model"
+        )
+    if semantic.generic_series and cond.dimension is None:
+        raise RegistryError(
+            f"{entry.id}: generic_series needs conditions.dimension, the dimension each label is pinned on"
+        )
+    for g in semantic.generic_series:
+        if cond.dimension in g.filters:
+            raise RegistryError(
+                f"{entry.id}: a generic series may not fix {cond.dimension}; the label asked for pins it"
+            )
     for c in contract.columns:
         if c.flag_for is not None and c.flag_for not in cols:
             raise RegistryError(f"{entry.id}: {c.name} flags unknown column {c.flag_for}")
@@ -1004,4 +1224,22 @@ def load_registry(root: Path | None = None) -> Registry:
     for path in sorted(catalog_dir.glob("*.yaml")):
         ds = load_dataset(root, path)
         datasets[ds.id] = ds
+    _check_hosts_agree(datasets.values())
     return Registry(root=root, datasets=datasets)
+
+
+def _check_hosts_agree(datasets: Iterable[Dataset]) -> None:
+    """The access policy is per host (robots.txt, the pace, a block), so every entry on one host must state it alike.
+
+    crawl.py decides browser and portal per dataset (by its URLs), but whether robots.txt binds is a property of
+    the host: two entries on one host that disagree on `government_host` would leave it to file order.
+    """
+    seen: dict[str, tuple[str, bool]] = {}
+    for ds in datasets:
+        s = ds.entry.source
+        first = seen.setdefault(s.host, (ds.id, s.government_host))
+        if first[1] != s.government_host:
+            raise RegistryError(
+                f"{ds.id} and {first[0]} are both on {s.host} but disagree on government_host; the access policy "
+                "is per host, so they must agree"
+            )

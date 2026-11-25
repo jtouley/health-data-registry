@@ -381,7 +381,7 @@ customProperties:
     per row
 - property: redistribution
   value: false
-- property: hosting
+- property: tier
   value: private
 - property: attribution
   value: Abstracts published in International Journal of Infectious Diseases; metadata from Crossref, OpenAlex and

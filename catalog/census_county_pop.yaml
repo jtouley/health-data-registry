@@ -38,6 +38,13 @@ caveats:
   - "The national figure is the sum of the 51 state rows (checked 2026-11-24 to equal the Census national estimate in NST-EST2025-ALLDATA for 2020-2025)."
   - "Connecticut is shown by its nine planning regions, not its eight former counties, for every year 2020-2025."
   - "Surveillance counts are by MMWR year and these estimates are for July 1 of the calendar year; the two years align closely but not exactly."
+conditions:
+  dimension: null
+  # Provenance: the contract's idDimensions (condition null).
+  source: "Population counts only; this source has no conditions."
+  labels: []
+  aliases: []
 contract: contracts/census_county_pop.odcs.yaml
 semantic_model: semantic/census_county_pop.yaml
 status: draft
+hosting: public
