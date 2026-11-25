@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -402,14 +403,15 @@ def test_obtain_liveReadPastItsBudget_plainRefusal(
 
     def slow(url: str) -> RawFetch:
         seen.append(deadline.remaining())
+        time.sleep(0.06)  # past this read's own budget
         raise deadline.DeadlineExceeded()
 
-    monkeypatch.setattr(live, "LIVE_READ_BUDGET_S", 5.0)
+    monkeypatch.setattr(live, "LIVE_READ_BUDGET_S", 0.05)
     eng = Engine(registry=load_registry(ROOT), lake=tmp_path, hub=None, fetch_at_run_time=True, getter=slow)
     with deadline.call_deadline(outer_s) if outer_s else nullcontext(), pytest.raises(QueryRefused) as e:
         eng._obtain(ds)
     assert e.value.code == code and "longer than one question" in str(e.value)
-    assert seen and seen[0] is not None and 0 < seen[0] <= 5.0  # read under its own 5 s budget
+    assert seen and seen[0] is not None and 0 < seen[0] <= 0.05  # read under its own budget
 
 
 def test_obtain_hostedCallOutOfTime_keepsItsOwnMessage(

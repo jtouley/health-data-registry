@@ -7,6 +7,7 @@ so a clinician (or a grader) can check the number without trusting the model tha
 from __future__ import annotations
 
 import threading
+import time
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
@@ -608,14 +609,16 @@ class Engine:
         bound: AbstractContextManager[None] = (
             nullcontext() if ds.entry.source.browser else deadline.call_deadline(LIVE_READ_BUDGET_S)
         )
+        own_end = time.monotonic() + LIVE_READ_BUDGET_S
         try:
             with bound:
                 self._live[ds.id] = fetch_live(ds, get)
         except DeadlineExceeded as e:
             left = deadline.remaining()
-            if left is not None and left <= 0:
+            hosted_spent = left is not None and left <= 0
+            if ds.entry.source.browser or hosted_spent or time.monotonic() < own_end:
                 raise  # the hosted call's budget ran out: its own plain message, not "unreachable"
-            raise live_refusal(ds, e) from e
+            raise live_refusal(ds, e) from e  # this read's own budget ran out
         except Exception as e:  # noqa: BLE001 - any publisher failure becomes one plain refusal
             raise live_refusal(ds, e) from e
         return True
