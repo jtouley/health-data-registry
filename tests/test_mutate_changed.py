@@ -88,11 +88,21 @@ def test_list_json_of_nothing_is_an_empty_array(mc: ModuleType) -> None:
         "health_data_registry",
         "health_data_registry..tools",
         "health_data_registry.tools ",
+        "scripts.mutate_changed",
+        "scripts.branch_hygiene.x",
     ],
 )
 def test_a_name_that_is_not_a_plain_module_is_refused(mc: ModuleType, name: str) -> None:
     with pytest.raises(ValueError, match="not a plain module name"):
         mc.list_json([name])
+
+
+def test_the_branch_hygiene_script_is_mutated(mc: ModuleType) -> None:
+    assert mc._module("scripts/branch_hygiene.py") == "scripts.branch_hygiene"
+    # Not list_json on the real file: inside mutmut's sandbox the file is the mutated copy, which shards differently.
+    assert mc.MODULE_NAME.fullmatch("scripts.branch_hygiene")
+    assert mc.module_path("scripts.branch_hygiene") == mc.ROOT / "scripts" / "branch_hygiene.py"
+    assert "scripts/branch_hygiene.py" in mc.PACKAGE_DIRS
 
 
 @reads_real_sources
@@ -290,7 +300,7 @@ def test_aggregate_mode_needs_expect(mc: ModuleType, tmp_path: Path) -> None:
 def test_module_mode_with_nothing_to_mutate_passes(
     mc: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(mc, "run_mutmut", lambda mods: mc.ShardResult(modules=mods))
+    monkeypatch.setattr(mc, "run_mutmut", lambda mods, *_: mc.ShardResult(modules=mods))
     report = tmp_path / "r.json"
     assert mc.main(["--module", "health_data_registry.tools", "--report", str(report)]) == 0
     assert "nothing to mutate" in capsys.readouterr().out
@@ -300,10 +310,11 @@ def test_module_mode_with_nothing_to_mutate_passes(
 def test_module_mode_fails_a_failed_baseline(
     mc: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(mc, "run_mutmut", lambda mods: mc.ShardResult(modules=mods, baseline_ok=False))
+    monkeypatch.setattr(mc, "run_mutmut", lambda mods, *_: mc.ShardResult(modules=mods, baseline_ok=False))
     assert mc.main(["--module", "health_data_registry.tools", "--report", str(tmp_path / "r.json")]) == 1
 
 
+@reads_real_sources  # splits a real module, which mutants/ holds trampolined
 def test_local_mode_applies_the_same_rule(mc: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     # A changed module with nothing to mutate passes locally, as its shard does in CI.
     monkeypatch.setattr(mc, "changed_modules", lambda base: ["health_data_registry.tools"])
@@ -311,9 +322,9 @@ def test_local_mode_applies_the_same_rule(mc: ModuleType, monkeypatch: pytest.Mo
     # One shard whatever tools.py holds: inside mutmut's mutants/ tree this test reads the mutated tools.py, whose
     # trampolines would otherwise split into more shards than one CI matrix runs.
     monkeypatch.setattr(mc, "SHARD_TARGET_BY_MODULE", {"health_data_registry.tools": 10**9})
-    monkeypatch.setattr(mc, "run_mutmut", lambda mods: mc.ShardResult(modules=mods))
+    monkeypatch.setattr(mc, "run_mutmut", lambda mods, *_: mc.ShardResult(modules=mods))
     assert mc.main([]) == 0
-    monkeypatch.setattr(mc, "run_mutmut", lambda mods: mc.ShardResult(modules=mods, baseline_ok=False))
+    monkeypatch.setattr(mc, "run_mutmut", lambda mods, *_: mc.ShardResult(modules=mods, baseline_ok=False))
     assert mc.main([]) == 1
 
 
@@ -772,11 +783,16 @@ def test_an_expect_list_mixing_two_splits_of_a_module_fails(mc: ModuleType) -> N
     assert mc.split_gaps([f"{A}#1of2@{'a' * 12}", f"{A}#2of2@{'a' * 12}"]) == []
 
 
+def _jobs() -> tuple[str, str]:
+    wf = (ROOT / ".github" / "workflows" / "mutation.yml").read_text(encoding="utf-8")
+    list_job = wf.split("\n  plan:", 1)[1].split("\n  stats:", 1)[0]
+    shard_job = wf.split("\n  shard:", 1)[1].split("\n  result:", 1)[0]
+    return list_job, shard_job
+
+
 @reads_real_sources  # .github/ is not copied into mutants/
 def test_the_list_job_splits_with_the_shards_python() -> None:
-    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    list_job = ci.split("  mutation-list:", 1)[1].split("\n  mutation:", 1)[0]
-    shard_job = ci.split("\n  mutation:", 1)[1].split("\n  mutation-aggregate:", 1)[0]
+    list_job, shard_job = _jobs()
     pin = 'python-version: "3.12"'
     assert pin in list_job and pin in shard_job
     assert "python3 scripts/mutate_changed.py" not in list_job
@@ -785,13 +801,18 @@ def test_the_list_job_splits_with_the_shards_python() -> None:
 
 @reads_real_sources  # .github/ is not copied into mutants/
 def test_shards_scope_to_the_lists_merge_base_and_stay_small() -> None:
-    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    list_job = ci.split("  mutation-list:", 1)[1].split("\n  mutation:", 1)[0]
-    shard_job = ci.split("\n  mutation:", 1)[1].split("\n  mutation-aggregate:", 1)[0]
-    assert '--list --base "${merge_base}"' in list_job
-    assert "merge_base: ${{ steps.list.outputs.merge_base }}" in list_job
-    assert '--base "${MERGE_BASE}"' in shard_job and "fetch-depth: 0" in shard_job
-    assert "timeout-minutes: 12\n" in shard_job and "max-parallel: 6\n" in shard_job
+    list_job, shard_job = _jobs()
+    assert '--list --base "${BASE}"' in list_job
+    assert "base: ${{ steps.base.outputs.base }}" in list_job
+    assert "BASE: ${{ needs.plan.outputs.base }}" in shard_job
+    assert '--base "${BASE}"' in shard_job and "fetch-depth: 0" in shard_job
+    assert "max-parallel: 6\n" in shard_job
+    assert "timeout-minutes: 60\n" in shard_job  # nightly: no time pressure, but a hard limit
+    # Stats from this run's own commit (the stats job), never a cache from another commit.
+    assert "needs: [plan, stats]" in shard_job and "name: mutmut-stats" in shard_job
+    assert "actions/cache" not in shard_job
+    assert "--stats .mutmut-cache/stats.json" in shard_job
+    assert "--budget" not in shard_job and "--require-stats" not in shard_job  # nothing defers
 
 
 # Diff scope: only the functions a change touches -----------------------------------------------------------
@@ -1176,3 +1197,86 @@ def test_tests_reaching_follows_files_loaded_by_path(tmp_path: Path, monkeypatch
     got = mc.tests_reaching(["health_data_registry.naming"], tmp_path)
     assert got == ["tests/test_gen.py", "tests/test_script.py"]
     assert mc.tests_reaching(["health_data_registry.other"], tmp_path) == []
+
+
+# Warm stats ------------------------------------------------------------------------------------------------
+
+
+def test_warm_stats_recollects_only_the_tests_of_changed_functions_and_files(mc: ModuleType) -> None:
+    tests = ["tests/test_a.py::t1", "tests/test_b.py::t2", "tests/test_b.py::t3", "tests/test_c.py::t4"]
+    stats = {
+        "tests_by_mangled_function_name": {
+            f"{A}.x_f": ["tests/test_a.py::t1", "tests/test_b.py::t2"],
+            f"{A}.x_g": ["tests/test_b.py::t3"],
+            f"{B}.x_h": ["tests/test_c.py::t4", "tests/test_a.py::t1"],
+        },
+        "duration_by_test": {t: 0.1 for t in [*tests, "tests/test_d.py::t5"]},
+    }
+    refresh = mc.warm_stats(stats, {f"{A}.x_f", f"{A}.x_new"}, {"tests/test_d.py"})
+    # x_f's tests, and every test of a changed test file; x_new has none yet (its caller x_f's tests reach it).
+    assert refresh == {"tests/test_a.py::t1", "tests/test_b.py::t2", "tests/test_d.py::t5"}
+    assert set(stats["duration_by_test"]) == {"tests/test_b.py::t3", "tests/test_c.py::t4"}
+    assert stats["tests_by_mangled_function_name"] == {
+        f"{A}.x_f": [],
+        f"{A}.x_g": ["tests/test_b.py::t3"],
+        f"{B}.x_h": ["tests/test_c.py::t4"],
+    }
+
+
+def test_a_shard_with_main_stats_starts_warm(
+    mc: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _scoped_shards(mc, monkeypatch, _source(2, 10))
+    monkeypatch.setattr(mc, "ROOT", tmp_path)
+    monkeypatch.setattr(mc, "module_path", lambda module: tmp_path / "a.py")
+    monkeypatch.setattr(mc, "changed_modules", lambda base: [A])
+    monkeypatch.setattr(mc, "set_scope", lambda mods, base: mc.SCOPE.update({A: frozenset({"x_f1"})}))
+    monkeypatch.setattr(mc, "changed_test_files", lambda base: set())
+    mc.SCOPE[A] = frozenset({"x_f1"})
+    (shard,) = mc.list_shards([A])
+    stats = tmp_path / "main-stats.json"
+    main_stats = {
+        "tests_by_mangled_function_name": {f"{A}.x_f1": ["tests/t.py::a"]},
+        "duration_by_test": {"tests/t.py::a": 1.0, "tests/t.py::b": 1.0},
+    }
+    stats.write_text(json.dumps(main_stats), encoding="utf-8")
+    seen: dict[str, Any] = {}
+
+    def fake_run(cmd: list[str], **kwargs: Any) -> Any:
+        if cmd[1] == "run":
+            seen.update(json.loads((tmp_path / "mutants" / mc.STATS_FILE).read_text(encoding="utf-8")))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(mc.subprocess, "run", fake_run)
+    mc.run_mutmut([shard], stats, "origin/main")
+    assert seen["duration_by_test"] == {
+        "tests/t.py::b": 1.0
+    }  # the changed function's test is collected again
+
+
+def test_collect_stats_keeps_only_a_finished_stats_pass(
+    mc: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(mc, "ROOT", tmp_path)
+    good = {"tests_by_mangled_function_name": {"m.x_f": ["t"]}, "duration_by_test": {"t": 1.0}}
+
+    def fake_run(stderr: str, data: dict[str, Any] | None) -> Any:
+        def run(cmd: list[str], **kwargs: Any) -> Any:
+            assert cmd == ["mutmut", "run", mc.NO_MUTANT]
+            if data is not None:
+                (tmp_path / "mutants").mkdir(exist_ok=True)
+                (tmp_path / "mutants" / mc.STATS_FILE).write_text(json.dumps(data), encoding="utf-8")
+            return SimpleNamespace(returncode=1, stdout="", stderr=stderr)
+
+        return run
+
+    out = tmp_path / "out" / "stats.json"
+    monkeypatch.setattr(mc.subprocess, "run", fake_run(mc.NOTHING_MATCHES, good))
+    assert mc.main(["--collect-stats", str(out)]) == 0
+    assert json.loads(out.read_text(encoding="utf-8")) == good
+    out.unlink()
+    monkeypatch.setattr(mc.subprocess, "run", fake_run("failed to collect stats", good))  # the pass failed
+    assert mc.collect_stats(out) == 1 and not out.exists()
+    empty = {"tests_by_mangled_function_name": {}, "duration_by_test": {}}
+    monkeypatch.setattr(mc.subprocess, "run", fake_run(mc.NOTHING_MATCHES, empty))
+    assert mc.collect_stats(out) == 1 and not out.exists()
