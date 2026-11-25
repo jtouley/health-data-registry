@@ -221,43 +221,45 @@ customProperties:
     value:
       - id: survey_type_comparability
         question: "survey_type differs by state and year (census, sample, voluntary response, mixed public/private). Can a sample-based state's estimate be set beside a census state's? CDC's methods must say so; until then answers show each row's survey type and never rank states without it."
-        columns: [survey_type, coverage_estimate]
-        answeredBy: publisher_codebook
+        status: open
+        changesNumbers: true
       - id: footnote_symbols
         question: "The footnote key (footnoteKey) gives the symbols' meanings, separately for coverage and exemption rows. Published symbols outside the key (≥, >=, and the replacement character � where a symbol was garbled) have no stated meaning. A maintainer reads CDC's key and decides how each symbol is shown; nothing reads them into a number."
-        columns: [foot_notes]
-        answeredBy: publisher_codebook
+        status: open
+        changesNumbers: true
       - id: exemption_count
         question: "Is number_of_exemptions a count of children with any exemption, or of exemptions by type (medical, non-medical), and does a state row carry its own denominator (population_sample_size)? Footnote § says some states counted per vaccine, so a child can be counted more than once there."
-        columns: [number_of_exemptions, population_sample_size]
-        answeredBy: publisher_codebook
+        status: open
+        changesNumbers: true
       - id: national_row
         question: "What is the 'United States' row: a pooled estimate over reporting states, weighted by enrolment, or something else? The 'U.S. Median' row is labelled a median. Neither is ever computed here."
-        columns: [geography]
-        answeredBy: publisher_codebook
+        status: open
+        changesNumbers: true
       - id: dose_blank
         question: "MMR, DTaP, polio and hepatitis B rows have an empty dose; varicella has '1 Dose', '2 Doses' and 'UTD' (each 'or disease history'). Does an empty dose mean the state's school-entry requirement (e.g. 2 doses of MMR), and did that change by state or year? Codebook only."
-        columns: [dose, vaccine]
-        answeredBy: publisher_codebook
+        status: open
+        changesNumbers: true
       - id: mmr_pac
         question: "What is 'MMR (PAC)' (vaccine and dose both 'MMR (PAC)', 480 rows) and how does it differ from MMR? Not defined in the dataset metadata; not read until a maintainer declares it."
-        columns: [vaccine, dose]
-        answeredBy: publisher_codebook
+        status: open
+        changesNumbers: true
       - id: no_intervals
         question: "CDC publishes no confidence interval for these percents; the metrics say so. Does CDC publish standard errors for sample-based states elsewhere (SchoolVaxView methods)? None is computed here."
-        columns: [coverage_estimate]
-        answeredBy: publisher_codebook
+        status: open
+        changesNumbers: false
       - id: estimate_codes
         question: "NR (25 rows) and Nreq (1 row) are published in the estimate column but not defined; NA and NReq are. Is Nreq the same as NReq, and what is NR (not reported)? Until answered each is stored as no value with its code kept as published."
-        columns: [coverage_estimate, estimate_as_published]
-        answeredBy: publisher_codebook
+        status: open
+        changesNumbers: false
       - id: grain_unique
         question: "Is vaccine x dose x geography x school year unique? It was not checked over the whole table, so no primary key is declared yet."
-        answeredBy: maintainer_review
+        status: open
+        changesNumbers: true
       - id: licence_wording
         question: "Licence: the Socrata metadata has no licence field; public-domain-us-federal is assumed from its being a CDC work (17 USC 105). Maintainer to confirm the wording before the first public release (the catalog says hosting: public, as every catalogued CDC source does, and the contract stays draft until then)."
-        answeredBy: maintainer_review
+        status: open
+        changesNumbers: false
       - id: gbd_mapping
         question: "Review the GBD cause proposals in gbdCauseProposals (vaccine to cause). None is asserted until a maintainer approves it."
-        columns: [vaccine]
-        answeredBy: maintainer_review
+        status: open
+        changesNumbers: false
