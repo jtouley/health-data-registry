@@ -1,5 +1,5 @@
 """Command line: serve [--http], refresh, fetch, export-public, check-contracts, validate, eval,
-publication-outlook, sitemaps snapshot, harvest-doi, and the analysis tools."""
+publication-outlook, choose-output-format, sitemaps snapshot, harvest-doi, and the analysis tools."""
 
 from __future__ import annotations
 
@@ -49,8 +49,16 @@ def validate(registry: Registry, lake: Path) -> int:
         print(
             f"ok   {ds.id}: contract {ds.contract.version} ({ds.entry.status}), {len(ds.semantic.metrics)} metrics"
         )
-    engine = Engine(registry=registry, lake=lake, hub=None, fetch_at_run_time=False)
+    from health_data_registry.format_choice import RubricError, load_rubric
+
     failed = 0
+    try:
+        rubric = load_rubric()
+        print(f"ok   format rubric {rubric.version} ({rubric.status}), sha256 {rubric.sha256[:12]}")
+    except RubricError as e:
+        failed += 1
+        print(f"FAIL format rubric: {e}", file=sys.stderr)
+    engine = Engine(registry=registry, lake=lake, hub=None, fetch_at_run_time=False)
     for ds_id, extra in unlisted_condition_labels(registry, engine).items():
         if extra is None:
             print(f"skip {ds_id}: no local snapshot, so its condition labels weren't checked")
@@ -295,6 +303,28 @@ def publication_outlook(a: argparse.Namespace) -> int:
     return 0 if out.startswith("conference,") else 1  # a plain-words refusal is not a table
 
 
+def choose_output_format(a: argparse.Namespace) -> int:
+    import json
+
+    from health_data_registry.format_choice import choose_output_format as choose
+
+    out = choose(
+        contribution=a.contribution,
+        data_maturity=a.data_maturity,
+        worked_examples=a.worked_examples,
+        needs_methods_section={"yes": True, "no": False}.get(a.needs_methods_section),
+        weeks_to_deadline=a.weeks_to_deadline,
+        conference=a.conference,
+        priorities=a.priorities,
+        fmt="json" if a.json else "csv",
+    )
+    if isinstance(out, dict):
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+        return 1 if "refused" in out else 0
+    print(out.rstrip("\n"))
+    return 0 if out.startswith("row,") else 1  # a plain-words refusal is not a table
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="health-data-registry", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -357,6 +387,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     po.add_argument("--condition", default=None)
     po.add_argument("--geography", default=None)
     po.add_argument("--json", action="store_true", help="JSON instead of CSV")
+    co = sub.add_parser(
+        "choose-output-format",
+        help="which output fits a project now (abstract, letter, manuscript, viewpoint), with probabilities",
+    )
+    co.add_argument("--contribution", required=True, help="empirical, methods_standard, argument or case")
+    co.add_argument(
+        "--data-maturity", required=True, help="idea, preliminary_counts, frozen_dataset or adjudicated"
+    )
+    co.add_argument("--worked-examples", type=int, required=True, help="how many worked examples, 0 or more")
+    co.add_argument("--needs-methods-section", required=True, choices=["yes", "no"])
+    co.add_argument(
+        "--weeks-to-deadline", type=int, default=None, help="weeks before the named conference's deadline"
+    )
+    co.add_argument("--conference", default=None, help='the target meeting, e.g. "IDWeek"')
+    co.add_argument(
+        "--priority",
+        dest="priorities",
+        action="append",
+        default=None,
+        help="speed, citable_record, reach or effort; repeat, most important first",
+    )
+    co.add_argument("--json", action="store_true", help="JSON instead of CSV")
     from health_data_registry import sitemaps
 
     sm = sub.add_parser("sitemaps", help="publisher sitemaps the crawlers start from")
@@ -389,6 +441,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     a = p.parse_args(argv)
     if a.cmd == "publication-outlook":  # reads only the packaged base rates, not the registry
         return publication_outlook(a)
+    if a.cmd == "choose-output-format":  # reads only the packaged rubric and base rates
+        return choose_output_format(a)
     if a.cmd == "gate":
         return gate(a)
 

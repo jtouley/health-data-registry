@@ -104,6 +104,25 @@ What we end with: the piece I asked for (a one-page pitch, an IDWeek abstract or
 Rules for this whole conversation: cite every number to the tool it came from, with its source and date; never fill a number from memory or the news; show uncertainty ranges where GBD gives them and say that observed counts have none; flag provisional, suppressed or partial-geography numbers; when an answer comes in pages, fetch every page and save all the rows to one CSV file or artifact rather than pasting them into the chat; and never ask me for, or accept, patient information.
 ```
 
+## Which format should I aim for?
+
+*`/choose-format` in Claude Code.* Asks five short questions about your project and returns which output fits now (abstract or poster, research letter, full manuscript or viewpoint), how settled that is, and what would change it.
+
+```text
+Help me decide which output to aim for with this project: [project]
+Don't guess my answers from that sentence: ask me each question below, one at a time, and wait for my answer.
+
+1. Ask what kind of work it is, and offer exactly these answers: empirical (new numbers from data), methods_standard (a method or standard others can reuse), argument (a position, not new data) or case (one case or a small series).
+2. Ask how far along the data is: idea, preliminary_counts, frozen_dataset or adjudicated (frozen, with clinician adjudication done).
+3. Ask how many worked examples the piece needs to show in full, and whether a reader needs a methods section to trust the numbers (yes or no).
+4. Ask whether I have a target conference and how many weeks remain before its deadline, and which matters most to me, in order, from: speed, citable_record, reach, effort. Both are optional.
+5. Run choose_output_format with my answers. Show the chosen format, each format's probability of ranking first, the confidence and the review advice. Say that confidence means how settled the choice is, not whether it is right, and that this is a decision under my stated priorities, not a prediction that the work will be published. If it says too close to call, show what would change it first.
+6. List the criteria it couldn't use and why, and the rules still awaiting the maintainer's review. If I named a conference, run get_publication_outlook for it and show how often its abstracts became full papers.
+7. Never use this to rank ideas, fellows or projects. Suggest I take the result to my mentor, especially if the advice says to discuss it.
+
+Rules for this whole conversation: cite every number to the tool it came from, with its source and date; never fill a number from memory or the news; show uncertainty ranges where GBD gives them and say that observed counts have none; flag provisional, suppressed or partial-geography numbers; when an answer comes in pages, fetch every page and save all the rows to one CSV file or artifact rather than pasting them into the chat; and never ask me for, or accept, patient information.
+```
+
 ## Something's wrong
 
 *`/help-me-fix-it` in Claude Code.* Asks what you see, matches it to known problems, and gives the fix one step at a time.

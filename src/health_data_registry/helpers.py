@@ -321,6 +321,58 @@ WORKFLOWS: tuple[Workflow, ...] = (
         artifact="pitch",
     ),
     Workflow(
+        name="choose-format",
+        title="Which format should I aim for?",
+        description=(
+            "Asks five short questions about your project and returns which output fits now (abstract or poster, "
+            "research letter, full manuscript or viewpoint), how settled that is, and what would change it."
+        ),
+        argument_hint="[your project in a sentence]",
+        args=("project",),
+        intro=(
+            "Help me decide which output to aim for with this project: {project}\n"
+            "Don't guess my answers from that sentence: ask me each question below, one at a time, and wait for "
+            "my answer."
+        ),
+        steps=(
+            Step(
+                "Ask what kind of work it is, and offer exactly these answers: empirical (new numbers from data), "
+                "methods_standard (a method or standard others can reuse), argument (a position, not new data) or "
+                "case (one case or a small series)."
+            ),
+            Step(
+                "Ask how far along the data is: idea, preliminary_counts, frozen_dataset or adjudicated (frozen, "
+                "with clinician adjudication done)."
+            ),
+            Step(
+                "Ask how many worked examples the piece needs to show in full, and whether a reader needs a "
+                "methods section to trust the numbers (yes or no)."
+            ),
+            Step(
+                "Ask whether I have a target conference and how many weeks remain before its deadline, and which "
+                "matters most to me, in order, from: speed, citable_record, reach, effort. Both are optional."
+            ),
+            Step(
+                "Run choose_output_format with my answers. Show the chosen format, each format's probability of "
+                "ranking first, the confidence and the review advice. Say that confidence means how settled the "
+                "choice is, not whether it is right, and that this is a decision under my stated priorities, not "
+                "a prediction that the work will be published. If it says too close to call, show what would "
+                "change it first.",
+                ("choose_output_format",),
+            ),
+            Step(
+                "List the criteria it couldn't use and why, and the rules still awaiting the maintainer's review. "
+                "If I named a conference, run get_publication_outlook for it and show how often its abstracts "
+                "became full papers.",
+                ("get_publication_outlook",),
+            ),
+            Step(
+                "Never use this to rank ideas, fellows or projects. Suggest I take the result to my mentor, "
+                "especially if the advice says to discuss it."
+            ),
+        ),
+    ),
+    Workflow(
         name="help-me-fix-it",
         title="Something's wrong",
         description="Asks what you see, matches it to known problems, and gives the fix one step at a time.",
@@ -452,7 +504,9 @@ PUBLICATION_OUTLOOK = (
     "How to judge whether a question could become a publishable piece, and where.\n\n"
     "There is no agreed method yet. Until there is, say so plainly, and only list what is already published on "
     "the question (title, year, venue, link) from PubMed and find_prior_work. For how often presented abstracts "
-    "become papers, use get_publication_outlook.\n"
+    "become papers, use get_publication_outlook. For which format to aim for (abstract or poster, research "
+    "letter, full manuscript or viewpoint), use choose_output_format: ask the clinician each answer, never infer "
+    "it, and present the result as a decision under their priorities, not a prediction of publication.\n"
 )
 
 RUBRIC = (

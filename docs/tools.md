@@ -23,6 +23,7 @@ Every tool only reads data. None of them can change anything, upload anything or
 | [`list_caveats`](#list_caveats) | What can't this data tell me? |
 | [`find_prior_work`](#find_prior_work) | Has this been looked at before? (coming) |
 | [`get_publication_outlook`](#get_publication_outlook) | How often do abstracts at this conference become papers? |
+| [`choose_output_format`](#choose_output_format) | Which format should I aim for with this project? |
 | [`compare_rates`](#compare_rates) | Is it higher here than there, or now than then? |
 | [`get_trend`](#get_trend) | Is it rising? |
 | [`age_adjust`](#age_adjust) | Does age explain the difference? |
@@ -50,6 +51,7 @@ The same list, as the server itself describes each tool to Claude:
 | `list_caveats` | What the data can't tell you: geography traps, suppression, provisional years, unreviewed contracts and facts not yet confirmed with the publisher. |
 | `find_prior_work` | Conference abstracts, case reports and health department reports on a condition, with the datasets each used. (The index is not built yet; the tool says so rather than guessing.) |
 | `get_publication_outlook` | How often presented abstracts at a conference (e.g. "IDWeek", "CROI") became full papers: one row per stage from idea to paper, each with its source, n and 95% interval, or "unknown". |
+| `choose_output_format` | Which output fits this project now: conference abstract or poster, research letter or brief report, full original manuscript, or viewpoint. |
 | `query_sql` | Escape hatch for questions the other tools don't cover: one read-only SELECT over loaded sources (tables are named by source_id). |
 
 <!-- tools:end -->
@@ -307,6 +309,30 @@ verified data says "unknown" and is never multiplied in. Today only IDWeek has a
 
 **Try:** "How often do IDWeek abstracts become full papers?"
 
+### `choose_output_format`
+
+**Which output fits this project now**: conference abstract or poster, research letter or brief report, full
+original manuscript, or viewpoint. It is a decision under your stated priorities, never a prediction that the
+work will be published, and never a ranking of ideas or people. See
+[publication-outlook.md](publication-outlook.md#choosing-an-output-format) for the method and sources.
+
+| Parameter | Required | What it does |
+|---|---|---|
+| `contribution` | yes | `empirical`, `methods_standard`, `argument` or `case` |
+| `data_maturity` | yes | `idea`, `preliminary_counts`, `frozen_dataset` or `adjudicated` |
+| `worked_examples` | yes | How many worked examples the piece shows in full |
+| `needs_methods_section` | yes | `true` if a reader needs a methods section to trust the numbers |
+| `conference` | no | The target meeting, e.g. `IDWeek` |
+| `weeks_to_deadline` | no | Weeks before that meeting's deadline; not used without a conference |
+| `priorities` | no | From `speed`, `citable_record`, `reach`, `effort`, most important first; without them every criterion counts the same |
+
+**Returns:** the `choice`, each format's probability of ranking first, a `confidence` (how settled, not whether
+right), `review` advice (act, discuss with your mentor, or too close to call), the `flip_condition` (what would
+change it), the criteria it couldn't use and why, and one Score per criterion and format with its level, legend,
+weight and source. Every answer carries the rubric's version and sha256.
+
+**Try:** "Which format should I aim for?" (the helper asks the questions one at a time).
+
 ## Analysis tools
 
 Each returns the number, its 95% interval, the method in one plain sentence (in the notes and the `computed`
@@ -451,6 +477,7 @@ is added; if your Claude app doesn't show them, copy them from the [helpers page
 | `find_opportunities` (`/find-opportunities`) | For a fellow without an area yet, looks for signals in the public data worth a study and returns a short opportunity brief |
 | `refine_hypothesis` (`/refine-hypothesis`) | States the hypothesis, checks the data and whether it's new, names the confounders and what the data can't say, and revises until it's test-ready, needs revising, or should be dropped |
 | `build_story` (`/build-story`), "Write my pitch or abstract" | Turns a refined hypothesis into a one-page pitch, an IDWeek abstract or a poster outline; for a case report, writes only the population-context paragraph |
+| `choose_format` (`/choose-format`), "Which format should I aim for?" | Asks five short questions about your project and returns which output fits now (abstract or poster, research letter, full manuscript or viewpoint), how settled that is, and what would change it |
 | `help_me_fix_it` (`/help-me-fix-it`) | Asks what you see, matches it to known problems, and gives the fix one step at a time |
 | `walk_me_through_install` | Step-by-step help installing a tool in the Claude Desktop app, including this one; never asks for a password |
 | `set_up_my_project` | Writes the Project instructions to paste, with the guardrails, and says where to paste them |

@@ -1,0 +1,362 @@
+# The output-format rubric for choose_output_format (docs/publication-outlook.md, "Choosing an output format").
+#
+# Reviewed like a contract: status stays draft until a maintainer reviews it, and every weight, rule, limit and
+# threshold names its basis. A basis is a reporting guideline, a venue's own author instructions, a published
+# study or method, or a maintainer's declaration (hard rule 1). A declaration that is still only proposed says
+# so (status: proposed) and the tool shows it as "declared, pending review". Anything without a basis is an open
+# question below, never a guess. Rates are never typed here: an evidence-backed rule reads them from
+# publication_base_rates.yaml with their n, k and source. Venue limits were read from each venue's own page on
+# the date in `checked`; they are never scraped at run time.
+schema_version: 1
+version: 0.1.0
+status: draft
+reviewed_by: none
+
+sources:
+  strobe_2007:
+    citation: >-
+      von Elm E, Altman DG, Egger M, Pocock SJ, Gotzsche PC, Vandenbroucke JP; STROBE Initiative. The
+      Strengthening the Reporting of Observational Studies in Epidemiology (STROBE) statement: guidelines for
+      reporting observational studies. Lancet. 2007;370(9596):1453-1457.
+    pmid: "18064739"
+    doi: 10.1016/S0140-6736(07)61602-X
+  record_2015:
+    citation: >-
+      Benchimol EI, Smeeth L, Guttmann A, et al. The REporting of studies Conducted using Observational
+      Routinely-collected health Data (RECORD) statement. PLoS Med. 2015;12(10):e1001885.
+    pmid: "26440803"
+    doi: 10.1371/journal.pmed.1001885
+  ofid_author_guidelines:
+    citation: Open Forum Infectious Diseases, Author guidelines (article types table), Oxford Academic.
+    url: https://academic.oup.com/ofid/pages/General_Instructions
+    checked: "2026-11-25"
+  eid_article_types:
+    citation: Emerging Infectious Diseases, Quick Guide to Article Information (article types), CDC.
+    url: https://wwwnc.cdc.gov/eid/article-types
+    checked: "2026-11-25"
+  dawes_1979:
+    citation: >-
+      Dawes RM. The robust beauty of improper linear models in decision making. Am Psychol. 1979;34(7):571-582.
+    doi: 10.1037/0003-066X.34.7.571
+  barron_barrett_1996:
+    citation: >-
+      Barron FH, Barrett BE. Decision quality using ranked attribute weights. Manage Sci. 1996;42(11):1515-1523.
+    doi: 10.1287/mnsc.42.11.1515
+  typesafe_choice:
+    citation: TypeSafe documentation, the Choice and Score output primitives (answer shape and confidence only).
+    url: https://docs.typesafe.ai
+    checked: "2026-11-25"
+  issue_176:
+    citation: >-
+      Maintainer's specification for choose_output_format, health-data-registry issue 176 and its comments
+      (25 Nov 2026).
+    url: https://github.com/jtouley/health-data-registry/issues/176
+
+# Answers a clinician gives. Structured values only; nothing is read from free text (hard rule 9).
+inputs:
+  contribution:
+    empirical: new numbers from data (counts, rates, trends)
+    methods_standard: a method, standard or way of doing something others can reuse
+    argument: an argument or position, not new data
+    case: one case or a small case series
+  data_maturity:
+    idea: an idea, no counts yet
+    preliminary_counts: preliminary counts that may still change
+    frozen_dataset: a frozen dataset that will not change
+    adjudicated: a frozen dataset with clinician adjudication done
+
+formats:
+  - id: abstract_poster
+    label: conference abstract or poster
+    guideline: the meeting's own abstract instructions
+    venues:
+      - name: IDWeek abstract
+        limits: unknown
+        reason: the meeting's own abstract instructions have not been read and checked yet
+  - id: research_letter
+    label: research letter or brief report
+    guideline: RECORD (routinely collected data) or STROBE, shortened to the venue's limits
+    venues:
+      - {name: EID Research Letter, words: 800, abstract_words: 50, figures_tables: 2, references: 10, source: eid_article_types}
+      - {name: OFID Brief Report, words: 2000, abstract_words: 50, figures_tables: 2, references: 15, source: ofid_author_guidelines}
+  - id: original_manuscript
+    label: full original manuscript
+    guideline: RECORD (routinely collected data) or STROBE
+    venues:
+      - {name: OFID Major Article, words: 3500, abstract_words: 250, figures_tables: 5, references: 50, source: ofid_author_guidelines}
+      - {name: EID Research, words: 3500, abstract_words: 150, figures_tables: as needed, references: 50, source: eid_article_types}
+  - id: viewpoint
+    label: viewpoint or perspective
+    guideline: the journal's own instructions for perspectives
+    venues:
+      - {name: OFID Perspective, words: 1200, abstract_words: 150, figures_tables: 2, references: 20, source: ofid_author_guidelines}
+      - {name: EID Perspective, words: 3500, abstract_words: 150, figures_tables: as needed, references: 50, source: eid_article_types}
+
+# Each criterion gives every format a level from 1 to 5. Levels describe situations, not bare numbers.
+criteria:
+  - id: contribution_fit
+    label: fits this kind of work
+    gate: true # a format at level 1 here is left out before anything is added up
+    legend:
+      1: this format isn't made for this kind of work, so it is left out before scoring
+      2: possible, but the work would have to be reshaped to fit it
+      3: fits part of the work; the rest would be left out
+      4: a usual home for this kind of work
+      5: the format made for this kind of work
+    rule:
+      kind: table
+      input: contribution
+      levels:
+        empirical: {abstract_poster: 4, research_letter: 5, original_manuscript: 5, viewpoint: 1}
+        methods_standard: {abstract_poster: 2, research_letter: 2, original_manuscript: 5, viewpoint: 3}
+        argument: {abstract_poster: 1, research_letter: 1, original_manuscript: 1, viewpoint: 5}
+        case: {abstract_poster: 4, research_letter: 3, original_manuscript: 1, viewpoint: 1}
+    basis:
+      kind: maintainer_declaration
+      status: proposed
+      cites: [ofid_author_guidelines, eid_article_types]
+      text: >-
+        The venues define their article types: research articles and letters report original data, perspectives
+        argue a position. The levels within those types are a proposed declaration. A case report is a format of
+        its own and is not compared here.
+
+  - id: data_readiness
+    label: the data you have now supports it
+    legend:
+      1: the data you have now can't support this format yet
+      2: would need much more data work before writing
+      3: workable, with gaps the piece must state plainly
+      4: the data supports this format, with its limits stated
+      5: the data is exactly what this format needs
+    rule:
+      kind: table
+      input: data_maturity
+      levels:
+        idea: {abstract_poster: 1, research_letter: 1, original_manuscript: 1, viewpoint: 4}
+        preliminary_counts: {abstract_poster: 4, research_letter: 2, original_manuscript: 1, viewpoint: 4}
+        frozen_dataset: {abstract_poster: 5, research_letter: 4, original_manuscript: 4, viewpoint: 4}
+        adjudicated: {abstract_poster: 5, research_letter: 5, original_manuscript: 5, viewpoint: 4}
+    basis:
+      kind: maintainer_declaration
+      status: proposed
+      cites: [strobe_2007, record_2015]
+      text: >-
+        A journal report of observational or routinely collected data gives the final study population and
+        outcome data (STROBE results items 13-16, with RECORD's additions), which needs a dataset that will not
+        change. The levels are a proposed declaration.
+
+  - id: room_for_methods
+    label: room for a methods section
+    legend:
+      1: no room to say how the numbers were made
+      2: room for a few sentences of methods only
+      3: room for the main methods, not the detail
+      4: room enough for what this work needs
+      5: a full methods section, item by item
+    rule:
+      kind: table
+      input: needs_methods_section
+      levels:
+        "true": {abstract_poster: 1, research_letter: 2, original_manuscript: 5, viewpoint: 1}
+        "false": {abstract_poster: 4, research_letter: 4, original_manuscript: 4, viewpoint: 4}
+    basis:
+      kind: maintainer_declaration
+      status: proposed
+      cites: [strobe_2007, record_2015, eid_article_types, ofid_author_guidelines]
+      text: >-
+        STROBE's methods items (4-12) and RECORD's additions to them need space that an 800-word research letter
+        or a perspective does not have; a major article has 3,500 words. The levels are a proposed declaration.
+
+  - id: room_for_examples
+    label: room for the worked examples
+    legend:
+      1: no room for the examples; most would be cut
+      2: room for one or two examples, the rest cut
+      3: room for the examples only in brief
+      4: room for the examples with a table or figure
+      5: room for every example, with tables, figures or a supplement
+    rule:
+      kind: bands
+      input: worked_examples
+      bands:
+        - {min: 0, max: 0, levels: {abstract_poster: 3, research_letter: 3, original_manuscript: 3, viewpoint: 3}}
+        - {min: 1, max: 2, levels: {abstract_poster: 4, research_letter: 5, original_manuscript: 4, viewpoint: 4}}
+        - {min: 3, max: 5, levels: {abstract_poster: 2, research_letter: 3, original_manuscript: 5, viewpoint: 3}}
+        - {min: 6, max: null, levels: {abstract_poster: 1, research_letter: 1, original_manuscript: 5, viewpoint: 2}}
+    basis:
+      kind: maintainer_declaration
+      status: proposed
+      cites: [eid_article_types, ofid_author_guidelines]
+      text: >-
+        The venues' figure and table limits (2 for a research letter, brief report or OFID perspective; 5 or as
+        needed for a research article). The bands and levels are a proposed declaration.
+
+  - id: deadline_fit
+    label: time before the venue's deadline
+    requires: conference # weeks_to_deadline is the deadline of the venue named; with no venue it is not used
+    legend:
+      1: the deadline is this week or next; too little time to write it well
+      2: two or three weeks; tight, possible with a draft in hand
+      3: four weeks or more, or no deadline for this format
+    rule:
+      kind: bands
+      input: weeks_to_deadline
+      bands:
+        - {min: 0, max: 1, levels: {abstract_poster: 1, research_letter: 3, original_manuscript: 3, viewpoint: 3}}
+        - {min: 2, max: 3, levels: {abstract_poster: 2, research_letter: 3, original_manuscript: 3, viewpoint: 3}}
+        - {min: 4, max: null, levels: {abstract_poster: 3, research_letter: 3, original_manuscript: 3, viewpoint: 3}}
+    basis:
+      kind: maintainer_declaration
+      status: proposed
+      cites: [issue_176]
+      text: >-
+        Only a short time before a meeting's abstract deadline counts against the abstract; journals take
+        submissions at any time. Ample time gives no advantage, so leaving this out when no venue is named never
+        removes one format's advantage.
+
+  - id: speed
+    label: how soon something is public
+    priority: speed
+    legend:
+      1: nothing public until more work is done
+      2: a long piece through full peer review, usually several rounds
+      3: a piece of moderate length through peer review
+      4: a short piece through one journal's review
+      5: the shortest route to something public, one short submission
+    rule:
+      kind: fixed
+      levels: {abstract_poster: 5, research_letter: 4, original_manuscript: 2, viewpoint: 4}
+    basis:
+      kind: maintainer_declaration
+      status: proposed
+      cites: [eid_article_types, ofid_author_guidelines]
+      text: >-
+        Shorter article types (by the venues' own word limits) are quicker to write and review. No verified
+        time-to-publication by format exists yet; the levels are a proposed declaration.
+
+  - id: effort
+    label: how much writing it takes
+    priority: effort
+    legend:
+      1: more than a full research article
+      2: about 3,500 words with full methods (OFID Major Article, EID Research)
+      3: about 2,000 words (OFID Brief Report)
+      4: 800 to 1,200 words with up to two tables or figures (EID Research Letter, OFID Perspective)
+      5: a few hundred words and a table or figure
+    rule:
+      kind: fixed
+      levels: {abstract_poster: 5, research_letter: 4, original_manuscript: 2, viewpoint: 4}
+    basis:
+      kind: venue_instructions
+      cites: [eid_article_types, ofid_author_guidelines]
+      text: Levels follow the venues' own word limits, which the legend names.
+
+  - id: citable_record
+    label: leaves a citable, indexed record once accepted
+    priority: citable_record
+    legend:
+      1: nothing citable is left
+      2: a published abstract, findable but rarely indexed or cited as a paper
+      3: a published piece that indexes do not list as research
+      4: an indexed article in a short format
+      5: a peer-reviewed journal article, indexed and citable
+    rule:
+      kind: fixed
+      levels: {abstract_poster: 2, research_letter: 5, original_manuscript: 5, viewpoint: 5}
+      # An accepted abstract may later become a full paper. With the named meeting's verified base rate, that
+      # chance p (Beta(k + 1, n - k + 1)) moves the abstract to level 5 with probability p; without one, it is
+      # named as unknown and the abstract keeps only the record it certainly gives, the same as journal formats
+      # get no credit for an unknown acceptance chance. Never imputed.
+      upside:
+        format: abstract_poster
+        rate: conference_abstract_to_paper
+        level: 5
+    basis:
+      kind: maintainer_declaration
+      status: proposed
+      cites: [issue_176]
+      text: >-
+        Defined by the format itself, as the maintainer specified: whether it yields a citable, indexed record
+        when accepted. The chance of acceptance is a separate criterion.
+
+  - id: acceptance_chance
+    label: chance the venue accepts it
+    rule:
+      kind: unknown
+      reason: no venue's acceptance rate has been verified yet, for any format, so it is not used for any
+    basis:
+      kind: maintainer_declaration
+      status: proposed
+      cites: [issue_176]
+      text: Unknown for every format until venue acceptance rates are verified; never imputed.
+
+  - id: reach
+    label: how many readers it reaches
+    priority: reach
+    rule:
+      kind: unknown
+      reason: no reviewed source compares readership by format, so it is not used for any
+    basis:
+      kind: maintainer_declaration
+      status: proposed
+      cites: [issue_176]
+      text: Left out until a sourced rule exists; never guessed.
+
+weights:
+  default:
+    scheme: unit # every criterion in use counts the same
+    basis:
+      kind: published_method
+      cites: [dawes_1979]
+      text: >-
+        Equal (unit) weights, which predict about as well as fitted weights when the right weights are not known.
+  priorities:
+    scheme: rank_order_centroid # the priorities you name, in order, then the rest tied
+    basis:
+      kind: published_method
+      cites: [barron_barrett_1996]
+      text: >-
+        Rank-order centroid weights from the order of your priorities; criteria you don't name share the
+        remaining ranks equally (each gets the mean of their centroid weights).
+  dirichlet:
+    concentration: 20
+    basis:
+      kind: maintainer_declaration
+      status: proposed
+      cites: [issue_176]
+      text: >-
+        Each draw's weights come from a Dirichlet centred on the declared weights, so the probabilities say how
+        often a format ranks first across reasonable weightings. The concentration (20) is a proposed
+        declaration; see the open questions.
+
+simulation:
+  draws: 10000
+  seed: 0
+  flip_multipliers: {low: 0.25, high: 4.0}
+  basis:
+    kind: maintainer_declaration
+    status: proposed
+    cites: [issue_176]
+    text: >-
+      A fixed seed makes every answer repeatable. The flip condition is the change to one declared weight, between
+      0.25x and 4x, nearest 1x, that would put another format first; it is computed on the declared weights.
+
+review:
+  act: 0.9
+  discuss: 0.67
+  basis:
+    kind: maintainer_declaration
+    status: proposed
+    cites: [issue_176, typesafe_choice]
+    text: >-
+      Draft defaults from the maintainer: act at a top probability of 0.9 or more; discuss with your mentor from
+      0.67; below that, too close to call.
+
+open_questions:
+  - The Dirichlet concentration (20) has no published source; should the maintainer set another, or derive it?
+  - No source gives the relative importance of these criteria for choosing an output; unit and rank-order
+    weights are the defaults until one does.
+  - The levels in every proposed rule are the maintainer's to confirm or change on review.
+  - IDWeek's abstract length and figure limits have not been read from the meeting's own instructions.
+  - Which journals' acceptance rates can be verified, so acceptance_chance can be used?
+  - Is there any reviewed source on readership by format, so reach can be used?

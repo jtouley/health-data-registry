@@ -98,7 +98,64 @@ line shows the Brier score against the base rate.
 - **Designs differ.** Ecological and surveillance-data designs, which this server serves, may publish at
   different rates from trials or cohorts; nothing here measures that yet.
 - **Fellows may chase the number.** A higher-looking outlook is not a better project. The outlook is never used to
-  rank ideas, fellows or projects, and the decision rubric never treats it as a score.
+  rank ideas, fellows or projects. Its base rate may inform how output formats are compared for one project
+  (`choose_output_format`, below), and nothing else.
+
+## Choosing an output format
+
+`choose_output_format` (CLI: `health-data-registry choose-output-format`) answers "which format should I aim for?"
+for one project: conference abstract or poster, research letter or brief report, full original manuscript, or
+viewpoint. It answers the same way every time for the same answers and the same rubric. It is a decision under
+the clinician's stated priorities, not a prediction that the work will be published, and it never ranks ideas,
+fellows or projects.
+
+**Inputs are structured answers only**, never read from a description (hard rule 9): `contribution` (empirical,
+methods_standard, argument, case), `data_maturity` (idea, preliminary_counts, frozen_dataset, adjudicated),
+`worked_examples` (a whole number), `needs_methods_section` (true or false), and optionally `conference`,
+`weeks_to_deadline` (the deadline of that conference; with no conference it is not used) and `priorities` (from
+speed, citable_record, reach, effort, most important first). Anything else is refused in plain words.
+
+**The rubric** is `src/health_data_registry/format_rubric.yaml` (status draft until the maintainer reviews it).
+Each criterion gives each format a level from 1 to 5. Each level describes a situation, and each rule names its
+basis: a reporting guideline (STROBE, RECORD), a venue's own author instructions (OFID, EID, checked 25 Nov
+2026), a published method, or a maintainer's declaration marked "pending review". `validate` refuses a rubric
+whose weight, rule, limit or threshold has no source.
+
+**How the answer is made:**
+
+1. **Gate.** A format whose contribution fit is level 1 (for example a viewpoint for new data) is left out
+   before anything is added up, and the answer says why.
+2. **Weights.** With no priorities, every criterion in use counts the same (unit weights, Dawes 1979). With
+   priorities, they get rank-order centroid weights in the order given (Barron and Barrett 1996) and the other
+   criteria share the remaining ranks.
+3. **Draws.** 10,000 draws with a fixed seed. Each draw takes the weights from a Dirichlet centred on the
+   declared weights (concentration 20, a proposed declaration). Each sourced rate comes from its Beta(k + 1,
+   n − k + 1) posterior. `probabilities` are the share of draws in which each format ranks first, so they say how
+   often a format wins across reasonable weightings. They sum to 1, and a format left out by the gate gets 0.
+4. **Confidence** is (p_max − 1/n) / (1 − 1/n) over the n formats left after the gate, as TypeSafe defines it
+   for a Choice. It says how settled the answer is, not whether it is right. The **review** advice is `act` at
+   p_max 0.9 or more, `discuss with your mentor` from 0.67, and `too close to call: decide with your mentor`
+   below that; that last one shows the flip condition first.
+5. **Flip condition.** The answer names the change to one declared weight, between 0.25× and 4×, nearest 1×,
+   that would put another format first. It is computed exactly on the declared weights, without simulation.
+
+**Unknowns are never imputed.** A criterion with no sourced rule (reach) or no verified rate (acceptance chance,
+for every venue) is left out for every format and named under "not used". The citable-record criterion is defined
+by what the format itself yields once accepted: a published abstract, or an indexed article. When the named
+conference has a verified abstract-to-paper rate (today only IDWeek, 236 of 887), the abstract can also reach
+level 5 with that chance. Without one, the abstract keeps only the record it certainly gives, and the missing
+rate is named. Ample time before a deadline earns no advantage. So leaving a criterion out never removes one
+format's advantage only.
+
+**Each criterion per format is a Score:** its level (the probability-weighted mean), the probabilities over
+levels, the legend from level to situation, the weight, and the source. A rule-based level puts all its
+probability on one level; only a sourced rate spreads it. Every answer carries the rubric's version, status and
+sha256, the draws and the seed, so it can be reproduced later. The answer follows the shape of TypeSafe's Choice
+and Score outputs. Nothing calls their service, and no model's judgement enters a level, a weight or a
+probability.
+
+With the defaults, the decision record's case (methods_standard, frozen_dataset, 7 worked examples, a methods
+section needed) picks the full original manuscript, with a probability below 1.
 
 ## Open questions
 
@@ -108,3 +165,6 @@ line shows the Brier score against the base rate.
   window.
 - Where the labelled abstracts for the gate come from, and who adjudicates ambiguous matches.
 - Whether a fellow's design maps cleanly onto the design categories the model would use.
+- The format rubric's own open questions, listed at the end of `format_rubric.yaml`: the Dirichlet
+  concentration, sourced criterion weights, verified acceptance rates, IDWeek's abstract limits and a source on
+  readership.

@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from mcp import types
 from mcp.server.mcpserver import MCPServer
+from pydantic import Field
 
-from health_data_registry import __version__, analysis, helpers, publication, tools
+from health_data_registry import __version__, analysis, format_choice, helpers, publication, tools
 from health_data_registry.query import Engine
 from health_data_registry.registry import Registry, load_registry
 from health_data_registry.store import lake_root
@@ -47,6 +48,9 @@ locations=[...])
   where a number came from (URL, retrieved_at, sha256, version, citation): get_provenance(source_id)
   what the data can't tell you: list_caveats(source_id=..., condition=...)
   published papers and abstracts: find_prior_work(condition=...)
+  which output to aim for (abstract, research letter, manuscript, viewpoint): choose_output_format(\
+contribution=..., data_maturity=..., worked_examples=..., needs_methods_section=...); ask the clinician for each \
+value, never infer it from their description
   last resort, only when no tool above fits: query_sql(sql=<one read-only SELECT>)
 
 ━━━ WORDS THAT CHANGE THE NUMBER ━━━
@@ -70,6 +74,9 @@ Every number comes from a tool response, with its source and caveats. If no tool
 number.
 """
 
+
+_CONTRIBUTIONS = tuple(format_choice.load_rubric().inputs["contribution"])
+_MATURITIES = tuple(format_choice.load_rubric().inputs["data_maturity"])
 
 PAGE_ARGS = "page: 1-based page of a long answer; pin: copy it from the previous page's Next line."
 
@@ -384,6 +391,37 @@ def build_server(
             lambda: publication.get_publication_outlook(
                 conference=conference, design=design, data_sources=data_sources, condition=condition,
                 geography=geography, fmt=fmt,
+            ),
+            fmt,
+        )  # fmt: skip
+
+    @mcp.tool(annotations=READ_ONLY)
+    def choose_output_format(
+        contribution: Annotated[str, Field(json_schema_extra={"enum": list(_CONTRIBUTIONS)})],
+        data_maturity: Annotated[str, Field(json_schema_extra={"enum": list(_MATURITIES)})],
+        worked_examples: int,
+        needs_methods_section: bool,
+        weeks_to_deadline: int | None = None,
+        conference: str | None = None,
+        priorities: list[Annotated[str, Field(json_schema_extra={"enum": list(format_choice.PRIORITIES)})]]
+        | None = None,
+        fmt: Fmt = "csv",
+    ) -> Out:
+        """Which output fits this project now: conference abstract or poster, research letter or brief report,
+        full original manuscript, or viewpoint. Answers with the format, the probability that each ranks first
+        under the stated priorities, how settled that is, whether to act or discuss it with a mentor, what would
+        change it, and every criterion's level with its source. A decision under stated priorities, never a
+        prediction of publication and never a ranking of ideas or people. Ask the clinician for each answer:
+        contribution (empirical, methods_standard, argument, case); data_maturity (idea, preliminary_counts,
+        frozen_dataset, adjudicated); worked_examples (how many shown in full); needs_methods_section (true or
+        false); weeks_to_deadline (weeks before the named conference's deadline; needs conference); priorities
+        (from speed, citable_record, reach, effort, most important first)."""
+        return safe(
+            "choose_output_format",
+            lambda: format_choice.choose_output_format(
+                contribution=contribution, data_maturity=data_maturity, worked_examples=worked_examples,
+                needs_methods_section=needs_methods_section, weeks_to_deadline=weeks_to_deadline,
+                conference=conference, priorities=priorities, fmt=fmt,
             ),
             fmt,
         )  # fmt: skip

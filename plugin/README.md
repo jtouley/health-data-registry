@@ -14,6 +14,7 @@ Add the plugin, connect the connector from the plugin's Connectors tab, then sta
 - `find-opportunities`: Path B: for a fellow without an area yet, looks for signals in the public data worth a study and returns a short opportunity brief.
 - `refine-hypothesis`: The refining loop: states the hypothesis, checks the data and whether it's new, names the confounders and what the data can't say, and revises until it's test-ready, needs revising, or should be dropped.
 - `build-story`: Turns a refined hypothesis into a one-page pitch, an IDWeek abstract or a poster outline; for a case report, writes only the population-context paragraph.
+- `choose-format`: Asks five short questions about your project and returns which output fits now (abstract or poster, research letter, full manuscript or viewpoint), how settled that is, and what would change it.
 - `help-me-fix-it`: Asks what you see, matches it to known problems, and gives the fix one step at a time.
 
 ## Data

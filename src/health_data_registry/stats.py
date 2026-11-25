@@ -18,6 +18,18 @@ worked example. The methods and their sources:
   aberrations in the occurrence of notifiable diseases surveillance data. Stat Med 1989;8:323-329, the
   method behind the MMWR notifiable disease tables' Figure I.
 
+- Random draws for the output-format rubric (format_choice.py). Uniforms come from SplitMix64 (Steele GL, Lea D,
+  Flood CH. Fast splittable pseudorandom number generators. OOPSLA 2014:453-472), written out here so a seed
+  gives the same sequence on every Python version and platform; it is for repeatable simulation, never for
+  secrets. Standard normals by the Box-Muller transform
+  (Box GEP, Muller ME. A note on the generation of random normal deviates. Ann Math Stat 1958;29:610-611); gamma
+  variates by Marsaglia G, Tsang WW. A simple method for generating gamma variables. ACM Trans Math Softw
+  2000;26:363-372, including its boost for a shape below 1 (Gamma(a) = Gamma(a + 1) x U^(1/a)); a Beta(a, b)
+  as X / (X + Y) and a Dirichlet as independent gammas divided by their sum (Devroye L. Non-Uniform Random
+  Variate Generation. Springer, 1986, ch. IX.4 and XI.4).
+- Confidence of a Choice: (p_max - 1/n) / (1 - 1/n), the definition TypeSafe gives for its Choice output
+  (docs.typesafe.ai); it says how settled a choice is, not whether it is right.
+
 The incomplete gamma function follows the series and continued-fraction forms in Press et al., Numerical
 Recipes, 3rd ed., section 6.2; quantiles are found by safeguarded Newton steps inside a bisection bracket.
 """
@@ -412,6 +424,80 @@ def historical_limits(current: float, history: Sequence[float]) -> Signal:
     lower = max(0.0, 1.0 - 2.0 * sd / mean)
     flag = "above" if ratio > upper else "below" if ratio < lower else "within"
     return Signal(current, mean, sd, ratio, lower, upper, flag)
+
+
+# ---------------------------------------------------------------------------------- random draws
+
+
+_MASK64 = (1 << 64) - 1
+
+
+class SplitMix64:
+    """SplitMix64 (Steele, Lea and Flood 2014): a 64-bit state advanced by the golden-ratio increment, mixed by
+    two multiply-xorshift rounds. random() takes the top 53 bits, a uniform in [0, 1)."""
+
+    def __init__(self, seed: int) -> None:
+        self.state = seed & _MASK64
+
+    def next64(self) -> int:
+        self.state = (self.state + 0x9E3779B97F4A7C15) & _MASK64
+        z = self.state
+        z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & _MASK64
+        z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & _MASK64
+        return z ^ (z >> 31)
+
+    def random(self) -> float:
+        return (self.next64() >> 11) * 2.0**-53
+
+
+def normal_draw(rng: SplitMix64) -> float:
+    """One standard normal by Box-Muller, from two uniforms in (0, 1]."""
+    u1 = 1.0 - rng.random()  # random() is in [0, 1); 1 - it is in (0, 1], so the logarithm is finite
+    u2 = rng.random()
+    return math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.pi * u2)
+
+
+def gamma_draw(rng: SplitMix64, shape: float) -> float:
+    """One Gamma(shape, 1) by Marsaglia and Tsang (2000); a shape below 1 uses their boost."""
+    if not shape > 0.0 or math.isinf(shape):
+        raise StatsError("a gamma shape must be a positive number")
+    if shape < 1.0:
+        return gamma_draw(rng, shape + 1.0) * float((1.0 - rng.random()) ** (1.0 / shape))
+    d = shape - 1.0 / 3.0
+    c = 1.0 / math.sqrt(9.0 * d)
+    while True:
+        x = normal_draw(rng)
+        v = 1.0 + c * x
+        if v <= 0.0:
+            continue
+        v = v * v * v
+        u = 1.0 - rng.random()
+        if math.log(u) < 0.5 * x * x + d - d * v + d * math.log(v):
+            return float(d * v)
+
+
+def beta_draw(rng: SplitMix64, a: float, b: float) -> float:
+    """One Beta(a, b) as X / (X + Y) with X ~ Gamma(a), Y ~ Gamma(b)."""
+    x = gamma_draw(rng, a)
+    return x / (x + gamma_draw(rng, b))
+
+
+def dirichlet_draw(rng: SplitMix64, alphas: Sequence[float]) -> list[float]:
+    """One Dirichlet(alphas): independent Gamma(alpha_i) draws divided by their sum."""
+    if not alphas:
+        raise StatsError("a Dirichlet needs at least one weight")
+    g = [gamma_draw(rng, a) for a in alphas]
+    total = max(sum(g), _TINY)  # only an underflow of every draw could make the sum zero
+    return [x / total for x in g]
+
+
+def choice_confidence(p_max: float, n: int) -> float:
+    """How settled a choice among n options is: 0 when p_max = 1/n (a coin toss), 1 when p_max = 1."""
+    if n < 1 or not 0.0 <= p_max <= 1.0:
+        raise StatsError("need at least one option and a probability between 0 and 1")
+    if n == 1:
+        return 1.0
+    return max(0.0, (p_max - 1.0 / n) / (1.0 - 1.0 / n))
 
 
 # ---------------------------------------------------------------------------------- standard populations

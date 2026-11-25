@@ -13,11 +13,11 @@ from health_data_registry.server import build_server
 SPEC_TOOLS = {
     "list_sources", "search_datasets", "describe_dataset", "suggest_datasets", "get_series",
     "get_aligned_with_gbd", "get_rate", "get_provenance", "list_caveats", "find_prior_work", "query_sql",
-    "compare_rates", "get_trend", "age_adjust", "check_signal", "get_publication_outlook",
+    "compare_rates", "get_trend", "age_adjust", "check_signal", "get_publication_outlook", "choose_output_format",
 }  # fmt: skip
 SPEC_HELPERS = {
     "start_here", "research_story", "scope_an_area", "find_opportunities", "refine_hypothesis", "build_story",
-    "help_me_fix_it", "walk_me_through_install", "set_up_my_project",
+    "help_me_fix_it", "walk_me_through_install", "set_up_my_project", "choose_format",
 }  # fmt: skip
 
 
@@ -85,3 +85,20 @@ def test_publication_outlook_over_mcp(registry: Registry, lake: Path) -> None:
     out = asyncio.run(s.call_tool("get_publication_outlook", {"conference": "IDWeek"}))
     text = out.content[0].text  # type: ignore[union-attr]
     assert text.startswith("conference,stage,step") and "24–30%" in text and "base rate only" in text
+
+
+def _text(result: object) -> str:
+    content = getattr(result, "content", [])
+    text = getattr(content[0], "text", None) if content else None
+    assert isinstance(text, str)
+    return text
+
+
+def test_choose_output_format_over_mcp(registry: Registry, lake: Path) -> None:
+    s = build_server(registry, Engine(registry=registry, lake=lake))
+    args = {"contribution": "methods_standard", "data_maturity": "frozen_dataset", "worked_examples": 7,
+            "needs_methods_section": True}  # fmt: skip
+    text = _text(asyncio.run(s.call_tool("choose_output_format", args)))
+    assert text.startswith("row,format,criterion") and "full original manuscript ranks first" in text
+    words = _text(asyncio.run(s.call_tool("choose_output_format", {**args, "contribution": "opinion"})))
+    assert "contribution must be one of" in words and "Traceback" not in words
