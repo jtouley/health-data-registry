@@ -85,6 +85,14 @@ The scheduled refresh, crawls, sitemap snapshots, publishing and Space deploy ru
 [automation.md](automation.md) lists each workflow, its schedule and limits, and the secrets and variables it
 needs. Every Hugging Face repository is named by one convention, built in `naming.py`: see [naming.md](naming.md).
 
+**Checking the crawl keys.** The `crawl` environment holds `CENSUS_API_KEY` and `SOCRATA_APP_TOKEN`, which only
+an Actions job in that environment can read. To check they work, open the Actions tab, choose "Check crawl API
+keys", then "Run workflow" with the branch set to `main` (it refuses any other branch). It makes one request to the
+Census API and one to data.cdc.gov, and prints one line per key: accepted, or rejected with the HTTP status. The
+run fails if a key is missing or rejected. It never prints a key, a request URL, response headers or a body, and
+writes nothing. To make GitHub enforce the main-only rule too, set the `crawl` environment's deployment branches
+to `main`.
+
 To run the server in Claude Code from a checkout:
 
 ```bash

@@ -1,0 +1,136 @@
+# Manual check that the `crawl` environment's API keys work. Run it from the Actions tab on main.
+#
+#   main-only  refuses, and fails the run, unless it was started on main. It holds no secrets.
+#   check      in the GitHub environment `crawl`: one request to the Census API with CENSUS_API_KEY and one to
+#              CDC's Socrata portal with SOCRATA_APP_TOKEN. Each step prints one line, accepted or rejected,
+#              and the job fails if either key is missing or rejected.
+#
+# What it never does: print a key, a request URL, response headers or a response body; put a key on a command
+# line (curl reads it from stdin, so it is not in the process list); check out the repository; use an action;
+# write artifacts, caches or files. Each secret is set on its own step only. Docs: docs/dev/README.md.
+name: Check crawl API keys
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: check-crawl-keys
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  main-only:
+    name: Refuse unless on main
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check the run is on main
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          set +x
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::This check runs only on main, so the crawl keys are never read from another branch. Start it from the Actions tab with the branch set to main."
+            exit 1
+          fi
+          echo "Running on main."
+
+  check:
+    name: Check the Census key and the Socrata token
+    needs: main-only
+    # Defence in depth: the job that can read the environment's secrets never starts off main, even if
+    # main-only is edited away.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: crawl
+    steps:
+      - name: Census API key
+        env:
+          CENSUS_API_KEY: ${{ secrets.CENSUS_API_KEY }}
+        run: |
+          set +x
+          if [ -z "$CENSUS_API_KEY" ]; then
+            echo "::error::The crawl environment has no CENSUS_API_KEY secret, or it is empty. Add it under Settings > Environments > crawl."
+            exit 1
+          fi
+          # Checked before the mask: a line break would split the mask and leave part of the key unmasked.
+          if [[ "$CENSUS_API_KEY" =~ [[:space:][:cntrl:]] ]]; then
+            echo "::error::CENSUS_API_KEY contains a space, line break or control character. Paste the key again without them."
+            exit 1
+          fi
+          echo "::add-mask::$CENSUS_API_KEY"
+          # The key goes in on stdin (--data-urlencode key@-, appended to the query by -G), never on the command
+          # line. No redirects: the Census API answers a bad key with a redirect to an error page.
+          rc=0
+          resp=$(printf '%s' "$CENSUS_API_KEY" | curl -sS --fail-with-body --proto '=https' --max-redirs 0 \
+            --max-time 30 -G --data-urlencode 'key@-' -w '\n%{http_code}' \
+            'https://api.census.gov/data/2022/acs/acs5?get=NAME,B01003_001E&for=state:26') || rc=$?
+          code=${resp##*$'\n'}
+          body=${resp%$'\n'*}
+          if [ "$rc" -ne 0 ] && [ "$code" = "000" ]; then
+            echo "::error::Census key: not checked: the Census API could not be reached (curl exit $rc). Try again later."
+            exit 1
+          fi
+          if [ "$code" = "200" ]; then
+            # Header row plus one data row; only the count is printed, never the body.
+            rows=$(jq -er 'if type == "array" then length - 1 else error("not an array") end' <<<"$body" 2>/dev/null) || rows=""
+            if [ "$rows" = "1" ]; then
+              echo "Census key: accepted (HTTP 200, 1 row)"
+              exit 0
+            fi
+            echo "::error::Census key: rejected (HTTP 200, but not the expected one row)"
+            exit 1
+          fi
+          echo "::error::Census key: rejected (HTTP $code)"
+          exit 1
+
+      - name: Socrata app token
+        # Runs even when the Census step failed, so one run reports on both keys.
+        if: ${{ !cancelled() }}
+        env:
+          SOCRATA_APP_TOKEN: ${{ secrets.SOCRATA_APP_TOKEN }}
+        run: |
+          set +x
+          if [ -z "$SOCRATA_APP_TOKEN" ]; then
+            echo "::error::The crawl environment has no SOCRATA_APP_TOKEN secret, or it is empty. Add it under Settings > Environments > crawl."
+            exit 1
+          fi
+          # Checked before the mask: a line break would split the mask, and would let the secret add a header.
+          if [[ "$SOCRATA_APP_TOKEN" =~ [[:space:][:cntrl:]] ]]; then
+            echo "::error::SOCRATA_APP_TOKEN contains a space, line break or control character. Paste the token again without them."
+            exit 1
+          fi
+          echo "::add-mask::$SOCRATA_APP_TOKEN"
+          # The header goes in on stdin (-H @-), never on the command line. The body is discarded; the response
+          # headers are kept in memory only to look at their names, never printed.
+          rc=0
+          # $limit is Socrata's query parameter, not a shell variable.
+          # shellcheck disable=SC2016
+          resp=$(printf 'X-App-Token: %s\n' "$SOCRATA_APP_TOKEN" | curl -sS --fail-with-body --proto '=https' \
+            --max-redirs 0 --max-time 30 -H @- -o /dev/null -D - -w '\n%{http_code}' \
+            'https://data.cdc.gov/resource/x9gk-5huc.json?$limit=1') || rc=$?
+          code=${resp##*$'\n'}
+          headers=${resp%$'\n'*}
+          if [ "$rc" -ne 0 ] && [ "$code" = "000" ]; then
+            echo "::error::Socrata token: not checked: data.cdc.gov could not be reached (curl exit $rc). Try again later."
+            exit 1
+          fi
+          if [ "$code" != "200" ]; then
+            echo "::error::Socrata token: rejected (HTTP $code)"
+            exit 1
+          fi
+          echo "Socrata token: accepted (HTTP 200)"
+          # Socrata answers 403 to a bad token, so a 200 means the token was accepted. Throttle headers, when
+          # Socrata sends them, would show the token was applied; only their names are printed.
+          throttle=$(tr -d '\r' <<<"$headers" | grep -ioE '^x-soda2-[a-z0-9-]*(throttl|limit)[a-z0-9-]*' | sort -u | paste -sd, -) || throttle=""
+          if [ -n "$throttle" ]; then
+            echo "Socrata applied the token: its throttle headers are present ($throttle)."
+          else
+            echo "Socrata sent no throttle headers, so it does not show whether the token was applied; it accepted the token with no error."
+          fi
