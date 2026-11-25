@@ -1,0 +1,53 @@
+id: detroit_dhd_covid_archive_daily
+title: Daily COVID-19 cases in Detroit by date of illness, March 2020 to May 2026 (Detroit Health Department COVID-19 Archived Dashboard)
+agency: Detroit Health Department
+publisher: City of Detroit Health Department (DHD)
+level: city
+country: US
+research_areas: [infectious_disease]
+id_areas: [respiratory]
+years: {start: 2020, end: 2026}
+geography: [city]
+shape: surveillance_series
+grain: "One row is one day (the date the dashboard calls the disease date), with the confirmed COVID-19 cases the archived dashboard's timeline chart shows for Detroit that day; days the dashboard shows as '<16' are kept as that marker, never as a number."
+refresh: irregular
+licence:
+  # Neither the dashboard nor detroitmi.gov's dashboard pages state terms for reuse of the data (checked
+  # 2026-11-24 on the dashboard). With no terms, nothing is mirrored: read live, never stored or published
+  # (ADR 0009).
+  id: no-terms-stated
+  redistribution: false
+  terms_url: https://codtableau.detroitmi.gov/t/DHD/views/CityofDetroit-PublicCOVIDDashboard/TimelineCasesDashboard
+citation: "City of Detroit Health Department. City of Detroit Public COVID-19 Dashboard (archived), Timeline Cases. https://codtableau.detroitmi.gov/t/DHD/views/CityofDetroit-PublicCOVIDDashboard/TimelineCasesDashboard (accessed <retrieved_at>)."
+source:
+  portal: tableau
+  host: codtableau.detroitmi.gov
+  dataset: CityofDetroit-PublicCOVIDDashboard
+  landing_url: https://codtableau.detroitmi.gov/t/DHD/views/CityofDetroit-PublicCOVIDDashboard/TimelineCasesDashboard
+  api_url: https://codtableau.detroitmi.gov/t/DHD/views/CityofDetroit-PublicCOVIDDashboard
+  # The city's own Tableau Server: a government host under the maintainer's access policy (robots.txt was 404
+  # on 2026-11-24 in any case). Tableau Server builds the data session in JavaScript, so a browser reads it.
+  government_host: true
+  browser: true
+  tableau:
+    views:
+      - view: TimelineCasesDashboard
+        worksheets:
+          "Epi Curve Cases by Combined": c8f939fbdd5a34cf8794b06c75d540f56173684f25c56047d9f883467cb22c22
+        # The chart's tooltip shows a day's count as "<16" while the bar's data carry the number: that day is
+        # read as suppressed (an exact structural fact of the published chart: the marker is on the same mark).
+        suppressed_by:
+          "AGG(Confirmed & Probable Case Count)": "AGG(Tooltip Number of Records)"
+codebook_url: https://codtableau.detroitmi.gov/t/DHD/views/CityofDetroit-PublicCOVIDDashboard/DashboardNotes
+caveats:
+  - "An archived dashboard: its data end in May 2026 (last date 2026-05-23; the dashboard's timestamp reads 'Wednesday, May 27')."
+  - "Days the dashboard shows as '<16' are suppressed: their count is empty, and any total over a period that includes one is not given."
+  - "Cases are placed on the dashboard's 'disease date'; how that date is chosen (onset, test or report) is not stated in the data."
+  - "The Detroit Health Department states no terms for reuse, so this source is read live from the city and never stored or published."
+gbd:
+  location_column: null
+  causes:
+    - {condition: covid19, cause: "COVID-19", pathogen: null}
+contract: contracts/detroit_dhd_covid_archive_daily.odcs.yaml
+semantic_model: semantic/detroit_dhd_covid_archive_daily.yaml
+status: draft

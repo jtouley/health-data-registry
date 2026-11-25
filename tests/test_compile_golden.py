@@ -334,6 +334,7 @@ def test_build_snapshot_manifest_and_pointer(est: tuple[Registry, Engine, Path],
         "release_files": {},
         "notes": [],
         "quality": {},
+        "layouts": {},
     }
     assert (lake / "datasets" / "toy_cases" / "LATEST").read_text() == m.snapshot_id + "\n"
     assert sorted(p.name for p in lake.iterdir()) == ["datasets", "raw"]  # no temporary folder left behind
