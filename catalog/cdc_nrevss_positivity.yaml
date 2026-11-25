@@ -55,5 +55,4 @@ conditions:
 contract: contracts/cdc_nrevss_positivity.odcs.yaml
 semantic_model: semantic/cdc_nrevss_positivity.yaml
 status: draft
-# Private until a maintainer's reviewed catalog change says public.
-hosting: private
+hosting: public

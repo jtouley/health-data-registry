@@ -116,12 +116,12 @@ outputPorts:
     customProperties:
       - {property: hosted, value: true}
   - name: cdc_nrevss_positivity
-    description: NREVSS weekly national percent of laboratory tests positive for COVID-19, influenza and RSV. Public-domain federal data, not hosted until a maintainer reviews the catalog entry.
+    description: NREVSS weekly national percent of laboratory tests positive for COVID-19, influenza and RSV.
     type: tables
     version: 0.1.0
     contractId: cdc_nrevss_positivity
     customProperties:
-      - {property: hosted, value: false}
+      - {property: hosted, value: true}
   - name: census_county_pop
     description: Census Bureau county and state resident population estimates, the denominator for rates.
     type: tables
