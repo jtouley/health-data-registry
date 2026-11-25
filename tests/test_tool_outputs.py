@@ -89,9 +89,10 @@ def test_get_rate_is_crude_and_says_so(pop: tuple[Registry, Engine]) -> None:
     csv = tools.get_rate(reg, eng, condition="legionellosis", locations=["Michigan"], year=2023)
     assert isinstance(csv, str) and csv.startswith("location,year,condition,cases,population,")
     assert tools.get_rate(reg, eng, condition="mumps", year=2023, fmt="json") == {
-        "message": "No loaded source reports 'mumps' as case counts. Use list_sources or suggest_datasets to see "
-        "what is available.",
+        "message": "No loaded source reports 'mumps' as case counts.",
         "refused": "unknown_condition",
+        "next_step": "Open describe_dataset for a source search_datasets lists, pick one of its condition labels, "
+        "and ask again with that label.",
     }
 
 
@@ -103,6 +104,7 @@ def test_get_rate_without_population(registry: Registry, lake: Path) -> None:
         "message": "Population counts (Census) aren't loaded yet, so a rate can't be worked out here. Use "
         "get_series for the counts, or a published rate if the source has one (describe_dataset says).",
         "refused": "no_denominator",
+        "next_step": "Use get_series for the counts, or a rate the source publishes (describe_dataset says).",
     }
 
 
@@ -117,18 +119,24 @@ def test_list_sources_exact(registry: Registry, lake: Path) -> None:
     eng = Engine(registry=registry, lake=lake)
     out = _json(tools.list_sources(registry, eng, fmt="json"))
     assert out == {
-        "columns": ["source_id", "title", "publisher", "years", "geography", "updated", "last_fetched", "licence",
-                    "review", "contract_version", "data_from"],
+        "columns": ["source_id", "title", "publisher", "years", "geography", "updated", "last_fetched",
+                    "review", "contract_version", "data_from", "source_url", "retrieved_at", "raw_sha256", "version", "licence", "citation", "contract_status"],
         "rows": [["toy_cases", "Toy notifiable condition cases by state and year",
                   "Centers for Disease Control and Prevention", "2022-2024", "nation state", "weekly", "2026-11-24",
-                  "public-domain-us-federal", "draft", "0.1.0", "the local lake (a maintainer's copy)"]],
+                  "draft", "0.1.0", "the local lake (a maintainer's copy)", "https://data.cdc.gov/d/toy0-toy0",
+                  "2026-11-24T12:00:00", "227232863363b7f6d297ffab7de67fbf91f8890d5c439fd8f6baa52464a41c9d",
+                  "snapshot 20261124T120000Z-c1d38a70c53f; contract 0.1.0",
+                  "public-domain-us-federal (https://www.cdc.gov/other/agencymaterials.html)",
+                  "CDC. Toy table. https://data.cdc.gov/d/toy0-toy0", "draft"]],
         "notes": ["review = draft means no maintainer has checked this source's contract yet."],
     }  # fmt: skip
     assert _json(tools.list_sources(registry, None, fmt="json"))["rows"][0][6] == ""
     assert _json(tools.list_sources(registry, eng, condition="syphilis", fmt="json"))["rows"]
     none = _json(tools.list_sources(registry, eng, condition="mumps", fmt="json"))
     assert none["rows"] == [] and none["notes"] == [
-        "No source matches; try without a condition or geography."
+        "No source matches; try without a condition or geography.",
+        "Next step: Open describe_dataset for a source search_datasets lists, pick one of its condition labels, "
+        "and ask again with that label.",
     ]
     assert _json(tools.list_sources(registry, eng, geography_level="county", fmt="json"))["rows"] == []
     assert _json(tools.list_sources(registry, eng, geography_level="state", fmt="json"))["rows"]
@@ -137,9 +145,12 @@ def test_list_sources_exact(registry: Registry, lake: Path) -> None:
 def test_search_datasets_exact(registry: Registry) -> None:
     out = _json(tools.search_datasets(registry, topic="legionella legionellosis in states", fmt="json"))
     assert out == {
-        "columns": ["source_id", "title", "agency", "years", "geography", "why_it_fits"],
+        "columns": ["source_id", "title", "agency", "years", "geography", "why_it_fits", "source_url", "retrieved_at", "raw_sha256", "version", "licence", "citation", "contract_status"],
         "rows": [["toy_cases", "Toy notifiable condition cases by state and year", "CDC", "2022-2024",
-                  "nation state", "mentions legionella, legionellosis; One row per reporting area, condition and year."]],
+                  "nation state", "mentions legionella, legionellosis; One row per reporting area, condition and year.",
+                  "https://data.cdc.gov/d/toy0-toy0", "not fetched yet", "not fetched yet", "contract 0.1.0",
+                  "public-domain-us-federal (https://www.cdc.gov/other/agencymaterials.html)",
+                  "CDC. Toy table. https://data.cdc.gov/d/toy0-toy0", "draft"]],
         "notes": ["Next: describe_dataset with a source_id to see what it can and can't answer."],
     }  # fmt: skip
     plain = _json(tools.search_datasets(registry, fmt="json"))
@@ -147,9 +158,9 @@ def test_search_datasets_exact(registry: Registry) -> None:
     for kw in ({"id_area": "oncology"}, {"geography": "county"}, {"year_start": 2025}, {"year_end": 2021},
                {"topic": "mumps"}):  # fmt: skip
         miss = _json(tools.search_datasets(registry, fmt="json", **kw))
-        assert miss["rows"] == [] and miss["notes"] == [
-            "No dataset matched. Try a broader topic, or suggest_datasets with your full question."
-        ]
+        assert miss["refused"] == "no_dataset_matched" and miss["next_step"] == (
+            "Try a broader topic, or suggest_datasets with your whole question."
+        )
     for kw in (
         {"id_area": "infectious_disease"},
         {"geography": "state"},
@@ -164,14 +175,19 @@ def test_suggest_datasets_exact(registry: Registry) -> None:
         tools.suggest_datasets(registry, "Legionellosis in Michigan counties 2019 to 2021?", fmt="json")
     )
     assert out == {
-        "columns": ["source_id", "can_answer", "why", "what_it_supports"],
+        "columns": ["source_id", "can_answer", "why", "what_it_supports", "source_url", "retrieved_at", "raw_sha256", "version", "licence", "citation", "contract_status"],
         "rows": [["toy_cases", "no", "goes down to nation, state only, not county; covers 2022-2024 only",
-                  "Legionellosis (cases); Legionellosis (rate); Syphilis (cases)"]],
+                  "Legionellosis (cases); Legionellosis (rate); Syphilis (cases)", "https://data.cdc.gov/d/toy0-toy0", "not fetched yet", "not fetched yet", "contract 0.1.0",
+                  "public-domain-us-federal (https://www.cdc.gov/other/agencymaterials.html)",
+                  "CDC. Toy table. https://data.cdc.gov/d/toy0-toy0", "draft"]],
         "notes": [
             "Read as: condition words ['legionellosis'], places ['Michigan'], years [2019, 2021].",
             "Public data shows what and where; your hospital's own data, kept in approved systems, answers why.",
             "Never put patient information in the chat.",
+            "Next step: Open describe_dataset for a source search_datasets lists, pick one of its condition labels, "
+            "and ask again with that label.",
         ],
+        "presentation_rules": tools.PRESENTATION_RULES,
     }  # fmt: skip
     ok = _json(tools.suggest_datasets(registry, "syphilis in Ohio 2023", fmt="json"))
     assert ok["rows"][0][:3] == ["toy_cases", "yes", "fits"]
@@ -267,8 +283,14 @@ def test_plain_and_refusal_shapes(registry: Registry, tmp_path: Path) -> None:
         eng.manifest("toy_cases")
     except Exception as e:  # noqa: BLE001 - checking the plain words of the refusal
         msg = tools.plain(e)
-        assert msg.endswith(" Run the Something's wrong helper, which walks you through turning it back on.")
-        assert tools.refusal(e, "json") == {"message": msg, "refused": "no_snapshot"}
+        assert msg.endswith(
+            " Run the Something's wrong helper, which walks you through loading this source again."
+        )
+        assert tools.refusal(e, "json") == {
+            "message": msg,
+            "refused": "no_snapshot",
+            "next_step": "Run the Something's wrong helper, which walks you through loading this source again.",
+        }
         assert tools.refusal(e) == msg
     assert tools.refusal(ValueError("x"), "json")["refused"] == "error"  # type: ignore[index]
     assert tools.message("hi", "json", a=1) == {"message": "hi", "a": 1}
@@ -278,4 +300,5 @@ def test_plain_and_refusal_shapes(registry: Registry, tmp_path: Path) -> None:
         "so nothing is shown rather than a partial list. For now, search PubMed (and OpenEvidence if you use it) "
         "for 'C. auris' in Michigan, and check IDWeek abstracts in the Open Forum Infectious Diseases supplements.",
         "refused": "index_not_built",
+        "next_step": "Search PubMed for the condition and place in the meantime.",
     }

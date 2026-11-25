@@ -165,7 +165,6 @@ def test_reportedCases_oneReportOneColumn_totalsExcluded_suppressionLeavesNoTota
         pytest.param({"period_column": "Q1 2024"}, [], id="every-report"),
         pytest.param({"report": NEW}, [], id="every-column"),
         pytest.param({"report": [NEW, ANNUAL], "period_column": "Q1 2024"}, [], id="two-reports"),
-        pytest.param({"period_column": "Q1 2024"}, ["report"], id="grouped-by-report"),
     ],
 )
 def test_reportedCases_acrossReportsOrColumns_refused(
@@ -176,56 +175,45 @@ def test_reportedCases_acrossReportsOrColumns_refused(
     assert e.value.code == "needs_single_value"
 
 
+def test_reportedCases_groupedByReport_oneRowEachNeverAdded(ds: Dataset) -> None:
+    con = _loaded(ds)
+    rows = _run(con, ds, "reported_cases", filters={"period_column": "Q1-Q4 2024 Total"}, group_by=["report"])
+    assert rows == [(ANNUAL, 57, 0, None), (NEW, 57, 0, None)]
+
+
 def test_contract_everyRowFramedOutWayne_neverStored(ds: Dataset) -> None:
     assert ds.entry.licence.redistribution is False
-    assert ds.entry.source.min_interval_s >= 10
+    assert ds.entry.source.government_host  # paced at crawl.MIN_INTERVAL_S; a block still stops the read
     assert any(c.startswith("Excludes Detroit") for c in ds.entry.caveats)
     area = ds.contract.column("area")
     assert area.required and area.partial_note("anything") is not None
     assert ds.contract.unreliable.kind == "publisher_suppressed" and ds.contract.unreliable.threshold == 6
 
 
-def test_pacer_waitsTheDeclaredGapPerHost() -> None:
-    now = [100.0]
-    slept: list[float] = []
+class Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.slept: list[float] = []
 
-    def sleep(s: float) -> None:
-        slept.append(s)
-        now[0] += s
+    def sleep(self, s: float) -> None:
+        self.slept.append(s)
+        self.now += s
 
-    pacer = crawl.Pacer({"www.waynecountymi.gov": 10.0}, sleep=sleep, clock=lambda: now[0])
-    pacer.wait(f"{BASE}/a.pdf")  # first request: no wait
-    now[0] += 4.0
-    pacer.wait(f"{BASE}/b.pdf")  # 4 s later: waits the other 6
-    pacer.wait("https://data.cdc.gov/resource/x.json")  # another host, no gap declared
-    now[0] += 11.0
-    pacer.wait(f"{BASE}/c.pdf")  # more than 10 s later: no wait
-    assert slept == [6.0]
+    def __call__(self) -> float:
+        return self.now
 
 
-def test_pacer_forRegistry_takesTheLargestGapPerHost() -> None:
-    pacer = crawl.Pacer.for_registry(load_registry(ROOT))
-    assert pacer.intervals == {"www.waynecountymi.gov": 10.0}
+def _county_policy(clock: Clock) -> crawl.Robots:
+    return crawl.Robots(
+        load_registry(ROOT).hosts,
+        government_hosts=frozenset({"www.waynecountymi.gov"}),
+        sleep=clock.sleep,
+        clock=clock,
+    )
 
 
-def test_fetcher_pacesEveryRequest(monkeypatch: pytest.MonkeyPatch) -> None:
-    from health_data_registry import fetch
-
-    calls: list[str] = []
-
-    class Resp:
-        status, content, sha256 = 200, b"x", hashlib.sha256(b"x").hexdigest()
-        final_url, retrieved_at = f"{BASE}/a.pdf", datetime(2026, 11, 24, tzinfo=UTC)
-
-    monkeypatch.setattr(fetch, "fetch", lambda url, **_: Resp())
-
-    class Recorder(crawl.Pacer):
-        def wait(self, url: str, *, deadline: float | None = None) -> None:
-            calls.append(url)
-
-    get = crawl.fetcher(load_registry(ROOT), robots=False, pacer=Recorder({}))
-    get(f"{BASE}/a.pdf")
-    assert calls == [f"{BASE}/a.pdf"]
+def test_policy_countyHost_pacedAtTheGovernmentHostInterval() -> None:
+    assert "www.waynecountymi.gov" in crawl.policy_for(load_registry(ROOT)).paced
 
 
 # --- review round fixes (PR #27) -----------------------------------------------------------------------
@@ -389,42 +377,18 @@ def test_contract_requiredColumns_eachHaveAFillRateCheck(ds: Dataset) -> None:
             assert "nullValues" in metrics, prop["name"]
 
 
-def test_pacer_deadline_slotAfterItRefused() -> None:
+def test_waitTurn_deadline_turnAfterItRefused(monkeypatch: pytest.MonkeyPatch) -> None:
     from health_data_registry.fetch import FetchRefused
 
-    now = [0.0]
-    pacer = crawl.Pacer({"www.waynecountymi.gov": 10.0}, sleep=lambda s: None, clock=lambda: now[0])
-    pacer.wait(f"{BASE}/a.pdf", deadline=0.0)
-    pacer.wait(f"{BASE}/b.pdf", deadline=10.0)  # slot at 10: exactly on time
+    _fake_fetch(monkeypatch, [])
+    clock = Clock()
+    policy = _county_policy(clock)
+    policy.wait_turn(f"{BASE}/a.pdf", deadline=10.0)  # after robots.txt at 0: due at 10, exactly on time
+    assert clock.slept == [10.0]
     with pytest.raises(FetchRefused) as e:
-        pacer.wait(f"{BASE}/c.pdf", deadline=19.9)
+        policy.wait_turn(f"{BASE}/b.pdf", deadline=19.9)
     assert e.value.code == "time_budget"
-    assert pacer.last[f"{BASE}".split("/")[2]] == 10.0  # a refused request reserves nothing
-
-
-def test_processPacer_oneSharedAcrossLiveReads() -> None:
-    reg = load_registry(ROOT)
-    assert crawl.process_pacer(reg) is crawl.process_pacer(reg)
-    assert crawl.process_pacer(reg).intervals["www.waynecountymi.gov"] == 10.0
-
-
-def test_pacer_threads_eachGetsItsOwnSlot() -> None:
-    import threading
-
-    slept: list[float] = []
-    lock = threading.Lock()
-
-    def sleep(s: float) -> None:
-        with lock:
-            slept.append(s)
-
-    pacer = crawl.Pacer({"www.waynecountymi.gov": 10.0}, sleep=sleep, clock=lambda: 0.0)
-    threads = [threading.Thread(target=pacer.wait, args=(f"{BASE}/{i}.pdf",)) for i in range(4)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-    assert sorted(slept) == [10.0, 20.0, 30.0]
+    assert clock.slept == [10.0]  # refused, not waited for
 
 
 def _fake_fetch(monkeypatch: pytest.MonkeyPatch, seen: list[tuple[str, dict[str, Any]]]) -> None:
@@ -441,18 +405,11 @@ def _fake_fetch(monkeypatch: pytest.MonkeyPatch, seen: list[tuple[str, dict[str,
     monkeypatch.setattr(fetch, "fetch", f)
 
 
-def test_fetcher_robotsTxtPacedToo_andPdfsAskedAsPdf(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fetcher_pdfReportsAskedAsHtmlAndPdf_apisAsJson(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[tuple[str, dict[str, Any]]] = []
     _fake_fetch(monkeypatch, seen)
-    paced: list[str] = []
-
-    class Recorder(crawl.Pacer):
-        def wait(self, url: str, *, deadline: float | None = None) -> None:
-            paced.append(url)
-
-    get = crawl.fetcher(load_registry(ROOT), pacer=Recorder({}))
-    get(f"{BASE}/a.pdf")
-    assert paced == [f"{BASE}/robots.txt", f"{BASE}/a.pdf"]
+    get = crawl.fetcher(load_registry(ROOT), robots=False)
+    get(f"{BASE}/files/content/mainsite/2026-q2-public.pdf")  # a report: not under a catalogued URL
     assert "application/pdf" in seen[-1][1]["headers"]["Accept"]
     get("https://data.cdc.gov/resource/x.json")
     assert seen[-1][1]["headers"]["Accept"] == "application/json"
@@ -463,20 +420,35 @@ def test_fetcher_budget_boundsTimeoutsAndRefusesPastIt(monkeypatch: pytest.Monke
 
     seen: list[tuple[str, dict[str, Any]]] = []
     _fake_fetch(monkeypatch, seen)
-    now = [0.0]
-    get = crawl.fetcher(
-        load_registry(ROOT), robots=False, pacer=crawl.Pacer({}), budget_s=50.0, clock=lambda: now[0]
-    )
-    now[0] = 20.0
-    get(f"{BASE}/a.pdf")
+    clock = Clock()
+    policy = crawl.Robots(load_registry(ROOT).hosts, sleep=clock.sleep, clock=clock)
+    get = crawl.fetcher(load_registry(ROOT), robots=policy, budget_s=50.0)
+    clock.now = 20.0
+    get("https://data.cdc.gov/resource/a.json")
     assert seen[-1][1]["timeout"] == 30.0
-    now[0] = 50.0
+    clock.now = 50.0
     with pytest.raises(FetchRefused) as e:
-        get(f"{BASE}/b.pdf")
+        get("https://data.cdc.gov/resource/b.json")
     assert e.value.code == "time_budget"
-    unbounded = crawl.fetcher(load_registry(ROOT), robots=False, pacer=crawl.Pacer({}))
+    unbounded = crawl.fetcher(load_registry(ROOT), robots=False)
     unbounded(f"{BASE}/c.pdf")
     assert seen[-1][1]["timeout"] == crawl.FETCH_TIMEOUT_S
+
+
+def test_fetcher_budget_retryBackoffPastItRefused(monkeypatch: pytest.MonkeyPatch) -> None:
+    from health_data_registry import fetch
+    from health_data_registry.fetch import FetchRefused
+
+    def slow(url: str, **kw: Any) -> Any:
+        raise FetchRefused("timeout", "slow")
+
+    monkeypatch.setattr(fetch, "fetch", slow)
+    clock = Clock()
+    policy = crawl.Robots(frozenset(), sleep=clock.sleep, clock=clock)
+    get = crawl.fetcher(load_registry(ROOT), robots=policy, sleep=clock.sleep, budget_s=1.0)
+    with pytest.raises(FetchRefused) as e:
+        get("https://data.cdc.gov/resource/a.json")
+    assert e.value.code == "time_budget" and clock.slept == []
 
 
 def test_liveRead_capsReportsAndKeepsTheNote(ds: Dataset) -> None:
@@ -495,6 +467,7 @@ def test_liveRead_capsReportsAndKeepsTheNote(ds: Dataset) -> None:
         pytest.param(LayoutError("x"), "publisher_layout_unreadable", "report layout", id="layout"),
         pytest.param(wc.ReconciliationError("x"), "publisher_layout_unreadable", "report layout", id="sums"),
         pytest.param("robots_disallowed", "publisher_disallows_reading", "asks automated tools", id="robots"),
+        pytest.param("blocked", "publisher_blocked", "refused this program", id="blocked"),
         pytest.param("time_budget", "publisher_too_slow", "longer than one question", id="slow"),
         pytest.param(RuntimeError("x"), "publisher_unreachable", "could not be reached", id="other"),
     ],

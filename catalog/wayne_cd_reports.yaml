@@ -25,8 +25,9 @@ source:
   dataset: statistics-reports
   landing_url: https://www.waynecountymi.gov/Government/Departments/Health-Human-Veterans-Services/Public-Health/Statistics-Reports
   api_url: https://www.waynecountymi.gov/Government/Departments/Health-Human-Veterans-Services/Public-Health/Statistics-Reports
-  # Access policy for government hosts: at least 10 s between requests, on top of any robots.txt crawl delay.
-  min_interval_s: 10
+  # A .gov host on the reviewed list: paced at least 10 s apart (crawl.MIN_INTERVAL_S) under the maintainer's
+  # government-host policy. A 401/403/429 is still a block, recorded and never worked around.
+  government_host: true
 codebook_url: https://www.waynecountymi.gov/Government/Departments/Health-Human-Veterans-Services/Public-Health/Statistics-Reports
 caveats:
   - "Excludes Detroit: the quarterly and annual reports count Wayne County outside the City of Detroit (Out-Wayne), which has its own health department, and say so. The 5-year report doesn't say, so its rows don't claim it either way (area says so, excludes_detroit is empty) until a maintainer confirms it. Never read these counts as all of Wayne County."

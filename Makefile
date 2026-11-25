@@ -1,6 +1,6 @@
 # Developer and CI entry points. `make help` lists the targets.
 .DEFAULT_GOAL := help
-.PHONY: help install lint fmt typecheck test test-network mutate docs kit check refresh serve check-contracts eval hooks
+.PHONY: help install lint fmt typecheck test test-network smoke mutate docs kit check refresh serve check-contracts eval hooks
 
 UV ?= uv
 COV_FLOOR ?= 85
@@ -33,6 +33,9 @@ test: ## Offline tests with coverage (fails under COV_FLOOR, default 85%)
 
 test-network: ## Tests that hit live publishers (network marker)
 	$(UV) run pytest -m network
+
+smoke: ## The C. auris in Michigan journey on a synthetic lake, scored with eval/scorer.py (smoke marker; offline)
+	$(UV) run pytest -m smoke tests/smoke -rxX
 
 mutate: ## Mutation tests on the modules changed since BASE (default origin/main); fails under MUTATION_FLOOR
 	$(UV) run python scripts/mutate_changed.py --base $(BASE) --floor $(MUTATION_FLOOR)

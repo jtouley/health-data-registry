@@ -120,10 +120,14 @@ def test_nndss_cauris_clinicalAndScreening_neverAddedTogether(
     metric: str, filters: dict[str, Any], group_by: list[str]
 ) -> None:
     ds = load_registry(ROOT).get("cdc_nndss_weekly")
+    if group_by and ds.semantic.measure(ds.semantic.metric(metric).measure).kind == "count":
+        # A plain count grouped by condition gives one row per condition, never a sum across them.
+        assert "GROUP BY" in compile_metric(ds, metric, filters=filters, group_by=group_by).sql
+        return
     with pytest.raises(QueryRefused) as e:
         compile_metric(ds, metric, filters=filters, group_by=group_by)
     assert e.value.code == "needs_single_value"
-    assert "one condition" in str(e.value)
+    assert "condition" in str(e.value)
 
 
 def test_nndss_cauris_series_oneLabelEach_caseStatusCited() -> None:
@@ -140,7 +144,7 @@ def test_needsSingleValue_message_runningTotalOnlyForItsOrderDimension() -> None
     ds = load_registry(ROOT).get("cdc_nndss_weekly")
     with pytest.raises(QueryRefused) as e:
         compile_metric(ds, "weekly_cases", filters={"condition": CAURIS})
-    assert str(e.value).startswith("weekly_cases is read at one condition")
+    assert str(e.value).startswith("weekly_cases is never added up across conditions")
     with pytest.raises(QueryRefused) as e:
         compile_metric(ds, "year_to_date_cases", filters={"condition": "Legionellosis"})
     assert str(e.value).startswith("year_to_date_cases is a running total, so it is read at one mmwr_week")

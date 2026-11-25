@@ -114,7 +114,7 @@ series:
     filters: {condition: "Legionellosis"}
     location_dimension: reporting_area
     time_dimension: mmwr_year
-    case_status: "as published (NNDSS does not split confirmed and probable here)"
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
   - condition: "Legionellosis"
     label: "Legionellosis"
     metric: us_resident_annual_cases
@@ -122,7 +122,7 @@ series:
     filters: {condition: "Legionellosis"}
     location_dimension: reporting_area
     time_dimension: mmwr_year
-    case_status: "as published (NNDSS does not split confirmed and probable here)"
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
   - condition: "Syphilis, Primary and secondary"
     label: "Syphilis (primary and secondary)"
     metric: annual_cases
@@ -130,7 +130,7 @@ series:
     filters: {condition: "Syphilis, Primary and secondary"}
     location_dimension: reporting_area
     time_dimension: mmwr_year
-    case_status: "as published (NNDSS does not split confirmed and probable here)"
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
   - condition: "Syphilis, Primary and secondary"
     label: "Syphilis (primary and secondary)"
     metric: us_resident_annual_cases
@@ -138,7 +138,7 @@ series:
     filters: {condition: "Syphilis, Primary and secondary"}
     location_dimension: reporting_area
     time_dimension: mmwr_year
-    case_status: "as published (NNDSS does not split confirmed and probable here)"
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
   - condition: "Syphilis, Congenital"
     label: "Congenital syphilis"
     metric: annual_cases
@@ -146,7 +146,7 @@ series:
     filters: {condition: "Syphilis, Congenital"}
     location_dimension: reporting_area
     time_dimension: mmwr_year
-    case_status: "as published (NNDSS does not split confirmed and probable here)"
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
   - condition: "Syphilis, Congenital"
     label: "Congenital syphilis"
     metric: us_resident_annual_cases
@@ -154,7 +154,7 @@ series:
     filters: {condition: "Syphilis, Congenital"}
     location_dimension: reporting_area
     time_dimension: mmwr_year
-    case_status: "as published (NNDSS does not split confirmed and probable here)"
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
   - condition: "Tuberculosis"
     label: "Tuberculosis"
     metric: annual_cases
@@ -162,7 +162,7 @@ series:
     filters: {condition: "Tuberculosis"}
     location_dimension: reporting_area
     time_dimension: mmwr_year
-    case_status: "as published (NNDSS does not split confirmed and probable here)"
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
   - condition: "Tuberculosis"
     label: "Tuberculosis"
     metric: us_resident_annual_cases
@@ -170,7 +170,7 @@ series:
     filters: {condition: "Tuberculosis"}
     location_dimension: reporting_area
     time_dimension: mmwr_year
-    case_status: "as published (NNDSS does not split confirmed and probable here)"
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
   # Weekly series feed check_signal only (get_series never adds weeks up into a year).
   - condition: "Candida auris, clinical"
     label: "C. auris (clinical cases)"
@@ -220,7 +220,7 @@ series:
     location_dimension: reporting_area
     time_dimension: mmwr_year
     week_dimension: mmwr_week
-    case_status: "as published (NNDSS does not split confirmed and probable here)"
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
   - condition: "Legionellosis"
     label: "Legionellosis"
     metric: us_resident_weekly_cases
@@ -229,7 +229,7 @@ series:
     location_dimension: reporting_area
     time_dimension: mmwr_year
     week_dimension: mmwr_week
-    case_status: "as published (NNDSS does not split confirmed and probable here)"
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
   - condition: "Syphilis, Primary and secondary"
     label: "Syphilis (primary and secondary)"
     metric: weekly_cases
@@ -238,7 +238,7 @@ series:
     location_dimension: reporting_area
     time_dimension: mmwr_year
     week_dimension: mmwr_week
-    case_status: "as published (NNDSS does not split confirmed and probable here)"
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
   - condition: "Syphilis, Primary and secondary"
     label: "Syphilis (primary and secondary)"
     metric: us_resident_weekly_cases
@@ -247,7 +247,7 @@ series:
     location_dimension: reporting_area
     time_dimension: mmwr_year
     week_dimension: mmwr_week
-    case_status: "as published (NNDSS does not split confirmed and probable here)"
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
   - condition: "Syphilis, Congenital"
     label: "Congenital syphilis"
     metric: weekly_cases
@@ -256,7 +256,7 @@ series:
     location_dimension: reporting_area
     time_dimension: mmwr_year
     week_dimension: mmwr_week
-    case_status: "as published (NNDSS does not split confirmed and probable here)"
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
   - condition: "Syphilis, Congenital"
     label: "Congenital syphilis"
     metric: us_resident_weekly_cases
@@ -265,7 +265,7 @@ series:
     location_dimension: reporting_area
     time_dimension: mmwr_year
     week_dimension: mmwr_week
-    case_status: "as published (NNDSS does not split confirmed and probable here)"
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
   - condition: "Tuberculosis"
     label: "Tuberculosis"
     metric: weekly_cases
@@ -274,7 +274,7 @@ series:
     location_dimension: reporting_area
     time_dimension: mmwr_year
     week_dimension: mmwr_week
-    case_status: "as published (NNDSS does not split confirmed and probable here)"
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
   - condition: "Tuberculosis"
     label: "Tuberculosis"
     metric: us_resident_weekly_cases
@@ -283,4 +283,29 @@ series:
     location_dimension: reporting_area
     time_dimension: mmwr_year
     week_dimension: mmwr_week
-    case_status: "as published (NNDSS does not split confirmed and probable here)"
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+# Any condition label in the catalog (conditions.labels) reads through these templates, pinned on the condition
+# dimension: the same running-total rules as the named series above (read at one week, never weeks added up).
+generic_series:
+  - metric: annual_cases
+    measure: cases
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+  - metric: us_resident_annual_cases
+    measure: cases
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+  - metric: weekly_cases
+    measure: cases
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    week_dimension: mmwr_week
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+  - metric: us_resident_weekly_cases
+    measure: cases
+    location_dimension: reporting_area
+    time_dimension: mmwr_year
+    week_dimension: mmwr_week
+    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"

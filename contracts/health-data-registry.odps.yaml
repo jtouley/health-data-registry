@@ -64,6 +64,28 @@ inputPorts:
       - type: canonicalUrl
         url: https://www.who.int/data/gho
         description: WHO Global Health Observatory.
+  - name: codtableau-detroitmi-gov
+    tags: [detroit, tableau]
+    customProperties:
+      - property: description
+        value: City of Detroit Health Department Tableau Server dashboards (guest views, read in a browser) read live per request only; never mirrored or stored.
+      - property: license
+        value: no-terms-stated
+    authoritativeDefinitions:
+      - type: canonicalUrl
+        url: https://codtableau.detroitmi.gov/t/DHD/
+        description: City of Detroit Health Department dashboards.
+  - name: mdhhstableau-public-michigan-gov
+    tags: [michigan, tableau]
+    customProperties:
+      - property: description
+        value: Michigan Department of Health and Human Services public Tableau dashboards (guest views, read in a browser), read live per request only; never mirrored or stored.
+      - property: license
+        value: no-terms-stated
+    authoritativeDefinitions:
+      - type: canonicalUrl
+        url: https://mdhhstableau-public.michigan.gov/
+        description: MDHHS public dashboards.
 outputPorts:
   - name: cdc_haicviz_cdi
     description: HAICViz - CDI (Clostridioides difficile infection, Emerging Infections Program).
@@ -114,6 +136,38 @@ outputPorts:
     contractId: wayne_cd_reports
     customProperties:
       - {property: hosted, value: false}
+  - name: detroit_dhd_epi_annual
+    description: Detroit Health Department Epidemiology Dashboard, annual cases and rates for Detroit and Michigan. Private tier, not hosted (no terms of reuse stated).
+    type: tables
+    version: 0.1.0
+    contractId: detroit_dhd_epi_annual
+    customProperties:
+      - {property: hosted, value: false}
+      - {property: tier, value: private}
+  - name: detroit_dhd_resp_ed_weekly
+    description: Detroit Health Department Respiratory Virus Dashboard, weekly share of ED visits for COVID-19, influenza and RSV. Private tier, not hosted (no terms of reuse stated).
+    type: tables
+    version: 0.1.0
+    contractId: detroit_dhd_resp_ed_weekly
+    customProperties:
+      - {property: hosted, value: false}
+      - {property: tier, value: private}
+  - name: detroit_dhd_covid_archive_daily
+    description: Detroit Health Department COVID-19 Archived Dashboard, daily cases by disease date, 2020-2026. Private tier, not hosted (no terms of reuse stated).
+    type: tables
+    version: 0.1.0
+    contractId: detroit_dhd_covid_archive_daily
+    customProperties:
+      - {property: hosted, value: false}
+      - {property: tier, value: private}
+  - name: mdhhs_measles_county
+    description: MDHHS Measles Tracking Dashboard, measles cases by Michigan county. Private tier, not hosted (no terms of reuse stated).
+    type: tables
+    version: 0.1.0
+    contractId: mdhhs_measles_county
+    customProperties:
+      - {property: hosted, value: false}
+      - {property: tier, value: private}
 customProperties:
   - property: hub
     value: One Hugging Face dataset; each source in its own folder (<source>/data/<source>.parquet) with its card.

@@ -321,7 +321,7 @@ customProperties:
   - {property: licence, value: no-stated-terms}
   - {property: citation, value: "Wayne County Department of Health, Human & Veterans Services. Select reportable communicable disease case counts (quarterly and 5-year reports). https://www.waynecountymi.gov/Government/Departments/Health-Human-Veterans-Services/Public-Health/Statistics-Reports"}
   - {property: refresh, value: quarterly}
-  - {property: accessPolicy, value: "Government host: honest user agent (fetch.USER_AGENT), at least 10 s between requests (catalog source.min_interval_s), robots.txt honoured, aggregate tables only, fetched at run time and never stored."}
+  - {property: accessPolicy, value: "Government host: honest user agent (fetch.USER_AGENT), at least 10 s between requests (catalog source.government_host, crawl.MIN_INTERVAL_S), a 401/403/429 is a block and never worked around, aggregate tables only, fetched at run time and never stored."}
   - {property: geographyBasis, value: "unresolved: the reports do not say whether a case is placed by residence or by where it was reported; the quarterly and annual reports' area is Wayne County excluding Detroit"}
   - property: unreliableRule
     value: {kind: publisher_suppressed, threshold: 6, description: "Reports from 2025 on print counts of 1 to 5 as '*' (stated in the reports); kept as printed, never filled in. 2021-2024 reports print every count."}
@@ -332,6 +332,6 @@ customProperties:
       - "Is a case placed by residence or by the reporting jurisdiction in MDSS? Not stated; geographyBasis stays unresolved, which blocks comparisons with GBD by place."
       - "Terms of use: none stated. Ask the county before anything beyond run-time reading."
       - "Disease labels are as printed; mapping them to GBD causes and to national case definitions (e.g. 'Candida auris' here vs CDC's clinical and screening series) needs a reviewer. gbd.causes is empty until then."
-      - "Robots and access: on 2026-11-24 the county's CDN answered 403 (Access Denied) for robots.txt and the index page to a request from the build environment with an honest user agent; the cause (address or agent) is unknown. crawl.Robots reads a 403 robots.txt as 'disallow everything', so live reads are refused wherever that happens (in plain words, pointing to the reports page); nothing works around it. The government-host fallback is issue #36. Check from a clinician's machine before review."
+      - "Robots and access: on 2026-11-24 the county's CDN answered 403 (Access Denied) for robots.txt and the index page to a request from the build environment with an honest user agent; the cause (address or agent) is unknown. crawl.Robots records a 401, 403 or 429 as a block for the run, so live reads are refused wherever that happens (in plain words, pointing to the reports page); nothing works around it. The government-host fallback is issue #36. Check from a clinician's machine before review."
       - "Should reports with the 2014-2020 layouts be read? Out of scope until their layouts are checked."
       - "Live reads: one question reads at most the three reports with the latest year in their file names (live.LIVE_MAX_REPORTS) within 75 s; the answer's notes name the reports left unread. Is the file-name year a good enough guide to the newest report?"

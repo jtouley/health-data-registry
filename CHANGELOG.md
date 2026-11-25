@@ -8,13 +8,26 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Condition vocabulary: each catalog entry lists the publisher's own condition labels (`conditions:`, with
+  where they come from), and `get_series`, `get_rate` and `get_trend` accept any of them through the semantic
+  model's `generic_series`, with the same aggregation rules as the named series. `validate` fails when a local
+  snapshot holds a label the catalog doesn't list.
+- `describe_dataset` returns `dimension_values` (the values each filter takes) and `presentation_rules`;
+  discovery results (`list_sources`, `search_datasets`, `suggest_datasets`, `describe_dataset`) carry each
+  source's provenance (source URL, retrieved_at, raw sha256, version, licence, citation, contract status).
+- Structured declines: every refusal carries `next_step`, and where they apply `did_you_mean`,
+  `nearest_served` (e.g. the state for a county), `served_elsewhere` (the publisher's page),
+  `outside_registry` (a GBD cause by name only) or, for `filter_matched_nothing`, the values that exist.
+- The server's instructions are an intent-to-tool routing block.
 - Wayne County (Out-Wayne, excluding Detroit) communicable disease case counts from the county's quarterly,
-  annual and 5-year PDF reports (`wayne_cd_reports`, draft): read at run time, never stored, every row labelled
-  as excluding Detroit, and `*` (1 to 5 cases) kept as printed. A PDF table parser that rebuilds tables from
+  annual and 5-year PDF reports (`wayne_cd_reports`, draft): read at run time within a 75 s budget, never
+  stored, each row labelled as excluding Detroit only where its report says so and citing its report's sha256,
+  and `*` (1 to 5 cases) kept as printed. A PDF table parser that rebuilds tables from
   word positions and cell borders and refuses what it can't settle, including a row below the grand total.
 - Draft contracts for CDC's Tracking C. auris page and the AR Lab Network C. auris isolates
   (`docs/sources/c-auris/`), kept apart from the NNDSS clinical and screening counts.
-- A per-host minimum gap between requests (`source.min_interval_s`, 10 s for the county's site).
+- A live read can be bounded in time (`crawl.fetcher(budget_s=...)`), and PDF-report pages are requested as
+  HTML and PDF rather than JSON.
 
 ### Changed
 
