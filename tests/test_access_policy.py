@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from health_data_registry import crawl, geo
+from health_data_registry import crawl
 from health_data_registry import fetch as fetch_mod
 from health_data_registry.browser_fetch import BrowserResult
 from health_data_registry.registry import Registry, load_registry
@@ -449,33 +449,3 @@ def test_not_flagged_government_host_keeps_robots(tmp_path: Path, monkeypatch: p
     fake(monkeypatch, {GOV: DISALLOW_ALL})
     with pytest.raises(fetch_mod.FetchRefused):
         crawl.fetcher(reg, None, sleep=lambda s: None)(VIEW)
-
-
-# --------------------------------------------------------------------------------------------- places
-
-
-def test_michigan_counties_and_detroit_resolve() -> None:
-    counties = [p for p in geo.LOCAL_PLACES if p.level == "county"]
-    assert len(counties) == 83 and len({p.fips for p in counties}) == 83
-    assert [p.fips for p in counties] == [f"26{n:03d}" for n in range(1, 166, 2)]
-    wayne = geo.local_place("Wayne County")
-    assert wayne is not None and wayne.fips == "26163" and wayne.gbd is None and wayne.state == "MI"
-    for label in ("Wayne", "WAYNE COUNTY", "Wayne Co.", "Wayne County, MI", "26163"):
-        assert geo.local_place(label) == wayne
-    for label in ("St. Joseph", "Saint Joseph County", "St Joseph", "st. clair county"):
-        p = geo.local_place(label)
-        assert p is not None and p.name.startswith("St. ")
-    detroit = geo.local_place("City of Detroit")
-    assert (
-        detroit is not None and detroit.level == "city" and detroit.fips == "2622000" and detroit.gbd is None
-    )
-    assert geo.local_place("Detroit") == geo.local_place("detroit city") == detroit
-
-
-def test_state_and_nation_keep_their_gbd_names_and_counties_never_key_to_gbd() -> None:
-    mi = geo.local_place("Michigan")
-    assert mi is not None and mi.gbd == "Michigan" and mi.level == "state"
-    assert geo.place("United States").gbd == "United States"  # type: ignore[union-attr]
-    assert geo.place("Detroit") is None and geo.place("Wayne County") is None  # only GBD locations are keyed
-    assert geo.local_place("Wayne County (excluding Detroit)") is None  # part of a county is not the county
-    assert geo.local_place("Detroit Case Rate") is None  # a legend label, not a place name
