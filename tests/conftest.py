@@ -101,15 +101,15 @@ SEMANTIC = """\
 dataset: toy_cases
 version: 0.1.0
 dimensions:
-  - {name: state, column: reporting_area, type: categorical, description: Reporting area}
-  - {name: year, column: year, type: time, description: MMWR year}
-  - {name: condition, column: condition, type: categorical, description: Condition}
+  - {name: state, column: reporting_area, type: categorical, non_additive: false, description: Reporting area}
+  - {name: year, column: year, type: time, non_additive: false, description: MMWR year}
+  - {name: condition, column: condition, type: categorical, non_additive: true, non_additive_reason: "each is a different condition", description: Condition}
 measures:
   - {name: cases, column: cases, kind: count, unit: "1", description: reported cases}
   - {name: rate, column: rate_per_100k, kind: rate, unit: /100000, description: rate per 100k}
 metrics:
   - {name: case_count, description: Reported cases, measure: cases, aggregation: sum, exclude_total_rows: true}
-  - {name: case_rate, description: Published rate per 100k, measure: rate, aggregation: none, exclude_total_rows: false}
+  - {name: case_rate, description: Published rate per 100k, measure: rate, aggregation: none, exclude_total_rows: false, uncertainty: none, uncertainty_reason: "The toy table gives no interval."}
 series:
   - condition: legionellosis
     label: Legionellosis
