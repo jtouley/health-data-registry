@@ -41,7 +41,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
-- New source, draft and not yet hosted: `cdc_nssp_ed_trajectories`, CDC's weekly percent of emergency department
+- New source, draft (contract not yet reviewed): `cdc_nssp_ed_trajectories`, CDC's weekly percent of emergency department
   visits for COVID-19, influenza and RSV with CDC's trend and activity level (NSSP, data.cdc.gov rdmq-nq56), on
   the existing Socrata adapter. State and national answers read CDC's own state and United States rows; county rows
   carry their Health Service Area's shared figure and are never added up.

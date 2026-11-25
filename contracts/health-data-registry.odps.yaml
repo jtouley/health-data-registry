@@ -109,12 +109,12 @@ outputPorts:
     customProperties:
       - {property: hosted, value: true}
   - name: cdc_nssp_ed_trajectories
-    description: NSSP weekly percent of emergency department visits for COVID-19, influenza, RSV and combined, with trends and levels, by state, Health Service Area and nationally. Public-domain federal data, not hosted until a maintainer reviews the catalog entry.
+    description: NSSP weekly percent of emergency department visits for COVID-19, influenza, RSV and combined, with trends and levels, by state, Health Service Area and nationally.
     type: tables
     version: 0.1.0
     contractId: cdc_nssp_ed_trajectories
     customProperties:
-      - {property: hosted, value: false}
+      - {property: hosted, value: true}
   - name: cdc_respnet
     description: RESP-NET hospitalization rates and clinical data (COVID-NET, FluSurv-NET, RSV-NET).
     type: tables

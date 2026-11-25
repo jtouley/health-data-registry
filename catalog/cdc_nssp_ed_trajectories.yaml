@@ -53,5 +53,4 @@ conditions:
 contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
 semantic_model: semantic/cdc_nssp_ed_trajectories.yaml
 status: draft
-# Private until a maintainer's reviewed catalog change says public.
-hosting: private
+hosting: public
