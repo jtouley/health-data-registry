@@ -28,8 +28,8 @@ fmt: ## Fix lint findings and format the code
 typecheck: ## Type check with mypy (strict, settings in pyproject.toml)
 	$(UV) run mypy
 
-test: ## Offline tests with coverage (fails under COV_FLOOR, default 85%)
-	$(UV) run pytest -m "not network" --cov --cov-report=term-missing --cov-fail-under=$(COV_FLOOR)
+test: ## Offline tests with coverage, one worker per core (pytest-xdist; fails under COV_FLOOR, default 85%)
+	$(UV) run pytest -m "not network" -n auto --dist worksteal --cov --cov-report=term-missing --cov-fail-under=$(COV_FLOOR)
 
 test-network: ## Tests that hit live publishers (network marker)
 	$(UV) run pytest -m network
@@ -37,7 +37,7 @@ test-network: ## Tests that hit live publishers (network marker)
 smoke: ## The C. auris in Michigan journey on a synthetic lake, scored with eval/scorer.py (smoke marker; offline)
 	$(UV) run pytest -m smoke tests/smoke -rxX
 
-mutate: ## Mutation tests on the modules changed since BASE (default origin/main); fails under MUTATION_FLOOR
+mutate: ## Mutation tests on the functions changed since BASE (default origin/main); fails under MUTATION_FLOOR
 	$(UV) run python scripts/mutate_changed.py --base $(BASE) --floor $(MUTATION_FLOOR)
 
 docs: ## Regenerate docs/helpers.md, the template's skills, the plugin and the tool lists (README, docs/tools.md, CLAUDE.md)

@@ -122,7 +122,7 @@ echo "PASS  mutation: shards of the changed modules since ${BASE}: ${modules_jso
 mkdir "${REPORTS}/shards" || fail "settings" "Could not create ${REPORTS}/shards."
 while IFS= read -r module <&3; do
   [ -n "${module}" ] || continue
-  step "mutation: ${module}" "${UV}" run python scripts/mutate_changed.py --module "${module}" \
+  step "mutation: ${module}" "${UV}" run python scripts/mutate_changed.py --module "${module}" --base "${BASE}" \
     --report "${REPORTS}/shards/${module}.json"
 done 3< "${REPORTS}/modules.txt"
 step "mutation floor (${MUTATION_FLOOR}% of all mutants)" "${UV}" run python scripts/mutate_changed.py \

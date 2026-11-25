@@ -37,7 +37,7 @@ The README's images (`assets/readme/*.svg`, light and dark) come from one token 
 | `make test` | Offline tests with coverage; fails under 85% (`COV_FLOOR`) |
 | `make test-network` | Live publisher tests in `tests/integration` (marker `network`) |
 | `make smoke` | The C. auris in Michigan reference journey on a synthetic lake (marker `smoke`; see [Smoke journey](#smoke-journey)) |
-| `make mutate` | Mutation tests on modules changed since `BASE` (default `origin/main`); fails under 70% killed (`MUTATION_FLOOR`) |
+| `make mutate` | Mutation tests on the functions changed since `BASE` (default `origin/main`); fails under 70% killed (`MUTATION_FLOOR`) |
 | `make docs` | Regenerate `docs/helpers.md` from `src/health_data_registry/helpers.py` |
 | `make refresh` | `health-data-registry refresh --all` into the local lake |
 | `make serve` | Run the MCP server on stdio |
@@ -168,16 +168,21 @@ Everything a clinician reads (tool descriptions, helpers, refusals) follows the 
 - **Network tests.** `tests/integration/test_live_<dataset>.py` fetch a small slice from the publisher at test time,
   write nothing to disk and are marked `network`. `make test` and CI's test job leave them out; run
   `make test-network` when you change an adapter, a contract or the fetcher.
-- **Mutation tests.** `scripts/mutate_changed.py` runs mutmut on the modules changed since the merge base and
-  prints each mutant it did not kill. A survivor means the tests would not notice that change: add or sharpen a
+- **Mutation tests.** `scripts/mutate_changed.py` runs mutmut on the functions changed since the merge base (a
+  function holding an added, edited or deleted line; every function of a new file) and prints each mutant it did
+  not kill. A change outside every function (imports, constants) makes no mutant: mutmut mutates function bodies
+  only. A survivor means the tests would not notice that change: add or sharpen a
   test, or say in the PR why the mutant is equivalent. Every status but `killed` (and `caught by type check`)
   lowers the score, `no tests` and `skipped` included. `make mutate` is part of `make check`. CI runs the same
-  check on every PR in shards: `--list` names the shards of the changed modules, one job per shard runs mutmut,
-  and the aggregate job applies the 70% floor to the summed counts and lists every mutant not killed. A module
-  is one shard, or, when its estimated mutants exceed a shard's size (`SHARD_TARGET`, smaller for
-  `registry.py`), several named `<module>#<k>of<n>@<split>`: split by function, and a big function by the last
-  digit of its mutant numbers, so each shard takes about 10 to 20 minutes (the job's limit is 40). The split
-  comes from the module's source alone, read with the same Python 3.12 in `--list` and in every shard; `<split>`
+  check on every PR in shards: `--list` names the shards of the changed functions, one job per shard runs mutmut
+  (at most 6 at once per run), and the aggregate job applies the 70% floor to the summed counts and lists every
+  mutant not killed. The list job resolves the merge base once and hands it to every shard, so they scope to the
+  same functions. Each shard generates mutants for its own module only, and mutmut's stats run covers only the
+  test files that import that module, directly or through other modules (a test left out can only lower the
+  score). Shards are named `<module>#<k>of<n>@<split>`: the changed functions, split by function, and a big
+  function by the last digit of its mutant numbers, to about 3 minutes of mutants each (`SHARD_TARGET`, smaller
+  for `registry.py`; the job's limit is 8 minutes). The split
+  comes from the module's source and the changed functions alone, read with the same Python 3.12 in `--list` and in every shard; `<split>`
   is a hash of it, and a shard refuses an id whose hash differs from its own split, so an edit made after
   `--list` (in CI or during precheck) fails the shard instead of running the wrong mutants. Each shard also
   checks that every mutant of its module falls in exactly one shard. Functions mutmut never mutates (under
