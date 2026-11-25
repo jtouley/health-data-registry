@@ -8,10 +8,10 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from health_data_registry.adapters import LayoutError, pages, publisher_fields
+from health_data_registry.adapters import DOCUMENT_FIELDS, LayoutError, pages, publisher_fields
 from health_data_registry.adapters.html import SelectorError, parse_html, parse_selector, select
 from health_data_registry.adapters.row_guard import RowLevelRefused
-from tests.adapters.helpers import HOST, Site, entry
+from tests.adapters.helpers import HOST, Site, entry, published
 
 URL = f"https://{HOST}/toy/data"
 
@@ -139,15 +139,15 @@ def test_html_table(case: Case) -> None:
             list(pages(e, site))
         return
     got = list(pages(e, site))
-    assert got[0].records == case.records and got[0].fetch.content == case.content
+    assert published(got[0]) == case.records and got[0].fetch.content == case.content
 
 
 def test_fields_max_rows_and_publisher_fields() -> None:
     e = entry("html_table", {"shape": "table", "table_selector": "#cases"})
-    assert list(pages(e, Site({URL: SIMPLE}), fields=["Cases"], max_rows=1))[0].records == [
+    assert published(list(pages(e, Site({URL: SIMPLE}), fields=["Cases"], max_rows=1))[0]) == [
         {"Cases": "1,204a"}
     ]
-    assert publisher_fields(e, Site({URL: SIMPLE})) == {"County", "Cases"}
+    assert publisher_fields(e, Site({URL: SIMPLE})) == {"County", "Cases", *DOCUMENT_FIELDS}
 
 
 @pytest.mark.parametrize(

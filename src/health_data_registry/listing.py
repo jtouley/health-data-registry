@@ -41,11 +41,14 @@ from health_data_registry.access import (
     normalise,
     pace_s,
 )
-from health_data_registry.adapters import LayoutError, Page, Read
-from health_data_registry.adapters.html_table import item_records, listing_page
+from health_data_registry.adapters import LayoutError, Page, Read, with_document
+from health_data_registry.adapters.html_table import check_item, item_records, listing_page
+from health_data_registry.fetch import FetchRefused
 from health_data_registry.source_config import ListingConfig
 from health_data_registry.store import RawFetch, write_raw
 
+# A listing page or item page the publisher says is gone: the listing is incomplete, not refused.
+GONE = frozenset({404, 410})
 LISTING_FLOOR_S = 10.0  # a listing crawl is long: every host it reads is paced, government host or not
 
 
@@ -134,7 +137,6 @@ class PacedGetter:
                       api_interval=saved.pace_s, source_min=self.read.entry.source.min_interval_s)  # fmt: skip
 
     def __call__(self, url: str, *, redirects: int = 1) -> RawFetch:
-        from health_data_registry.fetch import FetchRefused
 
         host = (normalise(url).split("/")[2]).lower()
         state = self.store.load(host)
@@ -198,27 +200,43 @@ def _crawl_partition(read: Read, cfg: ListingConfig, state: ListingState, get: P
             return 0
         url = cfg.url_template.format(host=entry.source.host, year=year, page=ck.next_page,
                                       session=quote(session or "", safe=""))  # fmt: skip
-        raw = get(url)
-        total, links = listing_page(entry, cfg, raw.content, url)
+        try:
+            raw = get(url)
+        except FetchRefused as e:
+            if e.status not in GONE or ck.total is None:
+                raise
+            # The listing ran out before its own total: the crawl is incomplete, not refused (checked below).
+            ck.listing_done = True
+            state.save(ck)
+            break
+        total, items = listing_page(entry, cfg, raw.content, url)
         if ck.total is not None and total != ck.total:
             raise LayoutError(
                 f"{entry.id}: the {ck.partition} listing now shows {total} results, not {ck.total}"
             )
         ck.total = total
-        for link in links:
+        for listed in items:
+            link = listed.url
             if link in ck.done:
                 continue
             if budget is not None and len(ck.done) >= budget:
                 break
-            item = get(link)
-            records = item_records(entry, cfg, item.content, link)
+            try:
+                item = get(link)
+            except FetchRefused as e:
+                if e.status not in GONE:
+                    raise
+                continue  # a listed item that is gone leaves the crawl incomplete; it is asked for again next run
+            read_from_page = item_records(entry, cfg, item.content, link)
+            check_item(entry, cfg, listed, year, read_from_page)
+            records = with_document(read_from_page, item)
             write_raw(read.lake, [item])  # type: ignore[arg-type] # data first ...
             ck.done[link] = state.save_item(ck.partition, link, item, records)
             state.save(ck)  # ... checkpoint last
-        ck.listed += len(links)
+        ck.listed += len(items)
         ck.next_page += 1
         pages_read += 1
-        ck.listing_done = not links or len(links) < cfg.page_size or ck.listed >= total
+        ck.listing_done = not items or len(items) < cfg.page_size or ck.listed >= total
         state.save(ck)
         if pages_read > cfg.max_pages:
             raise LayoutError(f"{entry.id}: the {ck.partition} listing ran past {cfg.max_pages} pages")

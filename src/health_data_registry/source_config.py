@@ -214,6 +214,23 @@ class ListingYears(Strict):
 _TEMPLATE_FIELDS: Final = frozenset({"host", "year", "page", "session"})
 
 
+class ItemNumber(Strict):
+    """The number the listing prints for an item must be the number its own page prints (listing consistency).
+
+    ``link_text_pattern`` matches the item link's text on the listing whole, and ``field_pattern`` the item record's
+    ``field`` whole; each has one group, the number. A number on one side only, or two different numbers, means
+    the listing and its item pages disagree, and the crawl is refused rather than pairing the wrong pages."""
+
+    link_text_pattern: str
+    field: str
+    field_pattern: str
+
+    @field_validator("link_text_pattern", "field_pattern")
+    @classmethod
+    def _pattern(cls, v: str) -> str:
+        return safe_pattern(v, groups=1)
+
+
 class ListingConfig(Strict):
     """A paginated search listing, then one page per item, read by declared selectors (html_table, listing)."""
 
@@ -230,6 +247,10 @@ class ListingConfig(Strict):
     results_count_selector: str
     results_count_pattern: str  # one group: the listing's own total, digits with optional thousands commas
     fields: dict[str, str]  # field name -> selector on the item page; each value is the element's text
+    # Listing consistency: the group of item_path_pattern that holds the item's year, which must be the year the
+    # listing was asked for (1-based; unset: not checked), and the item number the listing and the page share.
+    item_year_group: int | None = Field(default=None, ge=1, le=9)
+    item_number: ItemNumber | None = None
 
     @field_validator("url_template")
     @classmethod
@@ -270,6 +291,15 @@ class ListingConfig(Strict):
     @classmethod
     def _selectors(cls, v: str) -> str:
         return check_selector(v)
+
+    @model_validator(mode="after")
+    def _year_group(self) -> ListingConfig:
+        groups = compile_pattern(self.item_path_pattern).groups
+        if self.item_year_group is not None and self.item_year_group > groups:
+            raise ValueError(
+                f"item_year_group {self.item_year_group} names a group item_path_pattern doesn't have"
+            )
+        return self
 
     @model_validator(mode="after")
     def _sessions(self) -> ListingConfig:
@@ -329,12 +359,64 @@ class PdfLive(Strict):
     order_by: Literal["listed", "year_in_filename"] = "listed"
 
 
+class ColumnSum(Strict):
+    """A printed total column that should equal the sum of other printed columns in the same row.
+
+    Columns pair by key: ``total`` and ``parts`` each have one group, and a total column whose key is k is checked
+    against every part column whose key is k ("YTD (\\d{4})" against "Q[1-4]_(\\d{4})"), so headers that change
+    from report to report still pair. Both match the whole header text, as printed."""
+
+    total: str
+    parts: str
+
+    @field_validator("total", "parts")
+    @classmethod
+    def _pattern(cls, v: str) -> str:
+        return safe_pattern(v, groups=1)
+
+
+class Reconcile(Strict):
+    """Which of a table's printed totals to check against its printed parts (ADR 0016; ELT: metadata only).
+
+    The type records every failed check on the row it concerns (``failed_checks``) and changes no value. A total
+    row (its label matching ``total_rows`` whole, or the structural grand-total line below the table) should equal
+    the sum of the rows it covers: a subtotal its own group's rows, the grand total every non-total row. Only the
+    columns matching ``columns`` are summed down; ``column_sums`` checks across a row. A check with a suppressed
+    or blank value in it is skipped, since its true sum is unknown. More than ``max_failed_rows`` failing rows
+    means the table was misread, and the document is refused."""
+
+    total_rows: str | None = None  # label pattern (fullmatch) of a subtotal row inside the table
+    columns: list[str] = Field(default_factory=lambda: [".*"])  # header patterns (fullmatch) summed down
+    column_sums: list[ColumnSum] = Field(default_factory=list)
+    tolerance: float = Field(default=0.0, ge=0.0, le=1_000_000.0)  # absolute difference still counted equal
+    max_failed_rows: int = Field(default=0, ge=0, le=1_000)
+
+    @field_validator("total_rows")
+    @classmethod
+    def _total(cls, v: str | None) -> str | None:
+        return None if v is None else safe_pattern(v)
+
+    @field_validator("columns")
+    @classmethod
+    def _columns(cls, v: list[str]) -> list[str]:
+        return [safe_pattern(p) for p in v]
+
+
+# The fields of a pdf_table long-layout record besides its group and label: the printed column header and the
+# printed cell text, both as printed.
+LONG_FIELDS: Final[tuple[str, str]] = ("column_header", "cell_text")
+
+
 class PdfTableConfig(Strict):
     """Text PDFs linked from an index page (``api_url``), tables rebuilt from word positions and borders."""
 
     index_link_pattern: str  # fullmatch on the normalised path of each link on the index page
     max_documents: int = cap(40, ceiling=200)  # more matching links than this: the page changed; refuse
     table: PdfTableSpec = Field(default_factory=PdfTableSpec)
+    # wide: one record per table row, keyed by each printed column header. long: one record per printed cell
+    # (group, label, column_header, cell_text), for tables whose headers change from document to document.
+    layout: Literal["wide", "long"] = "wide"
+    reconcile: Reconcile | None = None
     live: PdfLive = Field(default_factory=PdfLive)
     max_pdf_bytes: int = cap(10_000_000, ceiling=50_000_000)
     max_pdf_pages: int = cap(30, ceiling=200)
@@ -343,6 +425,15 @@ class PdfTableConfig(Strict):
     @classmethod
     def _pattern(cls, v: str) -> str:
         return safe_pattern(v)
+
+    @model_validator(mode="after")
+    def _long_fields(self) -> PdfTableConfig:
+        labels = {self.table.group_header, self.table.label_header}
+        if self.layout == "long" and labels & set(LONG_FIELDS):
+            raise ValueError(
+                f"a long layout keeps {' and '.join(LONG_FIELDS)} for each cell; a label column can't be named so"
+            )
+        return self
 
 
 class TableauConfig(Strict):

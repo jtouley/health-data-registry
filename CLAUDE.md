@@ -142,7 +142,8 @@ src/health_data_registry/
   evaluation.py   sealed blind sets: seal check, scorer, release gate
   adapters/       the generic adapter types (ADR 0016), registered in adapters.TYPES with declared capabilities:
                   socrata, odata (WHO GHO), https_csv, https_file (csv, xlsx, zip member), html_table (a table,
-                  or a listing of item pages), pdf_table, tableau, doi; adapters.pages runs every page through
+                  or a listing of item pages), pdf_table (wide or long; reconcile.py checks printed totals as
+                  metadata), tableau, doi; adapters.pages runs every page through
                   the row guard; extensions/ holds the named, pure extensions a source opts in to by name
 catalog/          one reviewed YAML per dataset (6 sources: 5 infectious-disease, plus Census county population
                   as the denominator; contracts all draft)

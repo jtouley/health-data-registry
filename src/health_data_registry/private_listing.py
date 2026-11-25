@@ -41,7 +41,7 @@ from health_data_registry.source_config import HtmlTableConfig
 CRAWL_DIR = "_crawl"
 PROVENANCE = ("page_url", "page_sha256", "retrieved_at", "year")
 # Stops the next run carries on from by itself; any other stop needs a maintainer (a changed page, a collision).
-RESUMABLE = frozenset({"crawl_incomplete", "host_locked", "fetch_refused"})
+RESUMABLE = frozenset({"crawl_incomplete", "host_locked"})
 
 
 class NotAListing(ValueError):
@@ -221,10 +221,12 @@ def crawl_into_private(
             runs.append(_incomplete(lake, members, owner, source_id, year, str(e), "layout_changed"))
             break
         except FetchRefused as e:
+            # A page that couldn't be read leaves the year incomplete (its checkpoint kept, resumed next run); a
+            # host that blocked this client is named as such, and is never worked around.
             where = f" (it pointed to {e.location})" if getattr(e, "location", None) else ""
-            runs.append(
-                _incomplete(lake, members, owner, source_id, year, f"{e.message}{where}", "fetch_refused")
-            )
+            code = "blocked" if e.code == "blocked" else "crawl_incomplete"
+            why = f"a page could not be read ({e.message}{where})"
+            runs.append(_incomplete(lake, members, owner, source_id, year, why, code))
             break
         ck = ListingState(crawl_root(lake), owner.id).load(str(year), 1)
         raw = raw_rows(got, year)

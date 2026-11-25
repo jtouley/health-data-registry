@@ -100,6 +100,35 @@ class AdapterType:
 
 TYPES: dict[str, AdapterType] = {}
 
+# Metadata a document type adds to every row it reads (hard rule 8): which document the row was read from, as the
+# provenance shows it. Added, never a publisher value, so ELT allows it; a contract declares the ones it keeps.
+DOCUMENT_FIELDS: tuple[str, str, str] = ("document_url", "document_sha256", "document_retrieved_at")
+
+
+def document_fields(fetch: RawFetch) -> dict[str, str]:
+    """The provenance of the document a row was read from: its URL with any key stripped, the sha256 of its raw
+    bytes and when it was fetched (ISO 8601, UTC)."""
+    from health_data_registry.access import redact_url
+
+    return dict(
+        zip(
+            DOCUMENT_FIELDS,
+            (redact_url(fetch.url), fetch.sha256, fetch.retrieved_at.isoformat()),
+            strict=True,
+        )
+    )
+
+
+def with_document(records: Sequence[Mapping[str, Any]], fetch: RawFetch) -> list[dict[str, Any]]:
+    """``records``, each with its document's provenance; a publisher label named like one is refused."""
+    meta = document_fields(fetch)
+    clash = sorted({k for r in records for k in r} & set(meta))
+    if clash:
+        raise LayoutError(
+            f"the publisher's own labels include {', '.join(clash)}, a name kept for provenance"
+        )
+    return [{**r, **meta} for r in records]
+
 
 def register(t: AdapterType) -> AdapterType:
     if t.name in TYPES:

@@ -15,7 +15,7 @@ from health_data_registry.adapters import LayoutError, pages
 from health_data_registry.fetch import FetchRefused
 from health_data_registry.listing import CrawlIncomplete, ListingState, crawl_pages, partitions
 from health_data_registry.registry import CatalogEntry
-from tests.adapters.helpers import HOST, Site, entry
+from tests.adapters.helpers import HOST, Site, entry, published
 
 LISTING = {
     "url_template": "https://{host}/search/?yr={year}&page={page}",
@@ -89,7 +89,7 @@ def run(e: CatalogEntry, get: Any, lake: Path, clock: Clock, **kw: Any) -> list[
 def test_a_complete_crawl_hands_on_every_item_in_order(tmp_path: Path) -> None:
     e, s, clock = listing_entry(), site(), Clock()
     got = run(e, s, tmp_path, clock)
-    assert [p.records for p in got] == [
+    assert [published(p) for p in got] == [
         [{"title": t, "body": f"Text of {t.lower()}."}] for t in ("A", "B", "C")
     ]
     assert s.calls == [search(1), item("a"), item("b"), search(2), item("c")]
@@ -285,3 +285,148 @@ def test_listing_config_refusals(change: dict[str, Any], match: str) -> None:
 
     with pytest.raises(ValidationError, match=match):
         listing_entry(listing={**LISTING, **change})
+
+
+# ------------------------------------------------------------------------------------------ consistency checks
+
+YEARS = {**LISTING, "item_path_pattern": r"/abstract/[a-z]+-(\d{4})/", "item_year_group": 1}
+
+
+def year_site(slugs: tuple[str, ...]) -> Site:
+    return Site(
+        {
+            search(1): listing_html(len(slugs), list(slugs[:2])),
+            search(2): listing_html(len(slugs), list(slugs[2:])),
+            **{item(s): item_html(s) for s in slugs},
+        }
+    )
+
+
+def test_an_item_of_the_year_asked_for_is_read(tmp_path: Path) -> None:
+    got = run(listing_entry(listing=YEARS),
+              year_site(("a-2025", "b-2025", "c-2025")), tmp_path, Clock())  # fmt: skip
+    assert len(got) == 3
+
+
+def test_an_item_of_another_year_is_refused(tmp_path: Path) -> None:
+    e = listing_entry(listing=YEARS)
+    with pytest.raises(LayoutError, match="an item of 2024; the listing ignored its year"):
+        run(e, year_site(("a-2025", "b-2024", "c-2025")), tmp_path, Clock())
+
+
+def test_a_year_group_the_pattern_lacks_is_refused() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="item_year_group 2"):
+        listing_entry(listing={**YEARS, "item_year_group": 2})
+
+
+NUMBERED = {
+    **LISTING,
+    "item_number": {"link_text_pattern": r"(\d+)\. .*", "field": "title", "field_pattern": r"(\d+)\. .*"},
+}
+
+
+def numbered_site(listed: dict[str, str], printed: dict[str, str]) -> Site:
+    def links(slugs: list[str]) -> str:
+        return "".join(
+            f'<h3 class="entry-title"><a href="/abstract/{s}/">{listed[s]}</a></h3>' for s in slugs
+        )
+
+    def page(s: str) -> bytes:
+        return f'<h1 class="entry-title">{printed[s]}</h1><div class="entry-content">x</div>'.encode()
+
+    slugs = list(listed)
+    return Site(
+        {
+            search(1): f'<p class="results-count">{len(slugs)} Results</p>{links(slugs[:2])}'.encode(),
+            search(2): f'<p class="results-count">{len(slugs)} Results</p>{links(slugs[2:])}'.encode(),
+            **{item(s): page(s) for s in slugs},
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("listed_b", "printed_b", "match"),
+    [
+        ("2. Beta", "2. Beta", None),
+        ("2. Beta", "3. Beta", "numbers .* 2, but the page itself prints 3"),
+        ("Beta", "2. Beta", "not at all, but the page itself prints 2"),
+        ("2. Beta", "Beta", "numbers .* 2, but the page itself prints none"),
+        ("Beta", "Beta", None),  # numbered on neither side: nothing to compare
+    ],
+)
+def test_the_listing_number_is_the_number_the_page_prints(
+    tmp_path: Path, listed_b: str, printed_b: str, match: str | None
+) -> None:
+    s = numbered_site({"a": "1. Alpha", "b": listed_b, "c": "3. Gamma"},
+                      {"a": "1. Alpha", "b": printed_b, "c": "3. Gamma"})  # fmt: skip
+    e = listing_entry(listing=NUMBERED)
+    if match is None:
+        assert len(run(e, s, tmp_path, Clock())) == 3
+        return
+    with pytest.raises(LayoutError, match=match):
+        run(e, s, tmp_path, Clock())
+
+
+def test_a_listing_page_that_is_gone_leaves_the_crawl_incomplete(tmp_path: Path) -> None:
+    s = site()
+    s.pages[search(2)] = FetchRefused("http_error", "The publisher answered 404.", status=404)
+    with pytest.raises(CrawlIncomplete, match="shows 3 results but 2"):
+        run(listing_entry(), s, tmp_path, Clock())
+
+
+def test_a_listed_item_that_is_gone_leaves_the_crawl_incomplete(tmp_path: Path) -> None:
+    s = site()
+    clock = Clock()
+    s.pages[item("b")] = FetchRefused("http_error", "The publisher answered 410.", status=410)
+    with pytest.raises(CrawlIncomplete, match="shows 3 results but 2"):
+        run(listing_entry(), s, tmp_path, clock)
+    s.pages[item("b")] = item_html("b")  # back again: the next run reads it and completes
+    assert len(run(listing_entry(), s, tmp_path, clock)) == 3
+
+
+def test_other_refusals_still_stop_the_crawl(tmp_path: Path) -> None:
+    s = site()
+    s.pages[search(1)] = FetchRefused("http_error", "The publisher answered 404.", status=404)
+    with pytest.raises(FetchRefused):  # the first listing page: nothing shows the listing exists
+        run(listing_entry(), s, tmp_path, Clock())
+    s2 = site()
+    s2.pages[item("a")] = FetchRefused("blocked", "blocked", status=403)
+    with pytest.raises(FetchRefused):
+        run(listing_entry(), s2, tmp_path / "2", Clock())
+
+
+# --------------------------------------------------------------------------------- combined parse extensions
+
+
+def test_parse_extensions_combine_in_declared_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    from health_data_registry.adapters.extensions import EXTENSIONS, Extension
+    from health_data_registry.adapters.html_table import item_records
+    from health_data_registry.source_config import Strict
+
+    order: list[str] = []
+
+    def ext(name: str, out: list[dict[str, str]]) -> Extension:
+        def run_(args: Any, content: bytes, url: str) -> list[dict[str, str]]:
+            order.append(name)
+            return out
+
+        return Extension(name, "parse", Strict, run_, "test only")
+
+    monkeypatch.setitem(EXTENSIONS, "probe_one", ext("probe_one", [{"session": "Oral"}]))
+    monkeypatch.setitem(EXTENSIONS, "probe_two", ext("probe_two", [{"track": "Clinical"}]))
+    monkeypatch.setitem(EXTENSIONS, "probe_title", ext("probe_title", [{"title": "again"}]))
+    monkeypatch.setitem(EXTENSIONS, "probe_many", ext("probe_many", [{"x": "1"}, {"x": "2"}]))
+    uses = [{"name": "probe_two", "hook": "parse"}, {"name": "probe_one", "hook": "parse"}]
+    e = listing_entry(extensions=uses)
+    cfg = e.source.config().listing  # type: ignore[attr-defined]
+    recs = item_records(e, cfg, item_html("a"), item("a"))
+    assert recs == [{"title": "A", "body": "Text of a.", "track": "Clinical", "session": "Oral"}]
+    assert order == ["probe_two", "probe_one"]
+    clash = listing_entry(extensions=[{"name": "probe_title", "hook": "parse"}])
+    with pytest.raises(LayoutError, match="title, which is already read"):
+        item_records(clash, cfg, item_html("a"), item("a"))
+    many = listing_entry(extensions=[{"name": "probe_many", "hook": "parse"}])
+    with pytest.raises(LayoutError, match="read 2 records"):
+        item_records(many, cfg, item_html("a"), item("a"))

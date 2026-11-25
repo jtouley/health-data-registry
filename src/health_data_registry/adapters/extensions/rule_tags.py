@@ -14,8 +14,13 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from health_data_registry.adapters.extensions import Extension, ExtensionRefused, StagingStep, register
-from health_data_registry.adapters.extensions.tag_rules import RULE_SETS, pattern
+from health_data_registry.adapters.extensions import (
+    Extension,
+    ExtensionRefused,
+    StagingStep,
+    register,
+    tag_rules,
+)
 from health_data_registry.source_config import Strict
 
 RuleSet = Literal["conditions", "designs", "data_sources", "geography"]
@@ -45,9 +50,9 @@ def input_fields(args: Args) -> list[str]:
 
 
 def column_sql(words: str, rule_set: str) -> str:
-    rules, keep_case = RULE_SETS[rule_set]
+    rules, keep_case = tag_rules.RULE_SETS[rule_set]
     hits = ", ".join(
-        f"CASE WHEN regexp_matches({words}, {_lit(pattern(pats, case_sensitive=tag in keep_case))}) "
+        f"CASE WHEN regexp_matches({words}, {_lit(tag_rules.pattern(pats, case_sensitive=tag in keep_case))}) "
         f"THEN {_lit(tag)} END"
         for tag, pats in rules.items()
     )

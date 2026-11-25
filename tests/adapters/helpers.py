@@ -150,3 +150,18 @@ def xlsx_bytes(
             "xl/sharedStrings.xml": sst.encode(),
         }
     )
+
+
+def published(page: Any) -> list[dict[str, Any]]:
+    """A page's records as the publisher printed them: each must carry its document's provenance, which is
+    checked against the page's fetch and then left out."""
+    from health_data_registry.access import redact_url
+    from health_data_registry.adapters import DOCUMENT_FIELDS
+
+    f = page.fetch
+    want = (redact_url(f.url), f.sha256, f.retrieved_at.isoformat())
+    out = []
+    for r in page.records:
+        assert tuple(r.get(k) for k in DOCUMENT_FIELDS) == want, r
+        out.append({k: v for k, v in r.items() if k not in DOCUMENT_FIELDS})
+    return out

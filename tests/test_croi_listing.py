@@ -254,7 +254,11 @@ def test_a_failed_listing_page_stops_the_year(
     site = Site(13)
     site.pages[listing_url(2)] = status
     run = crawl(registry, tmp_path, site)[0]
-    assert not run.complete and run.code == "crawl_incomplete" and f"status {status}" in (run.stopped or "")
+    why = run.stopped or ""
+    assert not run.complete and run.code == "crawl_incomplete"
+    assert (
+        f"status {status}" in why or "13 results but 10 item pages were read" in why
+    )  # 404: the listing ran out
     assert "run the same command again to carry on" in run.lines()
     assert not (tmp_path / "private" / INDEX / f"year={YEAR}.jsonl").exists()
 
@@ -265,7 +269,7 @@ def test_a_total_that_changes_mid_crawl_stops_the_year(
     site = Site(13)
     site.pages[listing_url(2)] = listing_html([10, 11, 12], 14)
     run = crawl(registry, tmp_path, site)[0]
-    assert not run.complete and run.code == "crawl_incomplete" and "14 results, not 13" in (run.stopped or "")
+    assert not run.complete and run.code == "layout_changed" and "14 results, not 13" in (run.stopped or "")
 
 
 def test_a_listed_page_of_another_year_stops_the_year(
@@ -273,9 +277,15 @@ def test_a_listed_page_of_another_year_stops_the_year(
 ) -> None:
     site = Site(13)
     site.pages[listing_url(2)] = listing_html([10, 11, 12], 13).replace(b"5012-2025", b"5012-2024")
+    site.pages[page_url(12, 2024)] = abstract_html(12)
     run = crawl(registry, tmp_path, site)[0]
-    assert not run.complete and run.code == "crawl_incomplete" and "another year" in (run.stopped or "")
-    assert page_url(12, 2024) not in site.calls
+    assert not run.complete and run.code == "layout_changed" and "an item of 2024" in (run.stopped or "")
+    gone = Site(13)
+    gone.pages[listing_url(2)] = site.pages[
+        listing_url(2)
+    ]  # the other year's page is gone: incomplete, resumable
+    run = crawl(registry, tmp_path / "gone", gone)[0]
+    assert not run.complete and run.code == "crawl_incomplete"
     assert not (tmp_path / "private" / INDEX / f"year={YEAR}.jsonl").exists()
 
 
@@ -288,7 +298,9 @@ def test_a_page_whose_number_differs_from_the_listing_stops_the_year(
     )  # heading and sidebar agree, the listing doesn't
     run = crawl(registry, tmp_path, site)[0]
     assert not run.complete and run.code == "layout_changed"
-    assert f"listing shows number {number(1)}" in (run.stopped or "")
+    assert f"the listing numbers {page_url(1)} {number(1)}, but the page itself prints 777" in (
+        run.stopped or ""
+    )
     assert "a maintainer needs to look" in " ".join(run.lines())
 
 
@@ -317,7 +329,7 @@ def test_two_pages_with_one_number_keep_the_first_and_stay_incomplete(
     site.pages[listing_url(1)] = site.pages[
         listing_url(1)
     ].replace(  # the listing shows the same number twice
-        f'title="{number(2)} –'.encode(), f'title="{number(1)} –'.encode()
+        f"{number(2)} – {title(2)}".encode(), f"{number(1)} – {title(2)}".encode()
     )
     run = crawl(registry, tmp_path, site)[0]
     assert (run.complete, run.code, run.collisions, run.stored) == (False, "collision", 1, 2)
@@ -334,7 +346,7 @@ def test_an_incomplete_year_never_reads_as_no_prior_work(
     site = Site(3)
     site.pages[page_url(2)] = abstract_html(2, shown_number=number(1))
     site.pages[listing_url(1)] = site.pages[listing_url(1)].replace(
-        f'title="{number(2)} –'.encode(), f'title="{number(1)} –'.encode()
+        f"{number(2)} – {title(2)}".encode(), f"{number(1)} – {title(2)}".encode()
     )
     crawl(registry, tmp_path, site)
     out = tools.find_prior_work(registry, condition="influenza", years=str(YEAR), fmt="json", lake=tmp_path)
