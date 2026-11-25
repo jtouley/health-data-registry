@@ -1,38 +1,27 @@
 # The hosted, read-only MCP server on a Hugging Face Docker Space (CPU Basic hardware).
-# The Space repo holds only space/ (this Dockerfile, README.md with the Space's config header, PRIVACY.md).
-# The package source is one release of the public GitHub repository: a vX.Y.Z tag that release.yml built from a
-# commit on main (HDR_TAG), checked against the commit that tag named when the deploy was prepared (HDR_COMMIT), so
-# a deploy is reproducible and a moved tag fails the build. Both are left empty here on purpose:
-# .github/workflows/deploy-space.yml fills them in from the release it deploys, and a build without them stops.
-# Never point them at a branch or an unreleased commit. Nothing secret is read at build time; the
-# private-tier token (HDR_PRIVATE_HF_TOKEN) is a Space secret, read from the environment at run time only.
-ARG HDR_REPO=https://github.com/jtouley/health-data-registry.git
+# The Space repo holds space/ (this Dockerfile, README.md with the Space's config header, PRIVACY.md) plus two files
+# of one GitHub release, added by .github/workflows/deploy-space.yml: the signed wheel
+# health_data_registry-X.Y.Z-py3-none-any.whl and the signed, hashed runtime requirements
+# health-data-registry-X.Y.Z-requirements.txt that release.yml built from uv.lock. The deploy verifies both Sigstore
+# signatures (built by release.yml at that tag) and that the wheel is the one on PyPI, then writes their sha256 here.
+# Nothing is built from source: the Space runs exactly the artifact that was released.
+#
+# HDR_TAG, HDR_COMMIT and the two sha256 values are empty in git on purpose: deploy-space.yml fills them in from the
+# release it deploys, and a build without them, or with files whose hashes differ, stops. Never fill them by hand
+# for a branch or an unreleased commit. Nothing secret is read at build time; the private-tier token
+# (HDR_PRIVATE_HF_TOKEN) is a Space secret, read from the environment at run time only.
 ARG HDR_TAG=
 ARG HDR_COMMIT=
+ARG HDR_WHEEL_SHA256=
+ARG HDR_REQUIREMENTS_SHA256=
 
-# Stage 1: fetch exactly that release (git checks every object against its hash) and verify it.
-# Base images are pinned by digest (the tag in front is for people), so a re-pushed tag can't change the build;
+# The base image is pinned by digest (the tag in front is for people), so a re-pushed tag can't change the build;
 # Dependabot (docker ecosystem, /space) bumps the digests.
-FROM python:3.12-slim@sha256:191083cdf6c7bda8c76158983163ead5d5cf7b77cf3033e805bb0f5296f51b4b AS source
-ARG HDR_REPO
-ARG HDR_TAG
-ARG HDR_COMMIT
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends git ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-WORKDIR /src
-RUN case "$HDR_TAG" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "HDR_TAG must be a release tag vX.Y.Z" >&2; exit 1 ;; esac \
-    && test -n "$HDR_COMMIT" \
-    && git init -q . \
-    && git remote add origin "$HDR_REPO" \
-    && git fetch -q --depth 1 origin "refs/tags/$HDR_TAG:refs/tags/$HDR_TAG" \
-    && git checkout -q --detach "refs/tags/$HDR_TAG^{commit}" \
-    && test "$(git rev-parse HEAD)" = "$HDR_COMMIT"
-
-# Stage 2: the server, without git.
 FROM python:3.12-slim@sha256:191083cdf6c7bda8c76158983163ead5d5cf7b77cf3033e805bb0f5296f51b4b
 ARG HDR_TAG
 ARG HDR_COMMIT
+ARG HDR_WHEEL_SHA256
+ARG HDR_REQUIREMENTS_SHA256
 
 # uv, pinned to the release the maintainers use.
 COPY --from=ghcr.io/astral-sh/uv:0.11.32@sha256:df4cae8f3a96d175e2e5f992e597550000edbe78fdc2594d5cd8de1a217f504c /uv /usr/local/bin/uv
@@ -45,20 +34,27 @@ ENV HOME=/home/user \
     PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
     HF_HUB_DISABLE_TELEMETRY=1 \
     DO_NOT_TRACK=1 \
     HDR_SOURCE_TAG=$HDR_TAG \
     HDR_SOURCE_COMMIT=$HDR_COMMIT
 WORKDIR /home/user/app
 
-# Only what the server needs: the package, the reviewed registry and the lock file. Never a lake.
-COPY --from=source --chown=user /src/pyproject.toml /src/uv.lock /src/README.md /src/LICENSE /src/NOTICE ./
-COPY --from=source --chown=user /src/src ./src
-COPY --from=source --chown=user /src/catalog ./catalog
-COPY --from=source --chown=user /src/contracts ./contracts
-COPY --from=source --chown=user /src/semantic ./semantic
-COPY --from=source --chown=user /src/licenses ./licenses
-RUN uv sync --frozen --no-dev --no-editable
+# The released wheel (it carries the reviewed catalog, contracts and semantic models) and the locked dependencies,
+# each checked against the sha256 the deploy verified. Every dependency must match a hash from uv.lock. Never a lake.
+COPY --chown=user health_data_registry-*-py3-none-any.whl health-data-registry-*-requirements.txt ./
+RUN case "$HDR_TAG" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "HDR_TAG must be a release tag vX.Y.Z" >&2; exit 1 ;; esac \
+    && test -n "$HDR_COMMIT" && test -n "$HDR_WHEEL_SHA256" && test -n "$HDR_REQUIREMENTS_SHA256" \
+    && version="${HDR_TAG#v}" \
+    && wheel="health_data_registry-${version}-py3-none-any.whl" \
+    && requirements="health-data-registry-${version}-requirements.txt" \
+    && printf '%s  %s\n%s  %s\n' "$HDR_WHEEL_SHA256" "$wheel" "$HDR_REQUIREMENTS_SHA256" "$requirements" \
+        | sha256sum --strict -c - \
+    && uv venv --python /usr/local/bin/python3 .venv \
+    && uv pip install --python .venv/bin/python --require-hashes --no-deps -r "$requirements" \
+    && uv pip install --python .venv/bin/python --no-deps "./$wheel" \
+    && rm -- ./*.whl ./*-requirements.txt
 
 # app_port in README.md. The cache goes to HDR_CACHE_DIR, else /data when storage is attached there, else /tmp.
 EXPOSE 7860

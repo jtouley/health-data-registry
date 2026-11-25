@@ -1,0 +1,57 @@
+# The one release rule, shared by every workflow that ships a release: release.yml (PyPI and the GitHub release),
+# npm-publish.yml (npm and the .mcpb) and deploy-space.yml (the hosted Space). Each calls this as its first job.
+#
+# A release goes ahead only when its tag is vX.Y.Z, names the commit the caller was started for (when given), and
+# that commit is on main and passed CI on main. Otherwise the job fails with a plain message and nothing ships.
+# The rule lives in scripts/verify_release_tag.py (tests in tests/test_verify_release_tag.py).
+#
+# On a tag push, the calling workflow (and so this file and the script) come from the tagged commit, so this check
+# catches mistakes, not a deliberate bypass: the tag ruleset and the environments' deployment rules do that
+# (docs/dev/automation.md, "Release safety").
+name: Verify release tag
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: The release tag, vX.Y.Z
+        required: true
+        type: string
+      sha:
+        description: The commit the caller was started for; the tag must name it. Empty to accept the tag's commit.
+        required: false
+        type: string
+        default: ""
+    outputs:
+      sha:
+        description: The commit the tag names, checked
+        value: ${{ jobs.verify.outputs.sha }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Release tag on main that passed CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read # read CI's runs for the tagged commit
+      contents: read # read the tag and compare its commit with main
+    outputs:
+      sha: ${{ steps.check.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/verify_release_tag.py
+          sparse-checkout-cone-mode: false
+      - name: Check the tag, main and CI
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          python3 scripts/verify_release_tag.py --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$SHA" \
+            --github-output "$GITHUB_OUTPUT"

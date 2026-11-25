@@ -10,16 +10,17 @@ our own.
 | [`crawl-croi.yml`](../../.github/workflows/crawl-croi.yml) | Indexes CROI abstracts at CROI's robots.txt crawl delay, in slices of ~4.7 h | 00:23, 06:23, 12:23, 18:23 daily | Three private datasets (state, metadata, text) |
 | [`crawl-doi.yml`](../../.github/workflows/crawl-doi.yml) | Harvests IDWeek, SHEA, APIC and ICID abstracts by DOI, one job per conference | Wednesday 03:41 | One private dataset per conference |
 | [`sitemaps.yml`](../../.github/workflows/sitemaps.yml) | Takes a weekly copy of the michigan.gov and kentcountymi.gov seed sitemaps, with the week's diff | Monday 04:43 | Private dataset `jtouley/health-data-registry-ops-sitemaps`; an issue when refused |
-| [`deploy-space.yml`](../../.github/workflows/deploy-space.yml) | Syncs `space/` to the Space that hosts the MCP server | Only on a release tag `vX.Y.Z` on main that passed CI | Space `jtouley/health-data-registry-mcp` |
+| [`deploy-space.yml`](../../.github/workflows/deploy-space.yml) | Deploys the release's signed wheel to the Space that hosts the MCP server, then checks the live Space | After `release.yml` succeeds for a tag `vX.Y.Z` on main that passed CI; by hand to roll back | Space `jtouley/health-data-registry-mcp` |
 | [`drift-check.yml`](../../.github/workflows/drift-check.yml) | `check-contracts` against every publisher, opening or updating an issue on failure; re-enables the scheduled workflows | Friday 05:37 | Issues; workflow enabled state |
 | [`cflite_pr.yml`](../../.github/workflows/cflite_pr.yml) | ClusterFuzzLite: builds the Atheris harnesses in `fuzz/` and fuzzes what the change reaches, about 5 minutes per harness | On pull requests, and pushes to `pre-pr/**`, that touch `src/`, `fuzz/` or `.clusterfuzzlite/` | Run artifacts only |
 | [`cflite_batch.yml`](../../.github/workflows/cflite_batch.yml) | ClusterFuzzLite: fuzzes every harness for about 30 minutes each and keeps the grown corpus | Thursday 02:53 | Run artifacts only (the corpus) |
 
-CI, CodeQL, Scorecard, release and npm-publish are unchanged and described in their own files.
+CI, CodeQL and Scorecard are described in their own files; release, npm-publish and the Space deploy under
+[Release safety](#release-safety).
 
 Every action is pinned to a full commit SHA. Every workflow's top-level token is `contents: read`; `issues:
 write` is granted only to the jobs that open an issue, `actions: write` only to the keep-alive job and
-`actions: read` only to the deploy's verify job, the two fuzzing jobs (to read earlier runs' corpus
+`actions: read` only to the shared release-tag check, the two fuzzing jobs (to read earlier runs' corpus
 artifacts) and CI's mutation list job (to find a green pre-pr verdict for the same commit, [the pre-PR
 gate](README.md#the-pre-pr-gate)). The ClusterFuzzLite actions are pinned by SHA too, but they pull OSS-Fuzz's runner images by their
 `v1` tag inside the action, which a workflow can't pin. Every checkout drops its credentials, and no workflow pushes to
@@ -34,7 +35,7 @@ for a repo that already exists).
 
 ## Guarded until another pull request merges
 
-Four workflows are on main before the code they run. Each checks for that code first and, until it is there,
+Three workflows are on main before the code they run. Each checks for that code first and, until it is there,
 ends green with a notice and does nothing. Each starts working on its next run after the other PR merges.
 
 | Workflow | Waits for | Check |
@@ -42,7 +43,6 @@ ends green with a notice and does nothing. Each starts working on its next run a
 | `crawl-croi.yml` | `index-croi` (CROI crawler, `wip/croi-index`) | `health-data-registry index-croi --help` |
 | `crawl-doi.yml` | `scripts/crawl_doi.py` (DOI harvester, `feat/doi-harvest`) | the file exists |
 | `sitemaps.yml` | `browser_fetch.py` (browser fetcher, `feat/michigan-tableau`) | the module imports; until then it uses plain HTTPS, which michigan.gov refuses from cloud servers, so expect the "Sitemap refresh blocked" issue |
-| `deploy-space.yml` | `space/` (the hosted server) at the release tag | `space/README.md` exists at the tag |
 
 ## What each workflow does
 
@@ -154,15 +154,9 @@ Until `browser_fetch.py` is on main, the job uses `--fetcher http` with a notice
 
 ### Deploy the Space (`deploy-space.yml`)
 
-Deploys only from a release tag (`vX.Y.Z`), never on a push to a branch and never from a pull request. The
-deploy job runs in the GitHub environment `space`, whose deployment rule allows only `v*.*.*` tags. The
-**verify** job checks, through the GitHub API, that the tagged commit is on main and that CI passed on main for
-that commit; only then does the **deploy** job, which alone gets the token, upload `space/` to the Space as one
-commit. To redeploy a tag, run the workflow by hand with "Use workflow from" set to that tag; any other ref is
-refused. Files in the Space that aren't in `space/` are deleted, so `space/README.md` must hold the Space's
-config header. Before uploading, the deploy job writes the tag and its commit into `space/Dockerfile`'s empty
-`HDR_TAG` and `HDR_COMMIT`, and the Space's build checks the tag still names that commit; a release without
-`space/` skips with a notice.
+Starts only when `release.yml` finishes successfully for a tag push, or by hand from main to roll back. It never
+builds the server: it deploys the release's own files. See [Release safety](#release-safety) for each job and
+[Roll back the Space](#roll-back-the-space) for what to do when the live check fails.
 
 ### Drift check and keep-alive (`drift-check.yml`)
 
@@ -234,7 +228,7 @@ enforces, even if a workflow file is edited. Under Settings → Environments, th
 
 | Environment | Used by | Deployment branches and tags | Secrets to move into it |
 |---|---|---|---|
-| `space` | `deploy-space.yml` deploy | Selected tags only: `v*.*.*` | `HF_TOKEN` (or `HF_SPACE_TOKEN`) |
+| `space` | `deploy-space.yml` deploy | Selected branches only: `main` (the deploy runs from main after a release; see [Release safety](#release-safety)) | `HF_TOKEN` (or `HF_SPACE_TOKEN`) |
 | `hub-publish` | `refresh.yml` publish | Selected branches only: `main` | `HF_TOKEN` (or `HF_PUBLISH_TOKEN`) |
 
 Required reviewers can be added to either. Until the environments exist, GitHub creates them on the first run
@@ -281,7 +275,7 @@ gh workflow run refresh.yml -f source=cdc_respnet            # one source, never
 gh workflow run crawl-croi.yml -f year=2025 -f max_requests=10   # a short CROI slice
 gh workflow run crawl-doi.yml                                # every conference
 gh workflow run sitemaps.yml                                 # this week's sitemap snapshots
-gh workflow run deploy-space.yml --ref v0.1.0                # redeploy a release tag; any other ref is refused
+gh workflow run deploy-space.yml -f tag=v0.1.0               # deploy (or roll back to) a release; from main only
 gh workflow run drift-check.yml
 gh run watch                                                 # follow the run you started
 ```
@@ -292,6 +286,56 @@ The same steps run locally from a checkout: `make refresh`, `make check-contract
 `<HDR_PRIVATE_HF_OWNER>/health-data-registry-ops-sitemaps` unless `--repo` says otherwise), and, once merged,
 `uv run health-data-registry index-croi --year 2025 --max-requests 10` and
 `uv run python scripts/crawl_doi.py idweek`.
+
+## Release safety
+
+A release leaves the repository three ways: PyPI and the GitHub release (`release.yml`), npm and the Claude
+Desktop extension (`npm-publish.yml`), and the hosted Space (`deploy-space.yml`). All three call one check first,
+[`verify-release-tag.yml`](../../.github/workflows/verify-release-tag.yml), which runs
+[`scripts/verify_release_tag.py`](../../scripts/verify_release_tag.py). It refuses, with a plain message, unless:
+
+- the tag is `vX.Y.Z` and names the commit the run was started for (a tag moved mid-release is refused);
+- that commit is main's head or one of its ancestors;
+- CI (`ci.yml`) has a successful push run on main for that commit.
+
+Any API error is a refusal too. Nothing is built, published or deployed until it passes.
+
+The Space deploy runs only after `release.yml` succeeds (`workflow_run`), so a failed release (no CHANGELOG
+section, a signing failure, a PyPI rejection) never reaches clinicians. It then:
+
+1. **verify**: the shared check, for the exact commit `release.yml` built.
+2. **artifacts** (no secrets): downloads the wheel and the locked requirements from the GitHub release, checks
+   each Sigstore signature was made by `release.yml` for this tag, by a push, at this commit, checks the wheel is
+   the file PyPI serves for the version, and stages `space/` from the tagged commit with both files, their
+   sha256 written into `space/Dockerfile`.
+3. **deploy** (environment `space`, the only job with the token): uploads the staged files to the Space as one
+   commit. The Space's build checks both hashes and installs every dependency with `--require-hashes`, then the
+   wheel; it never builds from source.
+4. **verify-live** (no secrets): [`scripts/check_space.py`](../../scripts/check_space.py) waits up to 20
+   minutes for the Space to run the uploaded commit, fails at once on a build or start error, checks `/healthz`
+   reports `status: ok` and the release's version, and asks one known-good MCP question (`list_sources`, whose
+   answer must be the sources table).
+
+On a tag push the release workflows run their own copy from the tagged commit, so the shared check stops
+mistakes, not someone who can push an edited workflow with a tag. The maintainer's settings close that gap: a
+tag ruleset on `refs/tags/v*` (creation, update and deletion limited to the maintainer), and the `pypi`, `npm`
+and `space` environments' deployment rules. The deploy itself always runs the workflow as it is on main.
+
+### Roll back the Space
+
+When **verify-live** fails, or clinicians report the hosted connector broken after a deploy:
+
+1. Find the last release that worked: the newest earlier `vX.Y.Z` on the
+   [releases page](https://github.com/jtouley/health-data-registry/releases) whose Deploy Space run ended green.
+2. Run `gh workflow run deploy-space.yml --ref main -f tag=vX.Y.Z` (or Actions, Deploy Space, Run workflow, from
+   main, with that tag). It goes through the same checks and the same live check as a new release.
+3. Watch it with `gh run watch`. When **verify-live** is green, the Space serves that release again.
+4. Open an issue for the failed release with the failing run's link; fix it in a pull request and cut a new
+   patch release. Never move or delete the failed tag: PyPI and npm already hold that version.
+
+If the Space won't build even the earlier release (a Hugging Face outage, or a base image that no longer
+pulls), the Space's own history on Hugging Face (Files, History) shows each deploy commit; reverting there is a
+last resort, and the next deploy replaces it.
 
 ## Open risks
 

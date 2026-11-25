@@ -1,9 +1,12 @@
 # Tagged release: vX.Y.Z on a commit of main, with a "## [X.Y.Z]" section in CHANGELOG.md.
 #
-#   build       sdist + wheel (uv build), a CycloneDX SBOM of the locked runtime environment, and the
+#   verify      the shared release rule (verify-release-tag.yml): the tag names this commit, which is on main and
+#               passed CI there; otherwise nothing is built or published
+#   build       sdist + wheel (uv build), the locked runtime requirements with hashes (the hosted Space installs
+#               the wheel with exactly these), a CycloneDX SBOM of the locked runtime environment, and the
 #               Claude Projects kit (make kit), zipped for the release
-#   provenance  SLSA v1.0 build provenance (*.intoto.jsonl) for every built file
-#   sign        Sigstore signatures (*.sigstore.json) for every built file
+#   provenance  SLSA v1.0 build provenance (*.intoto.jsonl) for the dists and the requirements
+#   sign        Sigstore signatures (*.sigstore.json) for the dists and the requirements
 #   release     GitHub release: notes from CHANGELOG.md; dists, SBOM, signatures and provenance attached
 #   pypi        PyPI upload by trusted publishing (no stored token), in the `pypi` environment
 #
@@ -22,8 +25,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify:
+    name: Verify the release tag
+    permissions:
+      actions: read # read CI's runs for the tagged commit
+      contents: read # read the tag and compare its commit with main
+    uses: ./.github/workflows/verify-release-tag.yml
+    with:
+      tag: ${{ github.ref_name }}
+      sha: ${{ github.sha }}
+
   build:
     name: Build dists and SBOM
+    needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -48,9 +62,26 @@ jobs:
             echo "::error::Tag $TAG does not match pyproject.toml version $version"
             exit 1
           fi
+          # The hosted Space's health check compares /healthz's version (this constant) with the tag.
+          init_v=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/health_data_registry/__init__.py)
+          if [ "v$init_v" != "$TAG" ]; then
+            echo "::error::Tag $TAG does not match __version__ $init_v in src/health_data_registry/__init__.py"
+            exit 1
+          fi
 
       - name: Build sdist and wheel
         run: uv build --sdist --wheel --out-dir dist
+
+      # The runtime dependencies pinned by uv.lock, every one with its hashes, without the project itself. The Space
+      # installs these and then the signed wheel, so it runs exactly what was released (deploy-space.yml). Kept
+      # outside dist/ so the dist artifact stays exactly what PyPI accepts.
+      - name: Locked runtime requirements
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p lock
+          uv export --frozen --no-dev --no-emit-project --no-header --format requirements.txt \
+            -o "lock/health-data-registry-${TAG#v}-requirements.txt"
 
       # The SBOM describes the locked runtime dependencies (no dev group) plus the package itself.
       - name: CycloneDX SBOM of the locked environment
@@ -72,15 +103,23 @@ jobs:
           (cd kit/projects-kit && zip -X -r "../health-data-registry-projects-kit-${TAG#v}.zip" .)
           rm -r kit/projects-kit
 
-      - name: Hash the dists for provenance
+      - name: Hash the dists and requirements for provenance
         id: hash
-        working-directory: dist
-        run: echo "hashes=$(sha256sum -- * | base64 -w0)" >> "$GITHUB_OUTPUT"
+        run: |
+          hashes=$( { (cd dist && sha256sum -- *); (cd lock && sha256sum -- *); } | base64 -w0)
+          echo "hashes=$hashes" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
           path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lock
+          path: lock/
           if-no-files-found: error
           retention-days: 7
 
@@ -125,14 +164,18 @@ jobs:
         with:
           name: dist
           path: dist/
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lock
+          path: lock/
       - uses: sigstore/gh-action-sigstore-python@790bc6befb9d733738f18d8f895854b453640ec9 # v3.5.0
         with:
-          inputs: ./dist/*.tar.gz ./dist/*.whl
+          inputs: ./dist/*.tar.gz ./dist/*.whl ./lock/*-requirements.txt
           upload-signing-artifacts: false
           release-signing-artifacts: false
       # Signatures go in their own artifact so the dist artifact stays exactly what PyPI accepts.
       - name: Collect signatures
-        run: mkdir -p signatures && mv dist/*.sigstore.json signatures/
+        run: mkdir -p signatures && mv dist/*.sigstore.json lock/*.sigstore.json signatures/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: signatures

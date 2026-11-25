@@ -129,12 +129,12 @@ Deploys come from `.github/workflows/deploy-space.yml` on a release tag ([automa
 
 1. Create a Space (Docker SDK, CPU Basic). Hugging Face's docs say creating a Docker Space now needs a paid plan
    (PRO for a personal account), though CPU Basic hardware has no hourly cost.
-2. Upload `space/` as the Space repo's root, and nothing else (`Dockerfile`, `README.md`, `PRIVACY.md`; the
-   README's front matter sets `sdk: docker` and `app_port: 7860`). The Dockerfile builds only from a release:
-   `HDR_TAG` is a `vX.Y.Z` tag that `release.yml` built from a commit on main, and `HDR_COMMIT` is the commit that
-   tag names, checked at build time, so a deploy is reproducible and a moved tag fails the build. Both are empty
-   in git and a build without them stops. `deploy-space.yml` fills in both from the release it deploys and
-   uploads `space/`. To deploy newer code, cut a release; never point them at a branch.
+2. Deploy a release with `deploy-space.yml` ([automation.md](automation.md#release-safety)); don't upload by hand.
+   The Space repo holds `space/` (`Dockerfile`, `README.md`, `PRIVACY.md`; the README's front matter sets
+   `sdk: docker` and `app_port: 7860`) plus the release's signed wheel and locked requirements. The Dockerfile
+   installs exactly those two files, each checked against the sha256 the deploy verified, with every dependency
+   hash-checked; `HDR_TAG`, `HDR_COMMIT` and both hashes are empty in git and a build without them stops. To
+   deploy newer code, cut a release; to go back, [roll back](automation.md#roll-back-the-space).
 3. Optional: attach a Storage Bucket as a volume at `/data`, so the cache survives restarts.
 4. Settings, Variables and secrets: the secret `HDR_SIGNING_KEY` (32 or more random characters, for example
    `python -c "import secrets; print(secrets.token_hex(32))"`), so pins and session ids survive a restart;

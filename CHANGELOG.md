@@ -38,6 +38,12 @@ All notable changes to this project are documented here. The format follows
   again) apart from "the hub has no published release yet" (retrying won't help).
 - `tools/` is linted and type-checked with the rest of the code, and a test fails if the committed README images
   differ from what the generator draws.
+- Releases: PyPI, npm and the Space deploy all run one check first (`verify-release-tag.yml`): the tag names a
+  commit on main that passed CI there, or nothing ships. The Space deploys only after the release succeeds, from
+  the release's signed wheel and hashed requirements (checked against their Sigstore signatures and PyPI) instead
+  of its own build, then checks the live Space (`/healthz` and one MCP question). Rollback steps are in
+  `docs/dev/automation.md`. Each release also carries its signed `-requirements.txt`, and the tag must match
+  `__version__`.
 
 ### Added
 

@@ -1,5 +1,7 @@
 # npm package and Claude Desktop extension (.mcpb) for a tagged release vX.Y.Z.
 #
+#   verify the shared release rule (verify-release-tag.yml): the tag names this commit, which is on main and
+#          passed CI there; otherwise nothing is published
 #   test   the launcher's node tests; tag, npm/package.json, pyproject.toml, packaging/ versions all match
 #   npm    waits until release.yml has put health-data-registry==X.Y.Z on PyPI (the launcher pins it), then
 #          publishes npm/ by npm trusted publishing (OIDC, no stored token) with provenance, in the `npm` environment
@@ -19,8 +21,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify:
+    name: Verify the release tag
+    permissions:
+      actions: read # read CI's runs for the tagged commit
+      contents: read # read the tag and compare its commit with main
+    uses: ./.github/workflows/verify-release-tag.yml
+    with:
+      tag: ${{ github.ref_name }}
+      sha: ${{ github.sha }}
+
   test:
     name: Launcher tests and version check
+    needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

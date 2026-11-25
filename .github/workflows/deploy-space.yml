@@ -1,124 +1,239 @@
-# Deploy the hosted MCP server: sync space/ to the Hugging Face Space (free CPU hardware).
+# Deploy the hosted MCP server to the Hugging Face Space (free CPU hardware), from a finished, signed release.
 #
-# Deploys ONLY from a release tag (vX.Y.Z) whose commit is on main and passed CI on main. Never on a push to a
-# branch, never from a pull request. The `verify` job checks both through the GitHub API before the deploy
-# job, which alone holds the Hugging Face token, starts. Re-deploying a tag: run this workflow by hand with
-# "Use workflow from" set to that tag; any other ref is refused.
+# Starts only when Release (release.yml) finishes successfully for a vX.Y.Z tag push, so a release that failed
+# (no CHANGELOG section, a signing failure, a PyPI rejection) never reaches the Space. Rollback or redeploy: run
+# this workflow by hand from main with the release tag to deploy (docs/dev/automation.md, "Roll back the Space").
+# workflow_run always runs this file as it is on main, never a copy from the tag.
 #
-# space/Dockerfile builds the server from one release: its HDR_TAG and HDR_COMMIT are empty in git (a build without
-# them stops), and the deploy job writes this tag and its commit into the copy it uploads, so the Space builds
-# exactly the code that passed `verify`. The Space's files are replaced by space/ exactly: anything in the Space
-# that is not in space/ is deleted, so space/ must hold the Space's README.md (its config header).
+#   verify       the shared release rule (verify-release-tag.yml): the tag names the commit Release built, on main,
+#                and CI passed on main for it
+#   artifacts    no secrets: downloads the release's wheel and locked requirements, checks both Sigstore signatures
+#                were made by release.yml for this tag and commit, checks the wheel is byte-for-byte the one on
+#                PyPI, then stages space/ (from the tagged commit) with the two files and their sha256 written
+#                into space/Dockerfile. Nothing is built here: the Space installs exactly the signed wheel.
+#   deploy       in the `space` environment, the only job with the Hugging Face token: uploads the staged files as
+#                one commit; anything else in the Space is deleted, so space/README.md holds its config header
+#   verify-live  no secrets: waits for the Space to run that commit, checks /healthz reports this version, and asks
+#                one known-good MCP question (scripts/check_space.py); a failure here means roll back
 #
-# The deploy job runs in the GitHub environment `space`, whose deployment rule allows only v*.*.* tags
-# (docs/dev/automation.md); its secrets live there, so no other ref or workflow can read them. `verify` stays
-# as defence in depth.
-#
-# Secrets: HF_TOKEN (HF_SPACE_TOKEN, if set, overrides it with a token limited to the Space), set only on the
-# upload step. Variable: HDR_HF_OWNER owns the Space (default jtouley).
+# The deploy job's environment `space` must allow the `main` branch (this workflow runs on main's ref for both
+# triggers); its secrets live there. Secrets: HF_TOKEN (HF_SPACE_TOKEN, if set, overrides it with a token limited
+# to the Space), set only on the upload step. Variable: HDR_HF_OWNER owns the Space (default jtouley).
 name: Deploy Space
 
 on:
-  push:
-    tags: ["v*.*.*"]
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to deploy (vX.Y.Z); an earlier tag rolls the Space back to it
+        required: true
+        type: string
 
 permissions:
   contents: read
 
-# Deploys never overlap; a newer tag waits for the running deploy, then replaces any older pending one.
+# Deploys never overlap; a newer one waits for the running deploy, then replaces any older pending one.
 concurrency:
   group: deploy-space
   cancel-in-progress: false
 
 jobs:
   verify:
-    name: Release tag on main that passed CI
-    if: github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    name: Verify the release tag
+    # A successful Release for a tag push in this repository, or a deploy started by hand from main.
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.head_repository.full_name == github.repository)
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     permissions:
-      actions: read # read CI's runs for this commit
-      contents: read # compare the tagged commit with main
+      actions: read # read CI's runs for the tagged commit
+      contents: read # read the tag and compare its commit with main
+    uses: ./.github/workflows/verify-release-tag.yml
+    with:
+      # The tag Release ran for (its head_branch), checked to name exactly the commit Release built; or the tag
+      # typed into the manual run, whose commit the shared check looks up.
+      tag: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || inputs.tag }}
+      sha: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || '' }}
+
+  artifacts:
+    name: Fetch and check the signed release
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # read the release assets and the tagged commit's space/
+    outputs:
+      version: ${{ steps.files.outputs.version }}
+    env:
+      TAG: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || inputs.tag }}
+      SHA: ${{ needs.verify.outputs.sha }}
     steps:
-      - name: Check the tag, main and CI
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          persist-credentials: false
+          sparse-checkout: space
+      - name: Download the wheel and requirements from the release
+        id: files
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
         run: |
-          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::$TAG is not a release tag (vX.Y.Z). Nothing deployed."
+          # TAG passed the shared check, so it is vX.Y.Z and safe in file names.
+          version="${TAG#v}"
+          wheel="health_data_registry-${version}-py3-none-any.whl"
+          requirements="health-data-registry-${version}-requirements.txt"
+          mkdir release
+          if ! gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir release \
+              -p "$wheel" -p "$wheel.sigstore.json" -p "$requirements" -p "$requirements.sigstore.json"; then
+            echo "::error::The GitHub release $TAG has no signed wheel and requirements to deploy. Nothing deployed."
             exit 1
           fi
-          # "identical" or "behind": the tagged commit is main's head or one of its ancestors.
-          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$GITHUB_SHA" --jq .status)
-          case "$status" in
-            identical|behind) ;;
-            *) echo "::error::$TAG ($GITHUB_SHA) is not on main (compare: $status). Nothing deployed."; exit 1 ;;
-          esac
-          passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&branch=main&event=push&status=success" \
-            --jq .total_count)
-          if [ "${passed:-0}" -lt 1 ]; then
-            echo "::error::CI has not passed on main for $GITHUB_SHA. Nothing deployed."
+          for f in "$wheel" "$wheel.sigstore.json" "$requirements" "$requirements.sigstore.json"; do
+            if [ ! -s "release/$f" ]; then
+              echo "::error::The GitHub release $TAG is missing $f. Nothing deployed."
+              exit 1
+            fi
+          done
+          {
+            echo "version=$version"
+            echo "wheel=$wheel"
+            echo "requirements=$requirements"
+          } >> "$GITHUB_OUTPUT"
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          enable-cache: false
+      # Each file must carry a signature from release.yml, run by a push of exactly this tag, at exactly this commit,
+      # in this repository. sigstore is pinned by version, as cyclonedx-bom is in release.yml; this job holds no
+      # secret, so the tool never sees the Hugging Face token.
+      - name: Check the Sigstore signatures
+        env:
+          WHEEL: ${{ steps.files.outputs.wheel }}
+          REQUIREMENTS: ${{ steps.files.outputs.requirements }}
+        run: |
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/${TAG}"
+          for f in "$WHEEL" "$REQUIREMENTS"; do
+            if ! uvx --from sigstore==4.5.1 sigstore verify github --bundle "release/$f.sigstore.json" \
+                --cert-identity "$identity" --trigger push --sha "$SHA" --repository "$GITHUB_REPOSITORY" \
+                --ref "refs/tags/$TAG" "release/$f"; then
+              echo "::error::$f in release $TAG is not signed by release.yml for $TAG at $SHA. Nothing deployed."
+              exit 1
+            fi
+          done
+      # Build once, promote the same file: the wheel the Space installs is the one PyPI serves for this version.
+      - name: Check the wheel is the one on PyPI
+        env:
+          WHEEL: ${{ steps.files.outputs.wheel }}
+          VERSION: ${{ steps.files.outputs.version }}
+        run: |
+          curl -fsS --proto '=https' -o pypi.json "https://pypi.org/pypi/health-data-registry/${VERSION}/json"
+          pypi_sha=$(python3 -c 'import json, sys
+          urls = json.load(open("pypi.json"))["urls"]
+          print(next((u["digests"]["sha256"] for u in urls if u["filename"] == sys.argv[1]), ""))' "$WHEEL")
+          ours=$(sha256sum "release/$WHEEL" | cut -d' ' -f1)
+          if [ -z "$pypi_sha" ] || [ "$pypi_sha" != "$ours" ]; then
+            echo "::error::$WHEEL in release $TAG is not the file PyPI serves for $VERSION. Nothing deployed."
             exit 1
           fi
-          echo "$TAG ($GITHUB_SHA) is on main and passed CI."
+          echo "$WHEEL matches PyPI ($ours)."
+      - name: Stage space/ with the release files
+        env:
+          WHEEL: ${{ steps.files.outputs.wheel }}
+          REQUIREMENTS: ${{ steps.files.outputs.requirements }}
+        run: |
+          if [ ! -f space/README.md ] || [ ! -f space/Dockerfile ]; then
+            echo "::error::$TAG has no space/README.md or space/Dockerfile. Nothing deployed."
+            exit 1
+          fi
+          cp -R space bundle
+          cp "release/$WHEEL" "release/$REQUIREMENTS" bundle/
+          wheel_sha=$(sha256sum "bundle/$WHEEL" | cut -d' ' -f1)
+          req_sha=$(sha256sum "bundle/$REQUIREMENTS" | cut -d' ' -f1)
+          # TAG is a checked vX.Y.Z, SHA a hex commit and the hashes hex, so none can carry sed syntax.
+          sed -i -e "s/^ARG HDR_TAG=\$/ARG HDR_TAG=${TAG}/" -e "s/^ARG HDR_COMMIT=\$/ARG HDR_COMMIT=${SHA}/" \
+            -e "s/^ARG HDR_WHEEL_SHA256=\$/ARG HDR_WHEEL_SHA256=${wheel_sha}/" \
+            -e "s/^ARG HDR_REQUIREMENTS_SHA256=\$/ARG HDR_REQUIREMENTS_SHA256=${req_sha}/" bundle/Dockerfile
+          for line in "ARG HDR_TAG=${TAG}" "ARG HDR_COMMIT=${SHA}" "ARG HDR_WHEEL_SHA256=${wheel_sha}" \
+              "ARG HDR_REQUIREMENTS_SHA256=${req_sha}"; do
+            if ! grep -qx "$line" bundle/Dockerfile; then
+              echo "::error::space/Dockerfile at $TAG has no empty ${line%%=*} to fill in. Nothing deployed."
+              exit 1
+            fi
+          done
+          ls -l bundle/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: space-bundle
+          path: bundle/
+          if-no-files-found: error
+          retention-days: 7
 
   deploy:
-    name: Sync space/ to the Space
-    needs: verify
+    name: Upload to the Space
+    needs: [verify, artifacts]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: space
+    permissions:
+      contents: read
+    outputs:
+      space_repo: ${{ steps.upload.outputs.space_repo }}
     env:
       HF_HUB_DISABLE_TELEMETRY: "1"
       HDR_HF_OWNER: ${{ vars.HDR_HF_OWNER }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.verify.outputs.sha }}
           persist-credentials: false
-      - name: Check space/ and the token
-        id: gate
+      - name: Check the token
         env:
           HAS_TOKEN: ${{ (secrets.HF_SPACE_TOKEN || secrets.HF_TOKEN) && 'true' || 'false' }}
         run: |
-          if [ ! -f space/README.md ]; then
-            echo "::notice::No space/README.md at this tag (the hosted server isn't in this release). Nothing deployed."
-            echo "go=false" >> "$GITHUB_OUTPUT"
-          elif [ "$HAS_TOKEN" != "true" ]; then
-            echo "::notice::No HF_TOKEN secret. Nothing deployed."
-            echo "go=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "go=true" >> "$GITHUB_OUTPUT"
+          if [ "$HAS_TOKEN" != "true" ]; then
+            echo "::error::No HF_TOKEN (or HF_SPACE_TOKEN) secret in the space environment. Nothing deployed."
+            exit 1
           fi
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
-        if: steps.gate.outputs.go == 'true'
         with:
           python-version: "3.12"
           enable-cache: false
       - name: Install dependencies (locked)
-        if: steps.gate.outputs.go == 'true'
         run: uv sync --locked --no-dev
-      - name: Pin space/Dockerfile to this release
-        if: steps.gate.outputs.go == 'true'
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          # TAG is a checked vX.Y.Z (verify) and GITHUB_SHA a hex commit, so neither can carry sed syntax.
-          sed -i -e "s/^ARG HDR_TAG=\$/ARG HDR_TAG=${TAG}/" -e "s/^ARG HDR_COMMIT=\$/ARG HDR_COMMIT=${GITHUB_SHA}/" \
-            space/Dockerfile
-          if grep -qx "ARG HDR_TAG=${TAG}" space/Dockerfile && grep -qx "ARG HDR_COMMIT=${GITHUB_SHA}" space/Dockerfile; then
-            echo "space/Dockerfile pinned to ${TAG} (${GITHUB_SHA})."
-          else
-            echo "::error::space/Dockerfile has no empty HDR_TAG and HDR_COMMIT to fill in. Nothing deployed."
-            exit 1
-          fi
-      - name: Upload space/ as one commit
-        if: steps.gate.outputs.go == 'true'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: space-bundle
+          path: bundle/
+      - name: Upload the staged files as one commit
+        id: upload
         env:
           HF_TOKEN: ${{ secrets.HF_SPACE_TOKEN || secrets.HF_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || inputs.tag }}
+          SHA: ${{ needs.verify.outputs.sha }}
         run: |
           space_repo=$(uv run --no-sync python -m health_data_registry.naming space)
-          uv run --no-sync hf upload "$space_repo" space . --repo-type space --delete "*" \
-            --commit-message "Deploy ${TAG} (${GITHUB_SHA})"
+          echo "space_repo=$space_repo" >> "$GITHUB_OUTPUT"
+          uv run --no-sync hf upload "$space_repo" bundle . --repo-type space --delete "*" \
+            --commit-message "Deploy ${TAG} (${SHA})"
+
+  verify-live:
+    name: Check the live Space
+    needs: [artifacts, deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/check_space.py
+          sparse-checkout-cone-mode: false
+      - name: Build, /healthz and one known-good question
+        env:
+          SPACE_REPO: ${{ needs.deploy.outputs.space_repo }}
+          VERSION: ${{ needs.artifacts.outputs.version }}
+        run: python3 scripts/check_space.py --repo "$SPACE_REPO" --version "$VERSION" --timeout 1200
