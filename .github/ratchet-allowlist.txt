@@ -17,3 +17,12 @@
 # A mutation job: <workflow> :: job <id> | needs <job> -> <mutation job> | schedule <cron> | <job>: <command>
 # A removed pre-commit hook: .pre-commit-config.yaml :: hook <id>
 # Say why in a comment above each entry.
+
+# PR #148 (crawler factory): SQL built from quoted identifiers and a relation the caller built, as the existing
+# S608 lines in staging.py and quality.py are; the UNPIVOT of wide_to_long and stage_entry's row-count check.
+src/health_data_registry/adapters/extensions/wide_to_long.py :: f"(SELECT * FROM (SELECT * FROM {relation}) UNPIVOT INCLUDE NULLS "  # noqa: S608 - quoted identifiers
+src/health_data_registry/staging.py :: row = con.execute(f"SELECT count(*) FROM {source}").fetchone()  # noqa: S608 - a relation built by the caller
+# PR #148: a publisher's PDF or xlsx is untrusted input; pdfminer and defusedxml/expat raise many unrelated
+# exception classes on a broken or hostile file, and each must become a plain refusal, never a traceback.
+src/health_data_registry/adapters/pdf_tables.py :: except Exception as e:  # noqa: BLE001 - a broken or hostile PDF is a refusal, whatever the library raised
+src/health_data_registry/adapters/xlsx.py :: except Exception as e:  # noqa: BLE001 - defusedxml's and expat's errors, whatever their class: a refusal
