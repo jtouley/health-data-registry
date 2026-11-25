@@ -293,7 +293,9 @@ Everything a clinician reads (tool descriptions, helpers, refusals) follows the 
   synthetic lakes. No public data is committed.
 - **Network tests.** `tests/integration/test_live_<dataset>.py` fetch a small slice from the publisher at test time,
   write nothing to disk and are marked `network`. `make test` and CI's test job leave them out; run
-  `make test-network` when you change an adapter, a contract or the fetcher.
+  `make test-network` when you change an adapter, a contract or the fetcher. They also run nightly on main
+  (`live-checks.yml`, [automation.md](automation.md#nightly-live-checks-live-checksyml)), which keeps one
+  tracking issue open while any of them fails.
 - **Mutation tests.** `scripts/mutate_changed.py` runs mutmut on the functions changed since the merge base and
   prints each mutant it did not kill. A function is changed when it holds an added, edited or deleted line, or
   reads a module-level name that a changed line defines (an allowlist entry, a limit, an import), directly or

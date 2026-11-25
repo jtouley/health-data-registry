@@ -1,0 +1,70 @@
+# Nightly live publisher checks: the `network` tests in tests/integration (what `make test-network` runs), against
+# every publisher, so a publisher-side change (a renamed field, a new code, a moved file) shows up the next day.
+#
+#   live    runs the checks through scripts/live_checks_nightly.py: a failed check is retried once, at most, and
+#           one that passes then is listed as "passed on retry" in the job summary. HDR_LAKE is a new, empty
+#           temporary directory, and the job fails if the checks wrote to it or changed the checkout (hard rule 5).
+#           No secret and no environment: no live check needs a key. Token: contents: read.
+#   report  (main only) opens or updates the one tracking issue, found by its label `live-checks-failing`, with
+#           the failing test ids and their one-line messages, and closes it on the next green run. issues: write
+#           on this job only; it installs nothing and runs only the standard-library script.
+name: Live publisher checks
+
+on:
+  schedule:
+    # Daily 04:13 UTC: off the hour, after the nightly mutation run (02:41) and branch hygiene (03:41).
+    - cron: "13 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run at a time, never cancelled: a pending run waits for the running one.
+concurrency:
+  group: live-checks
+  cancel-in-progress: false
+
+jobs:
+  live:
+    name: Live publisher checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      report: ${{ steps.checks.outputs.report }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+          enable-cache: false
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+      - name: Run the live checks (a failed check is retried once)
+        id: checks
+        run: uv run --no-sync python scripts/live_checks_nightly.py run --summary "$GITHUB_STEP_SUMMARY" --github-output "$GITHUB_OUTPUT"
+
+  # always(): a failed, timed-out or cancelled live job still updates the issue.
+  report:
+    name: Open, update or close the tracking issue
+    needs: live
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write # open, update or close the tracking issue
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Sync the tracking issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+          LIVE_RESULT: ${{ needs.live.result }}
+          LIVE_REPORT: ${{ needs.live.outputs.report }}
+        run: python3 scripts/live_checks_nightly.py issue --repo "${REPO}" --run-url "${RUN_URL}" --sha "${SHA}" --job-result "${LIVE_RESULT}"

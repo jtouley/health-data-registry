@@ -18,6 +18,7 @@ our own.
 | [`sealed-test.yml`](../../.github/workflows/sealed-test.yml) | Runs and scores the sealed TEST set on a commit of main, or lists the TEST items a catalog change touches; aggregates only ([eval/README.md](../../eval/README.md#running-test-in-ci)) | Manual dispatch only, on main, in the `eval` environment; release milestones only | The job summary; one comment per run on the issue "Sealed TEST use log" |
 | [`check-crawl-keys.yml`](../../.github/workflows/check-crawl-keys.yml) | Checks the `crawl` environment's API keys (Census, Socrata, OpenAlex), one request per publisher; never prints a key ([README](README.md)) | Manual dispatch only, on main, in the `crawl` environment | Nothing |
 | [`mutation.yml`](../../.github/workflows/mutation.yml) | Mutation tests on every function changed on main since the last green run, with the 70% floor ([Nightly mutation tests](README.md#nightly-mutation-tests)) | Daily 02:41, and by hand | One issue per originating PR or commit with survivors (label `mutation-survivors`) |
+| [`live-checks.yml`](../../.github/workflows/live-checks.yml) | The live publisher checks (`make test-network`), each failed check retried once ([Nightly live checks](#nightly-live-checks-live-checksyml)) | Daily 04:13, and by hand | One tracking issue while any check fails (label `live-checks-failing`), closed on the next green run |
 
 CI runs only what a change can affect, with one required check, "CI result" ([CI](README.md#ci)). CodeQL, Scorecard
 and npm-publish are described in their own files. Release, the Space deploy and the hub publish each wait for the
@@ -25,7 +26,7 @@ mutation gate (`scripts/mutation_nightly.py gate`).
 
 Every action is pinned to a full commit SHA. Every workflow's top-level token is `contents: read` or narrower
 (`check-crawl-keys.yml`, `sealed-test.yml` and `branch-hygiene.yml` have `permissions: {}`); `issues: write` is granted only to the jobs
-that open an issue or write the sealed TEST use log, `actions: write` only to the keep-alive job and `actions: read`
+that open, update or close an issue (the live checks' `report` job among them) or write the sealed TEST use log, `actions: write` only to the keep-alive job and `actions: read`
 only to the deploy's verify job, the sealed TEST workflow's inputs job (to check the `eval` environment allows main
 only), the two fuzzing jobs (to read earlier runs' corpus artifacts), CI's Changes job (the merge-queue rule and a
 green pre-pr verdict for the same commit, [the pre-PR gate](README.md#the-pre-pr-gate)), CI's "CI result" (this
@@ -197,6 +198,34 @@ only). GitHub disables scheduled workflows in a public repository after 60 days 
 A workflow the maintainer disabled by hand is left alone. If the drift-check workflow itself has been disabled,
 re-enable it once in the Actions tab.
 
+### Nightly live checks (`live-checks.yml`)
+
+The `network` tests in `tests/integration` (what `make test-network` runs) ask each publisher for a small slice
+and check it against the contract: every field the contract reads is still served, required fields are filled,
+codes are the catalogued ones, and a few published figures come out the same two ways. They run every night on
+main, so a publisher-side change (a renamed field, a new code, a moved file) shows up the next day rather than at
+the Friday drift check or the Tuesday refresh.
+
+1. **live** (`contents: read`, 30-minute timeout, no secret and no environment: no live check needs a key) runs
+   `scripts/live_checks_nightly.py run`. It runs the checks in a child pytest that records each failure's test id
+   and pytest's one-line message, and keeps going past a module that can't be collected (that module counts as a
+   failed check). **Each failed check is retried once, at most**; one that passes then is listed as "passed on
+   retry" in the job summary and does not fail the run, so a dropped connection doesn't open an issue, while a
+   check that fails twice does. `HDR_LAKE` is a new, empty temporary directory: the job fails if the checks wrote
+   anything there, or changed the checkout (`git status`), since live checks fetch at test time and write
+   nothing (hard rule 5). The report goes to the job summary and, as one line of JSON, to the job's output.
+2. **report** (main only, `issues: write` on this job only; it installs nothing and runs only the script's
+   standard-library half) finds the tracking issue by its label `live-checks-failing` among the open issues that
+   `github-actions[bot]` opened, never by title. If the live job failed, or ended without a report (a timeout, a
+   cancelled run, a broken install), it opens the issue "Live publisher checks failing", or replaces the open
+   one's body with this run's failures and comments with the run link. If the live job passed, it closes the
+   issue with a comment linking the green run. The issue lists test ids and one-line messages only, cut to 200
+   characters and shown as code: never a response body or a row of data.
+
+The workflow is in the weekly keep-alive list. To reproduce a failure locally, run `make test-network`; to run
+the nightly job by hand, `gh workflow run live-checks.yml` (from another branch it runs the checks but leaves the
+issue alone).
+
 ### Fuzzing (`cflite_pr.yml`, `cflite_batch.yml`)
 
 ClusterFuzzLite builds `.clusterfuzzlite/Dockerfile` (OSS-Fuzz's Python builder, pinned by digest) and runs
@@ -309,6 +338,7 @@ gh workflow run crawl-doi.yml                                # every conference
 gh workflow run sitemaps.yml                                 # this week's sitemap snapshots
 gh workflow run deploy-space.yml --ref v0.1.0                # redeploy a release tag; any other ref is refused
 gh workflow run drift-check.yml
+gh workflow run live-checks.yml                              # the live publisher checks
 gh workflow run branch-hygiene.yml -f dry_run=true          # preview the branch sweep, change nothing
 gh run watch                                                 # follow the run you started
 ```

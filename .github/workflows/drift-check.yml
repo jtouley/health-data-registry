@@ -80,7 +80,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         # A workflow the maintainer disabled by hand (state disabled_manually) is left alone.
         run: |
-          for wf in refresh.yml crawl-croi.yml crawl-doi.yml sitemaps.yml drift-check.yml scorecard.yml; do
+          for wf in refresh.yml crawl-croi.yml crawl-doi.yml sitemaps.yml drift-check.yml scorecard.yml live-checks.yml; do
             state=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$wf" --jq .state || echo unknown)
             case "$state" in
               active|disabled_inactivity)
