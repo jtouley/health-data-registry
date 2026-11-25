@@ -100,8 +100,9 @@ The MCP surface (`server.py`):
 
 When a tool's name, parameters, columns or refusals change in `server.py` or `tools.py`, update
 [docs/tools.md](../tools.md) in the same PR; when a contract changes how a number is read (missing codes, total rows,
-provisional status, uncertainty, places), update [docs/data-conventions.md](../data-conventions.md). Both are written
-by hand, unlike `docs/helpers.md`.
+provisional status, uncertainty, places), update [docs/data-conventions.md](../data-conventions.md). The tool table in
+README.md, docs/tools.md and CLAUDE.md is generated from the server's registry by `make docs`, and a test fails if it
+drifts; the rest of docs/tools.md, and all of docs/data-conventions.md, is written by hand.
 
 Everything a clinician reads (tool descriptions, helpers, refusals) follows the writing rules in
 [ADR 0012](../adr/0012-built-for-clinicians.md): plain words, a next step, never a stack trace or an HTTP code.
