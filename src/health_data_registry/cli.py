@@ -252,9 +252,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         "snapshot", help="take this week's copy of each seed sitemap and upload it to the private ops dataset"
     )
     sitemaps.add_arguments(snap)
+    g = sub.add_parser(
+        "gate", help="serve a hub release only if its transform build passed every error-severity test"
+    )
+    g.add_argument("release", help="the release reference to serve (e.g. release-2026-11-25)")
+    g.add_argument("--target", type=Path, default=Path("transform/target"), help="dbt's target directory")
+    g.add_argument("--ops", type=Path, default=None, help="where builds and the serving log live (lake/ops)")
     a = p.parse_args(argv)
     if a.cmd == "publication-outlook":  # reads only the packaged base rates, not the registry
         return publication_outlook(a)
+    if a.cmd == "gate":  # reads only dbt's run record and the ops log, not the registry
+        from health_data_registry.release_gate import run as gate
+
+        served, message = gate(a.target, a.ops or lake_root() / "ops", a.release)
+        print(message, file=sys.stdout if served else sys.stderr)
+        return 0 if served else 1
     if a.cmd == "sitemaps":  # reads only the seed list, not the registry
         return sitemaps.snapshot(a, error=snap.error)
     try:
