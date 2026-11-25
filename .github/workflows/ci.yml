@@ -301,12 +301,16 @@ jobs:
     runs-on: ubuntu-latest
     # On a PR with a merge queue on main, mutmut gets 100 s (--budget) and needs main's stats (--require-stats); past
     # either it reports itself deferred, and the merge queue mutates it. The job limit is the backstop for a hung
-    # step. In the merge queue, or on a PR while main has no queue, a shard runs to the end, cold stats included.
+    # step. In the merge queue, or on a PR while main has no queue, a shard runs to the end, cold stats included,
+    # under the 20-minute limit: #114 measured a cold scoped shard at up to 7.5 minutes (stats run 3.0, clean test
+    # run 2.9, mutants 1.2; CI run 45643738512). Main's cached stats remove the stats run; the clean test run of the
+    # tests that reach the changed functions remains, which is what still keeps a core-module shard over 100 s.
     timeout-minutes: ${{ (github.event_name == 'merge_group' || needs.changes.outputs.queue != 'true') && 20 || 3 }}
     strategy:
       fail-fast: false
-      # At most 6 shards of one run at a time: the account has about 20 runners, so one run never takes more than
-      # about a third of them, and main's and other PRs' runs still start.
+      # At most 6 shards of this run at a time, so one run takes at most 6 of the account's runners (about 20). The
+      # cap is per run, not per account: several mutation runs at once (other PRs, a pre-pr branch) can still hold
+      # more between them.
       max-parallel: 6
       matrix:
         module: ${{ fromJSON(needs.changes.outputs.modules) }}
