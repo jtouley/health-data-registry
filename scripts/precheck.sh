@@ -103,7 +103,9 @@ step "transform (generated models reproduce; dbt build on fixtures)" "${MAKE}" -
 step "Projects kit" "${MAKE}" --no-print-directory kit
 step "docs drift (make docs, then git diff --exit-code)" docs_drift
 
-# Mutation tests as CI shards them: list the changed modules, one step per module, then the floor on the total.
+# Mutation tests as CI shards them: list the shards of the changed modules (a module, or `<module>#<k>of<n>@<split>`
+# for a big one), one step per shard, then the floor on the total. Each shard refuses a split hash that differs
+# from its own split, so editing a module while its shards run fails the shard instead of miscounting it.
 echo
 echo "==> mutation: list changed modules since ${BASE}"
 if ! modules_json="$("${UV}" run python scripts/mutate_changed.py --list --base "${BASE}")"; then
@@ -113,9 +115,9 @@ if ! "${UV}" run python -c 'import json, sys; print("\n".join(json.loads(sys.arg
   > "${REPORTS}/modules.txt"; then
   fail "mutation: list changed modules since ${BASE}" "The module list was not JSON: ${modules_json}"
 fi
-summary="${summary}  PASS  mutation: changed modules since ${BASE}: ${modules_json}
+summary="${summary}  PASS  mutation: shards of the changed modules since ${BASE}: ${modules_json}
 "
-echo "PASS  mutation: changed modules since ${BASE}: ${modules_json}"
+echo "PASS  mutation: shards of the changed modules since ${BASE}: ${modules_json}"
 
 mkdir "${REPORTS}/shards" || fail "settings" "Could not create ${REPORTS}/shards."
 while IFS= read -r module <&3; do

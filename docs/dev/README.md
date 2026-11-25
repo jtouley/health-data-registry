@@ -102,7 +102,7 @@ A pull request's CI should pass the first time. So a commit is checked twice bef
 1. **`make precheck`** runs the CI checks locally plus a docs-drift check, and stops at the first failure: all
    pre-commit hooks (actionlint with shellcheck included), lint, typecheck, tests with the coverage floor, the
    smoke journey, the Projects kit build, the docs drift check (`make docs`, then nothing may change), and
-   mutation tests on the modules changed since `BASE` (default `origin/main`), one step per module as CI shards
+   mutation tests on the modules changed since `BASE` (default `origin/main`), one step per shard as CI shards
    them, then the 70% floor on the total. Each step prints a PASS or FAIL line, and a summary follows. It checks
    the working tree, so commit first: CI checks the commit you push. It runs on macOS's bash 3.2 as well.
 2. **Push to `pre-pr/<branch>`** (`git push origin HEAD:pre-pr/<branch>`). CI and CodeQL run on every push to
@@ -156,11 +156,20 @@ Everything a clinician reads (tool descriptions, helpers, refusals) follows the 
   prints each mutant it did not kill. A survivor means the tests would not notice that change: add or sharpen a
   test, or say in the PR why the mutant is equivalent. Every status but `killed` (and `caught by type check`)
   lowers the score, `no tests` and `skipped` included. `make mutate` is part of `make check`. CI runs the same
-  check on every PR in shards: `--list` names the changed modules, one job per module runs mutmut (60 minutes
-  each; the largest module needs about 17), and the aggregate job applies the 70% floor to the summed counts and
-  lists every mutant not killed. It fails if any shard failed its baseline, left mutants not checked, interrupted
-  or crashed, or left no report. A module with no mutable function has nothing to mutate and passes, locally and
-  in CI.
+  check on every PR in shards: `--list` names the shards of the changed modules, one job per shard runs mutmut,
+  and the aggregate job applies the 70% floor to the summed counts and lists every mutant not killed. A module
+  is one shard, or, when its estimated mutants exceed a shard's size (`SHARD_TARGET`, smaller for
+  `registry.py`), several named `<module>#<k>of<n>@<split>`: split by function, and a big function by the last
+  digit of its mutant numbers, so each shard takes about 10 to 20 minutes (the job's limit is 40). The split
+  comes from the module's source alone, read with the same Python 3.12 in `--list` and in every shard; `<split>`
+  is a hash of it, and a shard refuses an id whose hash differs from its own split, so an edit made after
+  `--list` (in CI or during precheck) fails the shard instead of running the wrong mutants. Each shard also
+  checks that every mutant of its module falls in exactly one shard. Functions mutmut never mutates (under
+  `# pragma: no mutate`, for instance) carry no weight, and `@overload` stubs count with their function. It
+  fails if any shard failed its baseline, left mutants not checked, interrupted or crashed, found a mutant in no
+  shard, or left no report, or if only some shards of a module were expected. A module with no mutable
+  function, or a shard none of whose names matches a mutant, has nothing to mutate and passes, locally and in
+  CI.
 - **New features and fixes add tests.** A bug fix includes a test that fails without it.
 
 ## Smoke journey
