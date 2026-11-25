@@ -156,7 +156,7 @@ outputPorts:
   - name: mdhhs_measles_county
     description: MDHHS Measles Tracking Dashboard, measles cases by Michigan county. Private tier, not hosted (no terms of reuse stated).
     type: tables
-    version: 0.1.0
+    version: 0.1.1
     contractId: mdhhs_measles_county
     customProperties:
       - {property: hosted, value: false}

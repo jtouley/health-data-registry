@@ -322,3 +322,15 @@ def test_query_sql_on_a_private_source_offers_no_other_tool(reg: Registry, tmp_p
 def test_detroit_contract_reads_the_flag_only_when_shown(reg: Registry) -> None:
     col = reg.get("detroit_dhd_epi_annual").contract.column("cases_flag")
     assert col.may_be_empty
+
+
+def test_an_mdhhs_read_with_no_suppressed_county_loads(reg: Registry) -> None:
+    """The Case Map writes its count flags only on a suppressed county, so a clean read carries neither."""
+    ds = reg.get("mdhhs_measles_county")
+    rows = [
+        {"view": "CaseMap", "worksheet": "Case By Cty Map", "County (alias)": county,
+         "c_Case Indicator (alias)": "Case", "SUM(c_Total Cases Reported) (alias)": total,
+         "SUM(c_Outbreak Cases) (alias)": outbreak}
+        for county, total, outbreak in (("Wayne", "3", "2"), ("Kent", "1", "0"))
+    ]  # fmt: skip
+    assert load_live(duckdb.connect(":memory:"), ds, rows).row_count == 2

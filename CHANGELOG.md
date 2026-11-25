@@ -17,7 +17,8 @@ All notable changes to this project are documented here. The format follows
 - `get_series` and `get_aligned_with_gbd` read a live source only when its declared coverage holds a place asked
   for, and give one refusal per source, never one per series (#111).
 - Detroit's annual dashboard loads again: its contract (0.1.1) marks `SUM(Cases) flag` as a field that appears only
-  when the dashboard shows a suppressed count, so a clean read no longer refuses the whole source (#111).
+  when the dashboard shows a suppressed count, so a clean read no longer refuses the whole source (#111). The MDHHS
+  measles Case Map had the same fault on a live read (2026-11-25) and gets the same fix (contract 0.1.1).
 - `get_series(source_id=...)` honours the source asked for, or refuses in plain words; it never answers from
   another source's labels (#112). `query_sql` on a private abstract source no longer says other tools can answer;
   it says a search tool is planned and where to browse the abstracts for now (#112, #106).
