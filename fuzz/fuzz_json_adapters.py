@@ -108,12 +108,15 @@ def known_adapter_error(adapter: str, data: bytes, e: Exception) -> bool:
         return False
     if type(e) is RecursionError:
         return _json_shape(data) == "deep"  # issue #58
-    frame = traceback.extract_tb(e.__traceback__)[-1]
-    filename = frame.filename.replace("\\", "/").rsplit("/", 1)[-1]
-    if _json_shape(data) != "json":
+    frames = traceback.extract_tb(e.__traceback__)
+    filename = frames[-1].filename.replace("\\", "/").rsplit("/", 1)[-1]
+    # The function that raised: on Python 3.11 (the fuzz image) a comprehension is a frame of its own
+    # ("<setcomp>", "<listcomp>"), which 3.12 inlines, so step out of those within the same file.
+    named = [f for f in frames if f.filename == frames[-1].filename and not f.name.startswith("<")]
+    if not named or _json_shape(data) != "json":
         return False
     return any(
-        filename == f and frame.name == fn and type(e) is kind and pattern.fullmatch(str(e))
+        filename == f and named[-1].name == fn and type(e) is kind and pattern.fullmatch(str(e))
         for f, fn, kind, pattern in _WRONG_SHAPE
     )
 
