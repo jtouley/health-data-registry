@@ -47,7 +47,11 @@ All notable changes to this project are documented here. The format follows
   `https_file` (csv, xlsx, or one member of a zip; xlsx values as stored with their number format, never the displayed
   text), `html_table` (one table by selector, or a resumable listing of item pages) and `pdf_table` (reports linked
   from an index page, plus facts a report prints once, read by a `parse` extension). `socrata`, `odata` (WHO GHO),
-  `https_csv`, `tableau` and `doi` read exactly as before. One fetch core: a source reaches only its own hosts and
+  `https_csv`, `tableau` and `doi` read exactly as before. `pdf_table` reads a table wide (one record per row) or long
+  (one record per printed cell, for column headers that change from report to report), and can check a table against
+  its own printed totals, recording each row's `failed_checks` as metadata and refusing a document with more failing
+  rows than the catalog allows. Every row a document type reads (`pdf_table`, `https_file`, `html_table`) carries its
+  document's URL with any key stripped, sha256 and fetch time. One fetch core: a source reaches only its own hosts and
   declared paths (catalogued patterns matched whole, on the linear-time RE2 engine), config can only slow the pace,
   robots.txt is reread after 24 hours and its Request-rate honoured, keys never reach provenance, and a source stops
   being crawled only after 8 weeks of continuous failure. The row-level guard (hard rule 4) runs on every page of

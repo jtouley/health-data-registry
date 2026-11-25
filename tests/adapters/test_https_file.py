@@ -11,11 +11,11 @@ from typing import Any
 
 import pytest
 
-from health_data_registry.adapters import LayoutError, pages, publisher_fields
+from health_data_registry.adapters import DOCUMENT_FIELDS, LayoutError, pages, publisher_fields
 from health_data_registry.adapters.archive import ArchiveRefused, Caps, SafeZip, read_member
 from health_data_registry.adapters.row_guard import RowLevelRefused
 from health_data_registry.adapters.xlsx import XlsxRefused
-from tests.adapters.helpers import HOST, Site, entry, xlsx_bytes, zip_bytes
+from tests.adapters.helpers import HOST, Site, entry, published, xlsx_bytes, zip_bytes
 
 URL = f"https://{HOST}/toy/data"
 CSV = b'County,Year,Cases\nWayne,2024,"1,204"\nOakland,2024,*\n'
@@ -234,7 +234,7 @@ def test_https_file(case: Case) -> None:
     got = list(pages(e, site, max_rows=case.max_rows))
     assert len(got) == 1 and got[0].fetch.content == case.content  # the raw store keeps the file as sent
     if case.records is not None:
-        assert got[0].records == case.records
+        assert published(got[0]) == case.records
     if "zip_member" in case.block:
         member = case.block["zip_member"]
         data = zipfile.ZipFile(io.BytesIO(case.content)).read(member)
@@ -245,13 +245,13 @@ def test_xlsx_in_zip_reads_the_same_as_alone() -> None:
     alone = list(pages(entry("https_file", {"format": "xlsx", "sheet": "Table 1"}), Site({URL: WB})))
     zipped = entry("https_file", {"format": "xlsx", "sheet": "Table 1", "zip_member": "book.xlsx"})
     inside = list(pages(zipped, Site({URL: zip_bytes({"book.xlsx": WB})})))
-    assert alone[0].records == inside[0].records
+    assert published(alone[0]) == published(inside[0])
 
 
 def test_fields_narrow_the_records_and_keep_their_formats() -> None:
     e = entry("https_file", {"format": "xlsx", "sheet": "Table 1"})
     got = list(pages(e, Site({URL: WB}), fields=["Share"]))
-    assert got[0].records == [{"Share": "0.123", "Share (number format)": "0.0%"}]
+    assert published(got[0]) == [{"Share": "0.123", "Share (number format)": "0.0%"}]
 
 
 def test_publisher_fields() -> None:
@@ -259,6 +259,7 @@ def test_publisher_fields() -> None:
         "County",
         "Year",
         "Cases",
+        *DOCUMENT_FIELDS,
     }
     xl = publisher_fields(entry("https_file", {"format": "xlsx", "sheet": "Table 1"}), Site({URL: WB}))
     assert "Share" in xl and "Share (number format)" in xl

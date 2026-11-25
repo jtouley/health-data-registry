@@ -41,7 +41,7 @@ from health_data_registry.access import (
     normalise,
     pace_s,
 )
-from health_data_registry.adapters import LayoutError, Page, Read
+from health_data_registry.adapters import LayoutError, Page, Read, with_document
 from health_data_registry.adapters.html_table import item_records, listing_page
 from health_data_registry.source_config import ListingConfig
 from health_data_registry.store import RawFetch, write_raw
@@ -211,7 +211,7 @@ def _crawl_partition(read: Read, cfg: ListingConfig, state: ListingState, get: P
             if budget is not None and len(ck.done) >= budget:
                 break
             item = get(link)
-            records = item_records(entry, cfg, item.content, link)
+            records = with_document(item_records(entry, cfg, item.content, link), item)
             write_raw(read.lake, [item])  # type: ignore[arg-type] # data first ...
             ck.done[link] = state.save_item(ck.partition, link, item, records)
             state.save(ck)  # ... checkpoint last

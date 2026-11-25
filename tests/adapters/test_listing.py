@@ -15,7 +15,7 @@ from health_data_registry.adapters import LayoutError, pages
 from health_data_registry.fetch import FetchRefused
 from health_data_registry.listing import CrawlIncomplete, ListingState, crawl_pages, partitions
 from health_data_registry.registry import CatalogEntry
-from tests.adapters.helpers import HOST, Site, entry
+from tests.adapters.helpers import HOST, Site, entry, published
 
 LISTING = {
     "url_template": "https://{host}/search/?yr={year}&page={page}",
@@ -89,7 +89,7 @@ def run(e: CatalogEntry, get: Any, lake: Path, clock: Clock, **kw: Any) -> list[
 def test_a_complete_crawl_hands_on_every_item_in_order(tmp_path: Path) -> None:
     e, s, clock = listing_entry(), site(), Clock()
     got = run(e, s, tmp_path, clock)
-    assert [p.records for p in got] == [
+    assert [published(p) for p in got] == [
         [{"title": t, "body": f"Text of {t.lower()}."}] for t in ("A", "B", "C")
     ]
     assert s.calls == [search(1), item("a"), item("b"), search(2), item("c")]

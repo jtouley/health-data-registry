@@ -5,6 +5,7 @@ member read and its own sha256. Records are keyed by the header row's labels (``
 extension such as header_row_finder), every value as stored: CSV text as written, and for xlsx the cell's stored
 value with its number format beside it under ``<label> (number format)``, never the display string (xlsx.py).
 Footer rows the config names (``skip_footer_rows``) are left out; nothing else is dropped, renamed or computed.
+Every row carries its document's provenance (``document_url``, ``document_sha256``, ``document_retrieved_at``).
 
 Refused rather than guessed: a file whose sha256 is not the pinned ``expected_sha256``, an empty or repeated
 header label, a CSV line with the wrong number of values, a merged cell in an xlsx header row, more rows than
@@ -18,7 +19,7 @@ import hashlib
 import io
 from collections.abc import Iterator
 
-from health_data_registry.adapters import Fetcher, LayoutError, Page, Read
+from health_data_registry.adapters import DOCUMENT_FIELDS, Fetcher, LayoutError, Page, Read, with_document
 from health_data_registry.adapters.archive import Caps, read_member
 from health_data_registry.adapters.extensions import resolved
 from health_data_registry.adapters.xlsx import merged_in_row, read_sheet
@@ -134,7 +135,7 @@ def pages(read: Read) -> Iterator[Page]:
         ]
     if read.max_rows is not None:
         recs = recs[: max(0, read.max_rows)]
-    yield Page(fetch=page.fetch, records=list(recs), provenance=provenance)
+    yield Page(fetch=page.fetch, records=with_document(recs, page.fetch), provenance=provenance)
 
 
 def publisher_fields(entry: CatalogEntry, get: Fetcher) -> set[str]:
@@ -142,4 +143,5 @@ def publisher_fields(entry: CatalogEntry, get: Fetcher) -> set[str]:
     assert isinstance(cfg, HttpsFileConfig)  # noqa: S101 - registered for https_file only
     content, _page = _download(entry, cfg, get)
     header, _recs, _prov = read_records(entry, cfg, content)
-    return set(header) | ({h + FORMAT_SUFFIX for h in header} if cfg.format == "xlsx" else set())
+    formats = {h + FORMAT_SUFFIX for h in header} if cfg.format == "xlsx" else set()
+    return set(header) | formats | set(DOCUMENT_FIELDS)

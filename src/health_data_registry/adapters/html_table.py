@@ -7,7 +7,8 @@ declares one, else refused; a body cell that spans is refused. Nested tables are
 
 Shape ``listing``: a paginated search listing and one page per item, crawled by the resumable runner in
 listing.py; this module reads one listing page (its item links and its own total) and one item page (its fields,
-by selector, or a ``parse`` extension).
+by selector, or a ``parse`` extension). Every record carries the provenance of the page it was read from
+(``document_url``, ``document_sha256``, ``document_retrieved_at``).
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from health_data_registry.access import ScopeRefused, normalise
-from health_data_registry.adapters import Fetcher, LayoutError, Page, Read
+from health_data_registry.adapters import DOCUMENT_FIELDS, Fetcher, LayoutError, Page, Read, with_document
 from health_data_registry.adapters.extensions import resolved
 from health_data_registry.adapters.html import Element, parse_html, select
 from health_data_registry.registry import CatalogEntry
@@ -130,16 +131,16 @@ def pages(read: Read) -> Iterator[Page]:
         recs = [{k: v for k, v in r.items() if k in keep} for r in recs]
     if read.max_rows is not None:
         recs = recs[: max(0, read.max_rows)]
-    yield Page(fetch=raw, records=list(recs))
+    yield Page(fetch=raw, records=with_document(recs, raw))
 
 
 def publisher_fields(entry: CatalogEntry, get: Fetcher) -> set[str]:
     cfg = entry.source.config()
     assert isinstance(cfg, HtmlTableConfig)  # noqa: S101 - registered for html_table only
     if cfg.listing is not None:
-        return set(cfg.listing.fields)
+        return set(cfg.listing.fields) | set(DOCUMENT_FIELDS)
     labels, _recs = read_table(entry, cfg, get(entry.source.api_url).content)
-    return set(labels)
+    return set(labels) | set(DOCUMENT_FIELDS)
 
 
 # ------------------------------------------------------------------------------------------------- listing
