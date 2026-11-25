@@ -47,6 +47,7 @@ import tokenize
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 PKG = ROOT / "src" / "health_data_registry"
@@ -81,14 +82,18 @@ NO_COVER = re.compile(r"#\s*(pragma|PRAGMA)[:\s]?\s*(no|NO)\s*(cover|COVER)")
 SEP = "ǁ"
 
 # Shard sizes, in estimated mutants (estimate_mutants comes within about 0.7 to 1.3 times mutmut's count), for
-# about 3 minutes of mutants per shard. Measured 25 Nov 2026 on GitHub's runners (PR #49, CI run 45536523615):
+# about 2 minutes of mutants per shard. Measured 25 Nov 2026 on GitHub's runners (PR #49, CI run 45536523615):
 # mutants ran at 54 to 145 a minute, except registry.py's at 13 a minute (most tests load the registry, so each of
-# its mutants runs most of the suite). 150 is under 3 minutes at the slowest ordinary rate, and 40 is about that
+# its mutants runs most of the suite). 100 is under 2 minutes at the slowest ordinary rate, and 25 is about that
 # for registry.py. Setup comes on top (3.5 to 6.5 minutes then); mutmut_scope cuts it to generating one module's
-# mutants and a stats run over the tests that import it. The shard job's timeout-minutes (8) is the hard stop.
-# Add a module here when its shards run long.
-SHARD_TARGET = 150
-SHARD_TARGET_BY_MODULE = {"health_data_registry.registry": 40}
+# mutants, and warm_stats to re-collecting stats for the changed functions' tests only. The shard job's
+# timeout-minutes (8) is the hard stop. Add a module here when its shards run long.
+SHARD_TARGET = 100
+SHARD_TARGET_BY_MODULE = {"health_data_registry.registry": 25}
+# Whole modules (`--all`, a local or nightly run, never a PR's): the earlier sizes, so every module fits one CI
+# matrix (MAX_SHARDS).
+WHOLE_SHARD_TARGET = 500
+WHOLE_SHARD_TARGET_BY_MODULE = {"health_data_registry.registry": 150}
 # GitHub runs at most 256 jobs from one matrix.
 MAX_SHARDS = 256
 DIGITS = "0123456789"
@@ -486,8 +491,12 @@ def split_module(source: str, target: int, keys: frozenset[str] | None = None) -
 
 
 def module_shards(module: str) -> list[list[Unit]]:
-    """The module's shards: of its changed functions only when set_scope has scoped it, else of all of them."""
-    target = SHARD_TARGET_BY_MODULE.get(module, SHARD_TARGET)
+    """The module's shards: of its changed functions only when set_scope has scoped it, else of all of them
+    (`--all`, never on a pull request's path), in the larger whole-module shards."""
+    if module in SCOPE:
+        target = SHARD_TARGET_BY_MODULE.get(module, SHARD_TARGET)
+    else:
+        target = WHOLE_SHARD_TARGET_BY_MODULE.get(module, WHOLE_SHARD_TARGET)
     return split_module(module_path(module).read_text(encoding="utf-8"), target, SCOPE.get(module))
 
 
@@ -638,6 +647,7 @@ def parse_results(text: str, shards: list[str], globs: list[str] | None = None) 
 
 # The test files mutmut never runs (pyproject.toml, pytest_add_cli_args_test_selection).
 MUTMUT_SKIPPED_TESTS = ("tests/integration/", "tests/test_metamorphic.py", "tests/test_fuzz_harnesses.py")
+FILE_NAME = re.compile(r"""["'/]([A-Za-z_][A-Za-z0-9_]*)\.py["']""")
 DOTTED_NAME = re.compile(r"\b(?:health_data_registry|eval|tools|tests)(?:\.[A-Za-z_][A-Za-z0-9_]*)+")
 
 
@@ -653,9 +663,10 @@ def _dotted(rel: Path) -> str:
 
 
 def local_modules(root: Path) -> dict[str, Path]:
-    """Every Python module of the project that tests can import: the package, eval/, tools/ and tests/."""
+    """Every Python module of the project that tests can import or load by path: the package, eval/, tools/,
+    tests/, and the scripts and fuzz harnesses tests load from their files."""
     out: dict[str, Path] = {}
-    for top in ("src/health_data_registry", "eval", "tools", "tests"):
+    for top in ("src/health_data_registry", "eval", "tools", "tests", "scripts", "fuzz"):
         for f in sorted((root / top).rglob("*.py")):
             rel = f.relative_to(root)
             if "sealed" not in rel.parts:
@@ -686,6 +697,10 @@ def imports_of(name: str, rel: Path, source: str, known: set[str]) -> set[str]:
             found.add(mod)
             found.update(f"{mod}.{a.name}" for a in node.names)
     found.update(DOTTED_NAME.findall(source))
+    # A file loaded by path (`ROOT / "scripts" / "crawl_doi.py"`, spec_from_file_location): every project module
+    # with that file name, so a test that loads a script reaches what the script imports.
+    stems = set(FILE_NAME.findall(source))
+    found.update(k for k in known if k.rpartition(".")[2] in stems)
     out: set[str] = set()
     for f in found:
         parts = f.split(".")
@@ -693,37 +708,55 @@ def imports_of(name: str, rel: Path, source: str, known: set[str]) -> set[str]:
     return out
 
 
-def tests_reaching(modules: list[str], root: Path) -> list[str]:
-    """The test files whose imports reach any of `modules`, directly or through other project modules or a
-    conftest.py above them, minus the files mutmut never runs. Leaving a test out can only let a mutant survive
-    (a lower score), never count one as killed, so a narrow selection fails safe."""
+def import_graph(root: Path) -> tuple[dict[str, Path], dict[str, set[str]]]:
+    """Every project module (local_modules) and the project modules each one imports (imports_of)."""
     files = local_modules(root)
     known = set(files)
     deps = {
         n: imports_of(n, rel, (root / rel).read_text(encoding="utf-8"), known) for n, rel in files.items()
     }
+    return files, deps
+
+
+def importers_closure(modules: set[str], deps: dict[str, set[str]]) -> set[str]:
+    """`modules` and every module that imports one of them, however indirectly."""
     importers: dict[str, set[str]] = {}
     for n, ds in deps.items():
         for d in ds:
             importers.setdefault(d, set()).add(n)
-    reached = set(modules)  # every module that imports one of `modules`, however indirectly
+    reached = set(modules)
     todo = list(reached)
     while todo:
         for n in importers.get(todo.pop(), ()):
             if n not in reached:
                 reached.add(n)
                 todo.append(n)
+    return reached
+
+
+def test_files_reached(files: dict[str, Path], reached: set[str], skip: tuple[str, ...] = ()) -> list[str]:
+    """The test files (tests/**/test_*.py) that are in `reached`, or sit under a conftest.py that is, minus any
+    path starting with one of `skip`."""
+    conftests = [c for c in files if c == "tests.conftest" or c.endswith(".conftest")]
     out = []
     for n, rel in files.items():
         posix = rel.as_posix()
         if not (rel.name.startswith("test_") and posix.startswith("tests/")):
             continue
-        if any(posix.startswith(s) for s in MUTMUT_SKIPPED_TESTS):
+        if any(posix.startswith(x) for x in skip):
             continue
-        conftests = {c for c in known if c.endswith(".conftest") and n.startswith(c.rpartition(".")[0] + ".")}
-        if reached & {n, *conftests}:
+        above = {c for c in conftests if n.startswith(c.rpartition(".")[0] + ".")}
+        if reached & {n, *above}:
             out.append(posix)
     return sorted(out)
+
+
+def tests_reaching(modules: list[str], root: Path) -> list[str]:
+    """The test files whose imports reach any of `modules`, directly or through other project modules or a
+    conftest.py above them, minus the files mutmut never runs. Leaving a test out can only let a mutant survive
+    (a lower score), never count one as killed, so a narrow selection fails safe."""
+    files, deps = import_graph(root)
+    return test_files_reached(files, importers_closure(set(modules), deps), MUTMUT_SKIPPED_TESTS)
 
 
 TEST_SELECTION_LINE = re.compile(r"^pytest_add_cli_args_test_selection = .*$", re.MULTILINE)
@@ -757,7 +790,80 @@ def mutmut_scope(paths: list[str], tests: list[str]) -> Iterator[None]:
         pyproject.write_text(original, encoding="utf-8")
 
 
-def run_mutmut(shards: list[str]) -> ShardResult:
+# Warm stats: mutmut's map of which tests call which function, from main ----------------------------------------
+
+STATS_FILE = "mutmut-stats.json"  # in mutants/, where mutmut reads and writes it (mutmut/stats.py)
+NO_MUTANT = "health_data_registry.x_no_such_function_for_stats__mutmut_*"
+
+
+def collect_stats(out: Path) -> int:
+    """Run mutmut's stats pass over every module and every test, mutating nothing, and copy the stats to `out`.
+    CI does this on main (job mutation-stats) and caches the file, so a shard can start from it (warm_stats)."""
+    shutil.rmtree(ROOT / "mutants", ignore_errors=True)
+    run = subprocess.run(
+        ["mutmut", "run", NO_MUTANT], cwd=ROOT, check=False, stderr=subprocess.PIPE, text=True
+    )
+    sys.stderr.write(run.stderr or "")
+    stats = ROOT / "mutants" / STATS_FILE
+    if NOTHING_MATCHES not in (run.stderr or "") or not stats.is_file():
+        print(
+            f"mutmut's stats pass did not finish (exit code {run.returncode}), so there are no stats to keep."
+        )
+        return 1
+    data = json.loads(stats.read_text(encoding="utf-8"))
+    if not data.get("tests_by_mangled_function_name") or not data.get("duration_by_test"):
+        print("mutmut's stats map no test to any function; not keeping them.")
+        return 1
+    out.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(stats, out)
+    print(
+        f"Stats for {len(data['duration_by_test'])} tests and {len(data['tests_by_mangled_function_name'])} functions."
+    )
+    return 0
+
+
+def changed_test_files(base: str) -> set[str]:
+    """Test files changed since the merge base of `base` and HEAD (and untracked ones)."""
+    commit = merge_base(base)
+    out = subprocess.run(
+        ["git", "diff", "--name-only", "--no-renames", commit, "--", "tests"],
+        cwd=ROOT, capture_output=True, text=True, check=True,
+    ).stdout  # fmt: skip
+    untracked = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard", "tests"],
+        cwd=ROOT, capture_output=True, text=True, check=True,
+    ).stdout  # fmt: skip
+    return {p for p in (out + untracked).split() if p.endswith(".py")}
+
+
+def warm_stats(stats: dict[str, Any], changed_keys: set[str], test_files: set[str]) -> set[str]:
+    """Make mutmut collect stats again for the tests a change can affect, and keep the rest of main's map.
+
+    mutmut re-runs its stats pass for every test missing from `duration_by_test` (it calls them new tests). So
+    the tests that main's map links to a changed function (`<module>.<key>`), and every test in a changed test
+    file, are taken out of the map and the durations: mutmut records afresh which functions they call. A new
+    function is reached through a changed caller, whose tests are among them. A test the map misses can only let a
+    mutant survive (a lower score), never count one as killed: each kill is a real test failing on the mutant
+    after it passed on the clean code. Returns the tests taken out."""
+    by_fn: dict[str, list[str]] = stats["tests_by_mangled_function_name"]
+    durations: dict[str, float] = stats["duration_by_test"]
+    refresh = {t for k in changed_keys for t in by_fn.get(k, [])}
+    refresh |= {t for t in durations if t.partition("::")[0] in test_files}
+    for k, tests in by_fn.items():
+        by_fn[k] = [t for t in tests if t not in refresh]
+    for t in refresh:
+        durations.pop(t, None)
+    return refresh
+
+
+def scope_keys() -> set[str]:
+    """`<module>.<key>` of every function in SCOPE (every changed function of the change, not one shard's)."""
+    return {f"{m}.{k}" for m, keys in SCOPE.items() for k in keys}
+
+
+def run_mutmut(shards: list[str], stats: Path | None = None, base: str | None = None) -> ShardResult:
+    """Run mutmut on the shards' mutants. With `stats` (main's, from collect_stats) and `base`, start from them
+    (warm_stats); otherwise mutmut's stats pass runs on the test files that import the shards' modules."""
     print("Mutating:", ", ".join(shards))
     globs = [g for s in shards for g in shard_globs(s)]
     if not globs:  # mutmut run with no names runs every mutant of the package: never do that
@@ -765,8 +871,17 @@ def run_mutmut(shards: list[str]) -> ShardResult:
     shutil.rmtree(ROOT / "mutants", ignore_errors=True)
     modules = sorted({parse_shard_id(s)[0] for s in shards})
     paths = [module_path(m).relative_to(ROOT).as_posix() for m in modules]
-    tests = tests_reaching(modules, ROOT)
-    print(f"Stats run on the {len(tests)} test files that import {', '.join(modules)}, directly or not.")
+    tests: list[str] = []
+    if stats is not None and base is not None and stats.is_file():
+        data = json.loads(stats.read_text(encoding="utf-8"))
+        set_scope(changed_modules(base), base)
+        refresh = warm_stats(data, scope_keys(), changed_test_files(base))
+        (ROOT / "mutants").mkdir()
+        (ROOT / "mutants" / STATS_FILE).write_text(json.dumps(data), encoding="utf-8")
+        print(f"Warm stats from main: mutmut collects stats again for {len(refresh)} tests only.")
+    else:
+        tests = tests_reaching(modules, ROOT)
+        print(f"Cold stats: a stats run on the {len(tests)} test files that import {', '.join(modules)}.")
     with mutmut_scope(paths, tests):
         run = subprocess.run(
             ["mutmut", "run", *globs], cwd=ROOT, check=False, stderr=subprocess.PIPE, text=True
@@ -884,9 +999,23 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--list", action="store_true", help="print the shards to run as a JSON array")
     mode.add_argument("--module", help="CI shard: a module, or one shard of it (module#KofN); needs --report")
     mode.add_argument("--aggregate", type=Path, metavar="DIR", help="CI: combine the shard reports in DIR")
+    mode.add_argument(
+        "--collect-stats",
+        type=Path,
+        metavar="FILE",
+        help="CI on main: mutmut's stats over every test, to FILE",
+    )
     ap.add_argument("--report", type=Path, help="with --module: write the shard's counts here as JSON")
+    ap.add_argument(
+        "--stats",
+        type=Path,
+        help="with --module and --base: start from main's stats (--collect-stats), if present",
+    )
     ap.add_argument("--expect", help="with --aggregate (required): the --list output, as JSON")
     a = ap.parse_args(argv)
+
+    if a.collect_stats:
+        return collect_stats(a.collect_stats)
 
     if a.aggregate:
         if a.expect is None:  # without it a missing shard could never be noticed
@@ -911,7 +1040,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if a.base:
                 set_scope([module], a.base)
-            result = run_mutmut([a.module])
+            result = run_mutmut([a.module], a.stats, a.base)
         except ValueError as e:  # the split changed since --list, or no names: fail, never run other mutants
             print(e)
             result = ShardResult(modules=[a.module], baseline_ok=False)
