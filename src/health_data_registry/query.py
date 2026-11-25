@@ -40,6 +40,40 @@ def _single(value: Any) -> bool:
     return len(value) == 1 if isinstance(value, list | tuple) else True
 
 
+def live_refusal(ds: Dataset, e: BaseException) -> QueryRefused:
+    """A plain-words refusal for a live read that failed, with what the clinician can do instead."""
+    from health_data_registry.adapters.pdf_tables import LayoutError
+    from health_data_registry.fetch import FetchRefused
+
+    e_ = ds.entry
+    page = e_.source.landing_url
+    if isinstance(e, LayoutError):
+        return QueryRefused(
+            "publisher_layout_unreadable",
+            f"{e_.publisher}'s report layout for {e_.title} couldn't be read, or its own totals didn't check out, "
+            "so no numbers from it are shown: reading a changed layout needs a reviewed update here, and asking "
+            f"again won't fix it. Read the table in the report itself from {page}, or ask about another source; "
+            "the Something's wrong helper tells the maintainers.",
+        )
+    if isinstance(e, FetchRefused) and e.code == "robots_disallowed":
+        return QueryRefused(
+            "publisher_disallows_reading",
+            f"{e_.publisher}'s website asks automated tools not to read it, so {e_.title} was not read. Open the "
+            f"reports yourself at {page}.",
+        )
+    if isinstance(e, FetchRefused) and e.code == "time_budget":
+        return QueryRefused(
+            "publisher_too_slow",
+            f"Reading {e_.title} from {e_.publisher} would take longer than one question may wait, so it stopped. "
+            f"Open the reports yourself at {page}, or ask about another source.",
+        )
+    return QueryRefused(
+        "publisher_unreachable",
+        f"{e_.publisher} could not be reached for {e_.title}, which is read live from the "
+        "publisher because its terms don't allow us to keep a copy. Try again in a few minutes.",
+    )
+
+
 @dataclass(frozen=True)
 class CompiledMetric:
     sql: str
@@ -493,18 +527,16 @@ class Engine:
             return True
         if not self.fetch_at_run_time:
             return False
-        from health_data_registry.crawl import fetcher
-        from health_data_registry.live import fetch_live
+        from health_data_registry.crawl import fetcher, process_pacer
+        from health_data_registry.live import LIVE_READ_BUDGET_S, fetch_live
 
-        get = self.getter or fetcher(self.registry, None)
+        get = self.getter or fetcher(
+            self.registry, None, pacer=process_pacer(self.registry), budget_s=LIVE_READ_BUDGET_S
+        )
         try:
             self._live[ds.id] = fetch_live(ds, get)
         except Exception as e:  # noqa: BLE001 - any publisher failure becomes one plain refusal
-            raise QueryRefused(
-                "publisher_unreachable",
-                f"{ds.entry.publisher} could not be reached for {ds.entry.title}, which is read live from the "
-                "publisher because its terms don't allow us to keep a copy. Try again in a few minutes.",
-            ) from e
+            raise live_refusal(ds, e) from e
         return True
 
     def manifest(self, dataset_id: str) -> Manifest:

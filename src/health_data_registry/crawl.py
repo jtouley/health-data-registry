@@ -8,6 +8,7 @@ reads it live (live.py).
 from __future__ import annotations
 
 import tempfile
+import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -25,6 +26,9 @@ ROBOTS_TIMEOUT_S = 30.0
 # more than that is refused in plain words rather than stalling a refresh or a clinician's question.
 CRAWL_DELAY_BUDGET_S = 240.0
 ROBOTS_AGENT = "health-data-registry"
+# What each portal's pages are. APIs answer JSON; a PDF-report source serves an HTML index and PDF reports.
+_ACCEPT = {"pdf_report": "text/html, application/pdf;q=0.9, */*;q=0.8"}
+_ACCEPT_DEFAULT = "application/json"
 
 Getter = Callable[[str], RawFetch]
 
@@ -48,8 +52,10 @@ class Robots:
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
         budget_s: float = CRAWL_DELAY_BUDGET_S,
+        pace: Callable[[str], None] | None = None,
     ) -> None:
         self.hosts, self.sleep, self.clock, self.budget = hosts, sleep, clock, budget_s
+        self.pace = pace  # the host pacing every request keeps, robots.txt included
         self.rules: dict[str, RobotFileParser] = {}
         self.last: dict[str, float] = {}
         self.waited = 0.0
@@ -60,8 +66,11 @@ class Robots:
         if host in self.rules:
             return self.rules[host]
         rp = RobotFileParser()
+        url = f"https://{host}/robots.txt"
+        if self.pace is not None:
+            self.pace(url)
         try:
-            r = fetch(f"https://{host}/robots.txt", allowed_hosts=self.hosts, timeout=ROBOTS_TIMEOUT_S)
+            r = fetch(url, allowed_hosts=self.hosts, timeout=ROBOTS_TIMEOUT_S)
         except FetchRefused:
             return None  # can't be read now: asked again on the next fetch
         if r.status == 200:
@@ -107,7 +116,11 @@ class Robots:
 class Pacer:
     """The least time between two requests to one host, as each source's catalog entry declares
     (source.min_interval_s; 10 s for the county and federal report pages read here). Applied to every request,
-    retries included, whether or not robots.txt asks for a delay."""
+    retries and robots.txt included, whether or not robots.txt asks for a delay.
+
+    Safe to share between threads: each request reserves its slot under a lock, then sleeps outside it. The
+    server keeps one per process (`process_pacer`), so two questions never reach a host back to back.
+    """
 
     def __init__(
         self,
@@ -118,6 +131,7 @@ class Pacer:
     ) -> None:
         self.intervals, self.sleep, self.clock = intervals, sleep, clock
         self.last: dict[str, float] = {}
+        self._lock = threading.Lock()
 
     @classmethod
     def for_registry(cls, registry: Registry, *, sleep: Callable[[float], None] = time.sleep) -> Pacer:
@@ -127,16 +141,44 @@ class Pacer:
             intervals[host] = max(intervals.get(host, 0.0), ds.entry.source.min_interval_s)
         return cls({h: s for h, s in intervals.items() if s > 0}, sleep=sleep)
 
-    def wait(self, url: str) -> None:
+    def wait(self, url: str, *, deadline: float | None = None) -> None:
+        """Wait for this host's next free slot. With a `deadline` (on this pacer's clock), a slot after it is
+        refused in plain words instead of waited for."""
+        from health_data_registry.fetch import FetchRefused
+
         host = (urlsplit(url).hostname or "").lower()
         gap = self.intervals.get(host)
         if gap is None:
             return
-        if host in self.last:
-            due = self.last[host] + gap - self.clock()
-            if due > 0:
-                self.sleep(due)
-        self.last[host] = self.clock()
+        with self._lock:
+            now = self.clock()
+            slot = max(now, self.last[host] + gap) if host in self.last else now
+            if deadline is not None and slot > deadline:
+                raise FetchRefused(
+                    "time_budget",
+                    f"Reading {host} paces its requests at least {gap:g} seconds apart, and the next one would "
+                    "come after the time one question may wait, so the read stopped there.",
+                )
+            self.last[host] = slot
+        if slot > now:
+            self.sleep(slot - now)
+
+
+_PROCESS_PACER: Pacer | None = None
+_PROCESS_LOCK = threading.Lock()
+
+
+def process_pacer(registry: Registry) -> Pacer:
+    """The one Pacer this process shares across every live read, so host pacing holds between questions."""
+    global _PROCESS_PACER
+    with _PROCESS_LOCK:
+        fresh = Pacer.for_registry(registry)
+        if _PROCESS_PACER is None:
+            _PROCESS_PACER = fresh
+        else:
+            for host, gap in fresh.intervals.items():
+                _PROCESS_PACER.intervals[host] = max(_PROCESS_PACER.intervals.get(host, 0.0), gap)
+        return _PROCESS_PACER
 
 
 def fetcher(
@@ -146,14 +188,37 @@ def fetcher(
     sleep: Callable[[float], None] = time.sleep,
     robots: Robots | None | bool = True,
     pacer: Pacer | None = None,
+    budget_s: float | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> Getter:
     """A getter for catalogued publisher URLs that honours robots.txt, retries slow publishers and logs every
-    attempt. `robots=True` (the default) reads each host's robots.txt; tests pass False or their own Robots."""
+    attempt. `robots=True` (the default) reads each host's robots.txt; tests pass False or their own Robots.
+
+    `budget_s` bounds the whole read, from this getter's creation: pacing waits, request timeouts and retries all
+    stop at it, and a request that can't start in time is refused in plain words (a live read per question).
+    """
     from health_data_registry.fetch import FetchRefused, fetch
 
     hosts = registry.hosts
-    policy = Robots(hosts, sleep=sleep) if robots is True else robots or None
     pace = pacer if pacer is not None else Pacer.for_registry(registry, sleep=sleep)
+    deadline = None if budget_s is None else clock() + budget_s
+
+    def paced(url: str) -> None:
+        pace.wait(url, deadline=deadline)
+
+    policy = Robots(hosts, sleep=sleep, pace=paced) if robots is True else robots or None
+    accept = {ds.entry.source.host: _ACCEPT.get(ds.entry.source.portal, _ACCEPT_DEFAULT) for ds in registry}
+
+    def timeout_left() -> float:
+        if deadline is None:
+            return FETCH_TIMEOUT_S
+        left = deadline - clock()
+        if left <= 0:
+            raise FetchRefused(
+                "time_budget",
+                "The publisher took longer than one question may wait, so the read stopped there.",
+            )
+        return min(FETCH_TIMEOUT_S, left)
 
     def get(url: str) -> RawFetch:
         if policy is not None:
@@ -164,11 +229,15 @@ def fetcher(
                     log.record(url, ok=False, when=datetime.now(UTC), error=str(e))
                 raise
         for attempt in range(RETRIES):
-            pace.wait(url)
+            paced(url)
             when = datetime.now(UTC)
+            host = (urlsplit(url).hostname or "").lower()
             try:
                 r = fetch(
-                    url, allowed_hosts=hosts, headers={"Accept": "application/json"}, timeout=FETCH_TIMEOUT_S
+                    url,
+                    allowed_hosts=hosts,
+                    headers={"Accept": accept.get(host, _ACCEPT_DEFAULT)},
+                    timeout=timeout_left(),
                 )
             except FetchRefused as e:
                 if log is not None:

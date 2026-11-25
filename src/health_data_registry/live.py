@@ -22,6 +22,10 @@ from health_data_registry.registry import Dataset
 from health_data_registry.store import Manifest, RawFetch, select_list
 
 LIVE_TTL_S = 600.0  # how long parsed publisher records stay in memory; never written to disk
+# One question's live read is bounded: at most this long in total (pacing included), and at most this many
+# reports from a PDF-report source (the newest; the answer says which were left out).
+LIVE_READ_BUDGET_S = 75.0
+LIVE_MAX_REPORTS = 3
 
 
 def is_live(ds: Dataset) -> bool:
@@ -61,8 +65,11 @@ def fetch_live(ds: Dataset, get: Any) -> LiveTable:
     fields = sorted({c.source_field for c in ds.contract.columns})
     records: list[dict[str, Any]] = []
     fetches: list[RawFetch] = []
-    for page in pages(ds.entry, get, fields=fields):
+    notes: list[str] = []
+    for page in pages(ds.entry, get, fields=fields, max_reports=LIVE_MAX_REPORTS):
         fetches.append(page.fetch)
+        if page.note:
+            notes.append(page.note)
         records += [{k: (None if v is None else str(v)) for k, v in r.items()} for r in page.records]
     if not fetches:
         raise ValueError(f"{ds.id}: the publisher returned nothing")
@@ -82,7 +89,7 @@ def fetch_live(ds: Dataset, get: Any) -> LiveTable:
         redistribution=False,
         partial=False,
         origin="publisher",
-        notes=[attribution(ds)],
+        notes=[attribution(ds), *notes],
     )
     return LiveTable(records=records, manifest=m, fetched=time.monotonic())
 
