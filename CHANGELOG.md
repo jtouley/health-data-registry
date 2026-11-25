@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `list_caveats` and `describe_dataset` say what one count in a source is, which date it counts cases by, and
+  why its contract is not reviewed yet: a contract counts as reviewed only when none of its open questions
+  could change a number. Open questions are structured records (id, status, answer, source, reviewer, date,
+  issue).
+- Places, conditions and periods are keyed the same way in every source (the transform's marts): US places by
+  Census FIPS codes (two new reference sources, the Census state and county code files), the nation by its
+  UN M49 and ISO3 codes, and parts of a place (NNDSS New York without New York City, RESP-NET catchment areas,
+  Detroit and Out-Wayne) flagged and never added to the whole. Condition concepts come only from reviewed
+  crosswalk records; until those exist every label is shown as unresolved.
 - Condition vocabulary: each catalog entry lists the publisher's own condition labels (`conditions:`, with
   where they come from), and `get_series`, `get_rate` and `get_trend` accept any of them through the semantic
   model's `generic_series`, with the same aggregation rules as the named series. `validate` fails when a local
