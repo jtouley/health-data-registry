@@ -188,6 +188,10 @@ class Conditions(_Strict):
     source: str = ""
     labels: list[str] = Field(default_factory=list)
     aliases: list[ConditionAlias] = Field(default_factory=list)
+    # Labels whose counts are not cases in people (animals, screening swabs), each with the reason in plain words,
+    # read from the label itself: get_rate, compare_rates and get_trend(fit_on="rates") give no rate per 100,000
+    # people for them.
+    not_a_human_case_count: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _consistent(self) -> Conditions:
@@ -206,6 +210,11 @@ class Conditions(_Strict):
                 )
             if not a.source.strip():
                 raise ValueError(f"alias {a.alias!r} needs a source (codebook URL or reviewed declaration)")
+        for label, why in self.not_a_human_case_count.items():
+            if label not in self.labels:
+                raise ValueError(f"not_a_human_case_count names {label!r}, which is not in conditions.labels")
+            if not why.strip():
+                raise ValueError(f"not_a_human_case_count for {label!r} needs a reason in plain words")
         return self
 
 
@@ -738,16 +747,22 @@ class Dataset:
         """The publisher's own condition labels, as catalogued."""
         return list(self.entry.conditions.labels)
 
-    def label_for(self, text: str) -> str | None:
-        """The catalogued label `text` names exactly (or through a declared alias), compared ignoring case,
-        punctuation and repeated spaces; None if it names none."""
-        if text in self.entry.conditions.labels:
-            return text
-        want = norm_label(text)
-        for label in self.entry.conditions.labels:
-            if norm_label(label) == want:
-                return label
-        return next((a.label for a in self.entry.conditions.aliases if norm_label(a.alias) == want), None)
+    def labels_for(self, text: str) -> list[str]:
+        """Every catalogued label `text` names, exactly or through a declared alias, as the publisher writes them.
+
+        Labels are compared by spelling only (case, spaces and punctuation ignored), so a condition the publisher
+        spells two ways in different years ("Hepatitis B, acute" and "Hepatitis, B, acute") returns both labels.
+        Each stays its own series: the variants are never merged or dropped (hard rule 2)."""
+        labels = self.entry.conditions.labels
+        key = spelling_key(text)
+        targets = {key} | {
+            spelling_key(a.label) for a in self.entry.conditions.aliases if spelling_key(a.alias) == key
+        }
+        return [x for x in labels if spelling_key(x) in targets]
+
+    def not_a_human_case_count(self, label: str) -> str | None:
+        """Why this label's counts are not cases in people (so no rate per 100,000 people), or None."""
+        return self.entry.conditions.not_a_human_case_count.get(label)
 
     def condition_series(self, label: str) -> list[Series]:
         """Series for one catalogued label: the generic templates pinned to it, or, for a dataset that is one
@@ -758,6 +773,13 @@ class Dataset:
         if dim is None:
             return list(self.semantic.series)
         return [g.bind(label, dim) for g in self.semantic.generic_series]
+
+
+def spelling_key(text: str) -> str:
+    """A label reduced to its letters and digits, lower case: two labels with the same key are the same words
+    spelled differently ("Hepatitis, B, acute" = "Hepatitis B, acute"; "SalmonellaParatyphi infection" = "Salmonella
+    Paratyphi infection"). Used to find every spelling, never to merge them."""
+    return re.sub(r"[^a-z0-9]+", "", str(text).lower())
 
 
 def norm_label(text: str) -> str:

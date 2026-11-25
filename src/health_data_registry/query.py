@@ -6,6 +6,7 @@ so a clinician (or a grader) can check the number without trusting the model tha
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,6 +19,7 @@ from health_data_registry.sql_guard import GuardedQuery, guard_sql, harden, run_
 from health_data_registry.store import Manifest, latest_snapshot
 
 MAX_ROWS = 5000
+LOADED_VALUES_TIMEOUT_S = 5.0  # describe_dataset never waits longer than this for one column's values
 FilterValue = str | int | float | bool | Sequence[str | int | float | bool]
 
 
@@ -28,9 +30,8 @@ NEXT_STEPS: dict[str, str] = {
     "unknown_condition": "Open describe_dataset for a source search_datasets lists, pick one of its condition "
     "labels, and ask again with that label.",
     "filter_matched_nothing": "Ask again with one of the values listed as available.",
-    "no_snapshot": "Run the Something's wrong helper, which walks you through turning it back on.",
-    "no_place_breakdown": "Ask again without places, or use list_sources(geography_level='state') to find a "
-    "source with values by state.",
+    "no_snapshot": "Run the Something's wrong helper, which walks you through loading this source again.",
+    "no_place_breakdown": "Ask again without places, or ask which sources report by state.",
     "too_many_rows": "Ask again for fewer places or a shorter span of years.",
     "no_sex_split": "Ask again without sex.",
     "index_not_built": "Search PubMed for the condition and place in the meantime.",
@@ -42,7 +43,9 @@ NEXT_STEPS: dict[str, str] = {
     "would_combine_rates": "Use describe_dataset to see the filters, and ask for one published group at a time.",
     "publisher_unreachable": "Try again in a few minutes.",
     "publisher_bad_table": "Try again later; if it keeps happening, run the Something's wrong helper.",
-    "needs_single_value": "Read a running total at one week (normally the latest), never across weeks.",
+    "needs_single_value": "Ask for the year's total, or for one week.",
+    "not_a_human_count": "Use get_series to read these counts as published; they are not cases in people, so "
+    "there is no rate per 100,000 people.",
 }
 
 
@@ -645,6 +648,30 @@ class Engine:
             .execute(f"SELECT DISTINCT {_q(column)} FROM {_q(dataset_id)} ORDER BY 1")  # noqa: S608 - quoted contract identifiers
             .fetchall()
         )  # noqa: S608 - quoted contract identifiers
+        return [r[0] for r in rows if r[0] is not None]
+
+    def loaded_values(
+        self, dataset_id: str, column: str, timeout_s: float = LOADED_VALUES_TIMEOUT_S
+    ) -> list[Any] | None:
+        """The values a column takes in a copy that is already on this computer, or None when there is none.
+
+        Never downloads or reads the publisher (describe_dataset is a catalog lookup), and gives up after
+        timeout_s, so a slow or broken copy can't hold up the answer."""
+        ds = self.registry.get(dataset_id)
+        try:
+            con = self.connect()
+        except (duckdb.Error, OSError):
+            return None
+        if dataset_id not in self.manifests or column not in ds.contract.column_names:
+            return None
+        timer = threading.Timer(timeout_s, con.interrupt)
+        timer.start()
+        try:
+            rows = con.execute(f"SELECT DISTINCT {_q(column)} FROM {_q(dataset_id)} ORDER BY 1").fetchall()  # noqa: S608 - quoted contract identifiers
+        except (duckdb.Error, OSError):
+            return None
+        finally:
+            timer.cancel()
         return [r[0] for r in rows if r[0] is not None]
 
     def query_sql(self, sql: str) -> dict[str, Any]:

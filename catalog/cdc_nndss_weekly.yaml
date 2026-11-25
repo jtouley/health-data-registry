@@ -47,8 +47,11 @@ gbd:
 conditions:
   # The publisher's own labels, exactly as published (double spaces and the 'SalmonellaParatyphi' spelling
   # some years use are kept). Each works with get_series, get_rate and get_trend through generic_series.
+  # Provenance: every distinct value of the label column at https://data.cdc.gov/resource/x9gk-5huc.json, read
+  # 2026-11-24 (an exact structural fact from the publisher). Labels spelled two ways in different years are kept
+  # apart; whether each pair is one condition is an open question in the contract.
   dimension: condition
-  source: "Every distinct value of the label column (the NNDSS table's condition label) at https://data.cdc.gov/resource/x9gk-5huc.json, read 2026-11-24: an exact structural fact from the publisher. Case definitions: https://ndc.services.cdc.gov/."
+  source: "CDC's own condition names, exactly as published on data.cdc.gov (checked 24 Nov 2026). Case definitions: https://ndc.services.cdc.gov/."
   labels:
     - "Anthrax"
     - "Arboviral diseases, Chikungunya virus disease"
@@ -190,6 +193,9 @@ conditions:
     - "Yellow fever"
     - "Zika virus disease, non-congenital"
   aliases: []
+  # Read from the label itself: these counts are not cases in people, so no rate per 100,000 people is built.
+  not_a_human_case_count:
+    "Rabies, Animal": "rabid animals, not people"
 contract: contracts/cdc_nndss_weekly.odcs.yaml
 semantic_model: semantic/cdc_nndss_weekly.yaml
 status: draft

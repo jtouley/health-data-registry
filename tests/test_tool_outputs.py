@@ -283,11 +283,13 @@ def test_plain_and_refusal_shapes(registry: Registry, tmp_path: Path) -> None:
         eng.manifest("toy_cases")
     except Exception as e:  # noqa: BLE001 - checking the plain words of the refusal
         msg = tools.plain(e)
-        assert msg.endswith(" Run the Something's wrong helper, which walks you through turning it back on.")
+        assert msg.endswith(
+            " Run the Something's wrong helper, which walks you through loading this source again."
+        )
         assert tools.refusal(e, "json") == {
             "message": msg,
             "refused": "no_snapshot",
-            "next_step": "Run the Something's wrong helper, which walks you through turning it back on.",
+            "next_step": "Run the Something's wrong helper, which walks you through loading this source again.",
         }
         assert tools.refusal(e) == msg
     assert tools.refusal(ValueError("x"), "json")["refused"] == "error"  # type: ignore[index]

@@ -16,9 +16,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, NamedTuple
 
+import duckdb
+
 from health_data_registry import geo
 from health_data_registry.query import Engine, QueryRefused, next_step_for
-from health_data_registry.registry import Dataset, Registry, Series, UnknownDataset, norm_label
+from health_data_registry.registry import Dataset, Registry, Series, UnknownDataset, norm_label, spelling_key
 
 Fmt = Literal["csv", "json"]
 Out = str | dict[str, Any]
@@ -139,7 +141,8 @@ PRESENTATION_RULES = [
 
 # Optional parts of a decline, in the order a clinician reads them, and how each is introduced in plain text.
 _DECLINE_PARTS = {
-    "did_you_mean": "Did you mean (these are different things from what you asked; check before using one)",
+    "did_you_mean": "Did you mean (close spellings of what you asked; check one means what you meant before "
+    "using it)",
     "nearest_served": "Nearest served here",
     "served_elsewhere": "Served elsewhere",
     "outside_registry": "Outside this registry",
@@ -176,7 +179,7 @@ def plain(e: Exception) -> str:
     """Any failure in plain words with a next step. Never a stack trace or a status code."""
     code = getattr(e, "code", None)
     if code == "no_snapshot":
-        return f"{e} Run the Something's wrong helper, which walks you through turning it back on."
+        return f"{e} Run the Something's wrong helper, which walks you through loading this source again."
     if isinstance(e, UnknownDataset):
         # Only the registry's own message is echoed; any other KeyError would leak an internal name.
         return f"{e}. Use search_datasets to see what is available."
@@ -253,7 +256,7 @@ def provenance_fields(ds: Dataset, engine: Engine | None) -> dict[str, str]:
     return {
         "source_url": ds.entry.source.landing_url,
         "retrieved_at": str(m.retrieved_at)[:19] if m else "not fetched yet",
-        "raw_sha256": sha if hashes else ("read live, not stored" if m else "not fetched yet"),
+        "raw_sha256": sha if hashes else (_no_hash(m) if m else "not fetched yet"),
         "version": f"snapshot {m.snapshot_id}; contract {m.contract_version}"
         if m
         else f"contract {ds.contract.version}",
@@ -263,8 +266,53 @@ def provenance_fields(ds: Dataset, engine: Engine | None) -> dict[str, str]:
     }
 
 
-def _norm(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+def _no_hash(m: Any) -> str:
+    """What to say when a manifest lists no raw file hash: only a live read has none by design (hard rule 8)."""
+    if m.origin == "publisher":
+        return "read live, not stored"
+    return "missing: this stored copy lists no raw file hash; run the Something's wrong helper"
+
+
+# Words too general to name a condition on their own: a label is matched by its specific words (the pathogen or
+# disease), never by these alone. "population" would otherwise pull in an indicator name, "acute" dozens of labels.
+STOP_WORDS = frozenset(
+    [
+        "a",
+        "acute",
+        "all",
+        "and",
+        "case",
+        "cases",
+        "chronic",
+        "clinical",
+        "confirmed",
+        "disease",
+        "diseases",
+        "fever",
+        "for",
+        "in",
+        "infection",
+        "infections",
+        "invasive",
+        "of",
+        "other",
+        "per",
+        "population",
+        "probable",
+        "screening",
+        "syndrome",
+        "the",
+        "total",
+        "unspecified",
+        "virus",
+        "viral",
+        "year",
+    ]
+)
+
+
+def _specific_words(text: str) -> set[str]:
+    return {w for w in norm_label(text).split() if w not in STOP_WORDS}
 
 
 def series_for(
@@ -280,7 +328,7 @@ def series_for(
     kind "plain" (the default, used by get_series) leaves out weekly and age-specific series, so a year is never
     built by adding up provisional weeks; "weekly" and "age" return only those (check_signal, age_adjust).
     """
-    want = _norm(condition)
+    want = norm_label(condition)
     found: list[tuple[Dataset, Series]] = []
 
     def fits(s: Series) -> bool:
@@ -295,25 +343,42 @@ def series_for(
             found += [(ds, s) for s in named if fits(s)]
             continue
         # Any other label the publisher uses (the catalog's vocabulary) reads through the generic series.
-        for label in catalogued_labels(ds, want):
+        for label in catalogued_labels(ds, condition):
             found += [(ds, s) for s in ds.condition_series(label) if fits(s)]
     return found
 
 
 def _names_match(want: str, names: set[str]) -> bool:
-    keys = {_norm(n) for n in names}
+    keys = {norm_label(n) for n in names}
     return bool(want) and (want in keys or any(re.search(rf"\b{re.escape(want)}\b", n) for n in keys))
 
 
-def catalogued_labels(ds: Dataset, want: str) -> list[str]:
-    """The catalog labels the words name: exactly, through a declared alias, or (3 characters or more) as whole
-    words inside the label. Each is a separate condition."""
-    exact = ds.label_for(want)
-    if exact is not None:
-        return [exact]
-    if len(want) < 3:
+def catalogued_labels(ds: Dataset, condition: str) -> list[str]:
+    """The catalog labels the words name, each a separate series: every spelling the publisher uses of the label
+    asked for (or of a declared alias), else, for 3 characters or more that include a specific word (not only
+    words like "acute", "virus" or "population"), the labels holding those words whole."""
+    exact = ds.labels_for(condition)
+    if exact:
+        return exact
+    want = norm_label(condition)
+    if len(want) < 3 or not _specific_words(want):
         return []
     return [x for x in ds.condition_labels if _names_match(want, {x})]
+
+
+def spelling_notes(labels: Sequence[str]) -> list[str]:
+    """A note for each condition the publisher spells more than one way (e.g. in different years): the spellings
+    are shown as separate rows, never merged, until a maintainer declares them one condition (hard rule 1)."""
+    groups: dict[str, list[str]] = {}
+    for x in dict.fromkeys(labels):
+        groups.setdefault(spelling_key(x), []).append(x)
+    return [
+        f"The publisher spells this condition {len(g)} ways ({'; '.join(repr(x) for x in g)}), often in "
+        "different years. Each spelling is shown as its own rows and never added to the other; read them "
+        "together for the full span of years."
+        for g in groups.values()
+        if len(g) > 1
+    ]
 
 
 def _all_labels(registry: Registry) -> dict[str, str]:
@@ -329,11 +394,12 @@ def unknown_condition(registry: Registry, condition: str, fmt: Fmt, what: str = 
     """No source serves these words: say so, with spelling suggestions (did_you_mean), labels sharing a word
     (nearest_served) and, when the words name a GBD cause in a crosswalk, that cause by name (outside_registry).
     GBD is never fetched."""
-    want = _norm(condition)
+    want = norm_label(condition)
     labels = _all_labels(registry)
     close = difflib.get_close_matches(want, list(labels), n=3, cutoff=0.75)
     did_you_mean = [labels[k] for k in close]
-    words = {w for w in want.split() if len(w) >= 4}
+    # Only a label sharing a specific word (the pathogen or disease, never "virus" or "infection") is offered.
+    words = {w for w in _specific_words(want) if len(w) >= 4}
     nearest = [v for k, v in sorted(labels.items()) if words & set(k.split()) and v not in did_you_mean][:8]
     outside = _gbd_causes_named(registry, condition)
     return message(
@@ -349,14 +415,11 @@ def unknown_condition(registry: Registry, condition: str, fmt: Fmt, what: str = 
 def _gbd_causes_named(registry: Registry, text: str) -> list[str]:
     """GBD causes (by name, from the catalogs' crosswalks) that the words name as whole words: where modelled
     burden for them lives. Only the name is given; this server never fetches GBD."""
-    said = f" {_norm(text)} "
+    said = f" {norm_label(text)} "
     causes = sorted(
-        {c.cause for ds in registry for c in ds.entry.gbd.causes if f" {_norm(c.cause)} " in said}
+        {c.cause for ds in registry for c in ds.entry.gbd.causes if f" {norm_label(c.cause)} " in said}
     )
-    return [
-        f"GBD cause '{c}': modelled burden for it is in the IHME GBD connector (this server never fetches GBD)"
-        for c in causes
-    ]
+    return [f"For modelled burden of {c} (GBD cause '{c}'), ask the IHME GBD connector." for c in causes]
 
 
 # ------------------------------------------------------------------------------------------ catalog tools
@@ -553,8 +616,9 @@ def describe_dataset(
     if ds.condition_labels and s.generic_series:
         lines += [
             "",
-            f"Every condition label the publisher uses here also works as the condition (from: {e.conditions.source}):",
+            f"You can ask for any of these conditions, named exactly as {e.agency} publishes them:",
             "; ".join(ds.condition_labels),
+            f"Where these names come from: {e.conditions.source}",
         ]
     lines += ["", "Values you can filter on (dimension_values):"]
     for name, dv in info["dimension_values"].items():
@@ -604,6 +668,7 @@ def describe_dataset(
 
 
 MAX_DIMENSION_VALUES = 300
+NO_VALUES = "not available: no copy of the data is on this computer yet, and the contract lists none"
 
 
 def _contract_values(ds: Dataset, column: str) -> tuple[list[Any], str]:
@@ -616,26 +681,23 @@ def _contract_values(ds: Dataset, column: str) -> tuple[list[Any], str]:
             return enum, "the contract's documented values"
         if p.get("examples"):
             return list(p["examples"]), "examples from the contract, not the full list"
-    return [], "not listed (no copy loaded yet)"
+    return [], NO_VALUES
 
 
 def dimension_values(ds: Dataset, engine: Engine | None) -> dict[str, dict[str, Any]]:
     """The values each filterable dimension takes: the catalog's labels for the condition dimension, else the
-    loaded copy's own values, else what the contract documents. Read from the data, never invented."""
+    values in a copy already on this computer, else what the contract documents. Read from the data, never
+    invented, and never downloaded: describing a source fetches nothing (Engine.loaded_values)."""
     out: dict[str, dict[str, Any]] = {}
     for d in ds.semantic.dimensions:
         values: list[Any]
         if d.name == ds.entry.conditions.dimension:
             values, src = ds.condition_labels, "the catalog's condition labels (the publisher's own)"
+        elif engine is not None and (raw := engine.loaded_values(ds.id, d.column)) is not None:
+            values = [v if isinstance(v, int | float | str) else str(v) for v in raw]
+            src = "the loaded copy of the data"
         else:
-            try:
-                if engine is None:
-                    raise LookupError("no engine")
-                raw = engine.distinct_values(ds.id, d.column)
-                values = [v if isinstance(v, int | float | str) else str(v) for v in raw]
-                src = "the loaded copy of the data"
-            except Exception:  # noqa: BLE001 - no copy to read: fall back to the contract
-                values, src = _contract_values(ds, d.column)
+            values, src = _contract_values(ds, d.column)
         out[d.name] = {
             "column": d.column,
             "values": values[:MAX_DIMENSION_VALUES],
@@ -721,7 +783,7 @@ def _match_places(
 
     def key(text: str) -> str:
         p = geo.place(text)
-        return p.name if p else _norm(col.canonical_label(text))
+        return p.name if p else norm_label(col.canonical_label(text))
 
     wanted = {loc: key(loc) for loc in locations}
     out: dict[Any, str] = {}
@@ -846,6 +908,8 @@ def provenance_note(ds: Dataset, m: Any) -> str:
         + (f" and {len(hashes) - 2} more (get_provenance lists every file)" if len(hashes) > 2 else "")
         if hashes
         else "read live, not stored (no stored raw file)"
+        if m.origin == "publisher"
+        else "raw file sha256 " + _no_hash(m)
     )
     release = f"; hub release {m.release_ref} ({m.release_id})" if getattr(m, "release_id", None) else ""
     return (
@@ -940,12 +1004,14 @@ def get_series(
             0, "Rows mix measures (see the measure column); never compare or add them across measures."
         )
     labels = sorted({s.label for _, s in matches})
-    if len(labels) > 1:
+    conditions = {spelling_key(x) for x in labels}
+    if len(conditions) > 1:
         notes.insert(
             0,
-            f"Rows cover {len(labels)} different condition labels (see the condition column): they are different "
-            "things, so never add them together.",
+            f"Rows cover {len(conditions)} different condition labels (see the condition column): they are "
+            "different things, so never add them together.",
         )
+    notes[0:0] = spelling_notes(labels)
     notes.append(
         "lower and upper are the publisher's own uncertainty bounds, shown only where published; observed counts "
         "have none. An empty value is never a zero: where the publisher gives a reason, it is in the flag column."
@@ -970,16 +1036,20 @@ def matched_nothing(
     elsewhere: list[str] = []
     for ds, s, unmatched in ran:
         places: list[str] = []
+        partial: set[str] = set()
         if s.location_dimension:
-            places = sorted(set(_match_places(engine, ds, s, [])[0].values()))
+            by_raw = _match_places(engine, ds, s, [])[0]
+            places = sorted(set(by_raw.values()))
+            col = ds.contract.column(ds.semantic.dimension(s.location_dimension).column)
+            # A state row that covers only part of the state (NNDSS New York leaves out New York City) may not
+            # hold the place asked for, so it is never offered as the nearest thing served.
+            partial = {name for raw, name in by_raw.items() if col.partial_note(str(raw))}
             available[f"{ds.id} places"] = ", ".join(places[:80]) + (" ..." if len(places) > 80 else "")
         available[f"{ds.id} years"] = _years(ds)
         for loc in unmatched:
             st = geo.containing_state(loc)
-            if st is not None and st.name in places:
-                nearest.append(
-                    f"{st.name} from {ds.id} (the state that contains {loc}; {ds.id} has no smaller area)"
-                )
+            if st is not None and st.name in places and st.name not in partial:
+                nearest.append(f"{st.name}: {ds.entry.title} reports by state, not by county or city")
         if not _years_overlap(ds, year_start, year_end):
             elsewhere.append(
                 f"{ds.entry.publisher}: {ds.entry.source.landing_url} (this copy covers {_years(ds)} only)"
@@ -1197,10 +1267,11 @@ def find_prior_work(
     )
 
 
-def unlisted_condition_labels(registry: Registry, engine: Engine) -> dict[str, list[str] | None]:
+def unlisted_condition_labels(registry: Registry, engine: Engine) -> dict[str, list[str] | str | None]:
     """For each source with a condition dimension: the labels its loaded copy holds that its catalog entry doesn't
-    list (validate fails on any), or None when there is no copy to check."""
-    out: dict[str, list[str] | None] = {}
+    list (validate fails on any), None when there is no copy to check, or, when the copy can't be read (a corrupt
+    or half-written snapshot), why in plain words; one unreadable source never stops the others being checked."""
+    out: dict[str, list[str] | str | None] = {}
     for ds in registry:
         dim = ds.entry.conditions.dimension
         if dim is None:
@@ -1209,6 +1280,11 @@ def unlisted_condition_labels(registry: Registry, engine: Engine) -> dict[str, l
             values = engine.distinct_values(ds.id, ds.semantic.dimension(dim).column)
         except QueryRefused:
             out[ds.id] = None
+            continue
+        except (duckdb.Error, OSError) as e:
+            out[ds.id] = (
+                f"its local snapshot could not be read ({type(e).__name__}); refresh it and run validate again"
+            )
             continue
         out[ds.id] = sorted({str(v) for v in values} - set(ds.condition_labels))
     return out

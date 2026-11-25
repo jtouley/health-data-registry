@@ -85,10 +85,10 @@ def test_catalog_vocabulary_loads_and_binds(vocab: tuple[Registry, Engine]) -> N
     reg, _ = vocab
     ds = reg.get("toy_cases")
     assert ds.condition_labels == LABELS
-    assert ds.label_for("Tularemia") == "Tularemia"
-    assert ds.label_for("q  FEVER acute") == "Q fever, Acute"
-    assert ds.label_for("Rabbit fever") == "Tularemia"  # an alias from the (synthetic) codebook
-    assert ds.label_for("rabbit") is None
+    assert ds.labels_for("Tularemia") == ["Tularemia"]
+    assert ds.labels_for("q  FEVER acute") == ["Q fever, Acute"]
+    assert ds.labels_for("Rabbit fever") == ["Tularemia"]  # an alias from the (synthetic) codebook
+    assert ds.labels_for("rabbit") == []
     [s] = ds.condition_series("Tularemia")
     assert (s.condition, s.label, s.metric, s.filters) == ("Tularemia", "Tularemia", "case_count",
                                                             {"condition": "Tularemia"})  # fmt: skip
@@ -216,8 +216,8 @@ def test_filter_matched_nothing_lists_what_exists(vocab: tuple[Registry, Engine]
         "message": "'Tularemia' is served here, but no row matches 'Travis County, Texas', 'Lake County, Ohio'.",
         "refused": "filter_matched_nothing",
         "next_step": "Ask again with one of the values listed as available.",
-        "nearest_served": ["Ohio from toy_cases (the state that contains Lake County, Ohio; toy_cases has no "
-                           "smaller area)"],
+        "nearest_served": ["Ohio: Toy notifiable condition cases by state and year reports by state, not by "
+                           "county or city"],
         "available": {"toy_cases places": "Michigan, Ohio, United States", "toy_cases years": "2022-2024"},
     }  # fmt: skip
     late = _json(
@@ -270,16 +270,20 @@ def test_unknown_condition_declines_with_suggestions(vocab: tuple[Registry, Engi
     out = _json(tools.get_series(reg, eng, condition="brucelosis", fmt="json"))
     assert out["refused"] == "unknown_condition" and out["did_you_mean"] == ["Brucellosis"]
     assert out["next_step"] == next_step_for("unknown_condition")
-    near = _json(tools.get_series(reg, eng, condition="chronic hepatitis", fmt="json"))
-    assert near["nearest_served"] == ["Q fever, Chronic"] and "did_you_mean" not in near
+    near = _json(tools.get_series(reg, eng, condition="brucellosis abortus", fmt="json"))
+    assert near["nearest_served"] == ["Brucellosis"] and "did_you_mean" not in near
+    # A shared general word ("chronic", "virus", "infection") is never enough to offer a label as nearest.
+    for words in ("chronic hepatitis", "Nipah virus infection"):
+        assert "nearest_served" not in _json(tools.get_series(reg, eng, condition=words, fmt="json"))
     gbd = _json(tools.get_series(reg, eng, condition="Lower respiratory infections", fmt="json"))
     assert gbd["outside_registry"] == [
-        "GBD cause 'Lower respiratory infections': modelled burden for it is in the IHME GBD connector (this "
-        "server never fetches GBD)"
+        "For modelled burden of Lower respiratory infections (GBD cause 'Lower respiratory infections'), ask the "
+        "IHME GBD connector."
     ]
     text = tools.get_aligned_with_gbd(reg, eng, condition="brucelosis")
     assert isinstance(text, str) and text.splitlines()[-1] == (
-        "Did you mean (these are different things from what you asked; check before using one): Brucellosis"
+        "Did you mean (close spellings of what you asked; check one means what you meant before using it): "
+        "Brucellosis"
     )
     miss = _json(tools.search_datasets(reg, topic="cancer", fmt="json"))
     assert miss["refused"] == "no_dataset_matched" and "outside_registry" not in miss
@@ -360,7 +364,7 @@ def test_describe_returns_dimension_values_rules_and_provenance(vocab: tuple[Reg
     assert all(f"- {r}" in text for r in tools.PRESENTATION_RULES)
     # With no copy loaded, the values fall back to the contract and say so.
     bare = _json(tools.describe_dataset(reg, "toy_cases", None, fmt="json"))
-    assert bare["dimension_values"]["state"]["from"] == "not listed (no copy loaded yet)"
+    assert bare["dimension_values"]["state"]["from"] == tools.NO_VALUES
     assert bare["retrieved_at"] == "not fetched yet" and bare["raw_sha256"] == "not fetched yet"
 
 
@@ -369,7 +373,7 @@ def test_dimension_values_from_contract_and_cap(tmp_path: Path, monkeypatch: pyt
     resp = tools.dimension_values(reg.get("cdc_respnet"), None)
     assert resp["virus_network"]["values"] == ["COVID-NET", "FluSurv-NET", "RSV-NET", "Combined"]
     assert resp["sex"]["from"] in ("the contract's documented values", "examples from the contract, not the full list",
-                                   "not listed (no copy loaded yet)")  # fmt: skip
+                                   tools.NO_VALUES)  # fmt: skip
     hai = tools.dimension_values(reg.get("cdc_nhsn_ar_hai"), None)
     assert "Methicillin-resistant Staphylococcus aureus" in hai["phenotype"]["values"]
     monkeypatch.setattr(tools, "MAX_DIMENSION_VALUES", 2)
@@ -394,7 +398,7 @@ def test_contract_values_enum_then_examples_then_nothing() -> None:
     assert tools._contract_values(reg.get("cdc_nndss_weekly"), "states")[0] == [
         "MICHIGAN", "Michigan", "US RESIDENTS", "U.S. Residents", "TOTAL",
     ]  # fmt: skip
-    assert tools._contract_values(resp, "nope") == ([], "not listed (no copy loaded yet)")
+    assert tools._contract_values(resp, "nope") == ([], tools.NO_VALUES)
     nndss = tools.dimension_values(reg.get("cdc_nndss_weekly"), None)
     assert nndss["reporting_area"] == {
         "column": "states",
@@ -429,8 +433,18 @@ def test_provenance_lists_two_hashes_then_says_more(vocab: tuple[Registry, Engin
     eng.manifests["toy_cases"] = replace(m, raw_sha256=["a" * 64, "b" * 64, "c" * 64])
     f = tools.provenance_fields(reg.get("toy_cases"), eng)
     assert f["raw_sha256"] == f"{'a' * 64} {'b' * 64} (+1 more; get_provenance lists all)"
+    # A stored copy with no hash is never called a live read (hard rule 8); only a live read has none by design.
     eng.manifests["toy_cases"] = replace(m, raw_sha256=[])
+    assert tools.provenance_fields(reg.get("toy_cases"), eng)["raw_sha256"].startswith(
+        "missing: this stored copy"
+    )
+    note = tools.provenance_note(reg.get("toy_cases"), eng.manifests["toy_cases"])
+    assert "raw file sha256 missing: this stored copy" in note and "read live" not in note
+    eng.manifests["toy_cases"] = replace(m, raw_sha256=[], origin="publisher")
     assert tools.provenance_fields(reg.get("toy_cases"), eng)["raw_sha256"] == "read live, not stored"
+    assert "read live, not stored (no stored raw file)" in tools.provenance_note(
+        reg.get("toy_cases"), eng.manifests["toy_cases"]
+    )
 
 
 # ------------------------------------------------------------------------------------------ validate
@@ -455,3 +469,191 @@ def test_validate_passes_and_skips(vocab: tuple[Registry, Engine], tmp_path: Pat
     assert cli.validate(reg, tmp_path / "empty") == 0
     assert "skip toy_cases: no local snapshot" in capsys.readouterr().out
     assert tools.unlisted_condition_labels(load_registry(write_registry(tmp_path / "plain")), eng) == {}
+
+
+def test_validate_reports_an_unreadable_snapshot_and_goes_on(
+    vocab: tuple[Registry, Engine], capsys: pytest.CaptureFixture[str]
+) -> None:
+    reg, eng = vocab
+    for db in eng.lake.rglob("data.duckdb"):
+        db.write_bytes(b"not a duckdb file")  # a truncated or half-written snapshot
+    fresh = Engine(registry=reg, lake=eng.lake, hub=None, fetch_at_run_time=False)
+    [(ds_id, why)] = tools.unlisted_condition_labels(reg, fresh).items()
+    assert ds_id == "toy_cases" and isinstance(why, str) and "could not be read" in why
+    assert cli.validate(reg, eng.lake) == 1
+    assert "FAIL toy_cases: its local snapshot could not be read" in capsys.readouterr().err
+
+
+# ------------------------------------------------------------------------------------------ review fixes
+
+
+SPELLED = [
+    "Hepatitis B, acute",
+    "Hepatitis, B, acute",
+    "Q fever, Acute",
+    "Q fever, Chronic",
+    "Q fever, Total",
+]
+SPELLED_ROWS = [
+    {"states": "OHIO", "year": "2022", "label": "Hepatitis B, acute", "m1": "4", "m2": ""},
+    {"states": "OHIO", "year": "2023", "label": "Hepatitis, B, acute", "m1": "6", "m2": ""},
+    {"states": "OHIO", "year": "2022", "label": "Q fever, Acute", "m1": "2", "m2": ""},
+    {"states": "OHIO", "year": "2022", "label": "Q fever, Chronic", "m1": "1", "m2": ""},
+    {"states": "OHIO", "year": "2022", "label": "Q fever, Total", "m1": "3", "m2": ""},
+]
+
+
+@pytest.fixture
+def spelled(tmp_path: Path) -> tuple[Registry, Engine]:
+    vocab = VOCAB.replace(
+        "labels: [{}]".format(", ".join(f'"{x}"' for x in LABELS)),
+        "labels: [{}]".format(
+            ", ".join(f'"{x}"' for x in ["Legionellosis", "Syphilis", "Tularemia", *SPELLED])
+        ),
+    )
+    return build(tmp_path, RECORDS + SPELLED_ROWS, vocab=vocab)
+
+
+@pytest.mark.parametrize("asked", ["Hepatitis B, acute", "Hepatitis, B, acute", "hepatitis b acute"])
+def test_every_spelling_of_a_label_comes_back_apart(spelled: tuple[Registry, Engine], asked: str) -> None:
+    """The publisher's two spellings of one condition: both come back, each under its own label, never added and
+    never one dropped, with a note naming both."""
+    reg, eng = spelled
+    assert reg.get("toy_cases").labels_for(asked) == ["Hepatitis B, acute", "Hepatitis, B, acute"]
+    out = _json(tools.get_series(reg, eng, condition=asked, fmt="json"))
+    assert sorted((r[1], r[2], r[9]) for r in out["rows"]) == [
+        (2022, 4, "Hepatitis B, acute"), (2023, 6, "Hepatitis, B, acute"),
+    ]  # fmt: skip
+    assert out["notes"][0].startswith("The publisher spells this condition 2 ways ('Hepatitis B, acute'; ")
+    assert not any(n.startswith("Rows cover") for n in out["notes"])  # one condition, not different things
+
+
+def test_a_total_label_is_never_added_to_its_parts(spelled: tuple[Registry, Engine]) -> None:
+    reg, eng = spelled
+    out = _json(tools.get_series(reg, eng, condition="Q fever", fmt="json"))
+    got = {r[9]: r[2] for r in out["rows"]}
+    assert got == {"Q fever, Acute": 2, "Q fever, Chronic": 1, "Q fever, Total": 3}  # each as published
+    assert 6 not in got.values()  # never parts plus total
+    assert out["notes"][0].startswith("Rows cover 3 different condition labels")
+
+
+def test_spelling_notes_only_for_real_variants() -> None:
+    assert tools.spelling_notes(["Q fever, Acute", "Q fever, Chronic"]) == []
+    [note] = tools.spelling_notes(["SalmonellaParatyphi infection", "Salmonella Paratyphi infection", "x"])
+    assert note.startswith("The publisher spells this condition 2 ways ('SalmonellaParatyphi infection'; ")
+
+
+def test_general_words_never_pick_a_label() -> None:
+    """A word like "population", "acute" or "virus" names no condition on its own; the specific word does."""
+    reg = load_registry(ROOT)
+    who, nndss = reg.get("who_gho_tb_incidence"), reg.get("cdc_nndss_weekly")
+    assert tools.catalogued_labels(who, "population") == []
+    for word in ("acute", "confirmed", "virus", "infection", "total", "acute virus infection"):
+        assert tools.catalogued_labels(nndss, word) == [], word
+    assert tools.catalogued_labels(nndss, "Q fever") == [
+        "Q fever, Acute",
+        "Q fever, Chronic",
+        "Q fever, Total",
+    ]
+    assert tools.catalogued_labels(nndss, "Paratyphi infection") == [
+        "Salmonella Paratyphi infection", "Salmonellosis (excluding Salmonella Typhi infection and Salmonella "
+        "Paratyphi infection)",
+    ]  # fmt: skip
+    assert tools.catalogued_labels(nndss, "SalmonellaParatyphi infection") == [
+        "Salmonella Paratyphi infection", "SalmonellaParatyphi infection",
+    ]  # fmt: skip
+    assert tools.series_for(reg, "population", "cases") == []
+
+
+def test_nearest_served_skips_a_state_row_that_leaves_out_part_of_the_state(tmp_path: Path) -> None:
+    """NNDSS 'New York' leaves out New York City, so it is never offered for Brooklyn; Kansas is whole."""
+    from tests.test_real_contracts import nndss
+
+    rows = [
+        nndss("NEW YORK", "2", m3="9", label="Tularemia"),
+        nndss("KANSAS", "1", m3="5", label="Tularemia"),
+    ]
+    reg = load_registry(ROOT)
+    lake = tmp_path / "lake"
+    lake.mkdir()
+    f = tmp_path / "n.ndjson"
+    write_ndjson(f, rows)
+    build_snapshot(
+        lake, reg.get("cdc_nndss_weekly"), [raw_fetch("https://data.cdc.gov/resource/x.json", rows)], [f]
+    )
+    eng = Engine(registry=reg, lake=lake, hub=None, fetch_at_run_time=False)
+    out = _json(tools.get_series(reg, eng, condition="Tularemia", locations=["Brooklyn, New York",
+                                 "Wichita, Kansas"], source_id="cdc_nndss_weekly", fmt="json"))  # fmt: skip
+    assert out["refused"] == "filter_matched_nothing"
+    assert out["nearest_served"] == ["Kansas: NNDSS Weekly Data reports by state, not by county or city"]
+
+
+class _Hub:
+    url = "https://example.invalid/hub"
+
+    def snapshot(self, ds: Any) -> Any:  # pragma: no cover - the test fails if describe_dataset downloads
+        raise AssertionError(f"describe_dataset downloaded {ds.id}")
+
+
+def test_describe_never_downloads_and_says_when_values_are_unavailable(tmp_path: Path) -> None:
+    reg = load_registry(ROOT)
+    eng = Engine(registry=reg, lake=tmp_path / "empty", hub=_Hub(), fetch_at_run_time=True)
+    d = _json(tools.describe_dataset(reg, "who_gho_tb_incidence", eng, fmt="json"))
+    assert all(v["from"] != "the loaded copy of the data" for v in d["dimension_values"].values())
+    assert eng.loaded_values("cdc_nndss_weekly", "states") is None
+    assert "cdc_nndss_weekly" not in eng.manifests and not eng._live
+
+
+def test_loaded_values_reads_a_local_copy_and_gives_up_on_errors(vocab: tuple[Registry, Engine]) -> None:
+    import duckdb
+
+    reg, eng = vocab
+    assert eng.loaded_values("toy_cases", "reporting_area") == ["MICHIGAN", "OHIO", "US RESIDENTS"]
+    assert eng.loaded_values("toy_cases", "nope") is None
+
+    class Slow:
+        interrupted = False
+
+        def execute(self, *_: Any) -> Any:
+            raise duckdb.InterruptException("timed out")
+
+        def interrupt(self) -> None:  # pragma: no cover - only called when the timer fires
+            self.interrupted = True
+
+    eng._con = Slow()  # type: ignore[assignment]
+    assert eng.loaded_values("toy_cases", "reporting_area", timeout_s=0.01) is None
+
+
+def test_respnet_names_say_which_virus() -> None:
+    reg = load_registry(ROOT)
+    src = reg.get("cdc_respnet").entry.conditions.source
+    assert "COVID-NET is COVID-19" in src and "FluSurv-NET is influenza" in src and "RSV-NET is RSV" in src
+    for ds in reg:  # clinicians see this text: no contract jargon
+        assert "idDimensions" not in ds.entry.conditions.source
+        assert "structural fact" not in ds.entry.conditions.source
+
+
+def test_not_a_human_case_count_is_declared_and_checked(tmp_path: Path) -> None:
+    reg = load_registry(ROOT)
+    nndss = reg.get("cdc_nndss_weekly")
+    assert nndss.not_a_human_case_count("Rabies, Animal") == "rabid animals, not people"
+    assert nndss.not_a_human_case_count("Rabies, Human") is None
+    bad = 'conditions: {dimension: condition, source: s, labels: [A], not_a_human_case_count: {B: "x"}}\n'
+    with pytest.raises(ValueError, match="not in conditions.labels"):
+        load_registry(write_registry(tmp_path / "r1", catalog=vocab_catalog(bad), semantic=SEMANTIC))
+    blank = 'conditions: {dimension: condition, source: s, labels: [A], not_a_human_case_count: {A: " "}}\n'
+    with pytest.raises(ValueError, match="needs a reason"):
+        load_registry(write_registry(tmp_path / "r2", catalog=vocab_catalog(blank), semantic=SEMANTIC))
+
+
+def test_real_rates_refuse_animal_counts(tmp_path: Path) -> None:
+    from health_data_registry import analysis
+
+    reg = load_registry(ROOT)
+    eng = Engine(registry=reg, lake=tmp_path / "empty", hub=None, fetch_at_run_time=False)
+    rate = _json(analysis.get_rate(reg, eng, condition="Rabies, Animal", year=2024, fmt="json"))
+    assert rate["refused"] == "not_a_human_count"
+    assert rate["message"] == (
+        "No rate per 100,000 people is given for 'Rabies, Animal': 'Rabies, Animal' counts rabid animals, not people."
+    )
+    assert rate["next_step"] == next_step_for("not_a_human_count")

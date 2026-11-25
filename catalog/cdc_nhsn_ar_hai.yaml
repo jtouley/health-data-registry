@@ -41,7 +41,9 @@ gbd:
     - {condition: "Carbapenem-resistant Pseudomonas aeruginosa", cause: "Other infectious diseases", pathogen: "Pseudomonas aeruginosa"}
 conditions:
   dimension: phenotype
-  source: "Every distinct value of the phenotype column (organism and resistance pattern; the contract's organismResistance dimension) at https://data.cdc.gov/resource/7wz3-n6um.json, read 2026-11-24: an exact structural fact from the publisher. Definitions: https://arpsp.cdc.gov/resources/AR_PhenotypeDefinitions_NOV2026.pdf."
+  # Provenance: every distinct value of the phenotype column (the contract's organismResistance dimension) at
+  # https://data.cdc.gov/resource/7wz3-n6um.json, read 2026-11-24 (an exact structural fact from the publisher).
+  source: "CDC's own names for each organism and resistance pattern, exactly as published on data.cdc.gov (checked 24 Nov 2026). Definitions: https://arpsp.cdc.gov/resources/AR_PhenotypeDefinitions_NOV2026.pdf."
   labels:
     - "Aminoglycoside-resistant Pseudomonas aeruginosa"
     - "Carbapenem-resistant Acinetobacter"

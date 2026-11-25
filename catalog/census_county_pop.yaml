@@ -40,7 +40,8 @@ caveats:
   - "Surveillance counts are by MMWR year and these estimates are for July 1 of the calendar year; the two years align closely but not exactly."
 conditions:
   dimension: null
-  source: "A population denominator (contract idDimensions: condition null); no condition labels."
+  # Provenance: the contract's idDimensions (condition null).
+  source: "Population counts only; this source has no conditions."
   labels: []
   aliases: []
 contract: contracts/census_county_pop.odcs.yaml

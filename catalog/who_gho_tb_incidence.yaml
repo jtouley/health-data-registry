@@ -39,7 +39,9 @@ gbd:
     - {condition: "MDG_0000000020", cause: "Tuberculosis", pathogen: null}
 conditions:
   dimension: null
-  source: "WHO GHO indicator list (https://ghoapi.azureedge.net/api/Indicator): IndicatorCode MDG_0000000020, IndicatorName as published (read 2026-11-24). The whole dataset is this one indicator."
+  # Provenance: WHO GHO indicator list (https://ghoapi.azureedge.net/api/Indicator), IndicatorCode
+  # MDG_0000000020, IndicatorName as published (read 2026-11-24).
+  source: "WHO's own name for its one measure here, estimated tuberculosis incidence, exactly as published in the Global Health Observatory (checked 24 Nov 2026)."
   labels:
     - "Incidence of tuberculosis (per 100 000 population per year)"
   aliases: []

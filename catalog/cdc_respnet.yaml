@@ -38,7 +38,9 @@ gbd:
     - {condition: "COVID-NET", cause: "COVID-19", pathogen: null}
 conditions:
   dimension: virus_network
-  source: "The surveillance_network values the contract documents (enum, from the publisher's dataset description), confirmed as every distinct value at https://data.cdc.gov/resource/kvib-3txy.json on 2026-11-24."
+  # Provenance: the surveillance_network values the contract documents (enum, from the publisher's dataset
+  # description), confirmed as every distinct value at https://data.cdc.gov/resource/kvib-3txy.json on 2026-11-24.
+  source: "CDC's names for its three hospital surveillance networks, as published on data.cdc.gov (checked 24 Nov 2026): COVID-NET is COVID-19, FluSurv-NET is influenza, RSV-NET is RSV, and Combined is the three together (CDC does not say whether a patient with two of these viruses is counted once). Each counts laboratory-confirmed hospitalizations in the network's catchment areas."
   labels:
     - "COVID-NET"
     - "FluSurv-NET"
