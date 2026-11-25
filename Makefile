@@ -1,6 +1,6 @@
 # Developer and CI entry points. `make help` lists the targets.
 .DEFAULT_GOAL := help
-.PHONY: help install lint fmt typecheck test test-network smoke mutate docs kit fuzz-requirements check precheck refresh serve check-contracts eval hooks serve-http
+.PHONY: help install lint fmt typecheck test test-network smoke mutate docs kit fuzz-requirements check precheck refresh serve check-contracts eval hooks serve-http contracts transform
 
 UV ?= uv
 COV_FLOOR ?= 85
@@ -62,6 +62,14 @@ serve: ## Run the MCP server locally
 
 serve-http: ## Run the hosted read-only server over Streamable HTTP on port 7860 (docs/dev/hosting.md)
 	$(UV) run health-data-registry serve --http --host 127.0.0.1 --port 7860
+
+contracts: ## Regenerate transform/ raw sources, staging models and model schemas from contracts/
+	$(UV) run python -m health_data_registry.transform_gen
+
+transform: ## dbt build (models and tests) on the synthetic fixtures in tests/fixtures/transform, as CI runs it
+	$(UV) run python -m health_data_registry.transform_gen --check
+	HDR_LAKE=../tests/fixtures/transform HDR_TRANSFORM_DB=target/ci.duckdb DBT_SEND_ANONYMOUS_USAGE_STATS=false \
+		$(UV) run --directory transform dbt build --profiles-dir . --project-dir .
 
 check-contracts: ## Check every source against its ODCS contract
 	$(UV) run health-data-registry check-contracts

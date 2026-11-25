@@ -9,7 +9,7 @@ from __future__ import annotations
 import threading
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -544,12 +544,16 @@ class Engine:
                 if table is None:
                     continue  # restricted sources are never read from disk, even a maintainer's lake
                 try:
-                    load_live(con, ds, table.records)
+                    report = load_live(con, ds, table.records)
                 except Exception:  # noqa: BLE001 - one bad publisher table must not break the other sources
                     del self._live[ds.id]
                     self._live_failed.add(ds.id)
                     continue
-                manifest = table.manifest
+                manifest = replace(
+                    table.manifest,
+                    notes=[*table.manifest.notes, *report.notes()],
+                    silver=report.as_dict(),
+                )
             elif (found := self._lake_snapshot(ds.id)) is not None:
                 path, manifest = found
                 alias = f"snap_{ds.id}"

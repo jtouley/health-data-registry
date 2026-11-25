@@ -99,6 +99,7 @@ step "lint" "${MAKE}" --no-print-directory lint
 step "typecheck" "${MAKE}" --no-print-directory typecheck
 step "test (coverage floor ${COV_FLOOR}%)" "${MAKE}" --no-print-directory test COV_FLOOR="${COV_FLOOR}"
 step "smoke" "${MAKE}" --no-print-directory smoke
+step "transform (generated models reproduce; dbt build on fixtures)" "${MAKE}" --no-print-directory transform
 step "Projects kit" "${MAKE}" --no-print-directory kit
 step "docs drift (make docs, then git diff --exit-code)" docs_drift
 
