@@ -11,7 +11,8 @@ from health_data_registry import tools
 from health_data_registry.adapters import socrata, who_gho
 from health_data_registry.query import Engine, QueryRefused, compile_metric
 from health_data_registry.registry import Registry, RegistryError, load_registry
-from health_data_registry.store import latest_snapshot, select_list
+from health_data_registry.staging import typed_select as select_list
+from health_data_registry.store import latest_snapshot
 from tests.conftest import CATALOG, CONTRACT, SEMANTIC, raw_fetch, write_registry
 
 # ------------------------------------------------------------------ registry: strict by design
