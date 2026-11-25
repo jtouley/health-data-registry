@@ -4,9 +4,13 @@ name: CI
 # - pull_request and push to pre-pr/** (the pre-PR gate): only what the change can affect (scripts/ci_impact.py),
 #   tests on Python 3.12, and mutation tests on the changed functions. A PR whose tested tree equals a green
 #   pre-pr run's reuses that whole verdict (scripts/verdict_reuse.py).
-# - merge_group (the merge queue), push to main, nightly and by hand: everything, tests on 3.12 and 3.13 with the
-#   coverage floor; no mutation (a property of the PR's diff, checked on the PR). Main also refreshes the mutmut
-#   stats the PR shards start from.
+# - merge_group (the merge queue): everything, tests on 3.12 and 3.13 with the coverage floor, and every mutation
+#   shard of the PR's changed functions with no time budget, so a shard a PR deferred is mutated before the merge.
+# - push to main, nightly and by hand: everything but mutation; main also refreshes the mutmut stats the PR shards
+#   start from.
+# Every PR job fits the pre-PR budget (ci/budgets.yml: 3 minutes, push to every check done). What cannot fit is
+# deferred, by name, to the merge queue, never cut short or skipped: a change of more than 6 shards, a shard with no
+# mutmut stats from main, or one that runs past its budget.
 # The one required check is "CI result": it passes only when every job the changes job selected passed and every
 # other job was skipped for a reason it knows.
 on:
@@ -50,6 +54,8 @@ jobs:
       kit: ${{ steps.impact.outputs.kit }}
       pythons: ${{ steps.impact.outputs.pythons }}
       modules: ${{ steps.mutation.outputs.modules }}
+      mutation_base: ${{ steps.mutation.outputs.base }}
+      mutation_deferred: ${{ steps.mutation.outputs.deferred }}
       merge_base: ${{ steps.impact.outputs.merge_base }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -123,21 +129,37 @@ jobs:
             echo 'pythons=["3.12","3.13"]' >> "$GITHUB_OUTPUT"
           fi
       # Only the functions this change touches (spec: mutation tests on changed functions), compared with the merge
-      # base, as shard ids `<module>#<k>of<n>@<split hash>`; the hash covers exactly which functions each shard
-      # mutates. Pull requests and pre-pr pushes only: in the merge queue and on main the PR already passed it.
+      # base (in the merge queue, the queue's base commit), as shard ids `<module>#<k>of<n>@<split hash>`; the hash
+      # covers exactly which functions each shard mutates. On a PR, more than 6 shards (more than one wave at
+      # max-parallel) cannot fit the budget: the PR then lists none and names why, and the merge queue runs them.
+      # Main and nightly run none: every change reaches main through the queue.
       - name: Mutation shards of the changed functions
         id: mutation
         if: steps.reuse.outputs.run_id == ''
         env:
+          EVENT: ${{ github.event_name }}
           MERGE_BASE: ${{ steps.impact.outputs.merge_base }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
-          if [ -z "${MERGE_BASE}" ]; then
+          base="${MERGE_BASE}"
+          if [ "${EVENT}" = "merge_group" ]; then base="${QUEUE_BASE}"; fi
+          if [ -z "${base}" ]; then
             echo "modules=[]" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          modules="$(uv run --no-project python scripts/mutate_changed.py --list --base "${MERGE_BASE}")"
-          echo "Shards of the changed functions since ${MERGE_BASE}: ${modules}"
+          if ! [[ "${base}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "The base commit is not a full SHA (${base}). Failing."
+            exit 1
+          fi
+          modules="$(uv run --no-project python scripts/mutate_changed.py --list --base "${base}")"
+          echo "Shards of the changed functions since ${base}: ${modules}"
+          count="$(python3 -c 'import json, sys; print(len(json.loads(sys.argv[1])))' "${modules}")"
+          if [ "${EVENT}" != "merge_group" ] && [ "${count}" -gt 6 ]; then
+            echo "deferred=${count} mutation shards are more than one wave (6), so they cannot fit the pre-PR budget; the merge queue mutates them before the merge." >> "$GITHUB_OUTPUT"
+            modules="[]"
+          fi
           echo "modules=${modules}" >> "$GITHUB_OUTPUT"
+          echo "base=${base}" >> "$GITHUB_OUTPUT"
 
   # The fast checks in one job, one install: generated files current (docs, transform/), then in parallel every
   # pre-commit hook (ruff, mypy, actionlint and the rest), the Claude Projects kit, and dbt build on the fixtures.
@@ -146,16 +168,24 @@ jobs:
     needs: changes
     if: needs.changes.outputs.reused_run == ''
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The pre-PR budget is 2 minutes (ci/budgets.yml); the limit leaves a minute over it for a slow runner.
+    timeout-minutes: ${{ needs.changes.outputs.full == 'true' && 10 || 3 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: ${{ needs.changes.outputs.merge_base != '' && '0' || '1' }}
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: "3.12"
       - name: Install dependencies (locked)
         run: uv sync --locked
+      # A budget in ci/budgets.yml may only tighten, unless the change touches that file alone (scripts/ci_budget.py).
+      - name: Budgets only tighten
+        if: needs.changes.outputs.merge_base != ''
+        env:
+          MERGE_BASE: ${{ needs.changes.outputs.merge_base }}
+        run: python3 scripts/ci_budget.py ratchet --base "${MERGE_BASE}"
       # docs/helpers.md, the template's skills, the plugin and the tool lists (make docs), and the dbt staging
       # models (make contracts), must be exactly what their generators write; an uncommitted output is drift too.
       - name: Generated files are current
@@ -212,7 +242,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.reused_run == '' && needs.changes.outputs.tests != 'none'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: ${{ needs.changes.outputs.full == 'true' && 15 || 3 }}
     strategy:
       fail-fast: false
       matrix:
@@ -254,10 +284,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.reused_run == '' && needs.changes.outputs.modules != '[]' && needs.changes.outputs.modules != ''
     runs-on: ubuntu-latest
-    # Shards hold about 2 minutes of mutants (SHARD_TARGET in scripts/mutate_changed.py). 8 minutes stops a hung
-    # baseline or stats run (mutmut gives those no timeout of its own) before it holds a runner for long. A shard
-    # that hits it leaves no report and fails the check; lower its module's target rather than raising this.
-    timeout-minutes: 8
+    # On a PR, mutmut gets 100 s (--budget) and needs main's stats (--require-stats); past either it reports itself
+    # deferred, and the merge queue mutates it. The job limit is the backstop for a hung step. In the merge queue a
+    # shard runs to the end, cold stats included.
+    timeout-minutes: ${{ github.event_name == 'merge_group' && 20 || 3 }}
     strategy:
       fail-fast: false
       # At most 6 shards of one run at a time: the account has about 20 runners, so one run never takes more than
@@ -282,20 +312,23 @@ jobs:
       - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .mutmut-cache/stats.json
-          key: mutmut-stats-v1-py3.12-${{ needs.changes.outputs.merge_base }}
+          key: mutmut-stats-v1-py3.12-${{ needs.changes.outputs.mutation_base }}
           restore-keys: mutmut-stats-v1-py3.12-
       # MODULE is a shard id `<module>#<k>of<n>@<split hash>`; it is always quoted. mutmut runs one mutant per core.
       - name: Mutation tests on one shard
         env:
+          EVENT: ${{ github.event_name }}
           MODULE: ${{ matrix.module }}
-          MERGE_BASE: ${{ needs.changes.outputs.merge_base }}
+          MERGE_BASE: ${{ needs.changes.outputs.mutation_base }}
         run: |
           if ! [[ "${MERGE_BASE}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "The changes job gave no merge base, so this shard cannot scope to the changed functions. Failing."
             exit 1
           fi
+          limits=(--require-stats --budget 100)
+          if [ "${EVENT}" = "merge_group" ]; then limits=(); fi
           uv run python scripts/mutate_changed.py --module "${MODULE}" --base "${MERGE_BASE}" \
-            --stats .mutmut-cache/stats.json --report "mutation-report/${MODULE}.json"
+            --stats .mutmut-cache/stats.json "${limits[@]}" --report "mutation-report/${MODULE}.json"
       # Uploaded even when the shard failed, so "CI result" shows its counts; a missing report fails there.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
@@ -337,10 +370,15 @@ jobs:
     needs: [changes, checks, test, mutation]
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 3
+    # actions: read only for the CI budget step, which reads this run's job times.
+    permissions:
+      contents: read
+      actions: read
     env:
       REUSED_RUN: ${{ needs.changes.outputs.reused_run }}
       MODULES: ${{ needs.changes.outputs.modules }}
+      DEFERRED: ${{ needs.changes.outputs.mutation_deferred }}
     steps:
       - name: Every selected job passed, every other one was skipped
         env:
@@ -368,6 +406,9 @@ jobs:
           else
             [ "${TEST}" = "success" ] || fail "The tests ended with '${TEST}'."
           fi
+          if [ -n "${DEFERRED}" ]; then
+            echo "Mutation deferred to the merge queue: ${DEFERRED}"
+          fi
           if [ "${MODULES}" = "[]" ] || [ -z "${MODULES}" ]; then
             [ "${MUTATION}" = "skipped" ] || fail "No shard was listed, yet the shards ended with '${MUTATION}'."
           else
@@ -375,7 +416,6 @@ jobs:
             [ "${MUTATION}" = "success" ] || [ "${MUTATION}" = "failure" ] || fail "The shards ended with '${MUTATION}'."
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: env.REUSED_RUN == '' && env.MODULES != '[]' && env.MODULES != ''
         with:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -384,10 +424,24 @@ jobs:
           pattern: mutation-*
           path: mutation-reports/
           merge-multiple: true
+      # A PR's run accepts a shard that deferred itself (named in the log); the merge queue's never does.
       - name: Mutation floor on the total
         if: env.REUSED_RUN == '' && env.MODULES != '[]' && env.MODULES != ''
         env:
+          EVENT: ${{ github.event_name }}
           MUTATION_FLOOR: "70"
         run: |
           mkdir -p mutation-reports
-          python3 scripts/mutate_changed.py --aggregate mutation-reports --expect "${MODULES}" --floor "${MUTATION_FLOOR}"
+          allow=(--allow-deferred)
+          if [ "${EVENT}" = "merge_group" ]; then allow=(); fi
+          python3 scripts/mutate_changed.py --aggregate mutation-reports --expect "${MODULES}" --floor "${MUTATION_FLOOR}" "${allow[@]}"
+      # Every job of this run against its budget (ci/budgets.yml), slow jobs listed. Runs even when a step above
+      # failed, so a slow run is reported either way.
+      - name: CI budget
+        if: always() && env.REUSED_RUN == ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          PROFILE: ${{ needs.changes.outputs.full == 'true' && 'full' || 'pr' }}
+        run: python3 scripts/ci_budget.py check --repo "${REPO}" --run-id "${RUN_ID}" --profile "${PROFILE}" --skip "CI result"

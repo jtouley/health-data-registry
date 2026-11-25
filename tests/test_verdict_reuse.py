@@ -448,8 +448,9 @@ def test_the_workflow_wires_the_lookup_safely() -> None:
     assert reuse["env"]["GITHUB_TOKEN"] == "${{ github.token }}"  # noqa: S105 (an expression, not a secret)
     assert "${{" not in reuse["run"]  # values reach the shell only through env, quoted
     assert changes["outputs"]["reused_run"] == "${{ steps.reuse.outputs.run_id }}"
-    # Only the changes job gets actions: read; every other job keeps the read-only default.
-    assert all("permissions" not in job for name, job in jobs.items() if name != "changes")
+    # actions: read only where the API is read: the reuse lookup (changes) and the CI budget step (result).
+    assert jobs["result"]["permissions"] == {"contents": "read", "actions": "read"}
+    assert all("permissions" not in job for name, job in jobs.items() if name not in ("changes", "result"))
     # Every other job of the PR's run is skipped on reuse, and "CI result" names the reused run.
     for name in ("checks", "test", "mutation"):
         assert "needs.changes.outputs.reused_run == ''" in jobs[name]["if"], name

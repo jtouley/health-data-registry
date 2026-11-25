@@ -244,7 +244,7 @@ def test_no_mutant_checked_anywhere_fails(mc: ModuleType) -> None:
 def test_no_changed_module_passes(mc: ModuleType) -> None:
     ok, lines = mc.aggregate([], 70.0, [])
     assert ok
-    assert lines == ["No changed modules to mutate."]
+    assert lines == ["No changed functions to mutate."]
 
 
 def test_expected_modules_with_no_reports_fail(mc: ModuleType) -> None:
@@ -836,8 +836,9 @@ def test_only_functions_holding_a_changed_line_are_in_scope(mc: ModuleType) -> N
     assert mc.changed_functions(SCOPED_SRC, {16}) == {"x_edited"}
     assert mc.changed_functions(SCOPED_SRC, {10}) == {"x_decorated"}  # the decorator line is the function's
     assert mc.changed_functions(SCOPED_SRC, {24}) == {m}
-    # Imports, constants and class attributes make no mutant, so a change there scopes nothing.
-    assert mc.changed_functions(SCOPED_SRC, {1, 3, 21}) == frozenset()
+    # An import, or a constant no function reads, scopes nothing; a class attribute scopes the methods reading it.
+    assert mc.changed_functions(SCOPED_SRC, {1, 3}) == frozenset()
+    assert mc.changed_functions(SCOPED_SRC, {21}) == {m}
     assert mc.changed_functions(SCOPED_SRC, set()) == frozenset()
     assert mc.changed_functions(SCOPED_SRC, None) == frozenset(spans)  # a new file: every function
 
@@ -1097,3 +1098,90 @@ def test_collect_stats_keeps_only_a_finished_stats_pass(
     empty = {"tests_by_mangled_function_name": {}, "duration_by_test": {}}
     monkeypatch.setattr(mc.subprocess, "run", fake_run(mc.NOTHING_MATCHES, empty))
     assert mc.collect_stats(out) == 1 and not out.exists()
+
+
+READERS_SRC = """LIMIT = 3
+_A = frozenset({"x", "y"})
+_B = frozenset({"z"})
+_ALLOWED = _A | _B
+
+
+def checks(name):
+    return name in _ALLOWED
+
+
+def caps(n):
+    return min(n, LIMIT)
+
+
+def other():
+    return 1
+"""
+
+
+def test_a_change_outside_functions_scopes_the_functions_that_read_it(mc: ModuleType) -> None:
+    # An allowlist edit (_A, line 2) reaches checks() through _ALLOWED; a limit (line 1) reaches caps().
+    assert mc.changed_functions(READERS_SRC, {2}) == {"x_checks"}
+    assert mc.changed_functions(READERS_SRC, {1}) == {"x_caps"}
+    assert mc.changed_functions(READERS_SRC, {1, 2}) == {"x_checks", "x_caps"}
+
+
+@reads_real_sources
+def test_a_sql_guard_allowlist_edit_makes_mutants() -> None:
+    # #114's review: an edit to the SQL sandbox's function allowlist must not pass with nothing mutated.
+    spec = importlib.util.spec_from_file_location("mc_real", ROOT / "scripts" / "mutate_changed.py")
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["mc_real"] = mod
+    spec.loader.exec_module(mod)
+    src = (ROOT / "src" / "health_data_registry" / "sql_guard.py").read_text(encoding="utf-8")
+    line = next(i for i, text in enumerate(src.splitlines(), 1) if text.startswith("_FUNCTIONS"))
+    assert mod.changed_functions(src, {line + 1})
+
+
+# Deferral: a pull request's shard never runs long -------------------------------------------------------------
+
+
+def test_a_pr_shard_without_main_stats_defers_and_runs_nothing(
+    mc: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _scoped_shards(mc, monkeypatch, _source(2, 10))
+    mc.SCOPE[A] = frozenset({"x_f1"})
+    (shard,) = mc.list_shards([A])
+    calls: list[list[str]] = []
+    monkeypatch.setattr(mc.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+    r = mc.run_mutmut([shard], tmp_path / "missing.json", "origin/main", require_stats=True, budget=120)
+    assert r.deferred and "cache miss" in r.deferred and calls == []
+    assert mc.shard_failure(r) is None
+
+
+def test_a_pr_shard_over_its_budget_defers(mc: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    _scoped_shards(mc, monkeypatch, _source(2, 10))
+    mc.SCOPE[A] = frozenset({"x_f1"})
+    (shard,) = mc.list_shards([A])
+
+    def slow(cmd: list[str], **kwargs: Any) -> Any:
+        assert kwargs["timeout"] == 90
+        raise mc.subprocess.TimeoutExpired(cmd, 90)
+
+    monkeypatch.setattr(mc.subprocess, "run", slow)
+    r = mc.run_mutmut([shard], budget=90)
+    assert r.deferred == "mutmut did not finish within this shard's budget (90 s)"
+
+
+def test_deferred_shards_pass_only_where_the_queue_mutates_them(mc: ModuleType) -> None:
+    ran = Shard([A], killed=8, survived=2)
+    later = Shard([B], deferred="no mutmut stats from main for this base (cache miss)")
+    ok, lines = mc.aggregate([ran, later], 70, [A, B], allow_deferred=True)
+    assert ok and any(line.startswith(f"DEFERRED to the merge queue: {B}") for line in lines)
+    assert "80.0%" in lines[-1]  # the deferred shard counts nothing
+    ok, lines = mc.aggregate([ran, later], 70, [A, B])  # the merge queue: nothing defers
+    assert not ok and "nothing defers here" in lines[0]
+    ok, lines = mc.aggregate([later], 70, [B], allow_deferred=True)
+    assert ok and lines[-1] == "No mutant scored here: every shard was deferred to the merge queue."
+
+
+def test_a_deferred_report_round_trips(mc: ModuleType, tmp_path: Path) -> None:
+    r = Shard([A], deferred="why")
+    (tmp_path / "a.json").write_text(json.dumps(asdict(r)), encoding="utf-8")
+    assert mc.load_reports(tmp_path)[0].deferred == "why"

@@ -15,7 +15,7 @@ It prints one JSON object and, with --github-output, writes the same keys as ste
 The rules, in order, for each path changed since the merge base (`git diff --name-only`, renames as delete + add,
 plus untracked files when run locally):
 
-1. Run everything: workflows and other CI config, scripts/, the Makefile, pyproject.toml, uv.lock, the
+1. Run everything: workflows and other CI config (ci/ too), scripts/, the Makefile, pyproject.toml, uv.lock, the
    pre-commit config, .python-version, tests/fixtures/ and tests/golden/, and any file this map does not know.
    An unknown path fails closed: it runs everything.
 2. Python code (src/health_data_registry, eval, tools, tests): the module and every module that imports it,
@@ -50,6 +50,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 RUN_ALL_PREFIXES = (
     ".github/",
+    "ci/",
     "scripts/",
     "tests/fixtures/",
     "tests/golden/",
@@ -75,6 +76,7 @@ DATA_TOPS = (
     "npm/",
     "space/",
     "eval/",
+    "tests/ci_probes/",
 )
 DBT_TOPS = ("contracts/", "semantic/", "catalog/", "transform/")
 # The modules `make transform` runs: transform_gen --check, and dbt's duckdb plugin (transform/profiles.yml).

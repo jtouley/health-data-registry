@@ -116,6 +116,9 @@ class ShardResult:
     survivors: list[str] = field(default_factory=list)
     incomplete: int = 0
     unassigned: list[str] = field(default_factory=list)
+    # Why a pull request's shard did not run its mutants (no stats from main, or over its time budget); the merge
+    # queue then runs them. Empty for a shard that ran. Only an --aggregate with --allow-deferred accepts it.
+    deferred: str = ""
 
     @property
     def checked(self) -> int:
@@ -221,12 +224,61 @@ def function_spans(source: str) -> dict[str, list[tuple[int, int]]]:
 
 def changed_functions(source: str, lines: set[int] | None) -> frozenset[str]:
     """The keys of the functions that hold a changed line; every function when `lines` is None (a new file).
-    A change outside every function (imports, constants, a class attribute) makes no mutant: mutmut mutates
-    function bodies only."""
+
+    mutmut mutates function bodies only, so a change outside every function (an allowlist, a limit, a class
+    attribute) would make no mutant. Such a change is tested through its readers instead: every function that
+    reads a module-level or class-level name assigned on a changed line, or a name assigned from one of those
+    (`_ALLOWED = _STRUCTURE | _FUNCTIONS`), is in scope too. An import or a comment changes no name and adds none.
+    """
     spans = function_spans(source)
     if lines is None:
         return frozenset(spans)
-    return frozenset(k for k, ss in spans.items() if any(a <= n <= b for a, b in ss for n in lines))
+    inside = {k for k, ss in spans.items() if any(a <= n <= b for a, b in ss for n in lines)}
+    return frozenset(inside | readers_of_changed_names(source, lines, spans))
+
+
+def _assigned_names(node: ast.stmt) -> set[str]:
+    targets: list[ast.expr] = []
+    if isinstance(node, ast.Assign):
+        targets = node.targets
+    elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+        targets = [node.target]
+    return {n.id for t in targets for n in ast.walk(t) if isinstance(n, ast.Name)}
+
+
+def readers_of_changed_names(
+    source: str, lines: set[int], spans: dict[str, list[tuple[int, int]]]
+) -> set[str]:
+    """The keys of the functions that read a name assigned outside every function on a changed line, directly or
+    through another such name defined from it."""
+    tree = ast.parse(source)
+    in_function = {n for ss in spans.values() for a, b in ss for n in range(a, b + 1)}
+    top: list[ast.stmt] = [*tree.body]
+    for cls in [n for n in tree.body if isinstance(n, ast.ClassDef)]:
+        top += cls.body
+    assigns = [n for n in top if _assigned_names(n) and n.lineno not in in_function]
+    changed: set[str] = set()
+    for n in assigns:
+        if any(n.lineno <= x <= (n.end_lineno or n.lineno) for x in lines):
+            changed |= _assigned_names(n)
+    grew = True
+    while grew:  # names defined from a changed name change with it
+        grew = False
+        for n in assigns:
+            loads = {m.id for m in ast.walk(n) if isinstance(m, ast.Name) and isinstance(m.ctx, ast.Load)}
+            if loads & changed and not _assigned_names(n) <= changed:
+                changed |= _assigned_names(n)
+                grew = True
+    if not changed:
+        return set()
+    out = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            reads = {m.id for m in ast.walk(node) if isinstance(m, ast.Name) and isinstance(m.ctx, ast.Load)}
+            reads |= {m.attr for m in ast.walk(node) if isinstance(m, ast.Attribute)}  # cls.LIMIT, self.LIMIT
+            if reads & changed:
+                out |= {k for k, ss in spans.items() if any(a <= node.lineno <= b for a, b in ss)}
+    return out
 
 
 def set_scope(mods: list[str], base: str) -> None:
@@ -861,10 +913,24 @@ def scope_keys() -> set[str]:
     return {f"{m}.{k}" for m, keys in SCOPE.items() for k in keys}
 
 
-def run_mutmut(shards: list[str], stats: Path | None = None, base: str | None = None) -> ShardResult:
+def run_mutmut(
+    shards: list[str],
+    stats: Path | None = None,
+    base: str | None = None,
+    require_stats: bool = False,
+    budget: float | None = None,
+) -> ShardResult:
     """Run mutmut on the shards' mutants. With `stats` (main's, from collect_stats) and `base`, start from them
-    (warm_stats); otherwise mutmut's stats pass runs on the test files that import the shards' modules."""
+    (warm_stats); otherwise mutmut's stats pass runs on the test files that import the shards' modules.
+
+    A pull request's shard passes `require_stats` and a `budget` in seconds: without main's stats, or when mutmut
+    has not finished within the budget, it checks nothing and reports itself deferred, so the merge queue (which
+    runs every shard, with neither limit) mutates it before the merge. Never a long pull request job."""
     print("Mutating:", ", ".join(shards))
+    if require_stats and (stats is None or not stats.is_file()):
+        why = "no mutmut stats from main for this base (cache miss), and a cold stats run would not fit the budget"
+        print(f"Deferred to the merge queue: {why}.")
+        return ShardResult(modules=shards, deferred=why)
     globs = [g for s in shards for g in shard_globs(s)]
     if not globs:  # mutmut run with no names runs every mutant of the package: never do that
         raise ValueError(f"{', '.join(shards)}: no mutant names to run; refusing to run mutmut on everything")
@@ -882,10 +948,16 @@ def run_mutmut(shards: list[str], stats: Path | None = None, base: str | None = 
     else:
         tests = tests_reaching(modules, ROOT)
         print(f"Cold stats: a stats run on the {len(tests)} test files that import {', '.join(modules)}.")
-    with mutmut_scope(paths, tests):
-        run = subprocess.run(
-            ["mutmut", "run", *globs], cwd=ROOT, check=False, stderr=subprocess.PIPE, text=True
-        )
+    try:
+        with mutmut_scope(paths, tests):
+            run = subprocess.run(
+                ["mutmut", "run", *globs],
+                cwd=ROOT, check=False, stderr=subprocess.PIPE, text=True, timeout=budget,
+            )  # fmt: skip
+    except subprocess.TimeoutExpired:
+        why = f"mutmut did not finish within this shard's budget ({budget:.0f} s)"
+        print(f"Deferred to the merge queue: {why}.")
+        return ShardResult(modules=shards, deferred=why)
     sys.stderr.write(run.stderr or "")
     if run.returncode != 0 and NOTHING_MATCHES in (run.stderr or ""):
         # The stats run passed and no generated mutant matches the shard's names: nothing to mutate. The results
@@ -933,21 +1005,36 @@ def shard_failure(r: ShardResult) -> str | None:
     return None
 
 
-def aggregate(results: list[ShardResult], floor: float, expected: list[str]) -> tuple[bool, list[str]]:
+def aggregate(
+    results: list[ShardResult], floor: float, expected: list[str], allow_deferred: bool = False
+) -> tuple[bool, list[str]]:
     """Sum every shard's counts and apply the floor to the total.
 
     Fails when an expected shard has no report, the expected shards of a module are not one complete split, any
     shard failed its baseline, left mutants unchecked or found a mutant no shard covers, or the total score is
-    under the floor. Clean shards that found no mutant pass: there was nothing to mutate.
+    under the floor. Clean shards that found no mutant pass: there was nothing to mutate. A deferred shard (see
+    run_mutmut) fails too, unless `allow_deferred` (a pull request's run, whose merge queue mutates it): then it is
+    named, counts nothing, and the floor applies to the shards that ran.
     """
     lines: list[str] = []
-    covered = {m for r in results for m in r.modules}
+    deferred = [r for r in results if r.deferred]
+    if deferred and not allow_deferred:
+        return False, [
+            f"FAILED {', '.join(r.modules)}: deferred ({r.deferred}), and nothing defers here"
+            for r in deferred
+        ]
+    lines += [
+        f"DEFERRED to the merge queue: {', '.join(r.modules)}: {r.deferred}. The queue mutates it before the merge."
+        for r in deferred
+    ]
+    results = [r for r in results if not r.deferred]
+    covered = {m for r in [*results, *deferred] for m in r.modules}
     missing = [m for m in expected if m not in covered]
     failures = split_gaps(expected)
     failures += [f"{m}: no shard report (the shard was cancelled, timed out or never ran)" for m in missing]
     failures += [f for f in map(shard_failure, results) if f]
     if not expected and not results:
-        return True, ["No changed modules to mutate."]
+        return True, ["No changed functions to mutate."]
     killed = sum(r.killed for r in results)
     checked = sum(r.checked for r in results)
     for r in sorted(results, key=lambda r: r.modules):
@@ -958,7 +1045,11 @@ def aggregate(results: list[ShardResult], floor: float, expected: list[str]) -> 
         if failures:
             lines.append("No mutant was scored, and a shard failed. Failing.")
             return False, lines
-        lines.append("Nothing to mutate: the changed modules have no mutable function.")
+        lines.append(
+            "No mutant scored here: every shard was deferred to the merge queue."
+            if deferred
+            else "Nothing to mutate: the changed modules have no mutable function."
+        )
         return True, lines
     score = 100.0 * killed / checked
     lines.append(
@@ -981,6 +1072,7 @@ def load_reports(directory: Path) -> list[ShardResult]:
                 survivors=[str(s) for s in d.get("survivors", [])],
                 incomplete=int(d["incomplete"]),
                 unassigned=[str(s) for s in d["unassigned"]],
+                deferred=str(d.get("deferred", "")),
             )
         )
     return out
@@ -1012,6 +1104,15 @@ def main(argv: list[str] | None = None) -> int:
         help="with --module and --base: start from main's stats (--collect-stats), if present",
     )
     ap.add_argument("--expect", help="with --aggregate (required): the --list output, as JSON")
+    ap.add_argument(
+        "--allow-deferred",
+        action="store_true",
+        help="with --aggregate: a pull request's run, whose queue mutates",
+    )
+    ap.add_argument(
+        "--require-stats", action="store_true", help="with --module: defer, never run cold, without --stats"
+    )
+    ap.add_argument("--budget", type=float, help="with --module: defer when mutmut runs longer, in seconds")
     a = ap.parse_args(argv)
 
     if a.collect_stats:
@@ -1024,7 +1125,7 @@ def main(argv: list[str] | None = None) -> int:
             expected = select_shards(json.loads(a.expect))
         except (ValueError, TypeError) as e:  # json.JSONDecodeError is a ValueError
             ap.error(f"--expect: {e}")
-        ok, lines = aggregate(load_reports(a.aggregate), a.floor, expected)
+        ok, lines = aggregate(load_reports(a.aggregate), a.floor, expected, a.allow_deferred)
         print("\n".join(lines))
         return 0 if ok else 1
 
@@ -1040,7 +1141,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if a.base:
                 set_scope([module], a.base)
-            result = run_mutmut([a.module], a.stats, a.base)
+            result = run_mutmut([a.module], a.stats, a.base, a.require_stats, a.budget)
         except ValueError as e:  # the split changed since --list, or no names: fail, never run other mutants
             print(e)
             result = ShardResult(modules=[a.module], baseline_ok=False)
@@ -1048,7 +1149,9 @@ def main(argv: list[str] | None = None) -> int:
         a.report.write_text(json.dumps(asdict(result), indent=1) + "\n", encoding="utf-8")
         failure = shard_failure(result)
         summary = (
-            f"{a.module}: {result.killed} killed of {result.checked} (floor applied to the total)"
+            f"{a.module}: deferred to the merge queue: {result.deferred}"
+            if result.deferred
+            else f"{a.module}: {result.killed} killed of {result.checked} (floor applied to the total)"
             if result.checked
             else f"{a.module}: nothing to mutate (no mutable function)"
         )
