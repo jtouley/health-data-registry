@@ -684,6 +684,87 @@ def test_guard_quotedStatementWord_isAnOrdinaryName(word: str) -> None:
     assert refused(f"SELECT state AS {word} FROM deaths").code in {"forbidden_construct", "parse_error"}
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM deaths read_csv('x')",  # the token-soup case: a table alias read_csv with a column alias x
+        "SELECT * FROM deaths AS sniff_csv",
+        "SELECT state AS read_parquet FROM deaths",
+        "SELECT state getenv FROM deaths",
+        "SELECT * FROM deaths AS d(current_setting)",
+        "WITH query AS (SELECT state FROM deaths) SELECT state FROM query",
+        "SELECT state AS Read_CSV FROM deaths",
+        "SELECT state AS read_anything_new FROM deaths",  # a family by prefix
+        "SELECT state AS duckdb_whatever FROM deaths",
+        "SELECT state AS pragma_x FROM deaths",
+        "SELECT state AS parquet_x FROM deaths",
+        "SELECT state AS sqlite_x FROM deaths",
+        "SELECT state AS postgres_x FROM deaths",
+        "SELECT state AS mysql_x FROM deaths",
+        "SELECT state AS iceberg_x FROM deaths",
+        "SELECT state AS delta_x FROM deaths",
+        "SELECT state AS http_x FROM deaths",
+        "SELECT state AS new_scan FROM deaths",  # a family by suffix
+        "SELECT state AS x_attach FROM deaths",
+        "SELECT state AS x_secret FROM deaths",
+        "SELECT state AS x_secrets FROM deaths",
+        "SELECT state AS x_setting FROM deaths",
+        "SELECT state AS x_settings FROM deaths",
+        "SELECT state AS repeat_row FROM deaths",  # only in DuckDB's own list of table functions
+        "SELECT state AS pg_timezone_names FROM deaths",
+        "SELECT state AS checkpoint FROM deaths",  # a pragma
+        "SELECT rank() OVER read_csv AS r FROM deaths WINDOW read_csv AS (ORDER BY year)",  # a window name
+        "SELECT rank() OVER (read_csv) AS r FROM deaths WINDOW read_csv AS (ORDER BY year)",
+    ],
+)
+def test_guard_functionNameAsName_refused(sql: str) -> None:
+    """Regression (found by the token-soup property): a bare function name as an alias or WITH name is refused."""
+    e = refused(sql)
+    assert e.code == "forbidden_construct"
+    assert "function" in e.message and "double quotes" in e.message
+
+
+@pytest.mark.parametrize("fn", sorted({*FORBIDDEN_FUNCTIONS, "summary", "sniff_csv", "read_xlsx"}))
+def test_guard_forbiddenFunctionAsAlias_refusedUnquotedAllowedQuoted(fn: str) -> None:
+    """Every forbidden function name: refused as a bare alias, an ordinary name when quoted."""
+    assert refused(f"SELECT state AS {fn} FROM deaths").code in {"forbidden_construct", "parse_error"}
+    q = guard(f'SELECT state AS "{fn}" FROM deaths')
+    assert f'AS "{fn}"' in q.sql
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        """SELECT * FROM deaths "read_csv"("x")""",
+        'SELECT state AS "glob" FROM deaths',
+        'WITH "query" AS (SELECT state FROM deaths) SELECT state FROM "query"',
+        'SELECT * FROM deaths AS d("current_setting", b, c, e)',
+        'SELECT "range".state FROM deaths AS "range"',
+        'SELECT rank() OVER "glob" AS r FROM deaths WINDOW "glob" AS (ORDER BY year)',
+    ],
+)
+def test_guard_quotedFunctionName_isAnOrdinaryName(sql: str) -> None:
+    assert guard(sql).sql.endswith("LIMIT 5000")
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT state AS rate, deaths AS total FROM deaths",
+        "SELECT state AS reader, deaths AS scan_count FROM deaths",  # near misses of a prefix or suffix
+        "SELECT state AS my_read_x, deaths AS scanned FROM deaths",
+        "SELECT year AS year_of_death, count(*) AS count FROM deaths GROUP BY 1",  # allowlisted function names
+    ],
+)
+def test_guard_ordinaryAlias_accepted(sql: str) -> None:
+    assert guard(sql).sql.endswith("LIMIT 5000")
+
+
+def test_guard_functionNameAsColumnReference_notRefusedAsAName() -> None:
+    """Only names the query defines are checked: a reference is checked against the catalogue instead."""
+    assert refused("SELECT read_text FROM deaths").code == "unknown_column"
+
+
 @pytest.mark.parametrize("fn", ["totally_new_function", "made_up", "my_udf"])
 def test_guard_unknownFunction_refused(fn: str) -> None:
     """Fail closed: a function nobody listed is refused, not only the known-dangerous ones."""
