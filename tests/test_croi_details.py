@@ -26,7 +26,7 @@ def test_default_client(tmp_path: Path) -> None:
         assert c.max_requests == 7
         assert c.default_delay == 120.0
         assert c.log is not None and c.log.lake == tmp_path and c.log.source == "croi_abstracts_index"
-        assert c.lock.held and c.lock.path == tmp_path / "crawl_state" / f"{croi.HOST}.lock"
+        assert c.lock.held and c.lock.path == tmp_path / "crawl-locks" / f"{croi.HOST}.lock"
         assert isinstance(c.clock, polite.SystemClock)
         assert c.user_agent == fetch.USER_AGENT
     with croi_index.default_client(tmp_path) as c:

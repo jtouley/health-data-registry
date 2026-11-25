@@ -48,7 +48,7 @@ def test_a_second_process_cannot_crawl_the_same_host(tmp_path: Path) -> None:
             client(tmp_path, site, clock)
         assert e.value.code == "host_locked"
         assert site.calls == []  # refused before any request, robots.txt included
-        assert (tmp_path / "state.lock").read_text().strip() == str(holder.pid)
+        assert (tmp_path / "crawl-locks" / f"{HOST}.lock").read_text().strip() == str(holder.pid)
         assert holder.stdin is not None and holder.stdout is not None
         holder.stdin.write("stop\n")
         holder.stdin.flush()
@@ -225,3 +225,104 @@ def test_robots_refusing_to_show_stops_the_crawl(tmp_path: Path) -> None:
         c.get(f"https://{HOST}/a/")
     assert e.value.code == "robots_unreadable"
     assert c.requests_made == 1  # robots.txt only: a robots.txt the host refuses to show means stop
+
+
+# ------------------------------------------------------------ fix round (#30): lock, state values, delay floor
+
+
+def test_the_lock_is_per_host_whatever_the_lake(tmp_path: Path) -> None:
+    """Two lakes (or two checkouts) of one user can't crawl the same host at once."""
+    clock = FakeClock()
+    (tmp_path / "lake-a").mkdir()
+    (tmp_path / "lake-b").mkdir()
+    first = client(tmp_path / "lake-a", FakeSite(clock), clock)
+    with pytest.raises(CrawlStopped) as e:
+        client(tmp_path / "lake-b", FakeSite(clock), clock)
+    assert e.value.code == "host_locked"
+    first.close()
+    with client(tmp_path / "lake-b", FakeSite(clock), clock) as c:
+        assert c.lock.path == tmp_path / "crawl-locks" / f"{HOST}.lock"
+
+
+def test_the_lock_folder_defaults_to_the_users_state_folder(monkeypatch: pytest.MonkeyPatch) -> None:
+    from health_data_registry.polite import LOCKS_ENV, host_lock_path
+
+    monkeypatch.delenv(LOCKS_ENV)
+    monkeypatch.setenv("XDG_STATE_HOME", "/xdg")
+    assert host_lock_path(HOST) == Path("/xdg/health-data-registry/locks") / f"{HOST}.lock"
+    monkeypatch.setenv("XDG_STATE_HOME", " ")
+    monkeypatch.setenv("HOME", "/home/u")
+    assert host_lock_path(HOST) == Path("/home/u/.local/state/health-data-registry/locks") / f"{HOST}.lock"
+    monkeypatch.setenv(LOCKS_ENV, "/locks")
+    assert host_lock_path(HOST) == Path("/locks") / f"{HOST}.lock"
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        '"last_request_at": NaN',
+        '"delay_s": NaN',
+        '"last_request_at": Infinity',
+        '"delay_s": -1',
+        '"delay_s": "120"',
+        '"last_request_at": true',
+        '"last_request_at": 2000000.0',  # in the future of the fake clock
+    ],
+)
+def test_state_values_that_would_turn_pacing_off_are_refused(tmp_path: Path, values: str) -> None:
+    (tmp_path / "state.json").write_text(f'{{"host": "{HOST}", {values}}}')
+    clock = FakeClock()
+    site = FakeSite(clock)
+    with pytest.raises(CrawlStopped) as e:
+        client(tmp_path, site, clock)
+    assert e.value.code == "state_unreadable" and "isn't a time or delay" in str(e.value)
+    assert site.calls == []
+
+
+def test_good_state_values_are_restored(tmp_path: Path) -> None:
+    (tmp_path / "state.json").write_text(f'{{"host": "{HOST}", "last_request_at": 0, "delay_s": 120}}')
+    clock = FakeClock()
+    with client(tmp_path, FakeSite(clock), clock) as c:
+        assert c._state.last_request_at == 0 and c._pace() == 120.0
+
+
+@pytest.mark.parametrize(
+    "robots", [b"User-agent: *\nCrawl-delay: 0\n", b"User-agent: *\nRequest-rate: 100/1\n"]
+)
+def test_a_robots_delay_below_the_floor_is_raised_to_it(
+    tmp_path: Path, robots: bytes, caplog: pytest.LogCaptureFixture
+) -> None:
+    clock = FakeClock()
+    site = FakeSite(clock, {f"https://{HOST}/a/": b"a"}, robots=robots)
+    with client(tmp_path, site, clock) as c:
+        c.get(f"https://{HOST}/a/")
+        c.get(f"https://{HOST}/a/")
+        assert c.delay == 10.0
+    assert site.calls[2][1] - site.calls[1][1] == 10.0
+    assert "less than the default 120.0 s; using 10.0 s" in caplog.text
+
+
+def test_the_crawl_floor_can_be_the_default_delay(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    clock = FakeClock()
+    site = FakeSite(clock, robots=b"User-agent: *\nCrawl-delay: 30\n")
+    with client(tmp_path, site, clock, min_delay=120.0) as c:
+        c.start()
+        assert c.delay == 120.0
+    with client(tmp_path, FakeSite(clock), clock) as c:  # robots asks 120: nothing logged
+        c.start()
+    assert caplog.text.count("less than the default") == 1
+
+
+@pytest.mark.parametrize("bad", [0.0, -1.0, 121.0])
+def test_a_min_delay_outside_the_default_is_refused(tmp_path: Path, bad: float) -> None:
+    clock = FakeClock()
+    with pytest.raises(ValueError, match="min_delay"):
+        client(tmp_path, FakeSite(clock), clock, min_delay=bad)
+
+
+def test_the_state_is_written_atomically_and_owner_only(tmp_path: Path) -> None:
+    clock = FakeClock()
+    with client(tmp_path, FakeSite(clock), clock) as c:
+        c.start()
+    assert (tmp_path / "state.json").stat().st_mode & 0o777 == 0o600
+    assert sorted(p.name for p in tmp_path.iterdir() if p.name.startswith("state")) == ["state.json"]

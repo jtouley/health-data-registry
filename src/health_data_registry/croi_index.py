@@ -48,6 +48,7 @@ INDEX_ID = "croi_abstracts_index"
 TEXT_ID = "croi_abstracts_text"
 MIN_YEARS = 5  # owner rule: the index covers at least five CROI years
 LATEST_HELD_YEAR = 2026  # the most recent CROI that has taken place (CROI 2026, February 2026)
+CROI_DELAY_S = 120.0  # CROI's robots.txt Crawl-delay (Nov 2026); also the floor under any later value
 DEFAULT_YEARS = tuple(range(LATEST_HELD_YEAR - MIN_YEARS + 1, LATEST_HELD_YEAR + 1))
 
 
@@ -149,6 +150,8 @@ def default_client(lake: Path, *, max_requests: int | None = None) -> PoliteClie
         get_raw=https_getter(croi.HOST),
         log=FetchLog(lake, INDEX_ID),
         max_requests=max_requests,
+        default_delay=CROI_DELAY_S,
+        min_delay=CROI_DELAY_S,  # never faster than CROI's 120 s, whatever robots.txt later says
     )
 
 
