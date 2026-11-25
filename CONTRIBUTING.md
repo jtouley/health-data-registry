@@ -15,7 +15,7 @@ contribution is licensed under the [Apache License 2.0](LICENSE).
 ```bash
 make install   # uv sync
 make hooks     # once per checkout: the pre-commit and pre-push hooks
-make check     # lint, type check, tests and mutation tests on changed modules (make precheck adds the rest of CI)
+make check     # lint, type check, tests and mutation tests on changed functions (make precheck adds the rest of CI)
 make help      # every target
 ```
 
@@ -26,7 +26,7 @@ publishers and are left out of `make test`; run them with `make test-network`.
 ## Requirements for every pull request
 
 - `make check` passes: ruff lint and format, mypy (strict), pytest with at least 85% coverage, and mutation tests
-  (`make mutate`) on the modules you changed, with at least 70% of mutants killed. Kill survivors with a test, or
+  (`make mutate`) on the functions you changed, with at least 70% of mutants killed. Kill survivors with a test, or
   say in the pull request why a mutant is equivalent.
 - CI is green before the pull request: merge `origin/main`, `make precheck` passes, then the commit goes green
   on `pre-pr/<branch>`, and only that commit goes to the PR branch ([the pre-PR gate](docs/dev/README.md#the-pre-pr-gate)).
@@ -38,16 +38,18 @@ publishers and are left out of `make test`; run them with `make test-network`.
 
 ## Review
 
-Every change, including the maintainer's, lands through a pull request; nothing is pushed straight to main. Each
-pull request gets one review round, then one round of fixes, and then it is merged. The review is always posted on
-the pull request. If your change touches data (catalog entries, contracts, semantic models, adapters, storage or
-export code), data-quality rules and tests, the README and user docs, or anything security-sensitive (fetchers,
-the SQL sandbox, workflows, tokens, the hosted server: a sharp-edges review), you'll also see a separate posted
-review for each matching skill in [CLAUDE.md](CLAUDE.md#skills-and-how-to-use-them), in the same round. The fix round
-addresses every posted finding. Anything the fix round doesn't
-cover becomes a follow-up issue or a later pull request, which goes through the same cycle. There is no second
-review round, so expect a short, predictable path to merge rather than repeated back-and-forth. Every pull request is
-squash-merged into `main`, and its branch is deleted afterwards.
+Every change, including the maintainer's, lands through a pull request; nothing is pushed straight to main. Each pull
+request gets one review round, then one round of fixes, and then it is merged. Each review comes from a fresh agent
+and is posted on the pull request in full, by that agent, unedited. If your change touches data (catalog entries,
+contracts, semantic models, adapters, storage or export code), data-quality rules and tests, the README and user docs,
+anything security-sensitive (fetchers, the SQL sandbox, workflows, tokens, the hosted server: a sharp-edges
+review), or CI and merge gating (workflows, the ruleset: deployment-pipeline-design and github-actions-templates
+reviews), you'll also see a separate posted review for each matching skill in
+[CLAUDE.md](CLAUDE.md#skills-and-how-to-use-them), in the same round. The fix round is one more fresh agent, started
+with `/fix-round <PR number>`, and it addresses every posted finding.
+Anything the fix round doesn't cover becomes a follow-up issue or a later pull request, which goes through the same
+cycle. There is no second review round, so expect a short, predictable path to merge rather than repeated
+back-and-forth. Every pull request is squash-merged into `main`, and its branch is deleted afterwards.
 
 ## Adding a dataset
 
