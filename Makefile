@@ -1,6 +1,6 @@
 # Developer and CI entry points. `make help` lists the targets.
 .DEFAULT_GOAL := help
-.PHONY: help install lint fmt typecheck test test-network smoke mutate docs kit fuzz-requirements check precheck refresh serve check-contracts eval hooks
+.PHONY: help install lint fmt typecheck test test-network smoke mutate docs kit fuzz-requirements check precheck refresh serve check-contracts eval hooks serve-http
 
 UV ?= uv
 COV_FLOOR ?= 85
@@ -59,6 +59,9 @@ refresh: ## Fetch every catalogued source into the local lake
 
 serve: ## Run the MCP server locally
 	$(UV) run health-data-registry serve
+
+serve-http: ## Run the hosted read-only server over Streamable HTTP on port 7860 (docs/dev/hosting.md)
+	$(UV) run health-data-registry serve --http --host 127.0.0.1 --port 7860
 
 check-contracts: ## Check every source against its ODCS contract
 	$(UV) run health-data-registry check-contracts

@@ -41,7 +41,7 @@ ends green with a notice and does nothing. Each starts working on its next run a
 | `crawl-croi.yml` | `index-croi` (CROI crawler, `wip/croi-index`) | `health-data-registry index-croi --help` |
 | `crawl-doi.yml` | `scripts/crawl_doi.py` (DOI harvester, `feat/doi-harvest`) | the file exists |
 | `sitemaps.yml` | `browser_fetch.py` (browser fetcher, `feat/michigan-tableau`) | the module imports; until then it uses plain HTTPS, which michigan.gov refuses from cloud servers, so expect the "Sitemap refresh blocked" issue |
-| `deploy-space.yml` | `space/` (HTTP server, `wip/http-server`) | `space/README.md` exists at the tag |
+| `deploy-space.yml` | `space/` (the hosted server) at the release tag | `space/README.md` exists at the tag |
 
 ## What each workflow does
 
@@ -159,8 +159,9 @@ deploy job runs in the GitHub environment `space`, whose deployment rule allows 
 that commit; only then does the **deploy** job, which alone gets the token, upload `space/` to the Space as one
 commit. To redeploy a tag, run the workflow by hand with "Use workflow from" set to that tag; any other ref is
 refused. Files in the Space that aren't in `space/` are deleted, so `space/README.md` must hold the Space's
-config header. `space/` comes from the HTTP-server work (`wip/http-server`) and **isn't on main yet**; until it
-is, the job skips with a notice.
+config header. Before uploading, the deploy job writes the tag and its commit into `space/Dockerfile`'s empty
+`HDR_TAG` and `HDR_COMMIT`, and the Space's build checks the tag still names that commit; a release without
+`space/` skips with a notice.
 
 ### Drift check and keep-alive (`drift-check.yml`)
 
@@ -293,7 +294,7 @@ The same steps run locally from a checkout: `make refresh`, `make check-contract
 
 ## Open risks
 
-- `index-croi`, `scripts/crawl_doi.py`, `browser_fetch.py` and `space/` aren't merged; their workflows skip or
+- `index-croi`, `scripts/crawl_doi.py` and `browser_fetch.py` aren't merged; their workflows skip or
   fall back until they are. Check the CLI flags and step outputs still match when each merges.
 - The sitemap job installs Playwright through the `browser` extra; if the Michigan PR names the extra
   differently, that step fails and the blocked issue says so.
