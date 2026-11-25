@@ -7,6 +7,7 @@ pinned by commit sha, and checkouts without credentials."""
 from __future__ import annotations
 
 import re
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,20 @@ SECRET_STEPS = {
         "Ask every question through the server",
     },
     "EVAL_HF_TOKEN": {"Check the eval environment's secrets are set", "Fetch the ciphertext"},
+}
+# Environment variables (vars.*, not secrets) and the steps that read them. GitHub hands a step none unless its
+# env names it.
+VAR_STEPS = {
+    "EVAL_MODEL": {
+        "Check the eval environment's secrets are set",
+        "Check the driver can ask one DEV question through the server",
+        "Ask every question through the server",
+        "Score the run and write the aggregate tables",
+    },
+}
+DRIVER_STEPS = {
+    "Check the driver can ask one DEV question through the server",
+    "Ask every question through the server",
 }
 
 
@@ -158,6 +173,17 @@ def test_the_driver_gets_the_questions_alone(wf: dict[Any, Any]) -> None:
     assert "test.jsonl" not in ask["run"]
 
 
+def test_only_the_harness_installs_the_drivers_eval_group_from_the_lock(wf: dict[Any, Any]) -> None:
+    # eval is not a default group, so the harness must ask for it or the driver can't import its SDK
+    install = next(
+        s
+        for s in wf["jobs"]["evaluate"]["steps"]
+        if s.get("name") == "Install age and the locked dependencies"
+    )
+    assert "(cd harness && uv sync --locked --no-dev --group eval)" in install["run"]
+    assert "(cd server && uv sync --locked --no-dev)" in install["run"]
+
+
 def test_the_inputs_job_checks_the_environment_is_main_only(wf: dict[Any, Any]) -> None:
     run = wf["jobs"]["inputs"]["steps"][-1]["run"]
     assert "custom_branch_policies" in run and '"branch:main"' in run
@@ -174,3 +200,58 @@ def test_use_log_runs_whenever_a_decrypt_was_started(wf: dict[Any, Any]) -> None
     assert "| head" not in run
     assert run.index('issues/$issue/comments" -f body') < run.index("/lock")
     assert "run_attempt" in j["steps"][0]["env"]["RUN_URL"]
+
+
+def driver_calls(run: str) -> list[list[str]]:
+    """The arguments of each `python -m eval.drive` command in a step's script, without the shell redirections."""
+    calls = []
+    for line in run.replace("\\\n", " ").splitlines():
+        if "eval.drive" not in line:
+            continue
+        words = shlex.split(line.split("eval.drive", 1)[1])
+        args = []
+        for w in words:
+            if w.startswith((">", "2>")) or w in {"||", "&&", ";", "then"}:
+                break
+            args.append(w)
+        calls.append(args)
+    return calls
+
+
+def test_every_driver_call_in_the_workflow_parses_with_the_drivers_own_flags(wf: dict[Any, Any]) -> None:
+    from eval.drive import parser
+
+    seen = {}
+    for _, s in steps(wf):
+        for args in driver_calls(s.get("run", "")):
+            seen[s.get("name")] = parser().parse_args(args)  # SystemExit here means the two have drifted
+    assert set(seen) == DRIVER_STEPS
+    assert seen["Check the driver can ask one DEV question through the server"].check is True
+    assert seen["Ask every question through the server"].check is False
+
+
+def test_every_driver_step_gets_the_key_and_the_model(wf: dict[Any, Any]) -> None:
+    for _, s in steps(wf):
+        if s.get("name") in DRIVER_STEPS:
+            env = s.get("env", {})
+            assert env.get("ANTHROPIC_API_KEY") == "${{ secrets.ANTHROPIC_API_KEY }}", s["name"]
+            assert env.get("EVAL_MODEL") == "${{ vars.EVAL_MODEL }}", s["name"]
+
+
+def test_each_variable_is_set_only_on_the_steps_that_read_it(wf: dict[Any, Any]) -> None:
+    for job, j in wf["jobs"].items():
+        assert "vars." not in yaml.safe_dump(j.get("env", {})), f"{job}: no job-wide variable"
+    for name, allowed in VAR_STEPS.items():
+        seen = {s.get("name") for _, s in steps(wf) if f"vars.{name}" in yaml.safe_dump(s)}
+        assert seen == allowed, (name, seen)
+    assert set(re.findall(r"vars\.(\w+)", WORKFLOW.read_text(encoding="utf-8"))) == set(VAR_STEPS)
+
+
+def test_the_secrets_check_refuses_an_empty_model(wf: dict[Any, Any]) -> None:
+    check = next(
+        s
+        for s in wf["jobs"]["evaluate"]["steps"]
+        if s.get("name") == "Check the eval environment's secrets are set"
+    )
+    assert 'if [ -z "${EVAL_MODEL// /}" ]; then' in check["run"]
+    assert "no EVAL_MODEL variable" in check["run"]
