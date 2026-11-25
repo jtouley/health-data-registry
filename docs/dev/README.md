@@ -115,11 +115,14 @@ Everything a clinician reads (tool descriptions, helpers, refusals) follows the 
   write nothing to disk and are marked `network`. `make test` and CI's test job leave them out; run
   `make test-network` when you change an adapter, a contract or the fetcher.
 - **Mutation tests.** `scripts/mutate_changed.py` runs mutmut on the modules changed since the merge base and
-  prints each surviving mutant. A survivor means the tests would not notice that change: add or sharpen a test, or
-  say in the PR why the mutant is equivalent. `make mutate` is part of `make check`. CI runs the same check on
-  every PR in shards: `--list` names the changed modules, one job per module runs mutmut (60 minutes each), and
-  the aggregate job applies the 70% floor to the summed counts. It fails if any shard failed its baseline,
-  checked no mutant or left no report.
+  prints each mutant it did not kill. A survivor means the tests would not notice that change: add or sharpen a
+  test, or say in the PR why the mutant is equivalent. Every status but `killed` (and `caught by type check`)
+  lowers the score, `no tests` and `skipped` included. `make mutate` is part of `make check`. CI runs the same
+  check on every PR in shards: `--list` names the changed modules, one job per module runs mutmut (60 minutes
+  each; the largest module needs about 17), and the aggregate job applies the 70% floor to the summed counts and
+  lists every mutant not killed. It fails if any shard failed its baseline, left mutants not checked, interrupted
+  or crashed, or left no report. A module with no mutable function has nothing to mutate and passes, locally and
+  in CI.
 - **New features and fixes add tests.** A bug fix includes a test that fails without it.
 
 ## Adding a dataset

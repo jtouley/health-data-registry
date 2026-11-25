@@ -113,8 +113,9 @@ jobs:
 
   # Mutation tests run in shards, one job per changed module, so a pull request that touches most modules
   # (the first one added about 13,800 mutants) finishes; a single job did not within 120 minutes. The last job
-  # applies the floor (70%) to the summed counts and fails closed: a shard whose baseline failed, that checked
-  # no mutant, or that left no report fails the check.
+  # applies the floor (70%) to the summed counts and fails closed: every mutant not killed (no tests and
+  # skipped included) lowers the score, and a shard whose baseline failed, whose run left mutants unchecked, or
+  # that left no report fails the check. A clean shard with no mutable function has nothing to mutate.
   mutation-list:
     name: Mutation tests (list changed modules)
     if: github.event_name == 'pull_request'
@@ -143,6 +144,10 @@ jobs:
     needs: mutation-list
     if: github.event_name == 'pull_request' && needs.mutation-list.outputs.modules != '[]'
     runs-on: ubuntu-latest
+    # Measured 25 Nov 2026 on 4 cores: the largest modules are analysis.py (2,022 mutants) and tools.py (1,723);
+    # query.py has 1,205 and helpers.py under 700. Setup took about 6 minutes and mutants ran at about 200 a
+    # minute, so the largest shard needs about 17 minutes; 60 leaves room for slower runners. A shard that hits
+    # the limit leaves no report and fails the check; split the module if that happens.
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -171,6 +176,9 @@ jobs:
           retention-days: 7
 
   # Keeps the check name the single job had, so a required status check still points at the verdict.
+  # always(), not !cancelled(), on purpose: GitHub counts a skipped required check as passing, so a run
+  # cancelled on the head commit must still end this check as a failure. The first step says the run was
+  # cancelled; a run superseded by a newer push fails only on its old commit, which no longer gates the merge.
   mutation-aggregate:
     name: Mutation tests (changed modules)
     needs: [mutation-list, mutation]
@@ -184,6 +192,10 @@ jobs:
           SHARDS_RESULT: ${{ needs.mutation.result }}
           MODULES: ${{ needs.mutation-list.outputs.modules }}
         run: |
+          if [ "${LIST_RESULT}" = "cancelled" ] || [ "${SHARDS_RESULT}" = "cancelled" ]; then
+            echo "The run was cancelled before every shard reported, so there is no verdict. Failing."
+            exit 1
+          fi
           if [ "${LIST_RESULT}" != "success" ]; then
             echo "Listing the changed modules ended with '${LIST_RESULT}', so nothing was checked. Failing."
             exit 1
