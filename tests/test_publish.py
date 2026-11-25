@@ -98,6 +98,29 @@ def hub_lake(tmp_path: Path, hub_registry: Registry) -> Path:
     return make_lake(tmp_path / "lake", hub_registry, tmp_path)
 
 
+def test_export_leaves_private_tier_sources_out(tmp_path: Path) -> None:
+    root = write_hub_registry(tmp_path / "reg")
+    listed = (root / "catalog" / "toy_listed.yaml").read_text()
+    (root / "catalog" / "toy_private.yaml").write_text(
+        listed.replace("toy_listed", "toy_private") + "hosting: private\nprivate_store: true\n"
+    )
+    (root / "contracts" / "toy_private.odcs.yaml").write_text(
+        CONTRACT.replace("toy_cases", "toy_private").replace(
+            "customProperties:\n", "customProperties:\n  - {property: tier, value: private}\n", 1
+        )
+    )
+    (root / "semantic" / "toy_private.yaml").write_text(SEMANTIC.replace("toy_cases", "toy_private"))
+    reg = load_registry(root)
+    assert reg.get("toy_private").entry.tier == "private"
+    assert [ds.id for ds in publish.public_sources(reg)] == ["toy_cases", "toy_listed"]
+    lake = make_lake(tmp_path / "lake", reg, tmp_path)
+    out = tmp_path / "hub"
+    rel = export_public(reg, lake, str(out), run_date=RUN)
+    assert "toy_private" not in rel.hosted and "toy_private" not in rel.listed
+    assert not (out / "toy_private").exists()
+    assert "toy_private" not in json.loads((out / "manifest.json").read_text())["sources"]
+
+
 def test_export_to_directory_manifest_hashes_and_rows(
     tmp_path: Path, hub_registry: Registry, hub_lake: Path
 ) -> None:
@@ -567,8 +590,10 @@ def test_new_hub_has_no_releases(tmp_path: Path) -> None:
 def test_real_product_file_matches_catalog_and_contracts() -> None:
     reg = load_registry()
     ports = load_ports(reg.root)
-    assert set(ports) == {ds.contract.id for ds in reg}
-    for ds in reg:
+    # Private-tier sources (their own private stores) are not part of the public hub product.
+    public = publish.public_sources(reg)
+    assert set(ports) == {ds.contract.id for ds in public}
+    for ds in public:
         p = ports[ds.contract.id]
         assert p.name == ds.id and p.version == ds.contract.version
         assert p.hosted == ds.entry.hosted

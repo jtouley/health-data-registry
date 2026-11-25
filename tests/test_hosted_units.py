@@ -198,6 +198,10 @@ def test_initialize_without_a_session_gets_a_fresh_opaque_id() -> None:
      ("a\tb", None), (issued("abc")[:-1] + ("1" if issued("abc").endswith("0") else "0"), None),
      (issued("abc")[:32], None),
      ("0" * 32 + "." + issued("abc")[33:], None), (issued("abc") + "0", None)],
+    # Fixed ids: the signed values change with each process's signing key, and pytest-xdist needs every worker to
+    # collect the same test names.
+    ids=["signed", "unsigned", "too-long", "empty", "non-ascii", "tab", "bad-signature", "nonce-only",
+         "zero-nonce", "trailing-digit"],
 )  # fmt: skip
 def test_only_session_ids_this_server_signed_count(value: str, expected: str | None) -> None:
     assert hosted._session_id(scope(session=value)) == expected
