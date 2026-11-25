@@ -5,9 +5,10 @@
 # job, which alone holds the Hugging Face token, starts. Re-deploying a tag: run this workflow by hand with
 # "Use workflow from" set to that tag; any other ref is refused.
 #
-# space/ comes from the HTTP-server work (branch wip/http-server). Until it is on main, the job skips with a
-# notice. The Space's files are replaced by space/ exactly: anything in the Space that is not in space/ is
-# deleted, so space/ must hold the Space's README.md (its config header).
+# space/Dockerfile builds the server from one release: its HDR_TAG and HDR_COMMIT are empty in git (a build without
+# them stops), and the deploy job writes this tag and its commit into the copy it uploads, so the Space builds
+# exactly the code that passed `verify`. The Space's files are replaced by space/ exactly: anything in the Space
+# that is not in space/ is deleted, so space/ must hold the Space's README.md (its config header).
 #
 # The deploy job runs in the GitHub environment `space`, whose deployment rule allows only v*.*.* tags
 # (docs/dev/automation.md); its secrets live there, so no other ref or workflow can read them. `verify` stays
@@ -82,7 +83,7 @@ jobs:
           HAS_TOKEN: ${{ (secrets.HF_SPACE_TOKEN || secrets.HF_TOKEN) && 'true' || 'false' }}
         run: |
           if [ ! -f space/README.md ]; then
-            echo "::notice::No space/README.md at this tag yet (the HTTP server is on wip/http-server). Nothing deployed."
+            echo "::notice::No space/README.md at this tag (the hosted server isn't in this release). Nothing deployed."
             echo "go=false" >> "$GITHUB_OUTPUT"
           elif [ "$HAS_TOKEN" != "true" ]; then
             echo "::notice::No HF_TOKEN secret. Nothing deployed."
@@ -98,6 +99,20 @@ jobs:
       - name: Install dependencies (locked)
         if: steps.gate.outputs.go == 'true'
         run: uv sync --locked --no-dev
+      - name: Pin space/Dockerfile to this release
+        if: steps.gate.outputs.go == 'true'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          # TAG is a checked vX.Y.Z (verify) and GITHUB_SHA a hex commit, so neither can carry sed syntax.
+          sed -i -e "s/^ARG HDR_TAG=\$/ARG HDR_TAG=${TAG}/" -e "s/^ARG HDR_COMMIT=\$/ARG HDR_COMMIT=${GITHUB_SHA}/" \
+            space/Dockerfile
+          if grep -qx "ARG HDR_TAG=${TAG}" space/Dockerfile && grep -qx "ARG HDR_COMMIT=${GITHUB_SHA}" space/Dockerfile; then
+            echo "space/Dockerfile pinned to ${TAG} (${GITHUB_SHA})."
+          else
+            echo "::error::space/Dockerfile has no empty HDR_TAG and HDR_COMMIT to fill in. Nothing deployed."
+            exit 1
+          fi
       - name: Upload space/ as one commit
         if: steps.gate.outputs.go == 'true'
         env:

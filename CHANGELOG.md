@@ -20,6 +20,20 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `serve --http`: the hosted, read-only connector over stateless Streamable HTTP (hub releases and live reads
+  only), with one deadline per tool call, a result-size cap, rate limits per MCP session and overall, and no
+  request content in any log; `space/` for a Hugging Face Docker Space and `docs/dev/hosting.md`.
+- Long answers come in pages instead of being refused: every row-returning tool (and the matching CLI commands,
+  `get-series`, `get-aligned-with-gbd`, `get-provenance`, `query-sql` and the analysis tools) takes `page` and
+  `pin`; each page carries real rows, the same provenance line as every answer, and the exact call for the next
+  page, and a pin keeps every page on one version of the data. `query_sql` adds `ORDER BY ALL` when a query has
+  no `ORDER BY`. The hosted server refuses to start with a limit of 0, a negative number, inf or nan, or with
+  `HDR_PAGE_CHARS` above `HDR_MAX_RESULT_CHARS`.
+- Hosted server hardening from review: request bodies over 1 MiB are refused with 413; session ids and pins are
+  signed (`HDR_SIGNING_KEY`), calls without a signed session id share one rate-limit bucket, and a refused call
+  spends no token; pins carry the answer's row count and row-key hash and may name only release tags; hub
+  downloads end by the call deadline and a stuck call never holds the engine past it; `serve --http` binds to
+  127.0.0.1 by default with Host and Origin checks; `query_sql` adds tie-breakers to its own `ORDER BY`.
 - Condition vocabulary: each catalog entry lists the publisher's own condition labels (`conditions:`, with
   where they come from), and `get_series`, `get_rate` and `get_trend` accept any of them through the semantic
   model's `generic_series`, with the same aggregation rules as the named series. `validate` fails when a local
