@@ -116,6 +116,33 @@ jobs:
           HDR_FETCH_AT_RUN_TIME: "0"
         run: make smoke
 
+  # The dbt project: staging models generated from contracts/ must be exactly what `make contracts` writes,
+  # then `dbt build` (models and tests) runs on the synthetic fixtures in tests/fixtures/transform only.
+  transform:
+    name: Transform (dbt build on fixtures)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+      - name: Generated staging models reproduce from the contracts
+        run: |
+          make contracts
+          git diff --exit-code -- transform/
+          # A generated file that was never committed is out of date too.
+          test -z "$(git status --porcelain --untracked-files=all -- transform/)" || {
+            git status --porcelain --untracked-files=all -- transform/
+            exit 1
+          }
+      - name: dbt build on synthetic fixtures
+        run: make transform
+
   kit:
     name: Claude Projects kit
     runs-on: ubuntu-latest
@@ -148,13 +175,25 @@ jobs:
   # covers, or that left no report fails the check, as does a module only some of whose shards were expected. A
   # clean shard with no mutable function has nothing to mutate.
   # They run on pull requests and on pushes to pre-pr/** (the gate must check what the PR will), not on main.
+  # Reuse (pull requests only): the pre-PR gate has already mutated the PR's head commit on pre-pr/<branch>, so
+  # the list job first asks the Actions API (scripts/mutation_reuse.py, this run's own GITHUB_TOKEN, actions:
+  # read) for a completed, successful "Mutation tests (changed modules)" job of this workflow, from a push to a
+  # pre-pr/** branch of this repository, for exactly the head SHA in the event payload, on a PR whose base is
+  # main. If there is one, it lists no modules, the shards are skipped, and the aggregate passes naming the reused
+  # run. A failed, cancelled, still-running or other-SHA run never counts, and an API error means no reuse, so the
+  # shards then run as usual. Every other job still runs on the PR, and every required check still reports.
   mutation-list:
     name: Mutation tests (list changed modules)
     if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pre-pr/')
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # actions: read only for the reuse lookup (workflow runs and their jobs); nothing is written.
+    permissions:
+      contents: read
+      actions: read
     outputs:
       modules: ${{ steps.list.outputs.modules }}
+      reused_run: ${{ steps.reuse.outputs.run_id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -165,6 +204,24 @@ jobs:
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: "3.12"
+      # The head SHA and base come from the event payload, never from text a contributor writes; the script
+      # checks both and the repository name, and prints a run id only for an exact, green pre-pr match. Like
+      # mutate_changed.py, it comes from the PR's own checkout: it adds no trust beyond what a PR's CI already has.
+      - name: Look for a green pre-pr mutation verdict on this commit
+        id: reuse
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          run_id="$(uv run --no-project python scripts/mutation_reuse.py --repo "${REPO}" --sha "${HEAD_SHA}" --base "${BASE_REF}")"
+          if ! [[ "${run_id}" =~ ^[0-9]*$ ]]; then
+            echo "Unexpected lookup output; the shards run."
+            run_id=""
+          fi
+          echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
       # Only the modules this change touches (spec: mutation tests on changed functions), as shard ids. The script
       # uses the standard library only (the split reads each module's source with ast) and rejects any name that
       # is not a plain module name or `<module>#<k>of<n>@<split hash>`. A pull request compares with
@@ -174,7 +231,13 @@ jobs:
         id: list
         env:
           BASE_REF: ${{ github.base_ref || 'main' }}
+          REUSED_RUN: ${{ steps.reuse.outputs.run_id }}
         run: |
+          if [ -n "${REUSED_RUN}" ]; then
+            echo "Run ${REUSED_RUN} already mutated this commit on pre-pr/ and passed; no shards here."
+            echo "modules=[]" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if ! git rev-parse --verify --quiet "origin/${BASE_REF}^{commit}" > /dev/null; then
             echo "The base branch origin/${BASE_REF} was not fetched, so the changed modules are unknown. Failing."
             exit 1
@@ -230,6 +293,7 @@ jobs:
   # always(), not !cancelled(), on purpose: GitHub counts a skipped required check as passing, so a run
   # cancelled on the head commit must still end this check as a failure. The first step says the run was
   # cancelled; a run superseded by a newer push fails only on its old commit, which no longer gates the merge.
+  # On a PR whose head commit already passed on pre-pr/** (see mutation-list), it reports that run instead of a floor.
   mutation-aggregate:
     name: Mutation tests (changed modules)
     needs: [mutation-list, mutation]
@@ -264,7 +328,19 @@ jobs:
           pattern: mutation-*
           path: mutation-reports/
           merge-multiple: true
+      # Reuse: the list job found the pre-pr run that mutated this exact head commit and passed (see mutation-list).
+      - name: Report the reused pre-pr verdict
+        if: needs.mutation-list.outputs.reused_run != ''
+        env:
+          REUSED_RUN: ${{ needs.mutation-list.outputs.reused_run }}
+          SERVER: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          echo "Reused the green 'Mutation tests (changed modules)' verdict of run ${REUSED_RUN} for ${HEAD_SHA}:"
+          echo "${SERVER}/${REPO}/actions/runs/${REUSED_RUN}"
       - name: Apply the floor to the total
+        if: needs.mutation-list.outputs.reused_run == ''
         env:
           MODULES: ${{ needs.mutation-list.outputs.modules }}
           MUTATION_FLOOR: "70"

@@ -78,6 +78,18 @@ flowchart LR
    beside the data, so the hashes catch damage, not tampering. Snapshots live
    in the lake (`$HDR_LAKE` as a full path, else a per-user data folder, never the working folder) and, for redistributable sources, may be published to a public
    Hugging Face dataset ([ADR 0009](adr/0009-licences-decide-mirroring.md)).
+   The typed projection lives in one place (`staging.py`). The same checks refuse a load on the lake path and
+   the live path alike: an empty required value or a count with a fraction (a publisher data failure), or a
+   declared field that no record carries (a layout change, so the contract needs review; a column the contract
+   marks `mayBeEmpty` is exempt). A refused load leaves no table behind. A live source refused this way is
+   unavailable for the session rather than answered from the rows that passed, which would change totals
+   without saying so.
+   The dbt project in `transform/` (dbt-duckdb) reads the full load each dataset's `LATEST` pointer names, from
+   `raw_records/<id>/<snapshot_id>.ndjson` (`dbt_raw.py`, a dbt-duckdb plugin). Every staging row carries its
+   snapshot id and raw sha256. A source with no load to read is empty, with a warning, so the rest still
+   builds. Staging models are generated from the contracts by `make contracts` and only type: no row is dropped
+   or deduplicated, and a declared key that repeats fails a test. Business rules go in intermediate models, and
+   dimensions and one fact per source in marts.
 5. **DuckDB read-only views.** `store.py` builds views over the snapshot from the contract. Connections are
    read-only.
 6. **Tools.** `get_series`, `get_aligned_with_gbd` and the other tools compile semantic-model metrics to SQL over

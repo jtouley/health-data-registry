@@ -18,6 +18,7 @@ import pytest
 from health_data_registry import query
 from health_data_registry.query import Engine, QueryRefused, compile_metric, envelope
 from health_data_registry.registry import Registry, load_registry
+from health_data_registry.staging import PublisherDataRefused
 from health_data_registry.store import Manifest, build_snapshot, latest_snapshot, sha256_file, write_ndjson
 from tests.conftest import CATALOG, raw_fetch, write_registry
 
@@ -342,10 +343,14 @@ def test_build_snapshot_manifest_and_pointer(est: tuple[Registry, Engine, Path],
         "release_files": {},
         "notes": [],
         "quality": {},
+        "silver": {"layout_version": "1", "row_count": 4, "unlisted_codes": {}},
         "layouts": {},
     }
     assert (lake / "datasets" / "toy_cases" / "LATEST").read_text() == m.snapshot_id + "\n"
-    assert sorted(p.name for p in lake.iterdir()) == ["datasets", "raw"]  # no temporary folder left behind
+    assert sorted(p.name for p in lake.iterdir()) == [
+        "datasets",
+        "raw",
+    ]  # partial: no raw_records; no temp folder
     assert (path / "data.parquet").stat().st_size > 0
     # The same bytes loaded in full are different inputs, so a new snapshot, never the partial one relabelled.
     again = build_snapshot(lake, reg.get("toy_cases"), [early, late], [f])
@@ -368,7 +373,8 @@ def test_build_snapshot_refusals(est: tuple[Registry, Engine, Path], tmp_path: P
     f = tmp_path / "bad.ndjson"
     write_ndjson(f, [{**RECS[0], "place": None}, {**RECS[1], "place": None}])
     with pytest.raises(
-        ValueError, match="^toy_cases: required column place has 2 empty values; check the contract$"
+        PublisherDataRefused,
+        match="^toy_cases: the publisher's data has 2 empty values in place, which the contract requires$",
     ):
         build_snapshot(tmp_path, reg.get("toy_cases"), [raw_fetch("https://data.cdc.gov/x.json", [])], [f])
     assert not list(tmp_path.glob(".toy_cases-*"))
