@@ -54,8 +54,8 @@ ratchet: ## The Trusted gate's ratchet on HEAD against BASE (default origin/main
 
 check: lint typecheck test mutate ## The quick local loop (not all of CI): lint, typecheck, test, mutation tests on changed functions
 
-precheck: ## The pre-PR gate's local half: the CI checks plus docs drift (hooks, lint, types, tests, smoke, kit, docs drift, mutation shards); stops at the first failure
-	UV="$(UV)" MAKE="$(MAKE)" BASE="$(BASE)" COV_FLOOR="$(COV_FLOOR)" MUTATION_FLOOR="$(MUTATION_FLOOR)" bash scripts/precheck.sh
+precheck: ## The pre-PR gate's local half: the CI checks plus drift (hooks, lint, types, tests, smoke, dbt, kit, generated files); stops at the first failure
+	UV="$(UV)" MAKE="$(MAKE)" COV_FLOOR="$(COV_FLOOR)" bash scripts/precheck.sh
 
 refresh: ## Fetch every catalogued source into the local lake
 	$(UV) run health-data-registry refresh --all

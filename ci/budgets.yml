@@ -1,0 +1,33 @@
+# CI time budgets, in seconds of running time (queue time is not the job's, and is reported apart).
+# "pr" is a narrowed pull request's or pre-pr push's run; "full" is every run that runs everything: the merge
+# queue, main, nightly, by hand, and a pull request while main has no merge queue.
+# A job name may end in `*` to cover a matrix (`Tests (Python *)`). Every job of a run needs a budget.
+# `run` is the run's critical path: the Changes job plus the longest job after it (scripts/ci_budget.py).
+# tests/test_ci_probes.py checks that the job budgets on that path add up to no more than `run`.
+#
+# The "CI budget" step of "CI result" checks every run. On a pull request or a pre-pr push it fails the run when a
+# job, or the run, went over, and lists them. On the merge queue, main and nightly it only warns: runner speed is
+# not a reason to block a merge. Mutation tests are not in CI: they run nightly (.github/workflows/mutation.yml).
+#
+# Ratchet: a budget may only tighten. To loosen one, change this file alone, in a pull request of its own, so the
+# maintainer sees and approves just that (scripts/ci_budget.py ratchet; run in the Checks job).
+{
+  "pr": {
+    "run": 180,
+    "jobs": {
+      "Changes": 20,
+      "Checks": 120,
+      "Tests (Python *)": 130,
+      "CI result": 30
+    }
+  },
+  "full": {
+    "run": 360,
+    "jobs": {
+      "Changes": 30,
+      "Checks": 240,
+      "Tests (Python *)": 300,
+      "CI result": 30
+    }
+  }
+}
