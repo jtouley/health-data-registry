@@ -45,8 +45,9 @@ models:
   - odcs_check:
       name: cdc_nndss_weekly_m1_flag_codes
       arguments:
-        measure_sql: SELECT count(*) FROM {object} WHERE NOT ("m1_flag" IS NULL OR trim(CAST("m1_flag" AS VARCHAR))
-          = '') AND "m1_flag" NOT IN ('-', 'U', 'N', 'NN', 'NP', 'NC')
+        measure_sql: SELECT CASE WHEN count(*) FILTER (WHERE NOT ("m1_flag" IS NULL OR trim(CAST("m1_flag" AS VARCHAR))
+          = '')) = 0 THEN NULL ELSE count(*) FILTER (WHERE NOT ("m1_flag" IS NULL OR trim(CAST("m1_flag" AS VARCHAR))
+          = '') AND "m1_flag" NOT IN ('-', 'U', 'N', 'NN', 'NP', 'NC')) END FROM {object}
         condition: measured = 0
       config:
         severity: error

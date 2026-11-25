@@ -295,7 +295,46 @@ def test_an_empty_table_fails_the_volume_check() -> None:
     assert q.run_rules(table([("-", 1)]), "t", [rule]).results[0]["status"] == "pass"
 
 
+def test_a_value_rule_with_nothing_to_judge_is_not_evaluated_and_blocks() -> None:
+    """ADR 0017 data-quality review: an error-severity value rule on a column with no values is not a pass."""
+    rules = q.parse_rules(doc(CODES), "x")
+    report = q.run_rules(table([(None, 1), ("  ", 2)]), "t", rules)
+    (result,) = report.results
+    assert (result["status"], result["observed"], result["severity"]) == ("not_evaluated", None, "error")
+    assert report.rule_errors == () and report.blocking  # apart from a metric error, and it blocks
+    assert report.caveats() == [
+        "A data check on this source could not be judged: Codes from the codebook (no row has a value in that "
+        "column, so there was nothing to check). Compare with the publisher's page before relying on these numbers."
+    ]
+    assert q.blocked_message("x", report.as_dict()) == (
+        "x: the error-severity check flag_codes could not be judged (no values to check), so this copy is not "
+        "served or published and the copy before it stays. Compare the data with the publisher's page, then "
+        "refresh, or have a maintainer fix the contract."
+    )
+    # Warn severity: reported, never blocking.
+    warn = q.run_rules(table([(None, 1)]), "t", q.parse_rules(doc({**CODES, "severity": "warn"}), "x"))
+    assert warn.results[0]["status"] == "not_evaluated" and not warn.blocking
+    # A column the contract marks mayBeEmpty is expected to be empty: the rule passes.
+    may = {"schema": [{"properties": [
+        {"name": "flag", "quality": [CODES], "customProperties": [{"property": "mayBeEmpty", "value": True}]},
+        {"name": "n"}]}]}  # fmt: skip
+    (rule,) = q.parse_rules(may, "x")
+    assert rule.may_be_empty and q.run_rules(table([(None, 1)]), "t", [rule]).results[0]["status"] == "pass"
+    # One value is enough to judge.
+    assert q.run_rules(table([(None, 1), ("-", 2)]), "t", rules).results[0]["status"] == "pass"
+
+
+def test_results_are_keyed_by_rule_id_whatever_the_order() -> None:
+    """Python checks and dbt tests may come back in any order: compare them by rule id, never by position."""
+    rules = q.parse_rules(doc(CODES, schema_rules=(ROWS, SQL)), "x")
+    con = table([("-", 1), ("X", 9), ("U", None)])
+    forward = {r["test"]: r for r in q.run_rules(con, "t", rules).results}
+    backward = {r["test"]: r for r in q.run_rules(con, "t", rules[::-1]).results}
+    assert forward == backward and set(forward) == {"rows", "n_small", "flag_codes"}
+
+
 def test_null_values_compares_a_count() -> None:
+
     rule = {**CODES, "id": "few_empty", "metric": "nullValues", "mustBeLessOrEqualTo": 1}
     del rule["mustBe"]
     report = q.run_rules(table([(None, 1), ("", 2), ("-", 3)]), "t", q.parse_rules(doc(rule), "x"))

@@ -30,7 +30,7 @@ same things.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import duckdb
@@ -54,6 +54,8 @@ COMPARATORS: dict[str, Callable[[Any, Any], bool]] = {
     "mustNotBeBetween": lambda v, b: not (b[0] <= v <= b[1]),
 }
 FILL_RATE_PREFIX = "fill_rate_"
+NOT_EVALUATED = "not_evaluated"  # a value rule whose column had no values: never a pass
+
 HAS_ROWS = "has_rows"  # the generated volume check
 EMPTY_SHARE = "emptyShare"  # the generated fill-rate checks only: the share of rows with no value, 0 to 1
 GUARD_TABLE = "rule_object"  # what {object} stands for while the guard checks a sql rule
@@ -65,6 +67,10 @@ class QualityRuleInvalid(ValueError):
 
 class NoMeasurement(ValueError):
     """A rule ran but returned no number (NULL): a rule error, never a pass and never a zero."""
+
+
+class NotEvaluated(NoMeasurement):
+    """A value rule found no values in its column to judge: not evaluated, which is never a pass."""
 
 
 @dataclass(frozen=True)
@@ -80,6 +86,9 @@ class Rule:
     metric: str | None = None
     valid_values: tuple[Any, ...] = ()
     query: str | None = None
+    # The column's mayBeEmpty: an all-empty column is then expected, so a value rule on it passes rather than
+    # counting as not evaluated.
+    may_be_empty: bool = False
 
     def bound_text(self) -> str:
         words = {
@@ -166,7 +175,14 @@ def parse_rules(doc: Mapping[str, Any], where: str) -> tuple[Rule, ...]:
     rules = [_rule(q, None, where, columns) for q in schema.get("quality") or []]
     for p in props:
         name = str(p.get("name"))
-        rules += [_rule(q, name, f"{where}.{name}", columns) for q in p.get("quality") or []]
+        empty_ok = any(
+            isinstance(cp, Mapping) and cp.get("property") == "mayBeEmpty" and cp.get("value") is True
+            for cp in p.get("customProperties") or []
+        )
+        rules += [
+            replace(_rule(q, name, f"{where}.{name}", columns), may_be_empty=empty_ok)
+            for q in p.get("quality") or []
+        ]
     ids = [r.id for r in rules]
     if len(set(ids)) != len(ids):
         raise QualityRuleInvalid(f"{where}: quality rule ids must be unique")
@@ -245,7 +261,13 @@ def measure_sql(rule: Rule, relation: str) -> str:
     if rule.metric == EMPTY_SHARE:  # the fill-rate check: the share of rows with no value; 1 means all empty
         return f"SELECT CASE WHEN count(*) = 0 THEN 0.0 ELSE count(*) FILTER (WHERE {empty}) / count(*) END FROM {relation}"  # noqa: S608 - quoted contract identifiers, literal codes
     listed = ", ".join(_lit(v) for v in rule.valid_values)
-    return f"SELECT count(*) FROM {relation} WHERE NOT {empty} AND {c} NOT IN ({listed})"  # noqa: S608 - quoted contract identifiers, literal codes
+    if rule.may_be_empty:
+        return f"SELECT count(*) FROM {relation} WHERE NOT {empty} AND {c} NOT IN ({listed})"  # noqa: S608 - quoted contract identifiers, literal codes
+    # A value rule on a column with no values at all has nothing to judge: NULL, never a pass (NotEvaluated).
+    return (
+        f"SELECT CASE WHEN count(*) FILTER (WHERE NOT {empty}) = 0 THEN NULL "  # noqa: S608 - quoted contract identifiers, literal codes
+        f"ELSE count(*) FILTER (WHERE NOT {empty} AND {c} NOT IN ({listed})) END FROM {relation}"
+    )
 
 
 def condition_sql(rule: Rule, value: str) -> str:
@@ -275,7 +297,10 @@ def measure(con: duckdb.DuckDBPyConnection, table: str, rule: Rule) -> tuple[flo
     require_single_select(sql)  # defence in depth: the guard checked the rule when the contract loaded
     row = con.execute(sql).fetchone()
     if not row or row[0] is None:
+        if rule.metric == "invalidValues":
+            raise NotEvaluated("no row has a value in this column, so there was nothing to check")
         raise NoMeasurement("the check returned no number")
+
     value = float(row[0])
     counts = rule.metric in ("invalidValues", "nullValues") or (
         rule.kind == "sql" and rule.comparator == "mustBe" and rule.bound == 0
@@ -304,6 +329,13 @@ class QualityReport:
         for r in self.results:
             if r["status"] == "pass":
                 continue
+            if r["status"] == NOT_EVALUATED:
+                out.append(
+                    f"A data check on this source could not be judged: {str(r['checks']).rstrip('.')} (no row has "
+                    "a value in that column, so there was nothing to check). Compare with the publisher's page "
+                    "before relying on these numbers."
+                )
+                continue
             if str(r["test"]).startswith(FILL_RATE_PREFIX):
                 out.append(
                     f"{r['checks']} Answers that need it will be blank: ask for another measure, or check the "
@@ -323,8 +355,11 @@ class QualityReport:
 
     @property
     def blocking(self) -> bool:
-        """True when an error-severity rule failed or any rule could not run."""
-        return any(r["status"] == "fail" for r in self.results) or bool(self.rule_errors)
+        """True when an error-severity rule failed or was not evaluated, or any rule could not run."""
+        return any(
+            r["status"] == "fail" or (r["status"] == NOT_EVALUATED and r["severity"] == "error")
+            for r in self.results
+        ) or bool(self.rule_errors)
 
 
 class QualityBlocked(ValueError):
@@ -334,17 +369,30 @@ class QualityBlocked(ValueError):
 def blocked_message(dataset: str, quality: Mapping[str, Any] | None) -> str | None:
     """Why a snapshot's quality record (a manifest's `quality`) blocks it, in plain words; None when it doesn't.
 
-    A failed error-severity rule is a data failure; a rule that could not run leaves the copy unchecked. Either
-    way the copy is kept for inspection, but LATEST stays where it was and export-public refuses it.
+    Three kinds, named apart: a failed error-severity rule (a data failure), an error-severity value rule with
+    no values to judge (not evaluated), and a rule that could not run (a metric error). Each leaves the copy
+    unchecked or failing: it is kept for inspection, but LATEST stays where it was and export-public refuses it.
     """
     q = quality or {}
-    failed = [str(r.get("test")) for r in q.get("results") or [] if r.get("status") == "fail"]
+    results = q.get("results") or []
+    failed = [str(r.get("test")) for r in results if r.get("status") == "fail"]
+    unjudged = [
+        str(r.get("test"))
+        for r in results
+        if r.get("status") == NOT_EVALUATED and r.get("severity") == "error"
+    ]
     broken = [str(e.get("test")) for e in q.get("rule_errors") or []]
-    if not failed and not broken:
+    if not failed and not unjudged and not broken:
         return None
     parts = []
     if failed:
         parts.append(f"the error-severity check{'s' if len(failed) > 1 else ''} {', '.join(failed)} failed")
+    if unjudged:
+        parts.append(
+            f"the error-severity check{'s' if len(unjudged) > 1 else ''} {', '.join(unjudged)} could not be "
+            "judged (no values to check)"
+        )
+
     if broken:
         parts.append(f"the check{'s' if len(broken) > 1 else ''} {', '.join(broken)} could not run")
     return (
@@ -365,6 +413,23 @@ def run_rules(con: duckdb.DuckDBPyConnection, table: str, rules: Sequence[Rule])
         try:
             value, rows = measure(con, table, rule)
             ok = COMPARATORS[rule.comparator](value, rule.bound)
+        except (
+            NotEvaluated
+        ):  # not a pass, and not a metric error: a result of its own that blocks (error rules)
+            results.append(
+                {
+                    "test": rule.id,
+                    "checks": rule.description,
+                    "status": NOT_EVALUATED,
+                    "rows_affected": None,
+                    "dimension": rule.dimension,
+                    "severity": rule.severity,
+                    "column": rule.column,
+                    "observed": None,
+                    "expected": rule.bound_text(),
+                }
+            )
+            continue
         except (duckdb.Error, SqlRefused, NoMeasurement, TypeError) as e:
             errors.append({"test": rule.id, "error": (str(e).splitlines() or [type(e).__name__])[0]})
             continue
