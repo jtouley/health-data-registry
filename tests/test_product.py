@@ -591,3 +591,249 @@ def test_cli_validate_reports_product_problems(
     )
     assert cli.main(["validate"]) == 1
     assert "FAIL toy-hub/toy_cases: tier must be one of" in capsys.readouterr().err
+
+
+# ------------------------------------------------------------------------- exact messages (mutation tests)
+
+
+def test_port_errors_say_exactly_what_is_wrong(tmp_path: Path) -> None:
+    root = registry_root(tmp_path)
+    write(root, port_contract("toy_index"), "ports/toy_index.odcs.yaml")
+    bad = port(
+        "Toy-Index",
+        "toy_index",
+        inputs=["toy_cases"],
+        tier="x",
+        hosting="private-hf",
+        releaseTag="v1",
+        sla={"refresh": "hourly", "release": "r", "support": "s"},
+        pendingInputs=[{"id": "elsewhere", "licence": "l", "fillsFrom": "PR"}],
+        stub=True,
+        openQuestions=["q"],
+    )
+    bad["version"] = "0.2.0"
+    write(root, product_doc("toys", bad), "toys.odps.yaml")
+    assert errors(root) == [
+        "toys/Toy-Index: port name must be snake_case",
+        "toys/Toy-Index: tier must be one of public, private",
+        "toys/Toy-Index: a hosted port's releaseTag is release-<run date>",
+        "toys/Toy-Index: sla.refresh must be one of daily, weekly, monthly, quarterly, annual, irregular",
+        "toys/Toy-Index: pendingInputs elsewhere is not one of the port's inputContracts",
+        "toys/Toy-Index: a stub port is not hosted (hosting: none)",
+        "toys/Toy-Index: sla.refresh hourly differs from toy_cases's refresh weekly",
+        "toys/Toy-Index: licences ['public-domain-us-federal'] must be its sources' licences "
+        "['l', 'public-domain-us-federal']",
+        "toys/Toy-Index: version 0.2.0 differs from contract version 0.1.0",
+    ]
+    ftp = port("toy_index", "toy_index", inputs=["toy_cases"], hosting="ftp")
+    write(root, product_doc("toys", ftp), "toys.odps.yaml")
+    assert errors(root) == ["toys/toy_index: hosting must be one of public-hub, private-hf, live, none"]
+
+
+def test_a_stub_contract_stays_draft(tmp_path: Path) -> None:
+    root = registry_root(tmp_path)
+    doc = port_contract("toy_stub")
+    doc["status"] = "active"
+    write(root, stamped(doc), "ports/toy_stub.odcs.yaml")
+    pending = [{"id": "later", "licence": "l", "fillsFrom": "PR"}]
+    stub = port(
+        "toy_stub",
+        "toy_stub",
+        inputs=["later"],
+        hosting="none",
+        stub=True,
+        openQuestions=["q"],
+        pendingInputs=pending,
+        licences=["l"],
+    )
+    write(root, product_doc("toys", stub), "toys.odps.yaml")
+    assert errors(root) == ["toys/toy_stub: a stub port's contract stays draft"]
+
+
+def test_public_hub_needs_hosted_catalogued_sources(tmp_path: Path) -> None:
+    root = registry_root(tmp_path)
+    cat = root / "catalog" / "toy_cases.yaml"
+    cat.write_text(cat.read_text().replace("hosting: public\n", ""))
+    write(root, port_contract("toy_index"), "ports/toy_index.odcs.yaml")
+    hub = product_doc("toy-hub", port("toy_cases", "toy_cases", hosting="live", hosted=False))
+    write(root, hub, "health-data-registry.odps.yaml")
+    write(root, product_doc("toys", port("toy_index", "toy_index", inputs=["toy_cases"])), "toys.odps.yaml")
+    assert errors(root) == [
+        "toys/toy_index: on the public hub only when every source is catalogued, hosting: public and licensed "
+        "for a public copy (not: toy_cases)"
+    ]
+    cat.write_text(cat.read_text() + "hosting: public\n")
+    write(
+        root,
+        product_doc("toy-hub", port("toy_cases", "toy_cases", hosted=True)),
+        "health-data-registry.odps.yaml",
+    )
+    pending = [{"id": "later", "licence": "public-domain-us-federal", "fillsFrom": "PR"}]
+    p = port(
+        "toy_index",
+        "toy_index",
+        inputs=["toy_cases", "later"],
+        pendingInputs=pending,
+        stub=True,
+        openQuestions=["q"],
+    )
+    write(root, product_doc("toys", p), "toys.odps.yaml")
+    assert any("(not: pending sources)" in e for e in errors(root)), errors(root)
+
+
+def test_public_ports_name_the_private_ports_and_columns(tmp_path: Path) -> None:
+    root = registry_root(tmp_path)
+    write(root, port_contract("toy_a", tier="private"), "ports/toy_a.odcs.yaml")
+    write(root, port_contract("toy_b", tier="private"), "ports/toy_b.odcs.yaml")
+    doc = port_contract("toy_index", private_col=True)
+    extra = copy.deepcopy(doc["schema"][0]["properties"][1])
+    extra["name"] = "full_text"
+    extra["quality"][0]["name"] = "full_text_not_null"
+    doc["schema"][0]["properties"].append(extra)
+    write(root, stamped(doc), "ports/toy_index.odcs.yaml")
+    pend = [{"id": i, "licence": "public-domain-us-federal", "fillsFrom": "PR"} for i in ("toy_a", "toy_b")]
+    reader = port(
+        "toy_index",
+        "toy_index",
+        inputs=["toy_a", "toy_b"],
+        hosting="none",
+        stub=True,
+        openQuestions=["q"],
+        pendingInputs=pend,
+    )
+    private = [
+        port(n, n, inputs=["toy_cases"], tier="private", hosting="private-hf") for n in ("toy_a", "toy_b")
+    ]
+    write(root, product_doc("toys", reader, *private), "toys.odps.yaml")
+    assert errors(root) == [
+        "toys/toy_index: a public port may not read private-tier ports (toy_a, toy_b)",
+        "toys/toy_index: a public port's contract has private-tier columns (abstract_text, full_text)",
+    ]
+
+
+def test_a_product_needs_ports(tmp_path: Path) -> None:
+    root = registry_root(tmp_path)
+    write(root, product_doc("toys"), "toys.odps.yaml")
+    assert errors(root) == ["toys.odps.yaml: a product needs at least one output port"]
+
+
+def test_port_contract_errors_name_the_file(tmp_path: Path) -> None:
+    doc = port_contract("toy_index", tier="secret")
+    doc["schema"][0]["properties"][0]["quality"][0].pop("name")
+    path = tmp_path / "toy_index.odcs.yaml"
+    path.write_text(yaml.safe_dump(doc))
+    assert product.port_contract_errors(path) == [
+        "toy_index.odcs.yaml: its meaning changed; bump the minor version and add a fingerprints entry",
+        "toy_index.odcs.yaml: quality rule (unnamed) needs a name, a dbtTest, a dimension and a severity "
+        "(error or warn)",
+        "toy_index.odcs.yaml: customProperties.tier must be one of public, private",
+    ]
+    shape = port_contract("toy_index")
+    shape["schema"][0]["properties"][0]["quality"][0]["name"] = "fine"
+    shape["schema"][0]["properties"][0]["physicalType"] = "INTEGER"
+    shape["schema"][0]["properties"].append(
+        {"name": "x", "customProperties": [{"property": "conformedKey", "value": {"dimension": "nope"}}]}
+    )
+    path.write_text(yaml.safe_dump(shape))
+    assert product.port_contract_errors(path) == [
+        "toy_index.odcs.yaml: its shape changed; bump the major version and add a fingerprints entry",
+        "toy_index.odcs.yaml.x: conformedKey.dimension must be one of dim_concept, dim_place, dim_time",
+    ]
+
+
+@pytest.mark.parametrize("missing", ["name", "dimension"])
+def test_each_quality_field_is_required(missing: str) -> None:
+    doc = port_contract("toy_index")
+    doc["schema"][0]["properties"][0]["quality"][0].pop(missing)
+    assert len(product.quality_errors(doc, "t")) == 1
+
+
+def test_a_missing_dbt_test_is_refused() -> None:
+    doc = port_contract("toy_index")
+    doc["schema"][0]["properties"][0]["quality"][0]["customProperties"] = []
+    assert product.quality_errors(doc, "t") == [
+        "t: quality rule title_not_null needs a name, a dbtTest, a dimension and a severity (error or warn)"
+    ]
+
+
+def test_conformed_key_errors_cover_every_column() -> None:
+    doc = port_contract("toy_index")
+    props = doc["schema"][0]["properties"]
+    props.append(copy.deepcopy(props[0]))
+    props[1]["name"] = "tags"
+    props[0]["customProperties"].append({"property": "conformedKey", "value": {"dimension": "dim_x"}})
+    key = {"dimension": "dim_concept", "assignment": "dictionary_proposed", "reviewStateColumn": "title"}
+    props[1]["customProperties"].append({"property": "conformedKey", "value": key})
+    props[0]["quality"].append({"name": "odd", "metric": "invalidValues"})  # no arguments: not a state check
+    assert product.conformed_key_errors(doc, "t") == [
+        "t.title: conformedKey.dimension must be one of dim_concept, dim_place, dim_time",
+        "t.tags: a dictionary-proposed tag needs a reviewStateColumn whose values are checked to be proposed, "
+        "accepted, rejected (rules 1 and 9: proposed is never a fact)",
+    ]
+
+
+def test_fingerprint_messages_name_the_version() -> None:
+    v1 = port_contract("toy_index")
+    e1 = product._custom(v1["customProperties"])["fingerprints"][0]
+    shape = {**e1, "version": "0.2.0", "interface": "other"}
+    doc = copy.deepcopy(v1)
+    doc["customProperties"][-1]["value"] = [
+        {**e1, "version": "one"},
+        e1,
+        shape,
+        {**shape, "version": "0.2.1", "docs": "x"},
+        {**e1, "version": "0.0.9"},
+    ]
+    doc["version"] = "0.0.9"
+    assert fingerprint_errors(doc, "t") == [
+        "t: fingerprint versions must be MAJOR.MINOR.PATCH",
+        "t: 0.2.0 changed the shape, so it must be a new major version",
+        "t: 0.2.1 changed the meaning, so it must be at least a new minor",
+        "t: 0.0.9 changed the shape, so it must be a new major version",
+    ]
+    doc["customProperties"][-1]["value"] = [
+        e1,
+        {**e1, "version": "0.1.1", "docs": "x"},
+        {**e1, "version": "0.0.1"},
+    ]
+    doc["version"] = "0.0.1"
+    assert fingerprint_errors(doc, "t") == [
+        "t: 0.1.1 changed the meaning, so it must be at least a new minor",
+        "t: 0.0.1 changed the meaning, so it must be at least a new minor",
+    ]
+    doc["customProperties"][-1]["value"] = [e1, {**e1, "version": "0.0.1"}]
+    assert fingerprint_errors(doc, "t") == ["t: fingerprint versions must increase"]
+    doc["customProperties"][-1]["value"] = []
+    assert fingerprint_errors(doc, "t") == [
+        "t: customProperties.fingerprints needs at least one {version, interface, docs}"
+    ]
+    doc["customProperties"][-1]["value"] = [e1, "text"]
+    assert len(fingerprint_errors(doc, "t")) == 1
+
+
+def test_digests_keep_non_ascii_text() -> None:
+    assert product._digest({"b": "é", "a": 1}) == hashlib.sha256('{"a": 1, "b": "é"}'.encode()).hexdigest()
+
+
+def test_summary_lines() -> None:
+    prods = product.load_products(REPO)
+    lines = product.summary([prods["michigan-hiv"], prods["health-data-registry-hub"]])
+    assert lines[0] == "ok   michigan-hiv/mi_mdhhs_hiv_sti: public tier, hosting none, draft stub"
+    assert "ok   health-data-registry-hub/cdc_respnet: public tier, hosting public-hub" in lines
+
+
+def test_load_ports_rejects_a_contract_served_twice(tmp_path: Path) -> None:
+    (tmp_path / "contracts").mkdir()
+    doc = product_doc("h", port("first", "same"), port("second", "same"))
+    (tmp_path / "contracts" / "health-data-registry.odps.yaml").write_text(yaml.safe_dump(doc))
+    with pytest.raises(ValueError, match="ports first and second both serve contract same"):
+        load_ports(tmp_path)
+
+
+def test_a_contract_served_by_two_product_files_names_both(tmp_path: Path) -> None:
+    root = registry_root(tmp_path)
+    write(root, product_doc("other", port("again", "toy_cases")), "other.odps.yaml")
+    assert (
+        "contract toy_cases is served by two ports: health-data-registry.odps.yaml (toy_cases) and "
+        "other.odps.yaml (again)"
+    ) in errors(root)

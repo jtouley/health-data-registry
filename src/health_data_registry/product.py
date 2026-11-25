@@ -193,6 +193,11 @@ def load_ports(root: Path) -> dict[str, Port]:
             version=str(p.get("version", "")),
             hosted=hosted is True,
         )
+        if port.contract_id in ports:
+            raise ValueError(
+                f"{path}: ports {ports[port.contract_id].name} and {port.name} both serve contract "
+                f"{port.contract_id}; each contract has one port"
+            )
         ports[port.contract_id] = port
     return ports
 
@@ -692,6 +697,16 @@ def validate_products(root: Path, registry: Registry, schema: Mapping[str, Any] 
     errs.extend(
         f"product id {i} is used by more than one file" for i in sorted({i for i in ids if ids.count(i) > 1})
     )
+    served: dict[str, str] = {}
+    for prod in products:
+        for p in prod.ports:
+            here = f"{prod.path.name} ({p.name})"
+            if p.contract_id in served:
+                errs.append(
+                    f"contract {p.contract_id} is served by two ports: {served[p.contract_id]} and {here}"
+                )
+            else:
+                served[p.contract_id] = here
     private_ports = {p.contract_id for prod in products for p in prod.ports if p.tier == "private"}
     private_ports |= {p.name for prod in products for p in prod.ports if p.tier == "private"}
     for prod in products:
