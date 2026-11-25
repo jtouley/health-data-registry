@@ -85,6 +85,7 @@ class Attribution(_Strict):
 
 
 def require_attribution(record: Mapping[str, Any], columns: Attribution) -> None:
+    # ci probe
     """Refuse (AttributionMissing) a record that lacks any attribution field; a blank value is missing."""
     missing = [f for f in ATTRIBUTION_FIELDS if not str(record.get(getattr(columns, f)) or "").strip()]
     if missing:
