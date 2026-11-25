@@ -174,13 +174,18 @@ def test_the_dbt_test_and_the_read_path_agree(tmp_path: Path, rows: int) -> None
         try:
             failed = bool(con.execute(_macro_sql(rule, "t")).fetchall())
         except duckdb.Error as e:
-            assert rule.id in errors and "could not be judged" in str(e), rule.id
+            # dbt records both a NULL measurement (a rule error) and a value rule with nothing to judge (not
+            # evaluated) as a test that could not run; the read path keeps the two apart, and both block.
+            assert rule.id in errors or results.get(rule.id) == "not_evaluated", rule.id
+            assert "could not be judged" in str(e), rule.id
             continue
         assert rule.id not in errors and failed == (results[rule.id] != "pass"), rule.id
     if rows:
         assert results["flag_codes"] == "fail" and results["biggest_case_count"] == "pass"
-    else:  # an empty table: the volume check fails, and max() over no rows is a rule error on both paths
+    else:  # an empty table: the volume check fails, max() over no rows is a rule error, and the codebook rule on
+        # an empty flag column is not evaluated: never a pass
         assert results["has_rows"] == "fail" and errors == {"biggest_case_count"}
+        assert results["flag_codes"] == "not_evaluated" and report.blocking
 
 
 def test_label_keys_match_in_python_and_duckdb() -> None:
