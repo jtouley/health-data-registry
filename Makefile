@@ -18,12 +18,12 @@ hooks: ## Install the git hooks (pre-commit and pre-push) from .pre-commit-confi
 	$(UV) run pre-commit install --hook-type pre-commit --hook-type pre-push
 
 lint: ## Lint and check formatting (ruff check, ruff format --check)
-	$(UV) run ruff check src tests eval
-	$(UV) run ruff format --check src tests eval
+	$(UV) run ruff check src tests eval tools
+	$(UV) run ruff format --check src tests eval tools
 
 fmt: ## Fix lint findings and format the code
-	$(UV) run ruff check --fix src tests eval
-	$(UV) run ruff format src tests eval
+	$(UV) run ruff check --fix src tests eval tools
+	$(UV) run ruff format src tests eval tools
 
 typecheck: ## Type check with mypy (strict, settings in pyproject.toml)
 	$(UV) run mypy
