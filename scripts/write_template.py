@@ -1,7 +1,8 @@
 """Write every file generated from the workflows in src/health_data_registry/helpers.py.
 
 `make docs` (no arguments) writes the files kept in git: docs/helpers.md, the template's Claude Code skills
-(template/.claude/skills/<name>/SKILL.md), the plugin (plugin/) and its marketplace (.claude-plugin/marketplace.json).
+(template/.claude/skills/<name>/SKILL.md), the plugin (plugin/), its marketplace (.claude-plugin/marketplace.json)
+and the tool lists in README.md, docs/tools.md and CLAUDE.md.
 Skill folders that no longer match a workflow are removed.
 
 `make kit` (--kit DIR) builds the Claude Projects kit into DIR (default dist/projects-kit, ignored by git): the

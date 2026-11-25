@@ -104,8 +104,9 @@ The MCP surface (`server.py`):
 
 When a tool's name, parameters, columns or refusals change in `server.py` or `tools.py`, update
 [docs/tools.md](../tools.md) in the same PR; when a contract changes how a number is read (missing codes, total rows,
-provisional status, uncertainty, places), update [docs/data-conventions.md](../data-conventions.md). Both are written
-by hand, unlike `docs/helpers.md`.
+provisional status, uncertainty, places), update [docs/data-conventions.md](../data-conventions.md). The tool table in
+README.md, docs/tools.md and CLAUDE.md is generated from the server's registry by `make docs`, and a test fails if it
+drifts; the rest of docs/tools.md, and all of docs/data-conventions.md, is written by hand.
 
 Everything a clinician reads (tool descriptions, helpers, refusals) follows the writing rules in
 [ADR 0012](../adr/0012-built-for-clinicians.md): plain words, a next step, never a stack trace or an HTTP code.
@@ -118,8 +119,14 @@ Everything a clinician reads (tool descriptions, helpers, refusals) follows the 
   write nothing to disk and are marked `network`. `make test` and CI's test job leave them out; run
   `make test-network` when you change an adapter, a contract or the fetcher.
 - **Mutation tests.** `scripts/mutate_changed.py` runs mutmut on the modules changed since the merge base and
-  prints each surviving mutant. A survivor means the tests would not notice that change: add or sharpen a test, or
-  say in the PR why the mutant is equivalent. `make mutate` is part of `make check`, and CI runs it on every PR.
+  prints each mutant it did not kill. A survivor means the tests would not notice that change: add or sharpen a
+  test, or say in the PR why the mutant is equivalent. Every status but `killed` (and `caught by type check`)
+  lowers the score, `no tests` and `skipped` included. `make mutate` is part of `make check`. CI runs the same
+  check on every PR in shards: `--list` names the changed modules, one job per module runs mutmut (60 minutes
+  each; the largest module needs about 17), and the aggregate job applies the 70% floor to the summed counts and
+  lists every mutant not killed. It fails if any shard failed its baseline, left mutants not checked, interrupted
+  or crashed, or left no report. A module with no mutable function has nothing to mutate and passes, locally and
+  in CI.
 - **New features and fixes add tests.** A bug fix includes a test that fails without it.
 
 ## Adding a dataset
