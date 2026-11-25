@@ -20,6 +20,7 @@ records are not rewritten.
 | [0012](0012-built-for-clinicians.md) | Built for clinicians: helpers as MCP prompts, with copy-paste docs | Accepted |
 | [0013](0013-browser-fetcher-on-government-hosts.md) | The browser fetcher may read government hosts: honest user agent, 10 s pace, no evasion; a challenge, CAPTCHA, 401, 403 or 429 stops the crawl | Accepted |
 | [0014](0014-bibliographic-registries-as-primary-routes.md) | Bibliographic registries (Crossref, OpenAlex, Europe PMC) are primary-source routes for DOI records, not aggregators | Accepted |
+| [0016](0016-crawler-factory.md) | Crawler factory: a closed set of generic adapter types, per-source config in the catalog, named pure extensions, one shared fetch core ([audit](../dev/crawler-audit.md)) | Proposed |
 
 The spec's current positioning (three layers: crawler and lake, an open health data hub on Hugging Face, and the MCP
 server with analysis tools; datasets hosted on the hub wherever the licence allows; restricted sources "listed, not
