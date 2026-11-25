@@ -22,6 +22,9 @@ records are not rewritten.
 | [0014](0014-bibliographic-registries-as-primary-routes.md) | Bibliographic registries (Crossref, OpenAlex, Europe PMC) are primary-source routes for DOI records, not aggregators | Accepted |
 | [0016](0016-crawler-factory.md) | Crawler factory: a closed set of generic adapter types, per-source config in the catalog, named pure extensions, one shared fetch core ([audit](../dev/crawler-audit.md)) | Proposed |
 
+There is no 0015 row yet: ADR 0015 (ELT: raw data stored as sent) is proposed on PR #108 and gets its row when that
+PR merges.
+
 The spec's current positioning (three layers: crawler and lake, an open health data hub on Hugging Face, and the MCP
 server with analysis tools; datasets hosted on the hub wherever the licence allows; restricted sources "listed, not
 hosted" and fetched by the server at run time) changes where restricted sources are fetched in 0001 and how the

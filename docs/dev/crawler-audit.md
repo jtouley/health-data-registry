@@ -88,10 +88,11 @@ The main findings:
 
 - **Type:** `https_file`, format `csv`.
 - **Hard-coded per source:** none. Encoding comes from `source.encoding`, the pivot from `source.reshape`.
-- **Per-source branches:** none, but `reshape.wide_to_long` exists for one source (`census_county_pop`) and runs
+- **Per-source branches:** none, but `https_csv.wide_to_long` (line 62, configured by the catalog key
+  `source.reshape`, `registry.py:289`) exists for one source (`census_county_pop`) and runs
   inside the adapter, so `raw_records/` holds our layout, not the file's (#104 finding 5). Under ADR 0016 it
   becomes the `wide_to_long` extension, declared in config and run in staging.
-- **Notes:** no xlsx, no zip member, no header-row offset: the P1 queue needs all three (ADR 0016, step 2).
+- **Notes:** no xlsx, no zip member, no header-row offset: the next sources need all three (ADR 0016, step 2).
 
 ### `adapters/tableau.py`
 
@@ -173,8 +174,10 @@ The main findings:
 - **Type:** `doi_metadata` runner (CLI only, private store).
 - **Hard-coded per source:** none per conference: a conference is a catalog entry (`source.conference`,
   `source.supplements`). Type-level code that could be config:
-  - the enricher tuple (line 323) fixes OpenAlex then Europe PMC, with their batch sizes and parsers; a catalog
-    `enrich: [openalex, europepmc]` list would let a source opt out of one;
+  - the enrichers are fixed in two places: `ENRICHERS` (line 58), which also builds `PROVENANCE_COLUMNS`
+    (lines 60-61), and the local `enrichers` tuple (lines 323-325), which fixes OpenAlex then Europe PMC with their
+    batch sizes and parsers. A catalog `enrich: [openalex, europepmc]` list would let a source opt out of one; it
+    has to drive both, or a source that opts out still gets provenance columns that are declared but empty;
   - `RESEARCH_INDEX_COLUMNS` (line 69) is described as "the columns every research-index row shares with the CROI
     index": a cross-source layout held in one source type's module.
 - **Per-source branches:** `conferences()` selects `portal == "doi"` (line 91). Fine as a type filter.
