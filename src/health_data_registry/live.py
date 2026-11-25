@@ -53,8 +53,9 @@ def kept_note(ds: Dataset, retrieved_at: str) -> str:
 
 
 def is_live(ds: Dataset) -> bool:
-    """A source whose terms forbid redistribution is served live only."""
-    return not ds.entry.licence.redistribution
+    """A source whose terms forbid redistribution is served live, unless it is kept in its own private store
+    (``private_store: true``, read through private.read_rows)."""
+    return ds.entry.tier == "live"
 
 
 def attribution(ds: Dataset) -> str:
