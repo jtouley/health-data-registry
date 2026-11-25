@@ -328,11 +328,15 @@ schema:
       value: attribute
     quality:
     - id: retrieved_at_filled
+      dimension: completeness
+      severity: error
       type: sql
       description: Every row has the time its Crossref listing was read (doi_harvest writes it on every row).
       query: "SELECT COUNT(*) FROM {object} WHERE retrieved_at IS NULL OR trim(retrieved_at) = ''"
       mustBe: 0
     - id: retrieved_at_format
+      dimension: conformity
+      severity: error
       type: sql
       description: The harvester writes this time in UTC to the second, as YYYY-MM-DDTHH:MM:SS+00:00
         (doi_harvest, isoformat with timespec seconds); any other form is a data failure.
@@ -365,6 +369,8 @@ schema:
       value: attribute
     quality:
     - id: openalex_retrieved_at_format
+      dimension: conformity
+      severity: error
       type: sql
       description: The harvester writes this time in UTC to the second, as YYYY-MM-DDTHH:MM:SS+00:00
         (doi_harvest, isoformat with timespec seconds); any other form is a data failure.
@@ -397,6 +403,8 @@ schema:
       value: attribute
     quality:
     - id: europepmc_retrieved_at_format
+      dimension: conformity
+      severity: error
       type: sql
       description: The harvester writes this time in UTC to the second, as YYYY-MM-DDTHH:MM:SS+00:00
         (doi_harvest, isoformat with timespec seconds); any other form is a data failure.
