@@ -984,3 +984,63 @@ def test_check_contracts_and_refresh_skip_doi_sources(registry: Any, tmp_path: P
     with pytest.raises(ValueError, match="not read through a portal adapter"):
         list(pages(ds.entry, lambda u: raw(u, b"")))  # type: ignore[arg-type]
     assert read_fetch_log(tmp_path, "apic_abstracts") == []
+
+
+# ------------------------------------------------------------------------------- retrieval-time data checks
+
+ABSTRACT_CONTRACTS = ("apic_abstracts", "icid_abstracts", "idweek_abstracts", "shea_abstracts")
+WHEN_COLUMNS = ("retrieved_at", "openalex_retrieved_at", "europepmc_retrieved_at")
+STAMP = WHEN.astimezone(UTC).isoformat(timespec="seconds")  # exactly what doi_harvest._Client writes
+
+
+def _when_rules(dataset: str) -> dict[str, str]:
+    import yaml
+
+    path = Path(__file__).resolve().parents[1] / "contracts" / f"{dataset}.odcs.yaml"
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return {
+        q["id"]: q["query"]
+        for prop in doc["schema"][0]["properties"]
+        if prop["name"] in WHEN_COLUMNS
+        for q in prop.get("quality") or []
+    }
+
+
+def _failing(rules: dict[str, str], rows: list[tuple[str | None, ...]]) -> set[str]:
+    import duckdb
+
+    db = duckdb.connect()
+    db.execute(
+        "CREATE TABLE t (retrieved_at VARCHAR, openalex_retrieved_at VARCHAR, europepmc_retrieved_at VARCHAR)"
+    )
+    db.executemany("INSERT INTO t VALUES (?, ?, ?)", rows)
+    out = set()
+    for rule, query in rules.items():
+        got = db.execute(query.replace("{object}", "t")).fetchone()
+        if got is None or got[0] != 0:
+            out.add(rule)
+    return out
+
+
+@pytest.mark.parametrize("dataset", ABSTRACT_CONTRACTS)
+def test_every_abstract_contract_checks_its_retrieval_times(dataset: str) -> None:
+    assert set(_when_rules(dataset)) == {"retrieved_at_filled", *(f"{c}_format" for c in WHEN_COLUMNS)}
+
+
+@pytest.mark.parametrize(
+    ("rows", "failing"),
+    [
+        ([(STAMP, STAMP, STAMP), (STAMP, None, None)], set()),
+        # The Crossref time is on every row; an empty one is a data failure, not a pass of the format check.
+        ([(None, None, None)], {"retrieved_at_filled"}),
+        ([("", None, None)], {"retrieved_at_filled", "retrieved_at_format"}),
+        # Any other form would sort wrongly as text, so each is caught.
+        ([("2026-11-24T12:00:00Z", None, None)], {"retrieved_at_format"}),
+        ([("2026-11-24", None, None)], {"retrieved_at_format"}),
+        ([(STAMP, "2026-11-24T12:00:00.123456+00:00", None)], {"openalex_retrieved_at_format"}),
+        ([(STAMP, None, "2026-11-24T07:00:00-05:00")], {"europepmc_retrieved_at_format"}),
+    ],
+)
+def test_retrieval_time_rules(rows: list[tuple[str | None, ...]], failing: set[str]) -> None:
+    for dataset in ABSTRACT_CONTRACTS:
+        assert _failing(_when_rules(dataset), rows) == failing
