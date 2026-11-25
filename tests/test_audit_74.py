@@ -531,6 +531,7 @@ def test_audit74_hubFile_rehashedOnReconnect(tmp_path: Path) -> None:
     file = eng._hub_files["toy_cases"][0]
     eng._reconnect()
     assert "toy_cases" in eng._hub_files and file.is_file()  # intact: kept
+    file.chmod(0o644)  # the cache keeps it read-only (hub.py); its owner can still change it
     with file.open("ab") as f:
         f.write(b"\0")  # changed in the cache after it was checked
     eng._reconnect()

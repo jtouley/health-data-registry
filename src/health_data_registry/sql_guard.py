@@ -382,6 +382,10 @@ def _check_nodes(tree: exp.Expr) -> None:
             raise SqlRefused(
                 "parameter", "Write values into the query itself: parameters like ? or $1 are not used."
             )
+        if isinstance(node, exp.Star) and isinstance(node.parent, exp.Neg | exp.BitwiseNot | exp.Not):
+            # A sign on * names no column, and sqlglot writes "- *" back as "-*", which DuckDB reads as one
+            # unknown operator (found by fuzz_sql_guard).
+            raise SqlRefused("parse_error", "The query is not valid SQL.")
         if isinstance(node, exp.Var):
             if isinstance(node.parent, _VAR_PARENTS):
                 continue

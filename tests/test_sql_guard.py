@@ -127,6 +127,12 @@ def test_guard_limit_injectedOrClamped(sql: str, expected: int) -> None:
     assert q.sql.endswith(f"LIMIT {expected}")
 
 
+@pytest.mark.parametrize("sql", ["SELECT -*-6", "SELECT -* - 6 FROM deaths", "SELECT ~* FROM deaths"])
+def test_guard_signedStar_refused(sql: str) -> None:
+    # Found by fuzz_sql_guard: "-*" was accepted and written back as DuckDB's unknown operator "-*".
+    assert refused(sql).code == "parse_error"
+
+
 def test_guard_limitInsideSubquery_untouched() -> None:
     q = guard("SELECT * FROM (SELECT state FROM deaths LIMIT 999999) s", max_rows=50)
     assert "LIMIT 999999" in q.sql and q.sql.endswith("LIMIT 50")
