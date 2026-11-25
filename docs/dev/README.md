@@ -24,6 +24,9 @@ work is not committed to the PR branch: it stays uncommitted or goes on a separa
 
 `make help` lists every target.
 
+The README's images (`assets/readme/*.svg`, light and dark) come from one token set: edit and run
+`python3 -I tools/readme_svg/gen.py`, never the SVGs by hand.
+
 | Command | What it does |
 |---|---|
 | `make install` | `uv sync` |
@@ -38,6 +41,7 @@ work is not committed to the PR branch: it stays uncommitted or goes on a separa
 | `make docs` | Regenerate `docs/helpers.md` from `src/health_data_registry/helpers.py` |
 | `make refresh` | `health-data-registry refresh --all` into the local lake |
 | `make serve` | Run the MCP server on stdio |
+| `make serve-http` | The hosted read-only server over Streamable HTTP on port 7860 ([hosting.md](hosting.md)) |
 | `make check-contracts` | Check each publisher still serves the fields its contract reads |
 | `make eval` | Verify the sealed blind sets; with `--run`, score a client run against them |
 

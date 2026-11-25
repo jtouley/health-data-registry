@@ -1,0 +1,7 @@
+# Runtime dependencies of the modules the fuzz harnesses import. No versions here: scripts/fuzz_requirements.py
+# (make fuzz-requirements) pins each to its uv.lock version and compiles requirements.txt for the ClusterFuzzLite
+# image's Python 3.11, with hashes. A test fails when requirements.txt and uv.lock disagree.
+duckdb
+pydantic
+pyyaml
+sqlglot
