@@ -213,12 +213,9 @@ outputPorts:
           support: Best effort by one maintainer; no guaranteed response time.
       - {property: feedback, value: "https://github.com/jtouley/health-data-registry/issues/new?template=contract-finding.yml"}
       - {property: licences, value: ["no-terms-stated"]}
-      - property: pendingInputs
-        value:
-          - {id: detroit_dhd_epi_annual, licence: "no-terms-stated", fillsFrom: "PR #19 (feat/michigan-tableau)"}
       - property: openQuestions
         value:
-          - "Fills from PR #19 once it merges; the dashboard's HIV chart is not read yet and may hold programme data."
+          - "Its source detroit_dhd_epi_annual is catalogued (PR #19, read live, never stored). The port stays a stub until its own columns and measures are declared from that contract, and the dashboard's HIV chart, not read yet, may hold programme data."
 customProperties:
   - property: combine
     value: grouped-never-merged

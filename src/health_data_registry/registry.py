@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -87,14 +87,90 @@ class Reshape(_Strict):
     wide_to_long: WideToLong
 
 
+class TableauView(_Strict):
+    """One dashboard view (the URL name after /views/<workbook>/) and the worksheets read from it.
+
+    Each worksheet maps to the sha256 of its column list (adapters/tableau.layout_hash), recorded when the
+    contract was written: a dashboard whose columns change no longer matches, and the load stops.
+    """
+
+    view: str
+    worksheets: dict[str, str]
+    # A count the chart carries as a number while the dashboard shows it suppressed on the same mark (its tooltip
+    # reads "<16"): count field -> the field whose marker suppresses it. Where that marker is shown, the count is
+    # read as suppressed (empty, with the marker in "<count> flag"), never as the number behind the chart.
+    suppressed_by: dict[str, str] = {}
+
+    @field_validator("suppressed_by")
+    @classmethod
+    def _suppressed_by(cls, v: dict[str, str]) -> dict[str, str]:
+        if any(not k.strip() or not m.strip() or k == m for k, m in v.items()):
+            raise ValueError("suppressed_by maps a count field to another field that carries its marker")
+        return v
+
+    @field_validator("view")
+    @classmethod
+    def _view(cls, v: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", v):
+            raise ValueError("view must be the view's URL name (letters, digits, - and _)")
+        return v
+
+    @field_validator("worksheets")
+    @classmethod
+    def _hashes(cls, v: dict[str, str]) -> dict[str, str]:
+        if not v or not all(re.fullmatch(r"[0-9a-f]{64}", h) for h in v.values()):
+            raise ValueError("worksheets must map each worksheet name to its 64-character layout sha256")
+        return v
+
+
+class Tableau(_Strict):
+    views: list[TableauView]
+
+
+# The reviewed list of what counts as a government host under the maintainer's access policy (robots.txt on such a
+# host does not stop the crawler; see crawl.Robots). One place in code: a catalog entry's `government_host: true`
+# is refused for any other host, so a typo or a copied entry can't switch robots.txt off for a commercial host.
+# Add a suffix or a domain only through review.
+GOVERNMENT_HOST_SUFFIXES: tuple[str, ...] = (
+    ".gov",  # US federal, state, county and city governments (.gov is restricted to US government bodies)
+    ".mil",
+    ".mi.us",  # Michigan state and local governments under the .us locality space
+    ".state.us",
+)
+# Government bodies whose own domain is not under one of the suffixes above: the named county domains of the
+# Detroit metropolitan area. michigan.gov and detroitmi.gov are listed for the record (they are .gov already).
+GOVERNMENT_DOMAINS: tuple[str, ...] = (
+    "michigan.gov",
+    "detroitmi.gov",
+    "waynecounty.com",  # Wayne County, Michigan
+    "oakgov.com",  # Oakland County, Michigan
+    "macombgov.org",  # Macomb County, Michigan
+)
+
+
+def is_government_host(host: str) -> bool:
+    """True when ``host`` is on the reviewed list of government suffixes and domains (see above)."""
+    h = host.lower().rstrip(".")
+    return h.endswith(GOVERNMENT_HOST_SUFFIXES) or any(
+        h == d or h.endswith("." + d) for d in GOVERNMENT_DOMAINS
+    )
+
+
 class Source(_Strict):
-    portal: Literal["socrata", "who_gho", "https_csv"]
+    portal: Literal["socrata", "who_gho", "https_csv", "tableau"]
     host: str
     dataset: str
     landing_url: str
     api_url: str
     encoding: str = "utf-8"  # https_csv only: the file's text encoding, from the publisher's documentation
     reshape: Reshape | None = None  # https_csv only
+    tableau: Tableau | None = None  # tableau only: the views and worksheets read
+    # A government host (only a host on the reviewed list GOVERNMENT_HOST_SUFFIXES / GOVERNMENT_DOMAINS): by the
+    # maintainer's access policy a robots.txt disallow there does not stop the crawler (the pacing, the honest
+    # user agent and every other rule still apply). Default false: robots.txt is honoured in full.
+    government_host: bool = False
+    # The host answers only a real browser (browser_fetch.py): Tableau Server views, michigan.gov behind Akamai.
+    browser: bool = False
 
     @field_validator("host")
     @classmethod
@@ -114,6 +190,15 @@ class Source(_Strict):
     def _csv_only(self) -> Source:
         if self.portal != "https_csv" and (self.reshape is not None or self.encoding != "utf-8"):
             raise ValueError("encoding and reshape apply only to the https_csv portal")
+        if (self.portal == "tableau") != (self.tableau is not None):
+            raise ValueError(
+                "a tableau source lists its views (tableau.views), and only a tableau source does"
+            )
+        if self.government_host and not is_government_host(self.host):
+            raise ValueError(
+                f"government_host is accepted only for hosts on the reviewed list of government suffixes and "
+                f"domains (registry.GOVERNMENT_HOST_SUFFIXES, GOVERNMENT_DOMAINS); {self.host} is not on it"
+            )
         if self.reshape is not None:
             try:
                 re.compile(self.reshape.wide_to_long.key_pattern)
@@ -584,7 +669,9 @@ class Metric(_Strict):
     order_by: str | None = None
     restated_by: Restatement | None = None
     # Dimensions a summed running total must be filtered to one value of (NNDSS year to date: the week), so
-    # every week's running total is never added up. The compiler refuses the metric otherwise.
+    # every week's running total is never added up. For a plain count, the dimensions whose values overlap or
+    # count different things (Detroit within Michigan; one condition and another): each answer row then holds one
+    # value of them, by a filter or by grouping. The compiler refuses the metric otherwise.
     single_value_of: list[str] = Field(default_factory=list)
 
 
@@ -954,4 +1041,22 @@ def load_registry(root: Path | None = None) -> Registry:
     for path in sorted(catalog_dir.glob("*.yaml")):
         ds = load_dataset(root, path)
         datasets[ds.id] = ds
+    _check_hosts_agree(datasets.values())
     return Registry(root=root, datasets=datasets)
+
+
+def _check_hosts_agree(datasets: Iterable[Dataset]) -> None:
+    """The access policy is per host (robots.txt, the pace, a block), so every entry on one host must state it alike.
+
+    crawl.py decides browser and portal per dataset (by its URLs), but whether robots.txt binds is a property of
+    the host: two entries on one host that disagree on `government_host` would leave it to file order.
+    """
+    seen: dict[str, tuple[str, bool]] = {}
+    for ds in datasets:
+        s = ds.entry.source
+        first = seen.setdefault(s.host, (ds.id, s.government_host))
+        if first[1] != s.government_host:
+            raise RegistryError(
+                f"{ds.id} and {first[0]} are both on {s.host} but disagree on government_host; the access policy "
+                "is per host, so they must agree"
+            )

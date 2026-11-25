@@ -58,7 +58,7 @@ Anything that would change a number goes in `openQuestions`, never in the contra
 | `mi_detroit_ehe` | public; programme data, not surveillance | tasks 78–80 |
 | `mi_ahead_wayne` | public | tasks 78–80 and the AHEAD download |
 | `mi_aidsvu` | private | tasks 78–80 |
-| `mi_detroit_dhd_sti_annual` | private (no terms of reuse stated) | #19 (`detroit_dhd_epi_annual`) |
+| `mi_detroit_dhd_sti_annual` | private (no terms of reuse stated) | `detroit_dhd_epi_annual` (catalogued in #19); its port columns still to declare |
 
 In the Michigan product (`combine: grouped-never-merged`), each port reads exactly one source and declares its
 own `countedUnit` and `dataKind`. Detroit and Out-Wayne stay separate series wherever the publisher splits them.

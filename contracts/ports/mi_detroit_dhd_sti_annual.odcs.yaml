@@ -156,6 +156,6 @@ customProperties:
   - {version: 0.1.0, interface: 74c84d395e5b316200f4959a367806f69bff3afa52f708ee07548dd9cf0324de, docs: 155ddd3789cbfc1c7fd9d80e3065a7ebeff3f8cec29e31179138cc052312d64c}
 - property: openQuestions
   value:
-  - 'Fills from PR #19 (feat/michigan-tableau, detroit_dhd_epi_annual). Its HIV and gonorrhea yearly charts were not read on 2026-11-24; HIV figures there may include Ryan White programme data and must then be labelled as programme data.'
+  - 'Reads detroit_dhd_epi_annual, catalogued in PR #19 (merged). Its HIV and gonorrhea yearly charts were not read on 2026-11-24; HIV figures there may include Ryan White programme data and must then be labelled as programme data.'
   - 'Rate denominator, case definitions and geography basis are open questions in that contract; they apply here unchanged.'
   - 'The dashboard shows Detroit and Michigan (Michigan includes Detroit); Out-Wayne is not shown.'
