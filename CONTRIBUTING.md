@@ -15,7 +15,7 @@ contribution is licensed under the [Apache License 2.0](LICENSE).
 ```bash
 make install   # uv sync
 make hooks     # once per checkout: the pre-commit and pre-push hooks
-make check     # lint, type check, tests and mutation tests on changed functions (make precheck adds the rest of CI)
+make check     # lint, type check, tests and mutation tests on changed functions (make precheck runs what CI runs)
 make help      # every target
 ```
 
@@ -28,6 +28,10 @@ publishers and are left out of `make test`; run them with `make test-network`.
 - `make check` passes: ruff lint and format, mypy (strict), pytest with at least 85% coverage, and mutation tests
   (`make mutate`) on the functions you changed, with at least 70% of mutants killed. Kill survivors with a test, or
   say in the pull request why a mutant is equivalent.
+- Mutation tests are not part of CI on a pull request: they run nightly on everything changed on main
+  ([`mutation.yml`](.github/workflows/mutation.yml)). Survivors open an issue named after your pull request
+  (label `mutation-survivors`); kill each with a test, or explain in the issue why it is equivalent, then close
+  it. A release waits while one is open.
 - CI is green before the pull request: merge `origin/main`, `make precheck` passes, then the commit goes green
   on `pre-pr/<branch>`, and only that commit goes to the PR branch ([the pre-PR gate](docs/dev/README.md#the-pre-pr-gate)).
 - **New features and bug fixes add tests.** A bug fix includes a test that fails without it.
