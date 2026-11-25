@@ -356,6 +356,9 @@ def test_publisher_fields_lists_the_catalogued_worksheets_fields() -> None:
         "Location (alias)",
         "SUM(Cases) (alias)",
         "SUM(Rate)",
+        # an aggregated field's flag: written whenever the dashboard shows it suppressed
+        "SUM(Cases) flag",
+        "SUM(Rate) flag",
     }
 
 
@@ -400,9 +403,10 @@ def test_without_a_declaration_the_count_is_read_as_published() -> None:
     (page,) = tb.pages(entry({"Curve": CURVE_HASH}), serve(boot({"Curve": CURVE}, CURVE_DATA)))
     assert [r["AGG(Case Count)"] for r in page.records] == [120, 3]
     assert page.records[0]["AGG(Tooltip Cases) flag"] == "<16"
-    assert "AGG(Case Count) flag" not in tb.publisher_fields(
-        entry({"Curve": CURVE_HASH}), serve(boot({"Curve": CURVE}, CURVE_DATA))
-    )
+    assert all("AGG(Case Count) flag" not in r for r in page.records)
+    # the flag a count would carry if the dashboard suppressed it is served for the drift check either way
+    served = tb.publisher_fields(entry({"Curve": CURVE_HASH}), serve(boot({"Curve": CURVE}, CURVE_DATA)))
+    assert "AGG(Case Count) flag" in served and "YEAR(Year) flag" not in served
 
 
 def test_apply_suppressed_by_empties_the_alias_too() -> None:

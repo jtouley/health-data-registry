@@ -89,6 +89,29 @@ schema:
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: "AGG(Confirmed & Probable Case Count) flag"}
+          - {property: flagFor, value: cases}
+          - {property: flagCodes, value: {"<16": "the dashboard's tooltip shows the day's count as '<16' (its published suppression marker); the count is suppressed and left empty"}}
+    quality:
+      - id: some_daily_bars_have_counts
+        type: sql
+        description: "Fill rate: an all-empty count column would pass every value check, so at least one daily bar must carry a count (on 2026-11-24, 1,588 of the 2,240 bars did)."
+        query: "SELECT COUNT(*) FROM {object} WHERE case_status = 'Confirmed' AND cases IS NOT NULL"
+        mustBeGreaterThan: 0
+      - id: empty_count_only_where_flagged
+        type: sql
+        description: "A daily bar's count is empty only where the dashboard shows its '<16' marker: an empty count with no flag is a read failure, not suppression."
+        query: "SELECT COUNT(*) FROM {object} WHERE case_status = 'Confirmed' AND cases IS NULL AND cases_flag IS NULL"
+        mustBe: 0
+      - id: one_row_per_day_and_layer
+        type: sql
+        description: "Grain: one row per disease date and chart layer (the daily bars, case_status 'Confirmed'; the 7-day average line, case_status empty)."
+        query: "SELECT COUNT(*) FROM (SELECT disease_date, case_status FROM {object} GROUP BY disease_date, case_status HAVING COUNT(*) > 1)"
+        mustBe: 0
+      - id: archived_row_count
+        type: library
+        metric: rowCount
+        description: "An archived dashboard: 4,480 rows on 2026-11-24 (2,240 days x 2 chart layers). A different count means the archive changed and the contract needs review."
+        mustBeBetween: [4480, 4480]
 customProperties:
   - {property: licence, value: no-terms-stated}
   - {property: redistribution, value: false}

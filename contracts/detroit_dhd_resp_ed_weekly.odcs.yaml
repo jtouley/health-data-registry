@@ -81,6 +81,36 @@ schema:
           - {property: role, value: measure}
           - {property: sourceField, value: "SUM(Percent)"}
           - {property: unit, value: "fraction of all ED visits, as published (see openQuestions)"}
+      - name: share_flag
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "A suppression marker on the week's share, exactly as the dashboard would show it. The chart showed none on 2026-11-24, so no marker is quoted; this column is read so that a share the dashboard starts to suppress comes back empty with its marker, never as a number."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: "SUM(Percent) flag"}
+          - {property: flagFor, value: share_of_ed_visits}
+    quality:
+      - id: shown_weeks_row_count
+        type: library
+        metric: rowCount
+        description: "3 diagnoses x the 7 most recent weeks the dashboard shows: 21 rows on 2026-11-24. A different count means the dashboard shows another span of weeks and the contract needs review."
+        mustBeBetween: [21, 21]
+      - id: one_row_per_diagnosis_week
+        type: sql
+        description: "Grain: one row per diagnosis and week."
+        query: "SELECT COUNT(*) FROM (SELECT diagnosis, week_ending FROM {object} GROUP BY diagnosis, week_ending HAVING COUNT(*) > 1)"
+        mustBe: 0
+      - id: some_shares_present
+        type: sql
+        description: "Fill rate: an all-empty share column would pass every value check, so at least one week must carry a share (all 21 did on 2026-11-24)."
+        query: "SELECT COUNT(*) FROM {object} WHERE share_of_ed_visits IS NOT NULL"
+        mustBeGreaterThan: 0
+      - id: empty_share_only_where_flagged
+        type: sql
+        description: "A week's share is empty only where the dashboard shows a suppression marker for it."
+        query: "SELECT COUNT(*) FROM {object} WHERE share_of_ed_visits IS NULL AND share_flag IS NULL"
+        mustBe: 0
 customProperties:
   - {property: licence, value: no-terms-stated}
   - {property: redistribution, value: false}

@@ -592,7 +592,9 @@ class Metric(_Strict):
     order_by: str | None = None
     restated_by: Restatement | None = None
     # Dimensions a summed running total must be filtered to one value of (NNDSS year to date: the week), so
-    # every week's running total is never added up. The compiler refuses the metric otherwise.
+    # every week's running total is never added up. For a plain count, the dimensions whose values overlap or
+    # count different things (Detroit within Michigan; one condition and another): each answer row then holds one
+    # value of them, by a filter or by grouping. The compiler refuses the metric otherwise.
     single_value_of: list[str] = Field(default_factory=list)
 
 

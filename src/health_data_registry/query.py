@@ -67,12 +67,22 @@ def compile_metric(
     measure = sem.measure(metric.measure)
     dims = {d.name: d for d in sem.dimensions}
     for d in metric.single_value_of:
-        if d in group_by or not _single((filters or {}).get(d)):
+        if measure.kind == "running_count":
+            if d in group_by or not _single((filters or {}).get(d)):
+                raise QueryRefused(
+                    "needs_single_value",
+                    f"{metric.name} is a running total, so it is read at one {d}: filter {d} to a single value "
+                    f"(normally the latest) and don't group by it. Adding up the running totals of several {d}s "
+                    "would count the same cases many times.",
+                )
+        # A count whose values of d overlap (Michigan includes Detroit) or are different things (conditions): each
+        # answer row holds one value of d, by a filter to one value or by grouping by it; never added across them.
+        elif d not in group_by and not _single((filters or {}).get(d)):
             raise QueryRefused(
                 "needs_single_value",
-                f"{metric.name} is a running total, so it is read at one {d}: filter {d} to a single value "
-                f"(normally the latest) and don't group by it. Adding up the running totals of several {d}s would "
-                "count the same cases many times.",
+                f"{metric.name} is never added up across {d}s: they overlap or count different things (for example "
+                f"a state's count already includes its cities). Filter {d} to one value, or group by {d} to get one "
+                "row each.",
             )
 
     def dim(name: str) -> str:

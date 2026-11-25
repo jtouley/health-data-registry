@@ -43,6 +43,9 @@ SUPPRESSED: Final = re.compile(r"^\s*(<|>|<=|>=|≤|≥)\s*\d+(\.\d+)?\s*$")
 # Only those carry counts, so only they are read for suppression markers; a dimension label such as the age
 # band "< 20" is a label, never a suppressed count.
 AGGREGATED: Final = re.compile(r"^[A-Z]+\(")
+# The aggregations that make a number of a group (not a date part such as YEAR(...) or MDY(...)): the fields whose
+# flag the drift check lists as served before any marker has appeared.
+COUNTING: Final = re.compile(r"^(SUM|AGG|CNT|CNTD|COUNT|COUNTD|AVG|MEDIAN|MIN|MAX)\(")
 ALIAS_SUFFIX: Final = " (alias)"
 FLAG_SUFFIX: Final = " flag"
 WORKSHEET_FIELD: Final = "worksheet"
@@ -344,7 +347,11 @@ def pages(
 
 
 def publisher_fields(entry: CatalogEntry, fetcher: Fetcher) -> set[str]:
-    """Every field the catalogued worksheets serve today, for the contract drift check."""
+    """Every field the catalogued worksheets serve today, for the contract drift check.
+
+    An aggregated field's ``<caption> flag`` is served too: the adapter writes it whenever the dashboard shows that
+    field suppressed, so a contract may read it before any marker has appeared.
+    """
     out = {VIEW_FIELD, WORKSHEET_FIELD}
     spec = entry.source.tableau
     for view in spec.views if spec else []:
@@ -352,5 +359,6 @@ def publisher_fields(entry: CatalogEntry, fetcher: Fetcher) -> set[str]:
         for ws_name in view.worksheets:
             if ws_name in sheets:
                 out |= set(sheets[ws_name].fields)
+                out |= {c.caption + FLAG_SUFFIX for c in sheets[ws_name].columns if COUNTING.match(c.caption)}
         out |= {count + FLAG_SUFFIX for count in view.suppressed_by}
     return out

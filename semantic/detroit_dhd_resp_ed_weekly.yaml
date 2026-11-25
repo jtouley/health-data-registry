@@ -2,7 +2,7 @@ dataset: detroit_dhd_resp_ed_weekly
 version: 0.1.0
 dimensions:
   - {name: diagnosis, column: diagnosis, type: categorical, description: "COVID-19, influenza or RSV, as the dashboard codes the visit's diagnosis."}
-  - {name: week_ending, column: week_ending, type: time, description: "Last day of the week."}
+  - {name: week_ending, column: week_ending, type: time, description: "The Saturday that ends the week the emergency department visits are counted in, as the dashboard's weekly axis labels it (Sunday to Saturday weeks; whether they are MMWR weeks is not stated)."}
 measures:
   - {name: share_of_ed_visits, column: share_of_ed_visits, kind: percent, unit: "fraction of all ED visits, as published", description: "Share of all emergency department visits in the week diagnosed with the illness."}
 metrics:
