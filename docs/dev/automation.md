@@ -14,12 +14,13 @@ our own.
 | [`drift-check.yml`](../../.github/workflows/drift-check.yml) | `check-contracts` against every publisher, opening or updating an issue on failure; re-enables the scheduled workflows | Friday 05:37 | Issues; workflow enabled state |
 | [`cflite_pr.yml`](../../.github/workflows/cflite_pr.yml) | ClusterFuzzLite: builds the Atheris harnesses in `fuzz/` and fuzzes what the change reaches, about 5 minutes per harness | On pull requests, and pushes to `pre-pr/**`, that touch `src/`, `fuzz/` or `.clusterfuzzlite/` | Run artifacts only |
 | [`cflite_batch.yml`](../../.github/workflows/cflite_batch.yml) | ClusterFuzzLite: fuzzes every harness for about 30 minutes each and keeps the grown corpus | Thursday 02:53 | Run artifacts only (the corpus) |
+| [`sealed-test.yml`](../../.github/workflows/sealed-test.yml) | Runs and scores the sealed TEST set on a commit of main, or lists the TEST items a catalog change touches; aggregates only ([eval/README.md](../../eval/README.md#running-test-in-ci)) | Manual dispatch only, on main, in the `eval` environment; release milestones only | The job summary; one comment per run on the issue "Sealed TEST use log" |
 | [`check-crawl-keys.yml`](../../.github/workflows/check-crawl-keys.yml) | Checks the `crawl` environment's API keys (Census, Socrata, OpenAlex), one request per publisher; never prints a key ([README](README.md)) | Manual dispatch only, on main, in the `crawl` environment | Nothing |
 
 CI, CodeQL, Scorecard, release and npm-publish are unchanged and described in their own files.
 
 Every action is pinned to a full commit SHA. Every workflow's top-level token is `contents: read` or narrower
-(`check-crawl-keys.yml` has `permissions: {}`); `issues: write` is granted only to the jobs that open an issue,
+(`check-crawl-keys.yml` and `sealed-test.yml` have `permissions: {}`); `issues: write` is granted only to the jobs that open an issue or write the sealed TEST use log,
 `actions: write` only to the keep-alive job and `actions: read` only to the deploy's verify job, the two
 fuzzing jobs (to read earlier runs' corpus artifacts) and CI's mutation list job (to find a green pre-pr verdict for the same commit, [the pre-PR
 gate](README.md#the-pre-pr-gate)). The ClusterFuzzLite actions are pinned by SHA too, but they pull OSS-Fuzz's runner images by their
@@ -239,6 +240,7 @@ maintainer creates:
 | `space` | `deploy-space.yml` deploy | Selected tags only: `v*.*.*` | `HF_TOKEN` (or `HF_SPACE_TOKEN`) |
 | `hub-publish` | `refresh.yml` publish | Selected branches only: `main` | `HF_TOKEN` (or `HF_PUBLISH_TOKEN`) |
 | `crawl` | `check-crawl-keys.yml` check | Selected branches only: `main` (required: the workflow's own main-only check is only an early refusal) | `CENSUS_API_KEY`, `SOCRATA_APP_TOKEN`, `OPENALEX_API_KEY` |
+| `eval` | `sealed-test.yml` evaluate and label-check | Selected branches only: `main` (required, as for `crawl`) | `EVAL_TEST_KEY` (the age identity: one `AGE-SECRET-KEY-1...` line), `ANTHROPIC_API_KEY` (for the driver), and `EVAL_HF_TOKEN` (read access to `<owner>/health-data-registry-ops-eval`) when the ciphertext is in the ops dataset |
 
 Required reviewers can be added to any of them; a run then waits for approval, so it may look stuck until
 someone approves it. Until the environments exist, GitHub creates them on the first run

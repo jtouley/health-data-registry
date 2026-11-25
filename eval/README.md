@@ -12,6 +12,8 @@ differences are listed below, so a later run can be compared with it.
 | `numbers.py` | Reads numbers as tokens (value, precision, year or count) and finds the sums the rubric allows |
 | `stats.py` | Wilson 95% interval, McNemar's test for before/after runs, the DEV−TEST gap, per-class tables |
 | `report.py` | Writes aggregate tables; prints per-question rows for DEV only |
+| `sealed_run.py` | The checks the sealed TEST workflow runs around decrypting, scoring and the use count |
+| `label_check.py` | Lists the items whose labels depend on catalog entries changed between two commits |
 | `dev/dev.jsonl` | The DEV questions: 29 expected records, no answers |
 
 Quick start, on DEV: score a run into `run.jsonl` ([Running a report](#running-a-report)), then
@@ -69,8 +71,18 @@ Each question carries one of six expected classes:
 | `DECLINE_NEAREST` | Say the place isn't served, and name the nearest served place or places |
 | `DECLINE_ELSEWHERE` | Decline the measure or source asked for, and point to the catalogued dataset that fits |
 | `HANDOFF_GBD` | Hand modelled burden to the IHME GBD connector, with no "GBD vs local" verdict |
+| `HANDOFF_CONNECTOR` | Hand off to the connector the record names (`gbd`, `openalex` or `pubmed`), such as a publication follow-up to OpenAlex or PubMed |
 | `DISAMBIGUATE` | Ask which condition or series is meant before giving any number |
 | `OUT_OF_SCOPE` | Say no catalogued source covers it, with no number |
+
+`HANDOFF_CONNECTOR` names its target connectors in `expected_nearest`, with or without `_connector` and joined
+by `|` when more than one will do (`"openalex_connector|pubmed_connector"`); any other item there is a place.
+Only the hand-off itself is scored, never what the other connector returns, so a result doesn't depend on a third
+party being up: Class asks whether the reply hands off to any connector, and Target whether it names one the record
+expects. With a `gbd` target the reply must show no numbers and no verdict, as for `HANDOFF_GBD`; with OpenAlex or
+PubMed it may list what this server holds (abstracts, years, DOIs) beside the hand-off. `HANDOFF_GBD` stays as an
+alias: its records keep their class name and score exactly as before, so the frozen DEV and TEST labels need no
+change (rule C1 in `scorer.py`).
 
 Each reply gets three scores from 0 to 2 (Class, Target, Provenance) and a fabrication gate. A question
 passes only when the gate passes and all three scores are 2. A reply that shows no number has provenance
@@ -165,8 +177,8 @@ The output starts with the DEV table:
 `--before` adds McNemar's test against an earlier run on the same split and labels. `--questions` adds
 per-question scores and works for DEV only.
 
-To score TEST, the plaintext must be decrypted first. The maintainer holds the age key (the eval workflow
-reads it from the `EVAL_TEST_KEY` secret). Decrypt into a folder outside the repo, score with
+To score TEST, the plaintext must be decrypted first. The maintainer holds the age key (the sealed TEST workflow
+reads it from the `EVAL_TEST_KEY` secret; see [Running TEST in CI](#running-test-in-ci)). Decrypt into a folder outside the repo, score with
 `load_expected(path, "test")` and `to_row("test")` as above (a file whose hash differs voids the run), and
 keep the results outside the repo too. Then:
 
@@ -191,3 +203,47 @@ before writing anything.
 
 Any fabrication on TEST blocks a release, whatever the pass rates. The TEST report prints "Release is
 blocked." when it finds one; the DEV report only counts them.
+
+## Running TEST in CI
+
+[`.github/workflows/sealed-test.yml`](../.github/workflows/sealed-test.yml) runs TEST at release milestones only,
+never on a pull request. It is started by hand from main, and its jobs read their secrets from the GitHub
+environment `eval`, which allows main only ([automation.md](../docs/dev/automation.md)).
+
+| Input | What it is |
+|---|---|
+| `mode` | `evaluate` runs and scores TEST; `label-check` lists the items a catalog change touches, with no server run |
+| `ciphertext` | A path in the private ops dataset `<owner>/health-data-registry-ops-eval`, or `release:<tag>/<asset>` for an asset of one of this repository's releases |
+| `commit` | The full sha of the commit on main to evaluate (for `label-check`, the newer catalog) |
+| `base_commit` | `label-check` only: the full sha of the older catalog, such as the commit the labels were audited against |
+| `wave` | A short name for the run, logged with it |
+| `reaudited_labels` | Blank for TEST v1 (frozen sha256 above). For a re-audited set, the sha256 of its ciphertext, which must already be listed in `REAUDITED_TEST` in `sealed_run.py` |
+
+**evaluate** checks that the commit is on main, builds the server there (locked dependencies and a fresh lake of
+the public sources), then fetches and decrypts the labels. It asks every question through the server with the
+driver and scores the run. Only the aggregate tables of `report.py --split test` reach the job summary, with the
+commit, the wave and the two sha256s. The plaintext stays in memory or in the runner's temporary directory (mode
+0600), and the last step deletes it. No artifact, cache or log line holds a question, a label, an answer or a
+per-question row. Error messages from parsers are withheld, because they can quote a record.
+
+**The driver** is the evaluator's and is not in this repository yet. Until `eval/drive.py` is on main, `evaluate`
+stops before it fetches or decrypts anything, so no use of TEST is spent. The workflow calls it as
+
+```sh
+python -m eval.drive --questions <labels.jsonl> --server-dir <server checkout> --out <dir>
+```
+
+with `HDR_LAKE` and `ANTHROPIC_API_KEY` set. It must write `<dir>/transcript.jsonl` and `<dir>/answers.jsonl` in
+the formats under [Running a report](#running-a-report) and exit 0. Its output goes to a file that is never
+printed, since it can quote the questions.
+
+**label-check** decrypts the labels and lists the ids of the items that depend on a catalog entry changed between
+`base_commit` and `commit` (`label_check.py`: L1 an expected dataset's entry changed, L2 it was removed, L3 the
+item's condition is named in an added or changed entry it doesn't expect). Each id comes with a fixed reason
+that never names a dataset, a condition or a class. Nothing from either commit is run. After a re-audit, list
+the new ciphertext's sha256 and its plaintext sha256 in `REAUDITED_TEST` in a reviewed pull request, then run
+with `reaudited_labels`.
+
+**The use log.** Every run that decrypted the labels adds one comment to the issue "Sealed TEST use log": date,
+mode, wave, commit, actor, the ciphertext and label sha256s, and the run's link. The use-log job's summary gives the
+number of evaluation runs of those labels, counting the run of TEST v1 before the log existed (`PRIOR_USES`).
