@@ -4,8 +4,8 @@ The research index (CROI and the DOI-published conferences: IDWeek, SHEA Spring,
 abstract the same way, from its title and, where we hold it, its text. A tag is a hint for finding prior work,
 not a fact about the study: a missing tag doesn't mean the topic is absent (ADR 0006: no model output is stored).
 
-The condition, design, data-source and geography rules are the CROI adapter's (wip/croi-index), with conditions
-for healthcare-associated infection and stewardship added for the infection-prevention meetings.
+The condition, design, data-source and geography rules started as the CROI adapter's (adapters/croi.py), with
+conditions for healthcare-associated infection and stewardship added for the infection-prevention meetings.
 """
 
 from __future__ import annotations

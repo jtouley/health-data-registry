@@ -250,9 +250,10 @@ WORKFLOWS: tuple[Workflow, ...] = (
             ),
             Step(
                 "Check it's new: search PubMed (and OpenEvidence if I have it), then this public health data "
-                "tool's find_prior_work for abstracts, case reports and health department reports PubMed misses. "
+                "tool's find_prior_work for CROI conference abstracts PubMed misses (it covers CROI only). "
                 "List what has been done (title, year, venue, link) and say where the gap is. If a tool isn't "
-                "connected or its index isn't built yet, say so plainly instead of guessing.",
+                "connected, its index isn't loaded, or a year isn't fully indexed, say so plainly instead of "
+                "guessing.",
                 ("find_prior_work",),
             ),
             Step(
@@ -388,7 +389,8 @@ LANE_RULES = (
     "- Observed and reported data (surveillance counts, published rates, resistance percentages, years after 2023 "
     "where published): this public health data tool, health-data-registry. It never gives a GBD number and never "
     "says whether GBD is right; it lines its observed numbers up beside GBD's names.\n"
-    "- Papers and prior work: PubMed, then this tool's find_prior_work for reports PubMed misses.\n"
+    "- Papers and prior work: PubMed, then this tool's find_prior_work for CROI conference abstracts PubMed "
+    "misses (CROI only).\n"
     "If a tool isn't connected, say so plainly and tell me how to add it; never answer its lane from memory."
 )
 

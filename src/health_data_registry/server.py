@@ -226,10 +226,13 @@ def build_server(registry: Registry | None = None, engine: Engine | None = None)
         dataset: str | None = None,
         fmt: Fmt = "csv",
     ) -> Out:
-        """Has this been presented before? CROI conference abstracts on a condition, optionally in a place
-        (geography), years ('2020-2024') or using a kind of data (dataset, e.g. surveillance): title, year,
-        session type and the link to read it on CROI's site, with a short excerpt when available. Says plainly when
-        the index isn't built yet, or a year isn't fully indexed."""
+        """Has this been presented before? CROI abstracts on a condition, narrowed by place, years or kind of data,
+        each with its link and a short excerpt; says which years aren't fully indexed yet.
+
+        Arguments: geography (a place), years ('2023', '2020-2024' or '2020-'), dataset (a kind of data, e.g.
+        surveillance). Each row gives the conference, year, abstract number, title, session type, link, poster
+        link, excerpt, when the page was read (retrieved_at) and its page_sha256. Says plainly when the index isn't
+        loaded on this server, and never reports "no match" for a year that isn't fully indexed."""
         return _safe(
             lambda: tools.find_prior_work(reg, condition=condition, geography=geography, years=years,
                                           dataset=dataset, fmt=fmt, lake=eng.lake),

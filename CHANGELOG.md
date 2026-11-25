@@ -10,9 +10,11 @@ All notable changes to this project are documented here. The format follows
 
 - CROI abstract index: `health-data-registry index-croi` crawls croiconference.org at its robots.txt pace (five
   most recent years by default) into two private-tier stores, metadata (`croi_abstracts_index`) and abstract
-  text (`croi_abstracts_text`); posters are linked, never stored. `find_prior_work` reads it, and says when a
-  year is not fully indexed instead of reporting no match. A year is complete only at the listing's own total;
-  writes are atomic, data before checkpoint; one crawler per host.
+  text (`croi_abstracts_text`); posters are linked, never stored. `find_prior_work` reads it, gives each row's
+  `retrieved_at` and `page_sha256` with the contract version, and says when a year is not fully indexed instead
+  of reporting no match (with no years asked, it checks the five default years). A year is complete only when
+  the distinct abstracts stored equal the listing's own total; writes are atomic, data before checkpoint; one
+  crawler per host for each user, never faster than CROI's 120-second delay.
 - Repository scaffolding under the Apache License 2.0, with a NOTICE for material adapted from the author's
   earlier MIT-licensed work.
 - SECURITY.md (private reporting through GitHub advisories, 14-day first response), CONTRIBUTING.md,

@@ -21,7 +21,7 @@ Every tool only reads data. None of them can change anything, upload anything or
 | [`get_rate`](#get_rate) | How common is it here, per 100,000? |
 | [`get_provenance`](#get_provenance) | Where exactly did these numbers come from? |
 | [`list_caveats`](#list_caveats) | What can't this data tell me? |
-| [`find_prior_work`](#find_prior_work) | Has this been looked at before? (coming) |
+| [`find_prior_work`](#find_prior_work) | Has this been presented at CROI before? |
 | [`get_publication_outlook`](#get_publication_outlook) | How often do abstracts at this conference become papers? |
 | [`compare_rates`](#compare_rates) | Is it higher here than there, or now than then? |
 | [`get_trend`](#get_trend) | Is it rising? |
@@ -48,7 +48,7 @@ The same list, as the server itself describes each tool to Claude:
 | `check_signal` | Is this week unusual? The last 4 weeks' cases against the same, preceding and following 4 weeks of the past 5 years, in the style of CDC's historical limits for notifiable diseases. |
 | `get_provenance` | Where a source's numbers came from: the exact URLs, when they were fetched, content hashes, case definitions and how to cite them. |
 | `list_caveats` | What the data can't tell you: geography traps, suppression, provisional years, unreviewed contracts and facts not yet confirmed with the publisher. |
-| `find_prior_work` | Has this been presented before? CROI conference abstracts on a condition, optionally in a place (geography), years ('2020-2024') or using a kind of data (dataset, e.g. surveillance): title, year, session type and the link to read it on CROI's site, with a short excerpt when available. |
+| `find_prior_work` | Has this been presented before? CROI abstracts on a condition, narrowed by place, years or kind of data, each with its link and a short excerpt; says which years aren't fully indexed yet. |
 | `get_publication_outlook` | How often presented abstracts at a conference (e.g. "IDWeek", "CROI") became full papers: one row per stage from idea to paper, each with its source, n and 95% interval, or "unknown". |
 | `query_sql` | Escape hatch for questions the other tools don't cover: one read-only SELECT over loaded sources (tables are named by source_id). |
 
@@ -237,16 +237,26 @@ the contract is still a draft, and the place traps that apply everywhere.
 
 ### `find_prior_work`
 
-**Conference abstracts, case reports and health department reports** on a condition, with the datasets each used.
+**CROI conference abstracts** on a condition, each with its link on CROI's site and a short excerpt. It covers
+CROI only, so search PubMed too. Matches come from fixed word rules over each abstract's title and text, not from
+reading it: check each one.
 
 | Parameter | Required | What it does |
 |---|---|---|
-| `condition` | yes | The condition |
-| `geography`, `years`, `dataset` | no | Narrow the search |
+| `condition` | yes | The condition, e.g. `tuberculosis` or `PrEP` |
+| `geography` | no | A country or region, e.g. `Kenya` |
+| `years` | no | One year (`2023`), a range (`2020-2024`) or an open range (`2020-`, `-2019`) |
+| `dataset` | no | A kind of data the work used, e.g. `surveillance` or `claims` |
 
-Coming: the index isn't built yet. Today the tool says so, returns nothing rather than a partial list, and suggests
-searching PubMed (and OpenEvidence if you use it) and the IDWeek abstracts in the Open Forum Infectious Diseases
-supplements.
+**Returns:** `conference`, `year`, `abstract_number`, `title`, `session_type`, `link`, `poster_link`, `excerpt`,
+`retrieved_at` (when the page was read) and `page_sha256` (the page's fingerprint), with notes on the source, its
+contract version and CROI's terms. The full abstract and the poster are read on CROI's site.
+
+**Incomplete years:** the index is built a year at a time at CROI's own pace (about 47 hours a year). Until every
+abstract of a year is read, the tool names that year as not fully indexed and never says "no match" for it. With
+no `years` given, it checks the five most recent meetings (2022-2026).
+
+**Try:** "Has anyone presented on TB preventive therapy in Kenya at CROI since 2022?"
 
 ### `get_publication_outlook`
 
@@ -383,7 +393,9 @@ The common ones:
 | "Population counts (Census) aren't loaded yet …" | `get_rate` has no denominator on this setup | Use `get_series`, or a published rate |
 | "… could not be reached to download …" | A restricted source (WHO) is fetched from the publisher, and the publisher's site didn't answer | Try again in a few minutes |
 | "The hub release … has no file …" or "… does not list …" | The hub release the server reads from is incomplete | Try again later, or [open an issue](https://github.com/jtouley/health-data-registry/issues) |
-| "The index … isn't built yet" | `find_prior_work` is coming | Search PubMed |
+| "The CROI abstract index isn't loaded on this server yet …" | `find_prior_work` has no index on this server | Search PubMed and CROI's own abstract search |
+| "No match for '…' among the abstracts indexed so far. The CROI index is not complete for …" | Some of the years asked for aren't fully indexed, so a missing match there means nothing | Search CROI's own abstract site and PubMed for those years |
+| "'…' isn't a year or a range of years …" or "'…' runs backwards …" | `years` couldn't be read | Give one year (`2023`) or a range (`2020-2024`) |
 | "The open data hub … has no published release yet" | The hub's first data release isn't out | Try again later; nothing was guessed |
 | "This setup has reading data turned off for …" | This installation reads neither the hub (`HDR_HUB=off`) nor the publisher live (`HDR_FETCH_AT_RUN_TIME=0`), and has no local copy | Run the [Something's wrong](helpers.md#somethings-wrong) helper; whoever installed it removes whichever of the two settings is there |
 | "That query can't run: …" | `query_sql` refused the query | Use `get_series` or `describe_dataset` instead |

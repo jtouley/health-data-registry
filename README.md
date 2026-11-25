@@ -153,7 +153,7 @@ each tool's parameters, what comes back, an example prompt and what it says when
 | `check_signal` | Is this week unusual? The last 4 weeks' cases against the same, preceding and following 4 weeks of the past 5 years, in the style of CDC's historical limits for notifiable diseases. |
 | `get_provenance` | Where a source's numbers came from: the exact URLs, when they were fetched, content hashes, case definitions and how to cite them. |
 | `list_caveats` | What the data can't tell you: geography traps, suppression, provisional years, unreviewed contracts and facts not yet confirmed with the publisher. |
-| `find_prior_work` | Has this been presented before? CROI conference abstracts on a condition, optionally in a place (geography), years ('2020-2024') or using a kind of data (dataset, e.g. surveillance): title, year, session type and the link to read it on CROI's site, with a short excerpt when available. |
+| `find_prior_work` | Has this been presented before? CROI abstracts on a condition, narrowed by place, years or kind of data, each with its link and a short excerpt; says which years aren't fully indexed yet. |
 | `get_publication_outlook` | How often presented abstracts at a conference (e.g. "IDWeek", "CROI") became full papers: one row per stage from idea to paper, each with its source, n and 95% interval, or "unknown". |
 | `query_sql` | Escape hatch for questions the other tools don't cover: one read-only SELECT over loaded sources (tables are named by source_id). |
 
@@ -277,8 +277,11 @@ technical name for the program behind a connector.
 - **No sex or age breakdowns** in the current series, so `age_adjust` has nothing to standardise yet and says so.
 - **CDC and Census answers wait for the hub's first data release.** The hosted server is a preview; until the
   release is out, those questions get a plain message. WHO answers work today.
-- **Not built yet:** the published hub's first release, the prior-work index (`find_prior_work` says so), the
-  sealed blind question sets, and screenshots in these docs.
+- **Prior work covers CROI only,** and only the years the maintainer has indexed: CROI asks crawlers to wait
+  120 seconds between pages, so one conference year takes about 47 hours. `find_prior_work` names any year that
+  isn't fully indexed instead of saying "no match", and says so when the index isn't loaded on a server.
+- **Not built yet:** the published hub's first release, the sealed blind question sets, and screenshots in these
+  docs.
 
 ## How to cite
 

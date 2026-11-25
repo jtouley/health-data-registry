@@ -63,7 +63,7 @@ PROVENANCE_COLUMNS: dict[str, tuple[str, str, str]] = {
 # What a stored row keeps from an enriching API that couldn't be read this run.
 _TEXT_COLUMNS = ("abstract_text", "abstract_tier", "abstract_licence")
 _ID_COLUMNS = ("pubmed_pmid", "pmcid")
-# The columns every research-index row shares with the CROI index (croi_index.records on the CROI branch), so
+# The columns every research-index row shares with the CROI index (croi_index.records), so
 # all conferences land in one index: the abstract's id, year, title, authors as published, session, links and
 # our rule-based tags.
 RESEARCH_INDEX_COLUMNS: tuple[str, ...] = (
