@@ -1,0 +1,1 @@
+COPY deaths TO 'out.csv'

@@ -25,6 +25,15 @@ updates:
         applies-to: version-updates
         update-types: ["major"]
 
+  # The ClusterFuzzLite build image, pinned by digest in .clusterfuzzlite/Dockerfile.
+  - package-ecosystem: "docker"
+    directory: "/.clusterfuzzlite"
+    schedule:
+      interval: "weekly"
+
+  # No pip entry for fuzz/requirements.txt: it is generated from uv.lock (make fuzz-requirements), so the fuzzer
+  # runs the DuckDB and sqlglot that production runs. A test fails when a uv bump above leaves it behind.
+
   # The Space's base images (space/Dockerfile) are pinned by digest; Dependabot bumps tag and digest together.
   - package-ecosystem: "docker"
     directory: "/space"
