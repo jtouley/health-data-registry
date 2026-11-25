@@ -27,7 +27,8 @@ work is not committed to the PR branch: it stays uncommitted or goes on a separa
 | Command | What it does |
 |---|---|
 | `make install` | `uv sync` |
-| `make check` | `lint`, `typecheck`, `test` and `mutate`: everything CI runs |
+| `make check` | `lint`, `typecheck`, `test` and `mutate`: the quick local loop, not all of CI |
+| `make precheck` | The pre-PR gate's local half: the CI checks plus a docs-drift check, stopping at the first failure ([below](#the-pre-pr-gate)) |
 | `make lint` / `make fmt` | Ruff lint and format check / fix |
 | `make typecheck` | mypy, strict |
 | `make test` | Offline tests with coverage; fails under 85% (`COV_FLOOR`) |
@@ -86,6 +87,34 @@ To run the server in Claude Code from a checkout:
 ```bash
 claude mcp add health-data-registry -- uv run --directory "$PWD" health-data-registry serve
 ```
+
+## The pre-PR gate
+
+A pull request's CI should pass the first time. So a commit is checked twice before it reaches a PR branch:
+
+0. **Merge `origin/main` into the branch** (`git fetch origin main && git merge origin/main`). A PR's CI tests
+   the branch merged with current main (`refs/pull/<n>/merge`), while a pre-pr run tests the branch tip alone, so
+   the two agree only when the branch already contains main. If main moves after a green pre-pr run, merge it
+   again and repeat the steps below.
+1. **`make precheck`** runs the CI checks locally plus a docs-drift check, and stops at the first failure: all
+   pre-commit hooks (actionlint with shellcheck included), lint, typecheck, tests with the coverage floor, the
+   smoke journey, the Projects kit build, the docs drift check (`make docs`, then nothing may change), and
+   mutation tests on the modules changed since `BASE` (default `origin/main`), one step per module as CI shards
+   them, then the 70% floor on the total. Each step prints a PASS or FAIL line, and a summary follows. It checks
+   the working tree, so commit first: CI checks the commit you push. It runs on macOS's bash 3.2 as well.
+2. **Push to `pre-pr/<branch>`** (`git push origin HEAD:pre-pr/<branch>`). CI and CodeQL run on every push to
+   `pre-pr/**`, mutation shards included, against `origin/main`. A newer push to the same pre-pr branch cancels
+   the older run. `make precheck` does not run CodeQL or the Python 3.13 test leg; CI runs them here, and again
+   on the PR.
+3. **When every check is green**, open the PR from that exact commit, or fast-forward the PR branch to it
+   (`git push origin <green sha>:<pr-branch>`).
+
+Red on the pre-pr branch? Fix it there, run `make precheck` again, and push again. Fix-round commits and merges
+of main take the same path.
+
+The actionlint and shellcheck hooks need `uv sync` first: both tools come from the locked dev environment
+(`actionlint-py` and `shellcheck-py`, pinned in `uv.lock`), and the `shellcheck-present` hook fails if shellcheck
+is missing, because actionlint would otherwise skip its shell checks silently.
 
 ## Architecture
 
