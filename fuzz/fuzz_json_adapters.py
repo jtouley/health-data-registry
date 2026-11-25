@@ -100,6 +100,9 @@ def _json_shape(data: bytes) -> str:
     return "json"
 
 
+_MUTMUT_NAME = re.compile(r"^x_(.+?)__mutmut_(?:orig|\d+)$")
+
+
 def known_adapter_error(adapter: str, data: bytes, e: Exception) -> bool:
     """Whether an exception escaping one adapter call is exactly one of the filed, unfixed findings."""
     if KNOWN_SOCRATA_OVER_MAX_ROWS and type(e) is OverMaxRows and adapter == "socrata.pages":
@@ -115,8 +118,10 @@ def known_adapter_error(adapter: str, data: bytes, e: Exception) -> bool:
     named = [f for f in frames if f.filename == frames[-1].filename and not f.name.startswith("<")]
     if not named or _json_shape(data) != "json":
         return False
+    # mutmut runs the tests on a copy whose functions are renamed x_<name>__mutmut_orig: read the original name.
+    raised_in = _MUTMUT_NAME.sub(r"\1", named[-1].name)
     return any(
-        filename == f and named[-1].name == fn and type(e) is kind and pattern.fullmatch(str(e))
+        filename == f and raised_in == fn and type(e) is kind and pattern.fullmatch(str(e))
         for f, fn, kind, pattern in _WRONG_SHAPE
     )
 
