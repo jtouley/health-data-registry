@@ -10,7 +10,9 @@ make (whether a series filter is right, whether a caveat is stated, whether a de
 here is the lenient reading, and a `JudgementGrader` (off by default) can only lower the score: the rubric says
 the stricter of two scorers stands.
 
-Rules, numbered as in the baseline report (R1-R9) plus the ones this port had to make explicit (S1-S6):
+Rules, numbered as in the baseline report (R1-R9), plus S1-S8: rules the baseline applied implicitly and this
+scorer states outright. The baseline's own scoring scripts (`scoring/fabcheck.py`, `scoring/hosted_answers.py`)
+were kept with the baseline run, outside this repo; the rules below are ported from them.
 
 - R1 Class: `class_score`, one rule per expected class, from what the answer does (declines, hands off to the
   IHME GBD connector, asks which series is meant, shows numbers) and what the tools returned.
@@ -21,8 +23,8 @@ Rules, numbered as in the baseline report (R1-R9) plus the ones this port had to
 - R4 Fabrication: `check_fabrication`, token-level numeric matching (rules N1-N6 in `eval/numbers.py`): each
   number in the reply's prose must equal a number a tool returned (rounded to the precision the reply shows,
   percentages and fractions matched both ways, years matched as years and never as counts), or be one of the
-  rubric's allowed sums (`numbers.ALLOWED_DERIVATIONS`), which are reported apart as derived. The baseline's
-  substring check (`scoring/fabcheck.py`, line for line) stays as `unmatched_numbers_legacy`, used when
+  rubric's allowed sums (`numbers.ALLOWED_DERIVATIONS`), which are reported apart as derived, with the
+  number of candidate sums tried. The baseline's substring check (its `scoring/fabcheck.py`, line for line) stays as `unmatched_numbers_legacy`, used when
   `score_question(..., legacy=True)`.
 - R5 Naming another catalogued dataset as an alternative does not lower Target; `census_county_pop` is neutral
   when `get_rate` was called (it is that tool's denominator).
@@ -35,8 +37,11 @@ Rules, numbered as in the baseline report (R1-R9) plus the ones this port had to
   URLs that is not a year (a bare 1900-2099), not in the fabrication allowlist, and not right after a time or
   age word (week, year, age and so on).
 - S2 A decline is one of the fixed phrases in `DECLINE_PATTERNS`; a hand-off names IHME or the GBD connector; a
-  clarifying question is a sentence ending in "?" or one of `ASK_PATTERNS`. Where a tool response carries the
-  structured decline fields in `DECLINE_FIELDS` (S7), they are read first and the phrases are the fallback.
+  clarifying question is a sentence ending in "?" or one of `ASK_PATTERNS`. A follow-up offer ("Would you
+  like the weekly breakdown?", `OFFER_RE`) is not a clarifying question, and a caveat about data ("'-' means
+  not reported", "not available", "no data for 2025") is not a decline. Where a tool response carries the
+  structured decline fields in `DECLINE_FIELDS` (S7), they decide and the phrases are not read. For ANSWER,
+  the phrases can lower Class only when no data tool returned rows (`Observation.data_returned`).
 - S3 A dataset counts as named as fitting when its id appears in the answer at least once outside a negation
   that names it ("not <id>", "<id> is not", "<id> does not"); known ids come from the expected record, the
   provenance lines and dataset-shaped ids in tool responses, and any `catalog_ids` passed in. Ids only, not
@@ -62,7 +67,8 @@ Rules, numbered as in the baseline report (R1-R9) plus the ones this port had to
   shown number (SUM over a place filter holding a total row and a place, or with no place filter or grouping;
   SUM over two or more labels not grouped by label) and from the derivation of a shown number (N6).
 - H1-H5 Hosted run (`hosted=True`), applied only when the run's data tools say the open data hub has no release
-  (`HUB_UNAVAILABLE_RE`), ported from scoring/hosted_answers.py as rules instead of per-question lists:
+  (`HUB_UNAVAILABLE_RE`: the hub's own no-release wording only), ported from the baseline's
+  `scoring/hosted_answers.py` as rules instead of per-question lists:
   H1 ANSWER: Class 0; Target 2 when every expected dataset is the source of a get_series series in the
   transcript, else 0. H2 DECLINE_NEAREST/DECLINE_ELSEWHERE where an expected dataset serves the asked condition
   as a series: that dataset counts as named, then the usual rules. H3 the same classes with no such series:
@@ -124,11 +130,11 @@ DECLINE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(p, re.I)
     for p in (
         r"\bno (?:catalogued|catalogue|loaded|listed|registered) (?:source|dataset|data)",
-        r"\bnot (?:served|covered|catalogued|in the catalog(?:ue)?|reported|available|published)\b",
+        r"\bnot (?:served|covered|catalogued|in the catalog(?:ue)?|published)\b",
         r"\b(?:does not|doesn't|do not|don't|cannot|can't|isn't|is not|aren't|are not) "
         r"(?:cover|serve|report|have|include|carry|provide|publish|hold|break)",
         r"\bhas no rows for\b",
-        r"\bno (?:source|dataset|data)\b",
+        r"\bno (?:source|dataset)\b",
         r"\boutside (?:the|this|what the) (?:catalog|catalogue|registry|server)",
         r"\bnone of the (?:catalogued|loaded) (?:sources|datasets)",
         r"\b(?:isn't|is not|aren't|are not|not)\s+(?:a |an )?(?:reporting area|catalogued|cataloged|served|"
@@ -136,6 +142,12 @@ DECLINE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         r"\bno\b[^.;]{0,60}\b(?:is|are) (?:catalogued|cataloged|published|served)\b",
         r"\b(?:can't|cannot|can not) (?:give|answer|compare|fetch|serve|provide)\b",
     )
+)
+# S2: a sentence ending in "?" that offers more instead of asking what was meant.
+OFFER_RE = re.compile(
+    r"^\W*(?:would you like|do you want|want me to|shall i|should i|can i|may i|could i|"
+    r"would it help|is there anything|anything else|if you(?:'d| would) like|let me know if|i can also)\b",
+    re.I,
 )
 ASK_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(p, re.I)
@@ -171,7 +183,12 @@ DATA_TOOLS = frozenset(
     {"get_series", "get_rate", "get_trend", "get_aligned_with_gbd", "query_metric", SQL_TOOL}
 )
 METADATA_TOOLS = frozenset({"describe_dataset", "list_caveats"})
-HUB_UNAVAILABLE_RE = re.compile(r"has no tagged release yet|That query can't run", re.I)
+# The hub's own no-release wording (hub.py: "has no published release yet", earlier "has no tagged release
+# yet"; a local copy that "is not a tagged release"). Not query_sql's generic "That query can't run".
+HUB_UNAVAILABLE_RE = re.compile(
+    r"open data hub \([^)]*\) has no (?:tagged|published) release yet|hub copy at \S+ is not a tagged release",
+    re.I,
+)
 NO_SOURCE_RE = re.compile(
     r"No loaded source reports '[^']*'\.(?: Conditions available now: (?P<list>.*?)\. Try)?", re.S
 )
@@ -363,6 +380,8 @@ class Observation:
     target_flags: tuple[str, ...] = ()
     class_source: Literal["fields", "phrases"] = "phrases"
     shown_tokens: tuple[num.Token, ...] = ()
+    named_text: str = ""
+    data_returned: bool = False
 
 
 @dataclass(frozen=True)
@@ -404,6 +423,7 @@ class FabricationCheck:
     derived: tuple[tuple[str, str], ...] = ()  # (number, allowed derivation)
     forbidden: tuple[tuple[str, str], ...] = ()  # (number, forbidden derivation), also in `unmatched`
     subarea_mixed: bool = False
+    sums_tried: int = 0  # N6: candidate sums the derivation search tried, over every unmatched number
 
     @property
     def fabricated(self) -> bool:
@@ -426,9 +446,11 @@ class ScoredQuestion:
     target_flags: tuple[str, ...] = ()
     hosted_rule: str | None = None
     class_source: Literal["fields", "phrases"] = "phrases"
+    sums_tried: int = 0
 
     def to_row(self, split: Split) -> dict[str, Any]:
-        """A row in the baseline's results format (baseline_<sha>.jsonl): aggregate fields only, no text."""
+        """A row in the baseline's results format (baseline_<sha>.jsonl): scores and flags only, never the
+        question, the answer or its numbers. One row per question, so a TEST row file stays outside the repo."""
         return {
             "id": self.id,
             "split": split.upper(),
@@ -442,6 +464,7 @@ class ScoredQuestion:
             "total": self.a.total,
             "sql_needed": self.sql_needed,
             "tools_called": list(self.tools_called),
+            "sums_tried": self.sums_tried,
         }
 
 
@@ -502,10 +525,17 @@ def _allowlisted(tok: num.Token) -> bool:
     return not tok.count_context and tok.value in num.FAB_ALLOWLIST
 
 
+def named_text(answer: str, calls: Sequence[ToolCall]) -> str:
+    """N6: where a place counts as named for a sum across places: the reply's prose and the calls' arguments."""
+    return "\n".join([_prose(answer), *_args_texts(calls)])
+
+
 def check_fabrication(answer: str, calls: Sequence[ToolCall], responses: Sequence[str]) -> FabricationCheck:
     """R4: token-level check of every number in the reply's prose (provenance lines and URLs excluded; R3 checks
     those lines). Rules N1-N6 in `eval/numbers.py`."""
     pool = num.pools(responses, _args_texts(calls))
+    named = named_text(answer, calls)
+    counter = num.SumCounter()
     unmatched: dict[str, None] = {}
     derived: dict[tuple[str, str], None] = {}
     forbidden: dict[tuple[str, str], None] = {}
@@ -519,7 +549,7 @@ def check_fabrication(answer: str, calls: Sequence[ToolCall], responses: Sequenc
             continue
         if _allowlisted(tok) or num.value_matches(tok, pool):
             continue
-        how = num.find_derivation(tok, responses)
+        how = num.find_derivation(tok, responses, named, counter)
         if how is not None and how.allowed:
             derived.setdefault((tok.text, how.name), None)
             subarea = subarea or how.subarea_mixed
@@ -527,7 +557,7 @@ def check_fabrication(answer: str, calls: Sequence[ToolCall], responses: Sequenc
         unmatched.setdefault(tok.text, None)
         if how is not None:
             forbidden.setdefault((tok.text, how.name), None)
-    return FabricationCheck(tuple(unmatched), tuple(derived), tuple(forbidden), subarea)
+    return FabricationCheck(tuple(unmatched), tuple(derived), tuple(forbidden), subarea, counter.tried)
 
 
 def unmatched_numbers(
@@ -558,11 +588,11 @@ def substantive_numbers(answer: str) -> tuple[str, ...]:
     return tuple(t.plain for t in _shown_tokens(answer))
 
 
-def _holds(response: str, tok: num.Token) -> bool:
+def _holds(response: str, tok: num.Token, named: str = "") -> bool:
     """A response returned this number (N4), or it is an allowed sum of the response's own cells (N6)."""
     if num.value_matches(tok, num.pools([response])):
         return True
-    how = num.find_derivation(tok, [response])
+    how = num.find_derivation(tok, [response], named)
     return how is not None and how.allowed
 
 
@@ -612,9 +642,10 @@ def known_dataset_ids(
 
 def _negated(dataset_id: str, prose: str) -> bool:
     """R6/S3: every mention of the id sits in a negation that names it ("not <id>", "<id> is not a substitute",
-    "<id> does not cover"). A negation elsewhere in the sentence ("<id> has counts, not rates") doesn't count."""
+    "<id> does not cover"). A negation elsewhere in the sentence ("<id> has counts, not rates") doesn't count.
+    Mentions and negations are both counted case-insensitively."""
     i = re.escape(dataset_id)
-    mentions = len(re.findall(rf"(?<!\w){i}(?!\w)", prose))
+    mentions = len(re.findall(rf"(?<!\w){i}(?!\w)", prose, re.I))
     negated = len(re.findall(rf"{NEGATION_BEFORE}{i}(?!\w)|(?<!\w){i}{NEGATION_AFTER}", prose, re.I))
     return mentions > 0 and negated >= mentions
 
@@ -816,14 +847,18 @@ def _known_labels(responses: Sequence[str]) -> list[str]:
 
 
 def target_flags(
-    calls: Sequence[ToolCall], responses: Sequence[str], shown: Sequence[num.Token], fab: FabricationCheck
+    calls: Sequence[ToolCall],
+    responses: Sequence[str],
+    shown: Sequence[num.Token],
+    fab: FabricationCheck,
+    named: str = "",
 ) -> tuple[str, ...]:
     """T1-T3: from SQL whose response holds a shown number, and from how shown numbers were derived."""
     flags: set[str] = set()
     labels = _known_labels(responses)
     for c, r in zip(calls, responses, strict=True):
         sql = c.args.get("sql")
-        if c.tool == SQL_TOOL and isinstance(sql, str) and any(_holds(r, t) for t in shown):
+        if c.tool == SQL_TOOL and isinstance(sql, str) and any(_holds(r, t, named) for t in shown):
             flags |= sql_target_flags(sql, labels)
     names = {name for _, name in fab.forbidden}
     if "total_row_added" in names:
@@ -857,28 +892,44 @@ def observe(
         cited = cited - {NEUTRAL_DENOMINATOR["get_rate"]}
     shown = _shown_tokens(answer)
     numbers = bool(shown)
-    phrase_declined = any(p.search(prose) for p in DECLINE_PATTERNS)
-    phrase_asked = any(s.rstrip().endswith("?") for s in sentences) or any(
-        p.search(prose) for p in ASK_PATTERNS
-    )
     g = guidance(responses)
-    field_declined, field_asked = _follows_guidance(g, prose, numbers)
+    if g.fields:  # S7 first: the fields decide, the phrases are not read
+        declined, asked = _follows_guidance(g, prose, numbers)
+    else:
+        declined = any(p.search(prose) for p in DECLINE_PATTERNS)
+        asked = any(_asks(s) for s in sentences) or any(p.search(prose) for p in ASK_PATTERNS)
     fitting |= {d for d in g.fields.get("served_elsewhere", ()) if d in ids and _named(d, prose)}
     fab = fab if fab is not None else check_fabrication(answer, calls, responses)
+    named = named_text(answer, calls)
     return Observation(
         shown_numbers=tuple(t.plain for t in shown),
-        declined=phrase_declined or field_declined,
+        declined=declined,
         handoff=HANDOFF_RE.search(prose) is not None,
         gbd_verdict=any(p.search(prose) for p in GBD_VERDICT_PATTERNS),
-        asked_question=phrase_asked or field_asked,
+        asked_question=asked,
         cited_datasets=frozenset(cited),
         fitting_datasets=frozenset(fitting),
         named_places=frozenset(p for p in expected.expected_nearest if _place_named(p, prose)),
         sql_called=any(c.tool == SQL_TOOL for c in calls),
         called_datasets=call_datasets(calls, responses, ids),
-        target_flags=target_flags(calls, responses, shown, fab),
+        target_flags=target_flags(calls, responses, shown, fab, named),
         class_source="fields" if g.fields else "phrases",
         shown_tokens=tuple(shown),
+        named_text=named,
+        data_returned=data_returned(calls, responses),
+    )
+
+
+def _asks(sentence: str) -> bool:
+    """S2: a sentence asks a clarifying question when it ends in "?" and is not a follow-up offer."""
+    return sentence.rstrip().endswith("?") and OFFER_RE.match(sentence) is None
+
+
+def data_returned(calls: Sequence[ToolCall], responses: Sequence[str]) -> bool:
+    """A data tool succeeded and returned at least one table row."""
+    return any(
+        c.tool in DATA_TOOLS and _successful(r) and any(t.rows for t in num.tables(r))
+        for c, r in zip(calls, responses, strict=True)
     )
 
 
@@ -891,7 +942,9 @@ def class_score(expected: ExpectedRecord, obs: Observation) -> int:
     S4 and S7).
 
     - ANSWER: 2 numbers shown, no decline and no clarifying question; 1 numbers with a decline or a question
-      (it answers and also declines); 0 no numbers.
+      (it answers and also declines); 0 no numbers. Read from the fields when a response carries them; from the
+      phrases only when no data tool returned rows, since a reply built on returned data that adds a caveat
+      or a question is still an answer (S2).
     - DECLINE_NEAREST: 2 declines and gives numbers or names an expected nearest place (R8); 1 declines and offers
       nothing (framed as out of scope); 0 no decline.
     - DECLINE_ELSEWHERE: 2 declines and gives numbers or names a dataset as fitting; 1 declines and offers
@@ -907,7 +960,10 @@ def class_score(expected: ExpectedRecord, obs: Observation) -> int:
         case "ANSWER":
             if not numbers:
                 return 0
-            return 1 if obs.declined or obs.asked_question else 2
+            lowered = obs.declined or obs.asked_question
+            if obs.class_source == "phrases" and obs.data_returned:
+                lowered = False
+            return 1 if lowered else 2
         case "DECLINE_NEAREST":
             if not obs.declined:
                 return 0
@@ -967,7 +1023,8 @@ def provenance_score(
     For each shown number, the sources are the datasets whose provenance line is in a response holding that
     number (N4, or an allowed sum of its cells, N6). Then:
     - 0 when some number has no source, or none of its sources has a provenance line in the answer;
-    - 1 when every number has a line in the answer but one of those lines lacks a field (`provenance_complete`),
+    - 1 when every number has a line in the answer but one of those lines lacks a field (`provenance_complete`;
+      every line the answer gives for a dataset is checked, and all must be complete),
       or when a source response says "provisional" and the answer doesn't (S6);
     - 2 otherwise.
     """
@@ -975,15 +1032,17 @@ def provenance_score(
     if not obs.shown_numbers:
         return 2, True
     text = _strip_placeholders(answer)
-    lines = {m.group(1): m.group(0) for m in PROVENANCE_RE.finditer(text)}
+    lines: dict[str, list[str]] = {}
+    for m in PROVENANCE_RE.finditer(text):
+        lines.setdefault(m.group(1), []).append(m.group(0))
     score = 2
     for tok in obs.shown_tokens:
-        holding = [r for r in responses if _holds(r, tok)]
+        holding = [r for r in responses if _holds(r, tok, obs.named_text)]
         sources = set().union(*(provenance_ids(r) for r in holding)) if holding else set()
         cited = sources & lines.keys()
         if not cited:
             return 0, False
-        if not any(provenance_complete(lines[s]) for s in cited):
+        if not all(provenance_complete(line) for s in cited for line in lines[s]):
             score = 1
         if any(says_provisional(r) for r in holding) and not says_provisional(_prose(answer)):
             score = 1
@@ -1008,7 +1067,7 @@ def sql_needed(
         for c, r in zip(calls, responses, strict=True)
         if c.tool != SQL_TOOL and provenance_ids(r) & set(expected.expected_datasets)
     ]
-    return not all(any(_holds(r, t) for r in other) for t in obs.shown_tokens)
+    return not all(any(_holds(r, t, obs.named_text) for r in other) for t in obs.shown_tokens)
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -1169,6 +1228,7 @@ def score_question(
         target_flags=obs.target_flags,
         hosted_rule=rule,
         class_source=obs.class_source,
+        sums_tried=fab.sums_tried,
     )
 
 

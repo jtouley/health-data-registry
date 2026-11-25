@@ -11,10 +11,15 @@ import yaml
 from eval.numbers import (
     ALLOWED_DERIVATIONS,
     FORBIDDEN_DERIVATIONS,
+    MAX_NAMED,
     SEPARATE_SUBAREAS,
     Derivation,
+    SumCounter,
     column_kind,
+    find_derivation,
     is_aggregate,
+    period_key,
+    place_named,
     pools,
     rounds_to,
     subarea_pair,
@@ -174,3 +179,124 @@ def test_separate_subareas_match_the_contracts_partial_places() -> None:
     # Act / Assert
     assert parents
     assert parents <= set(SEPARATE_SUBAREAS.values())
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Fix round of PR 25: signs, ranges, numeric week order and the place-sum limit
+
+
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        ("a -35% change", [("-35", Decimal(-35), "value")]),
+        ("(-4.2) points", [("-4.2", Decimal("-4.2"), "value")]),
+        ("between 120-150 cases", [("120", Decimal(120), "value"), ("150", Decimal(150), "value")]),
+        ("120 – 150", [("120", Decimal(120), "value"), ("150", Decimal(150), "value")]),
+        ("3/10 places", [("3", Decimal(3), "value"), ("10", Decimal(10), "value")]),
+        ("weeks 9-11", [("9", Decimal(9), "time"), ("11", Decimal(11), "time")]),
+        ("week 9 to 11", [("9", Decimal(9), "time"), ("11", Decimal(11), "time")]),
+        ("2022-2023", [("2022", Decimal(2022), "year"), ("2023", Decimal(2023), "year")]),
+        ("-2024 x", [("-2024", Decimal(-2024), "value")]),
+        ("COVID-19 had 5", [("5", Decimal(5), "value")]),
+        ("a-35 b", []),
+        ("2026-11-24", [("2026", Decimal(2026), "year")]),
+        ("the 2025-26 season", [("2025", Decimal(2025), "year")]),
+        ("- 12 in a list", [("12", Decimal(12), "value")]),
+    ],
+)
+def test_tokens_read_signs_and_both_ends_of_ranges(text: str, want: list[tuple[str, Decimal, str]]) -> None:
+    # Act / Assert
+    assert [(t.text, t.value, t.kind) for t in tokens(text)] == want
+
+
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        ("from 2023 the publisher reports", "year"),  # rule on its own: "reports" is not a count word
+        ("2023 the publisher reports cases", "year"),  # the count word is three words away
+        ("2023 reported cases", "value"),  # one word away: a count
+        ("2022-2023", "year"),  # rule on its own: the second year of a range
+    ],
+)
+def test_rule_14_tokeniser_rules_each_on_their_own(text: str, want: str) -> None:
+    # Act / Assert
+    assert tokens(text)[-1].kind == want
+
+
+def test_period_key_orders_weeks_numerically() -> None:
+    # Arrange
+    periods = [("2024", "10"), ("2024", "9"), ("2024", "x"), ("2023", "52"), ("2024", "")]
+    # Act
+    got = sorted(periods, key=period_key)
+    # Assert
+    assert got == [("2023", "52"), ("2024", "9"), ("2024", "10"), ("2024", ""), ("2024", "x")]
+
+
+@pytest.mark.parametrize(
+    ("place", "text", "named"),
+    [
+        ("Toyland", "toyland had 3", True),
+        ("Toy", "Toyland had 3", False),
+        ("", "anything", False),
+        ("New York", '{"locations": ["New York"]}', True),
+    ],
+)
+def test_place_named_whole_words(place: str, text: str, named: bool) -> None:
+    # Act / Assert
+    assert place_named(place, text) is named
+
+
+def _table(places: list[str], values: list[int]) -> str:
+    return "location,year,cases\n" + "".join(f"{p},2024,{v}\n" for p, v in zip(places, values, strict=True))
+
+
+def test_place_sums_over_named_subsets_only() -> None:
+    # Arrange: A + C = 11 is not a run of rows; it passes only when both are named.
+    response = _table(["Aland", "Bland", "Cland", "Dland"], [1, 20, 10, 300])
+    (tok,) = tokens("11")
+    # Act
+    unnamed = find_derivation(tok, [response])
+    named = find_derivation(tok, [response], "Aland and Cland")
+    # Assert
+    assert unnamed is None
+    assert named == Derivation("sum_across_places")
+
+
+def test_many_named_places_are_summed_only_all_together() -> None:
+    # Arrange: ten named places (more than MAX_NAMED) and one unnamed in the middle: a subset of the named is
+    # not tried, all ten together are.
+    places = [f"P{i}land" for i in range(10)]
+    values = [1, 1000, 3, 1000, 5, 1000, 7, 1000, 9, 1000]
+    response = _table([*places[:5], "Xland", *places[5:]], [*values[:5], 50000, *values[5:]])
+    named = " ".join(places)
+    counter = SumCounter()
+    # Act
+    subset = find_derivation(tokens("25")[0], [response], named, counter)
+    whole = find_derivation(tokens("5025")[0], [response], named)
+    # Assert
+    assert len(places) > MAX_NAMED
+    assert subset is None
+    assert whole == Derivation("sum_across_places")
+    assert counter.tried == 1 + 55 + 1  # the whole group, every run of rows, all named places together
+
+
+def test_sum_counter_counts_allowed_searches_only() -> None:
+    # Arrange: a year-to-date column (forbidden across weeks) and nothing allowed to try.
+    response = "location,year,week,ytd_cases\nToyland,2024,1,10\nToyland,2024,2,25\n"
+    counter = SumCounter()
+    # Act
+    got = find_derivation(tokens("35")[0], [response], "", counter)
+    # Assert
+    assert got == Derivation("running_total_summed_across_weeks")
+    assert counter.tried == 0
+
+
+def test_total_row_added_needs_the_total_row_in_the_sum() -> None:
+    # Arrange: 30 + 40 = 70 uses no total row; 70 + 100 = 170 does.
+    response = _table(["Aland", "Bland", "Cland", "TOTAL"], [30, 500, 40, 100])
+    # Act
+    without_total = find_derivation(tokens("70")[0], [response])
+    with_total = find_derivation(tokens("170")[0], [response])
+    # Assert
+    assert without_total is None
+    assert with_total == Derivation("total_row_added")

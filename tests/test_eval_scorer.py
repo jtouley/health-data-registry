@@ -71,8 +71,11 @@ def series_call(**args: object) -> ToolCall:
 CLASS_CASES = [
     # (expected class, datasets, nearest, response, answer, class score)
     ("ANSWER", [DS], None, SERIES, f"Toyland reported 310 cases in 2024.\n{PROV}", 2),
-    ("ANSWER", [DS], None, SERIES, f"Toyland reported 310 cases. Did you mean 2023?\n{PROV}", 1),
-    ("ANSWER", [DS], None, SERIES, f"Toyland reported 310 cases, but {DS} does not cover towns.\n{PROV}", 1),
+    # A question or caveat beside returned data is still an answer (S2); with no data returned it lowers Class.
+    ("ANSWER", [DS], None, SERIES, f"Toyland reported 310 cases. Did you mean 2023?\n{PROV}", 2),
+    ("ANSWER", [DS], None, SERIES, f"Toyland reported 310 cases, but {DS} does not cover towns.\n{PROV}", 2),
+    ("ANSWER", [DS], None, "", f"Toyland reported 310 cases. Did you mean 2023?\n{PROV}", 1),
+    ("ANSWER", [DS], None, "", f"Toyland reported 310 cases, but {DS} does not cover towns.\n{PROV}", 1),
     ("ANSWER", [DS], None, SERIES, "I could not find that.", 0),
     ("DECLINE_NEAREST", [DS], "Toyland", SERIES, f"Toytown is not served; Toyland had 310 cases.\n{PROV}", 2),
     ("DECLINE_NEAREST", [DS], "Toyland", SERIES, "Toytown is not served. I can give Toyland's numbers.", 2),
@@ -479,7 +482,7 @@ def test_row_has_aggregate_fields_only() -> None:
     # Assert
     assert set(row) == {
         "id", "split", "expected_class", "class_score", "target_score", "prov_score", "fabricated", "pass",
-        "pass_strict", "total", "sql_needed", "tools_called",
+        "pass_strict", "total", "sql_needed", "tools_called", "sums_tried",
     }  # fmt: skip
     assert (row["split"], row["pass"], row["tools_called"]) == ("DEV", True, ["get_series"])
 
@@ -985,3 +988,217 @@ def test_hosted_rules_off_for_local_runs_and_for_hosted_runs_with_data() -> None
 def test_note_candidates_parse_the_ask_list(notes: str, want: tuple[set[str], ...]) -> None:
     # Act / Assert
     assert note_candidates(notes) == tuple(frozenset(w) for w in want)
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Fix round of PR 25: one test per finding
+
+
+STATES = [f"State {chr(65 + i // 26)}{chr(65 + i % 26)}" for i in range(55)]
+# 55 made-up state counts from 0 to 60: no single count, run of rows or the whole table gives 87, but the
+# pair 46 + 41 does, so the old every-pair search would have passed an invented 87.
+STATE_COUNTS = [
+    50, 48, 54, 12, 51, 15, 52, 25, 47, 51, 14, 12, 33, 31, 22, 46, 1, 1, 50, 17, 30, 16, 12, 44, 38, 22, 28,
+    51, 59, 46, 22, 23, 5, 14, 6, 14, 30, 12, 21, 13, 30, 39, 57, 39, 53, 0, 30, 58, 41, 22, 51, 41, 5, 53, 42,
+]  # fmt: skip
+STATE_TABLE = "location,year,label,cases\n" + "".join(
+    f"{p},2024,Toy fever,{v}\n" for p, v in zip(STATES, STATE_COUNTS, strict=True)
+)
+
+
+def test_invented_regional_sum_over_a_55_state_table_fails() -> None:
+    # Arrange
+    answer = "There were 87 cases in the region in 2024."
+    # Act
+    got = check_fabrication(answer, [ToolCall("get_series", {"condition": "toy fever"})], [STATE_TABLE])
+    # Assert
+    assert got.unmatched == ("87",)
+    assert got.derived == ()
+    assert 0 < got.sums_tried < 2000  # whole table and runs of rows only: 1 + 55 * 54 / 2 candidates
+
+
+def test_place_sum_allowed_over_places_the_answer_or_filter_names() -> None:
+    # Arrange: rows 15 (46) and 48 (41) are far apart in the table.
+    a, b = STATES[15], STATES[48]
+    named_in_answer = f"{a} and {b} had 87 cases together in 2024."
+    named_in_filter = ToolCall("get_series", {"condition": "toy fever", "locations": [a, b]})
+    # Act
+    by_answer = check_fabrication(named_in_answer, [ToolCall("get_series", {})], [STATE_TABLE])
+    by_filter = check_fabrication("87 cases in 2024.", [named_in_filter], [STATE_TABLE])
+    # Assert
+    assert by_answer.derived == (("87", "sum_across_places"),)
+    assert by_filter.derived == (("87", "sum_across_places"),)
+
+
+def test_sums_tried_reach_the_row() -> None:
+    # Act
+    got = score_question(rec("ANSWER"), [series_call()], [STATE_TABLE], "87 cases in 2024.")
+    # Assert
+    assert got.sums_tried > 0
+    assert got.to_row("dev")["sums_tried"] == got.sums_tried
+
+
+ELEVEN_WEEKS = "location,year,week,label,m1\n" + "".join(
+    f"Toyland,2024,{w},Toy fever,{v}\n"
+    for w, v in zip(range(1, 12), [3, 4, 6, 7, 9, 11, 13, 17, 19, 23, 29], strict=True)
+)
+
+
+@pytest.mark.parametrize(
+    ("number", "derived"),
+    [
+        ("71", True),  # weeks 9 + 10 + 11 (19 + 23 + 29): neighbours in numeric order
+        ("55", False),  # weeks 1 + 10 + 11 (3 + 23 + 29): neighbours only when "10" sorts before "2"
+    ],
+)
+def test_weeks_are_summed_in_numeric_order(number: str, derived: bool) -> None:
+    # Act
+    got = check_fabrication(f"Toy fever: {number} cases.", [ToolCall("get_series", {})], [ELEVEN_WEEKS])
+    # Assert
+    assert bool(got.derived) is derived
+    assert got.fabricated is not derived
+
+
+def test_hub_unavailable_only_on_the_hubs_own_wording() -> None:
+    # Arrange: a guard refusal from query_sql, then a correct get_series answer, in a hosted run.
+    calls = [ToolCall("query_sql", {"sql": "SELECT median(x) FROM t"}), series_call()]
+    refusal = "That query can't run: the function median is not allowed. The other tools can usually answer."
+    answer = f"Toyland reported 310 cases in 2024.\n{PROV}"
+    # Act
+    got = score_question(rec("ANSWER"), calls, [refusal, SERIES], answer, hosted=True)
+    published = score_question(
+        rec("ANSWER"),
+        [series_call()],
+        ["# The open data hub (hf://datasets/toy/toy) has no published release yet, so there is no data."],
+        "No data.",
+        hosted=True,
+    )
+    # Assert
+    assert got.hosted_rule is None
+    assert got.a.class_score == 2
+    assert published.hosted_rule == "H1"
+
+
+@pytest.mark.parametrize(
+    ("answer", "declined"),
+    [
+        ("'-' means not reported.", False),
+        ("Week 53 is not available.", False),
+        ("There is no data for 2025 yet.", False),
+        ("Toy fever is not served here.", True),
+        ("No source covers toy pox.", True),
+    ],
+)
+def test_caveats_are_not_declines(answer: str, declined: bool) -> None:
+    # Act / Assert
+    assert observe(rec("ANSWER"), [], [], answer).declined is declined
+
+
+@pytest.mark.parametrize(
+    ("answer", "asked"),
+    [
+        ("Would you like the weekly breakdown?", False),
+        ("Do you want 2023 as well?", False),
+        ("Shall I add the rate?", False),
+        ("If you'd like, I can add rates?", False),
+        ("Which toy fever did you mean?", True),
+    ],
+)
+def test_follow_up_offers_are_not_clarifying_questions(answer: str, asked: bool) -> None:
+    # Act / Assert
+    assert observe(rec("DISAMBIGUATE"), [], [], answer).asked_question is asked
+
+
+def test_answer_with_caveat_and_offer_keeps_class_two() -> None:
+    # Arrange
+    answer = (
+        "Toyland reported 310 cases in 2024. '-' means not reported. "
+        f"Would you like the weekly breakdown?\n{PROV}"
+    )
+    # Act
+    got = score_question(rec("ANSWER"), [series_call()], [SERIES], answer)
+    # Assert
+    assert got.a.class_score == 2
+    assert got.b.passed
+
+
+def test_structured_fields_decide_before_phrases() -> None:
+    # Arrange: the phrase says "not served", but the fields name a nearest place the reply never names.
+    response = '{"nearest_served": ["Toyland"]}'
+    answer = "Toytown is not served."
+    # Act
+    got = observe(rec("DECLINE_NEAREST", nearest="Toyland"), [series_call()], [response], answer)
+    # Assert
+    assert got.class_source == "fields"
+    assert not got.declined
+
+
+@pytest.mark.parametrize(
+    ("lines", "want"),
+    [
+        ((PROV, PROV), 2),
+        ((PROV, f"Provenance for {DS}: snapshot only"), 1),
+        ((f"Provenance for {DS}: snapshot only", PROV), 1),
+    ],
+)
+def test_every_provenance_line_per_dataset_must_be_complete(lines: tuple[str, str], want: int) -> None:
+    # Arrange
+    answer = "Toyland reported 310 cases in 2024.\n" + "\n".join(lines)
+    # Act
+    got = score_question(rec("ANSWER"), [series_call()], [SERIES], answer)
+    # Assert
+    assert got.a.prov_score == want
+
+
+def test_negation_counts_mentions_case_insensitively() -> None:
+    # Arrange: an upper-case negated mention must not hide a lower-case plain one.
+    answer = f"Use {DS} for counts. This is not {DS.upper()} rates."
+    # Act
+    got = observe(rec("DECLINE_ELSEWHERE"), [], [], answer)
+    # Assert
+    assert DS in got.fitting_datasets
+
+
+@pytest.mark.parametrize(
+    ("response", "answer", "want"),
+    [
+        ("label,change_pct\nToy,-35\n", "a -35% change", ()),
+        ("label,change_pct\nToy,-35\n", "cases fell 35%", ()),
+        ("label,change_pct\nToy,35\n", "a -35% change", ("-35",)),
+        ("cases\n120\n", "between 120-150 cases", ("150",)),
+        ("cases\n120\n150\n", "between 120-150 cases", ()),
+        ("cases\n3\n", "3/17 places", ("17",)),
+    ],
+)
+def test_fabrication_reads_signs_and_both_ends_of_a_range(
+    response: str, answer: str, want: tuple[str, ...]
+) -> None:
+    # Act / Assert
+    assert unmatched_numbers(answer, [ToolCall("get_series", {})], [response]) == want
+
+
+# Rule 14 disclosure: the year-range and year-before-"reports" rules, each proved on synthetic text alone.
+
+
+def test_second_year_of_a_range_is_checked_as_a_year() -> None:
+    # Arrange
+    response = "location,year,cases\nToyland,2022,310\nToyland,2023,320\n"
+    call = [ToolCall("get_series", {})]
+    # Act
+    seen = unmatched_numbers("Toyland, 2022-2023: 310 and 320 cases.", call, [response])
+    invented = unmatched_numbers("Toyland, 2022-2031: 310 cases.", call, [response])
+    # Assert
+    assert seen == ()
+    assert invented == ("2031",)
+
+
+def test_year_followed_by_reports_is_a_year_not_a_count() -> None:
+    # Arrange: "reports" is not a count word, so 2023 is checked as a year and backed by the year column.
+    response = "location,year,cases\nToyland,2023,310\n"
+    call = [ToolCall("get_series", {})]
+    # Act
+    got = unmatched_numbers("In Toyland, 2023 the publisher reports 310 cases.", call, [response])
+    as_count = unmatched_numbers("Toyland had 2023 reported cases.", call, [response])
+    # Assert
+    assert got == ()
+    assert as_count == ("2023",)

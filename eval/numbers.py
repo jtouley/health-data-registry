@@ -5,15 +5,20 @@ responses and call arguments, so "12" matched inside "2012", and a year in the a
 digits written as a count. Here every number is a token with a value, a precision and a kind:
 
 - N1 Tokens. A number is digits with optional thousands commas and decimals, not glued to a letter, digit,
-  dot, dash, slash or colon on the left (H5N1, v3.2, the 11 in 2026-11-24, 22:01), except the second year of
-  a four-digit range (2022-2023) nor to a letter, digit or a
-  further ".digit" or ":digit" on the right (5huc, 20261124T..., 0.1.0). A following "%" or "percent" makes it a percent.
-  Commas are dropped from the value: 1,234 and 1234 are the same token.
-- N2 Kinds, from the words around the token in the same text:
+  dot, dash, slash or colon on the left (H5N1, v3.2, the 11 in 2026-11-24, 22:01), nor to a letter, digit or a
+  further ".digit" or ":digit" on the right (5huc, 20261124T..., 0.1.0). Three exceptions: a "-" after a space,
+  "(" or the start of the text is a sign ("a -35% change" is -35); both ends of a numeric range or ratio
+  written "a-b", "a–b" or "a/b" are read ("120-150 cases" is 120 and 150, "2022-2023" is 2022 and 2023); and
+  a date (2026-11-24, 11/24/2026) stays unread. A following "%" or "percent" makes it a percent. Commas are
+  dropped from the value: 1,234 and 1234 are the same token.
+- N2 Kinds, from the words around the token in the same text (the second end of a range of years or weeks,
+  "weeks 9-11" or "week 9 to 11", takes the kind of the first):
   `denominator` right after "per" ("per 100,000"): a rate's unit, never checked;
   `time` right after a time or age word ("week 45", "aged 65", "through week 52");
-  `year` a whole number 1900-2100 written without a comma, unless a count word follows it ("2024 cases") and
-  no year preposition precedes it ("in 2024 cases rose" is a year);
+  `year` a whole number 1900-2100 written without a comma or sign, unless a count word follows it ("2024
+  cases") and no year preposition precedes it ("in 2024 cases rose" is a year); a count word only counts when
+  it directly follows the number or one or two words do ("2023 the publisher reports" is a year: "reports" is
+  not a count word);
   `value` everything else, the numbers a reader takes as results.
 - N3 Pools. In a tool response, a CSV block is read by its header: cells under a time column (year, week,
   last_week and so on) go to the time pool, other numeric cells to the value pool. Lines outside CSV blocks are
@@ -22,12 +27,17 @@ digits written as a count. Here every number is a token with a value, a precisio
 - N4 Matching. A `value` token not written as a count also matches a year or week a response returned. A
   `value` token matches a value-pool number equal to it after rounding that number to the
   decimals the answer shows (116 and 116.0 match 116.04; 2.34 matches 2.337, 2.3 does not match 2.337 written
-  as 2.34). A percent also matches a fraction times 100 (12.5% matches 0.125). A `year` or `time` token
+  as 2.34). A number written without a sign also matches a negative one of the same size ("fell 35%" for
+  -35). A percent also matches a fraction times 100 (12.5% matches 0.125). A `year` or `time` token
   matches any number in either pool, exactly. A `denominator` always passes.
 - N5 Allowlist. The baseline's tokens 1, 2, 5, 10, 100 and 100000 pass as values unless a count word follows
   them ("2 cases" is checked; "top 5" and "1 of 10" are not).
 - N6 Derivations. A value that matches no response number passes only as one of `ALLOWED_DERIVATIONS`, the
-  arithmetic the rubric and the semantic models allow; it is reported separately as derived. The forbidden
+  arithmetic the rubric and the semantic models allow; it is reported separately as derived. Weeks are put in
+  numeric order (week 9 before week 10) before runs of weeks are added. A sum across places is tried only
+  over the whole group (total rows left out), over runs of rows in the order the table lists them, and over
+  places the call's filter or the answer names: any other subset would make almost every small integer
+  reachable in a 55-state table. Every candidate sum tried is counted (`SumCounter`). The forbidden
   ones in `FORBIDDEN_DERIVATIONS` are recognised so the report can say why a number failed, and so Target can
   flag a total row or a second series added in.
 """
@@ -46,12 +56,18 @@ type Kind = Literal["value", "year", "time", "denominator"]
 type ColumnKind = Literal["time", "place", "series", "count", "running", "maximum", "rate", "other"]
 
 YEAR_MIN, YEAR_MAX = 1900, 2100
+NUM = r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?"
 TOKEN_RE = re.compile(
-    r"(?<![\w.\-/:])(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\w])(?![.:]\d)"
+    rf"(?:(?<![^\s(\[])(?P<sign>[-\u2212])|(?<![\w.\-\u2212/:]))(?P<num>{NUM})(?![\w])(?![.:]\d)"
     r"(?P<pct>\s?%|\s+per\s?cent\b|\s+percent\b)?",
     re.I,
 )
 YEAR_RANGE_RE = re.compile(r"(?<![\w.])((?:19|20)\d\d)[-\u2013]((?:19|20)\d\d)(?!\w)")
+# N1: "120-150", "120 – 150", "3/10": both ends. Not a date: a third part ("-24", "/2026") stops the match.
+RANGE_RE = re.compile(
+    rf"(?<![\w.\-\u2212/:])(?!(?:19|20)\d\d[-\u2013/]\d\d(?!\d))({NUM})\s?[-\u2013/]\s?({NUM})(?![\w\-\u2013/])(?![.:]\d)"
+)
+TO_BETWEEN_RE = re.compile(r"\s*(?:to|through|-|\u2013)\s*", re.I)
 YEAR_BEFORE_RE = re.compile(r"\b(?:in|from|since|during|until|before|after|between|mmwr year)\s*$", re.I)
 PER_BEFORE_RE = re.compile(r"\bper\s*$", re.I)
 TIME_BEFORE_RE = re.compile(
@@ -123,13 +139,17 @@ def _decimal(text: str) -> Decimal | None:
 
 def tokens(text: str) -> list[Token]:
     """N1-N2: every number in `text`, in order. A four-digit year range ("2022-2023") gives both years."""
-    text = YEAR_RANGE_RE.sub(r"\1 to \2", text)
+    text = RANGE_RE.sub(r"\1 to \2", YEAR_RANGE_RE.sub(r"\1 to \2", text))
     out: list[Token] = []
+    prev_end, prev_kind = -1, ""
     for m in TOKEN_RE.finditer(text):
+        signed = m.group("sign") is not None
         num = m.group("num")
         value = _decimal(num)
         if value is None:  # pragma: no cover - the regex only admits digits, commas and one dot
             continue
+        if signed:
+            value = -value
         before = text[max(0, m.start() - 16) : m.start()]
         after = text[m.end() : m.end() + 40]
         percent = m.group("pct") is not None
@@ -142,6 +162,7 @@ def tokens(text: str) -> list[Token]:
             kind = "time"
         elif (
             not percent
+            and not signed
             and (not count_context or YEAR_BEFORE_RE.search(before) is not None)
             and decimals == 0
             and "," not in num
@@ -151,7 +172,17 @@ def tokens(text: str) -> list[Token]:
             kind = "year"
         else:
             kind = "value"
-        out.append(Token(num, value, decimals, percent, kind, count_context, m.start()))
+        if (
+            prev_kind in ("time", "year")
+            and kind == "value"
+            and not percent
+            and TO_BETWEEN_RE.fullmatch(text[prev_end : m.start()])
+        ):
+            kind = "time" if prev_kind == "time" else "year"  # "weeks 9-11": 11 is a week too
+        prev_end, prev_kind = m.end("num"), kind
+        out.append(
+            Token(("-" if signed else "") + num, value, decimals, percent, kind, count_context, m.start())
+        )
     return out
 
 
@@ -282,7 +313,9 @@ def value_matches(tok: Token, pool: Pools) -> bool:
     if not tok.count_context and tok.decimals == 0 and tok.value in pool.response_times:
         return True
     for v in pool.values:
-        if rounds_to(v, tok.decimals, tok.value):
+        if rounds_to(v, tok.decimals, tok.value) or (
+            tok.value >= 0 and v < 0 and rounds_to(-v, tok.decimals, tok.value)
+        ):
             return True
         if (
             tok.percent
@@ -317,6 +350,14 @@ FORBIDDEN_DERIVATIONS: dict[ForbiddenName, str] = {
 }
 
 MAX_GROUP = 400  # rows per group searched for windows and pairs; larger groups are only summed whole
+MAX_NAMED = 8  # named places summed in every subset of two or more; with more, only all of them together
+
+
+@dataclass
+class SumCounter:
+    """N6: how many candidate sums a derivation search tried, so a report can say how wide the search was."""
+
+    tried: int = 0
 
 
 @dataclass(frozen=True)
@@ -387,7 +428,8 @@ class Derivation:
 
 def _sums(values: Sequence[Decimal], contiguous_only: bool) -> Iterable[tuple[Decimal, tuple[int, ...]]]:
     """Candidate sums of two or more values: all of them, contiguous windows, and (unless contiguous_only)
-    every pair, and every triple in groups of up to 25."""
+    every pair, and every triple in groups of up to 25. The forbidden derivations use the wide search: they
+    only explain a number that already failed."""
     n = len(values)
     if n < 2:
         return
@@ -408,6 +450,31 @@ def _sums(values: Sequence[Decimal], contiguous_only: bool) -> Iterable[tuple[De
             yield values[tri[0]] + values[tri[1]] + values[tri[2]], tri
 
 
+def _named_sums(values: Sequence[Decimal], named: Sequence[int]) -> Iterable[tuple[Decimal, tuple[int, ...]]]:
+    """N6: sums over the places the filter or the answer names (indices into `values`)."""
+    if len(named) < 2:
+        return
+    sizes = range(2, len(named) + 1) if len(named) <= MAX_NAMED else (len(named),)
+    for k in sizes:
+        for combo in itertools.combinations(named, k):
+            yield sum((values[i] for i in combo), Decimal(0)), combo
+
+
+def period_key(period: tuple[str, ...]) -> tuple[tuple[int, Decimal, str], ...]:
+    """N6: a period in numeric order ("9" before "10"); a part that is not a number sorts after, as text."""
+    out: list[tuple[int, Decimal, str]] = []
+    for part in period:
+        v = _number_cell(part) if part.strip() else None
+        out.append((0, v, "") if v is not None else (1, Decimal(0), part))
+    return tuple(out)
+
+
+def place_named(place: str, text: str) -> bool:
+    """A place is named in `text` as whole words, case-insensitively."""
+    key = place.strip()
+    return bool(key) and re.search(rf"(?<!\w){re.escape(key)}(?!\w)", text, re.I) is not None
+
+
 def _group[K](cells: Iterable[Cell], key: Callable[[Cell], K]) -> list[list[Cell]]:
     groups: dict[K, list[Cell]] = {}
     for c in cells:
@@ -415,47 +482,68 @@ def _group[K](cells: Iterable[Cell], key: Callable[[Cell], K]) -> list[list[Cell
     return list(groups.values())
 
 
-def find_derivation(tok: Token, responses: Sequence[str]) -> Derivation | None:
+def find_derivation(
+    tok: Token,
+    responses: Sequence[str],
+    named_text: str = "",
+    counter: SumCounter | None = None,
+) -> Derivation | None:
     """N6: the derivation that gives `tok`. Allowed ones are tried first, then forbidden ones; None if neither.
 
-    Allowed: weekly counts of one series and place in consecutive periods (`sum_across_weeks`); counts or
-    year-to-date values of one series at one period across places other than total rows (`sum_across_places`,
-    which also notes a sub-area added to its parent). Forbidden: year-to-date values across periods, a sum
-    that needs a total row, a sum across two series of one place and period, any sum of rates or maxima.
+    Allowed: weekly counts of one series and place in consecutive periods, in numeric order
+    (`sum_across_weeks`); counts or year-to-date values of one series at one period across places other than
+    total rows (`sum_across_places`, which also notes a sub-area added to its parent), summed over the whole
+    group, a run of rows, or places named in `named_text` (the call's filter and the answer). Forbidden:
+    year-to-date values across periods, a sum that needs a total row, a sum across two series of one place and
+    period, any sum of rates or maxima. `counter`, when given, adds up the candidate sums the allowed
+    derivations tried (the forbidden searches only explain a number that already failed).
     """
     cells = [c for i, r in enumerate(responses) for t in tables(r, i) for c in table_cells(t)]
+    count = counter if counter is not None else SumCounter()
 
-    def hits(values: Sequence[Decimal], contiguous_only: bool) -> Iterable[tuple[int, ...]]:
-        return (
-            idx for total, idx in _sums(values, contiguous_only) if rounds_to(total, tok.decimals, tok.value)
-        )
+    def matching(
+        candidates: Iterable[tuple[Decimal, tuple[int, ...]]], counted: bool = True
+    ) -> Iterable[tuple[int, ...]]:
+        for total, idx in candidates:
+            count.tried += counted
+            if rounds_to(total, tok.decimals, tok.value):
+                yield idx
+
+    def hits(
+        values: Sequence[Decimal], contiguous_only: bool, counted: bool = False
+    ) -> Iterable[tuple[int, ...]]:
+        return matching(_sums(values, contiguous_only), counted)
+
+    def found(values: Sequence[Decimal], contiguous_only: bool, counted: bool = False) -> bool:
+        return next(iter(hits(values, contiguous_only, counted)), None) is not None
 
     counts = [c for c in cells if c.kind in ("count", "running")]
     for group in _group(counts, lambda c: (c.series, c.period, c.column)):
         plain = [c for c in group if not is_aggregate(c.place)]
-        for idx in hits([c.value for c in plain], contiguous_only=False):
+        values = [c.value for c in plain]
+        named = [i for i, c in enumerate(plain) if place_named(c.place, named_text)]
+        candidates = itertools.chain(_sums(values, contiguous_only=True), _named_sums(values, named))
+        for idx in matching(candidates):
             return Derivation("sum_across_places", subarea_mixed=subarea_pair(plain[i].place for i in idx))
     weekly = [c for c in cells if c.kind == "count"]
     for group in _group(weekly, lambda c: (c.series, c.place, c.column)):
-        group.sort(key=lambda c: c.period)
-        if next(iter(hits([c.value for c in group], contiguous_only=True)), None) is not None:
+        group.sort(key=lambda c: period_key(c.period))
+        if found([c.value for c in group], contiguous_only=True, counted=True):
             return Derivation("sum_across_weeks")
     running = [c for c in cells if c.kind == "running"]
     for group in _group(running, lambda c: (c.series, c.place, c.column)):
-        group.sort(key=lambda c: c.period)
-        if next(iter(hits([c.value for c in group], contiguous_only=True)), None) is not None:
+        group.sort(key=lambda c: period_key(c.period))
+        if found([c.value for c in group], contiguous_only=True):
             return Derivation("running_total_summed_across_weeks")
     for group in _group(counts, lambda c: (c.series, c.period, c.column)):
-        if (
-            any(is_aggregate(c.place) for c in group)
-            and next(iter(hits([c.value for c in group], False)), None) is not None
-        ):
-            return Derivation("total_row_added")
+        for idx in hits([c.value for c in group], contiguous_only=False):
+            if any(is_aggregate(group[i].place) for i in idx):
+                return Derivation("total_row_added")
     for group in _group(counts, lambda c: (c.place, c.period)):
         for idx in hits([c.value for c in group], contiguous_only=False):
             if len({group[i].series for i in idx}) > 1:
                 return Derivation("series_added")
     for group in _group([c for c in cells if c.kind in ("rate", "maximum")], lambda c: (c.series, c.column)):
-        if next(iter(hits([c.value for c in group], contiguous_only=False)), None) is not None:
+        if found([c.value for c in group], contiguous_only=False):
             return Derivation("rate_or_maximum_summed")
     return None

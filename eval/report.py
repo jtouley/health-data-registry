@@ -1,14 +1,19 @@
 """Write the eval's aggregate tables. Per-question output exists for DEV only.
 
 TEST is sealed: its per-question rows, its regressed ids and its tag breakdowns are never printed. Every function
-that would show a single question calls `require_dev` first, which allows only the split named "dev" and only
-rows that all say DEV. Anything else, including an unknown or empty split name, a row without a split, or a DEV
-call carrying a TEST row, raises `SealedSplitError`. There is no flag to turn the check off.
+that would show a single question (`question_rows_md`, `breakdown_md`, and `mcnemar_md` before it lists
+regressed ids) calls `require_dev` first, which allows only the split named "dev" and only rows that all say
+DEV. Anything else, including an unknown or empty split name, a row without a split, or a DEV call carrying a
+TEST row, raises `SealedSplitError`. For TEST, `mcnemar_md` gives the number of regressions and withholds their
+ids. There is no flag to turn the check off. The rule stops at this module: `scorer.ScoredQuestion.to_row`
+writes one row per question for either split, so keep TEST result files outside the repo.
 
 Usage:
-    python -m eval.report --split dev --results run.jsonl [--before before.jsonl] [--questions] [--out file]
+    python -m eval.report --split dev|test --results run.jsonl [--before before.jsonl] [--tag label]
+        [--dev-results dev_run.jsonl] [--questions] [--out file]
 
 `run.jsonl` holds one row per question in the format `ScoredQuestion.to_row` writes (the baseline's format).
+`--dev-results` (with `--split test`) adds the DEV minus TEST gap. `breakdown_md` is library-only.
 """
 
 from __future__ import annotations
@@ -33,7 +38,8 @@ class SealedSplitError(PermissionError):
 
 
 class ResultRow(BaseModel):
-    """One scored question, validated when read. Only aggregate fields; answers and numbers are not kept."""
+    """One scored question, validated when read: scores and flags only, never the question, the answer or its
+    numbers."""
 
     model_config = ConfigDict(extra="ignore", frozen=True, populate_by_name=True)
 
@@ -67,7 +73,8 @@ def require_dev(split: str, rows: Iterable[ResultRow] = ()) -> None:
         )
     if any(r.split != "DEV" for r in rows):
         raise SealedSplitError(
-            "These results include questions outside DEV. Per-question output is shown for DEV only."
+            "These results include questions outside DEV, and per-question output is shown for DEV only. "
+            "Pass a DEV-only results file, or drop --questions to get the aggregate tables."
         )
 
 
@@ -128,7 +135,8 @@ def tables_md(rows: Sequence[ResultRow], split: Split, tag: str = "") -> str:
             md.append(f"| {label} | {c.n} | {c.passes} | {_pct(c.rate)} | [{_pct(c.low)}, {_pct(c.high)}] |")
         md.append("")
     fab = sum(r.fabricated for r in rows)
-    md.append(f"Fabrication fails: {fab} of {len(rows)}." + (" Release is blocked." if fab else ""))
+    blocked = " Release is blocked." if fab and split == "test" else ""
+    md.append(f"Fabrication fails: {fab} of {len(rows)}.{blocked}")
     return "\n".join(md) + "\n"
 
 
@@ -139,7 +147,8 @@ def mcnemar_md(
     protocol: Protocol_ = "A",
 ) -> str:
     """Before/after on the same ids: overall and per class where b + c > 0. Regressed ids are listed for DEV
-    only; for TEST the count is given and the ids are withheld."""
+    only (after `require_dev`); for TEST the count is given and the ids are withheld. Whether a regression
+    blocks merging is the reader's call from this table: the function decides nothing."""
     _check_split(split, before)
     _check_split(split, after)
 
@@ -169,6 +178,7 @@ def mcnemar_md(
     md.append(f"| **Overall** | {o.a} | {o.b} | {o.c} | {o.d} | {o.net:+d} | {o.p_value:.3f} | {o.method} |")
     md.append("")
     if split == "dev":
+        require_dev(split, [*before, *after])
         md.append("Regressed: " + (", ".join(o.regressed) if o.regressed else "none") + ".")
     else:
         md.append(f"Regressed questions: {o.b} (ids withheld: TEST is sealed).")
@@ -206,15 +216,21 @@ def question_rows_md(rows: Sequence[ResultRow], split: str) -> str:
     return "\n".join(md) + "\n"
 
 
-def breakdown_md(rows: Sequence[ResultRow], tags: Mapping[str, Mapping[str, object]], split: str) -> str:
-    """DEV-only secondary breakdowns by tag (place_level, phrasing, intent, condition_group), as passes/n."""
+def breakdown_md(
+    rows: Sequence[ResultRow],
+    tags: Mapping[str, Mapping[str, object]],
+    split: str,
+    protocol: Protocol_ = "A",
+) -> str:
+    """DEV-only secondary breakdowns by tag (place_level, phrasing, intent, condition_group), as passes/n under
+    the protocol named in the output's first line. Library-only: the command line does not print it."""
     require_dev(split, rows)
-    lines = []
+    lines = [f"Passes by tag, protocol {protocol}:"]
     for tag in ("place_level", "phrasing", "intent", "condition_group"):
         counts: dict[str, list[int]] = defaultdict(lambda: [0, 0])
         for r in rows:
             value = str(tags.get(r.id, {}).get(tag))
-            counts[value][0] += r.pass_strict
+            counts[value][0] += r.passed if protocol == "A" else r.pass_strict
             counts[value][1] += 1
         lines.append(f"- {tag}: " + ", ".join(f"{v} {a}/{n}" for v, (a, n) in sorted(counts.items())))
     return "\n".join(lines) + "\n"
@@ -226,16 +242,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--results", required=True, type=Path)
     ap.add_argument("--before", type=Path, help="an earlier run on the same split and labels, for McNemar")
     ap.add_argument("--tag", default="", help="a label for the run, such as the commit")
+    ap.add_argument("--dev-results", type=Path, help="with --split test: a DEV run, for the DEV - TEST gap")
     ap.add_argument("--questions", action="store_true", help="also print per-question scores (DEV only)")
     ap.add_argument("--out", type=Path, help="write here instead of standard output")
     a = ap.parse_args(argv)
     rows = read_results(a.results)
     if a.questions:
-        require_dev(a.split, rows)  # refuse before writing anything
+        try:
+            require_dev(a.split, rows)  # refuse before writing anything
+        except SealedSplitError as e:
+            sys.stderr.write(f"{e}\n")
+            return 2
+    if a.dev_results and a.split != "test":
+        sys.stderr.write("--dev-results compares a DEV run with a TEST run: use it with --split test.\n")
+        return 2
     parts = [tables_md(rows, a.split, a.tag)]
     if a.before:
         before = read_results(a.before)
         parts += [mcnemar_md(before, rows, a.split, "A"), mcnemar_md(before, rows, a.split, "B")]
+    if a.dev_results:
+        dev = read_results(a.dev_results)
+        parts += [gap_md(dev, rows, "A"), gap_md(dev, rows, "B")]
     if a.questions:
         parts.append(question_rows_md(rows, a.split))
     text = "\n".join(parts)
