@@ -54,6 +54,35 @@ models:
           contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
           checks: Publisher formula (resistant / tested) x 100; tolerance 0.06 allows rounding to one decimal place.
   - odcs_check:
+      name: cdc_nhsn_ar_hai_interval_filled_where_percent
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE percent_resistant IS NOT NULL AND (lower_confidence_interval
+          IS NULL OR upper_confidence_interval IS NULL)
+        condition: measured = 0
+      config:
+        severity: error
+        meta:
+          dimension: completeness
+          rule: interval_filled_where_percent
+          contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
+          checks: 'Fill rate. Publisher: the 95% confidence bounds are given only when percent resistant is calculated
+            (lower_confidence_interval''s description), so a calculated percent has both bounds. An all-empty bound
+            column would pass every value check; this rule catches it.'
+  - odcs_check:
+      name: cdc_nhsn_ar_hai_interval_only_with_percent
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE percent_resistant IS NULL AND (lower_confidence_interval
+          IS NOT NULL OR upper_confidence_interval IS NOT NULL)
+        condition: measured = 0
+      config:
+        severity: error
+        meta:
+          dimension: consistency
+          rule: interval_only_with_percent
+          contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
+          checks: 'Pairing. Publisher: the bounds are given only when percent resistant is calculated, so a row
+            with no percent has no bounds.'
+  - odcs_check:
       name: cdc_nhsn_ar_hai_fill_rate_isolates_tested
       arguments:
         measure_sql: SELECT CASE WHEN count(*) = 0 THEN 0.0 ELSE count(*) FILTER (WHERE ("isolates_tested" IS NULL
