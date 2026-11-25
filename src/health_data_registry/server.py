@@ -33,6 +33,9 @@ INSTRUCTIONS = (
 )
 
 
+PAGE_ARGS = "page: 1-based page of a long answer; pin: copy it from the previous page's Next line."
+
+
 def _safe(fn: Callable[[], Out], fmt: Fmt) -> Out:
     """No stack trace ever reaches a clinician: any unexpected failure becomes a plain message."""
     try:
@@ -55,6 +58,11 @@ def build_server(
 
     def safe(tool: str, fn: Callable[[], Out], fmt: Fmt) -> Out:
         return guard(tool, fn, fmt) if guard is not None else _safe(fn, fmt)
+
+    def paged_tool(fn: Callable[..., Out]) -> Callable[..., Out]:
+        """A tool that returns rows: its description says how long answers come in pages."""
+        doc = inspect.cleandoc(fn.__doc__ or "")
+        return mcp.tool(annotations=READ_ONLY, description=f"{doc}\n\n{PAGE_ARGS} {helpers.TOOL_PAGING}")(fn)
 
     @mcp.tool(annotations=READ_ONLY)
     def list_sources(
@@ -101,7 +109,7 @@ def build_server(
         """For a research question in plain words: which sources can answer it, which can't and why."""
         return safe("suggest_datasets", lambda: tools.suggest_datasets(reg, question, fmt=fmt), fmt)
 
-    @mcp.tool(annotations=READ_ONLY)
+    @paged_tool
     def get_series(
         condition: str,
         locations: list[str] | None = None,
@@ -110,6 +118,8 @@ def build_server(
         measure: str | None = None,
         sex: str | None = None,
         source_id: str | None = None,
+        page: int | None = None,
+        pin: str | None = None,
         fmt: Fmt = "csv",
     ) -> Out:
         """Observed values over time for a condition (e.g. "legionellosis") in places (e.g. ["Michigan", "Ohio",
@@ -122,17 +132,19 @@ def build_server(
             "get_series",
             lambda: tools.get_series(
                 reg, eng, condition=condition, locations=locations or [], year_start=year_start, year_end=year_end,
-                measure=measure, sex=sex, source_id=source_id, fmt=fmt,
+                measure=measure, sex=sex, source_id=source_id, page=page, pin=pin, fmt=fmt,
             ),
             fmt,
         )  # fmt: skip
 
-    @mcp.tool(annotations=READ_ONLY)
+    @paged_tool
     def get_aligned_with_gbd(
         condition: str,
         locations: list[str] | None = None,
         year_start: int | None = None,
         year_end: int | None = None,
+        page: int | None = None,
+        pin: str | None = None,
         fmt: Fmt = "csv",
     ) -> Out:
         """The same observed rows keyed to GBD location and cause names, plus the exact IHME GBD connector call
@@ -141,31 +153,47 @@ def build_server(
             "get_aligned_with_gbd",
             lambda: tools.get_aligned_with_gbd(
                 reg, eng, condition=condition, locations=locations or [], year_start=year_start, year_end=year_end,
-                fmt=fmt,
+                page=page, pin=pin, fmt=fmt,
             ),
             fmt,
         )  # fmt: skip
 
-    @mcp.tool(annotations=READ_ONLY)
-    def get_rate(condition: str, year: int, locations: list[str] | None = None, fmt: Fmt = "csv") -> Out:
+    @paged_tool
+    def get_rate(
+        condition: str,
+        year: int,
+        locations: list[str] | None = None,
+        page: int | None = None,
+        pin: str | None = None,
+        fmt: Fmt = "csv",
+    ) -> Out:
         """How common is it here? Crude rate per 100,000 (cases / Census population) with an exact Poisson 95%
         interval, computed here and never age-standardised. Suppressed counts stay empty, never zero; the source's
         own unreliable-rate rule is applied when its contract records one."""
         return safe(
             "get_rate",
             lambda: analysis.get_rate(
-                reg, eng, condition=condition, locations=locations or [], year=year, fmt=fmt
+                reg,
+                eng,
+                condition=condition,
+                locations=locations or [],
+                year=year,
+                page=page,
+                pin=pin,
+                fmt=fmt,
             ),
             fmt,
         )
 
-    @mcp.tool(annotations=READ_ONLY)
+    @paged_tool
     def compare_rates(
         condition: str,
         location: str,
         year: int,
         other_location: str | None = None,
         other_year: int | None = None,
+        page: int | None = None,
+        pin: str | None = None,
         fmt: Fmt = "csv",
     ) -> Out:
         """Is it higher here than there, or now than then? Rate ratio and rate difference with 95% intervals,
@@ -174,12 +202,12 @@ def build_server(
             "compare_rates",
             lambda: analysis.compare_rates(
                 reg, eng, condition=condition, location=location, year=year, other_location=other_location,
-                other_year=other_year, fmt=fmt,
+                other_year=other_year, page=page, pin=pin, fmt=fmt,
             ),
             fmt,
         )  # fmt: skip
 
-    @mcp.tool(annotations=READ_ONLY)
+    @paged_tool
     def get_trend(
         condition: str,
         location: str,
@@ -187,6 +215,8 @@ def build_server(
         year_end: int | None = None,
         include_provisional: bool = False,
         fit_on: Literal["rates", "counts"] = "rates",
+        page: int | None = None,
+        pin: str | None = None,
         fmt: Fmt = "csv",
     ) -> Out:
         """Is it rising? Annual percent change with a 95% interval from a Poisson regression on year. Split where
@@ -197,41 +227,74 @@ def build_server(
             "get_trend",
             lambda: analysis.get_trend(
                 reg, eng, condition=condition, location=location, year_start=year_start, year_end=year_end,
-                include_provisional=include_provisional, fit_on=fit_on, fmt=fmt,
+                include_provisional=include_provisional, fit_on=fit_on, page=page, pin=pin, fmt=fmt,
             ),
             fmt,
         )  # fmt: skip
 
-    @mcp.tool(annotations=READ_ONLY)
-    def age_adjust(condition: str, location: str, year: int, fmt: Fmt = "csv") -> Out:
+    @paged_tool
+    def age_adjust(
+        condition: str,
+        location: str,
+        year: int,
+        page: int | None = None,
+        pin: str | None = None,
+        fmt: Fmt = "csv",
+    ) -> Out:
         """Does age explain the difference? Rate directly standardised to the 2000 US standard population, with
         the gamma (Fay-Feuer) interval NCHS uses. Runs only when case counts and populations exist for the same
         age groups; never comparable with GBD's age-standardised rates."""
         return safe(
             "age_adjust",
-            lambda: analysis.age_adjust(reg, eng, condition=condition, location=location, year=year, fmt=fmt),
+            lambda: analysis.age_adjust(
+                reg, eng, condition=condition, location=location, year=year, page=page, pin=pin, fmt=fmt
+            ),
             fmt,
         )
 
-    @mcp.tool(annotations=READ_ONLY)
-    def check_signal(condition: str, location: str, year: int, week: int, fmt: Fmt = "csv") -> Out:
+    @paged_tool
+    def check_signal(
+        condition: str,
+        location: str,
+        year: int,
+        week: int,
+        page: int | None = None,
+        pin: str | None = None,
+        fmt: Fmt = "csv",
+    ) -> Out:
         """Is this week unusual? The last 4 weeks' cases against the same, preceding and following 4 weeks of the
         past 5 years, in the style of CDC's historical limits for notifiable diseases. A flag is not an outbreak."""
         return safe(
             "check_signal",
             lambda: analysis.check_signal(
-                reg, eng, condition=condition, location=location, year=year, week=week, fmt=fmt
+                reg,
+                eng,
+                condition=condition,
+                location=location,
+                year=year,
+                week=week,
+                page=page,
+                pin=pin,
+                fmt=fmt,
             ),
             fmt,
         )
 
-    @mcp.tool(annotations=READ_ONLY)
-    def get_provenance(source_id: str, year: int | None = None, fmt: Fmt = "csv") -> Out:
+    @paged_tool
+    def get_provenance(
+        source_id: str,
+        year: int | None = None,
+        page: int | None = None,
+        pin: str | None = None,
+        fmt: Fmt = "csv",
+    ) -> Out:
         """Where a source's numbers came from: the exact URLs, when they were fetched, content hashes, case
         definitions and how to cite them."""
         return safe(
             "get_provenance",
-            lambda: tools.get_provenance(reg, eng, source_id=source_id, year=year, fmt=fmt),
+            lambda: tools.get_provenance(
+                reg, eng, source_id=source_id, year=year, page=page, pin=pin, fmt=fmt
+            ),
             fmt,
         )
 
@@ -285,11 +348,11 @@ def build_server(
             fmt,
         )  # fmt: skip
 
-    @mcp.tool(annotations=READ_ONLY)
-    def query_sql(sql: str, fmt: Fmt = "csv") -> Out:
+    @paged_tool
+    def query_sql(sql: str, page: int | None = None, pin: str | None = None, fmt: Fmt = "csv") -> Out:
         """Escape hatch for questions the other tools don't cover: one read-only SELECT over loaded sources
         (tables are named by source_id). Writes, file reads and undeclared joins are refused; results are capped."""
-        return safe("query_sql", lambda: tools.query_sql(eng, sql, fmt=fmt), fmt)
+        return safe("query_sql", lambda: tools.query_sql(eng, sql, page=page, pin=pin, fmt=fmt), fmt)
 
     for h in helpers.PROMPTS:
         _register_helper(mcp, h)

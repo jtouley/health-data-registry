@@ -35,10 +35,16 @@ Claude (Anthropic's servers) --HTTPS 443--> <owner>-<space>.hf.space (Hugging Fa
 | Limit | Setting (default) | Why |
 |---|---|---|
 | One tool call | `HDR_TOOL_TIMEOUT_S` (200 s), plus a 10 s grace | claude.ai waits 240 s per tool call |
-| One tool result | `HDR_MAX_RESULT_CHARS` (140,000) | claude.ai takes about 150,000 characters per result |
+| One page of an answer | `HDR_PAGE_CHARS` (120,000) | keeps a page, both copies counted, well under the cap below |
+| One tool result (backstop) | `HDR_MAX_RESULT_CHARS` (140,000) | claude.ai takes about 150,000 characters per result |
 | Tool calls per MCP session | `HDR_RATE_PER_SESSION` (30 a minute) | one conversation can't crowd out others |
 | Tool calls overall | `HDR_RATE_GLOBAL` (300 a minute) | the free hardware: 2 vCPU, 16 GB RAM |
 | Request body | 4 MiB (the SDK's default) | |
+
+Every limit must be a positive number: `0`, a negative number, `inf`, `nan` or text never means "no limit", and
+the server refuses to start with it (unset the variable to use the default). `HDR_PAGE_CHARS` is a whole number of
+at least 2,000, and the server also refuses to start when it is above `HDR_MAX_RESULT_CHARS`, since every long
+answer would then be dropped instead of paged.
 
 - **Deadline:** one budget per call caps every fetch, retry and hub download inside it. Without it a live WHO
   read could retry 4 times at up to 180 s each (`crawl.RETRIES`, `crawl.FETCH_TIMEOUT_S`), per page. Each
@@ -47,9 +53,24 @@ Claude (Anthropic's servers) --HTTPS 443--> <owner>-<space>.hf.space (Hugging Fa
   call ignores the deadline, the guard answers anyway after the grace and interrupts DuckDB.
 - **One engine user at a time:** `query.Engine` holds one DuckDB connection and isn't thread safe, so calls
   queue; a call that can't start within its budget gets a plain "busy, try again in a minute".
-- **Result size:** measured as the text block plus the SDK's structured copy of it (the SDK sends both). An
-  answer over the cap is replaced by "This answer is too long to send… Narrow your question: fewer places, a
-  shorter span of years…".
+- **Result size: pages, not refusals.** Measured as the text block plus the SDK's structured copy of it (the SDK
+  sends both). Paging is in the tools layer (`paging.py`), so stdio, HTTP and the CLI page alike: an answer over
+  `HDR_PAGE_CHARS` comes back as page 1 with real rows, a `Page 1 of N: rows 1–k of T` header, a Next line with
+  the exact call for page 2 (same arguments plus `page` and `pin`), the guidance to fetch every page and save
+  the rows to a CSV file or artifact, and provenance on every page. `HDR_PAGE_CHARS` must not be above
+  `HDR_MAX_RESULT_CHARS` (checked at start). The cap stays as a backstop only (a single row too long for any page): such a result
+  is replaced by "This answer is too long to send… even one page at a time…".
+- **Consistent pages across releases.** The pin names each source's snapshot id and, from the hub, its release
+  tag (`toy_cases:<snapshot>@release-<date>`). The hosted server resolves the newest release once per process,
+  so a restart can move it to a newer release between two pages; a page whose pin names the older tag is then
+  read from that tag (a second engine on `…@release-<date>`, at most two kept, in the same bounded cache). If
+  the tag is gone, or a restricted source's in-memory read has expired (those are never kept), the page is
+  refused in plain words with "start again from page 1". Page boundaries depend only on the rows and the notes,
+  so the same pinned data always cuts into the same pages.
+- **Download links.** A long answer from a public-domain source read from a hub release also carries
+  `https://huggingface.co/datasets/<org>/<name>/resolve/<tag>/<source>/data/<source>.parquet` and the `hf://`
+  form, with the file's sha256, licence and citation. Links are built only from the hub URL, the release tag and
+  the source id: never from a question or an argument, and never for a source with `redistribution: false`.
 - **Rate limits are never per IP address:** every claude.ai user reaches the server from Anthropic's published
   outbound range. The server hands out an opaque random `MCP-Session-Id` on `initialize` (the spec allows a
   server to; clients must send it back) and keys the per-session limit on it; requests without one (the
@@ -133,7 +154,7 @@ first request after waking waits for the container to start.
 - Not documented by Hugging Face: whether its proxy logs request paths or bodies, and its proxy's idle timeout
   for a long tool call.
 - Not documented by Anthropic: whether the ~150,000-character limit counts the text block, the structured copy
-  or both; the cap assumes both.
+  or both; the cap and the page budget assume both.
 - `license` in the Space front matter is the Hub's general card field; the Spaces config reference doesn't list it.
 - The private-tier reader (`private.py`) is on another branch; when it lands, the hosted server must read its
   hub copies under the cache, never a local lake.

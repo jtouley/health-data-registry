@@ -188,6 +188,7 @@ def guard_sql(
     allowed_tables: Mapping[str, frozenset[str]],
     declared_joins: frozenset[frozenset[str]] = frozenset(),
     max_rows: int = 5000,
+    ordered: bool = False,
 ) -> GuardedQuery:
     """Check ``sql`` and return the SQL that may run.
 
@@ -197,6 +198,8 @@ def guard_sql(
             case-insensitively, as DuckDB's do.
         declared_joins: pairs of table names a contract declares joinable.
         max_rows: the most rows the outer query may return; a larger or missing LIMIT becomes this.
+        ordered: give a query without an outer ORDER BY one (``ORDER BY ALL``), so the rows and the rows the
+            LIMIT keeps come in a fixed order (answers cut into pages need that).
 
     Raises:
         SqlRefused: anything outside the read-only shape, with a plain-language reason.
@@ -217,6 +220,8 @@ def guard_sql(
         _check_columns(scope, tables)
         _check_joins(scope, tables, joins)
     limit = _apply_limit(tree, max_rows)
+    if ordered and tree.args.get("order") is None:
+        tree.set("order", exp.Order(expressions=[exp.Ordered(this=exp.var("ALL"), nulls_first=False)]))
 
     for node in tree.walk():
         node.comments = None  # the generated SQL carries no caller text outside literals and names

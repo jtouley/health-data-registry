@@ -309,3 +309,42 @@ def test_metrics_summary_holds_only_counters(caplog: pytest.LogCaptureFixture) -
     line = caplog.records[-1].getMessage()
     assert json.loads(line.split(": ", 1)[1]) == {"get_rate|refused|1-5s": 1, "get_series|ok|<1s": 1}
     assert not m.counts
+
+
+@pytest.mark.parametrize("raw", ["0", "-5", "inf", "nan", "fast", "-inf"])
+def test_a_limit_that_would_switch_itself_off_stops_the_server(
+    raw: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """sharp-edges: 0, negative, inf, nan or junk in a limit never reads as "no limit"; the server won't start."""
+    monkeypatch.setenv("HDR_RATE_GLOBAL", raw)
+    with pytest.raises(
+        ValueError, match=r"^HDR_RATE_GLOBAL must be a positive number; got .*Unset it to use 300\."
+    ):
+        HostedConfig()
+    monkeypatch.setenv("HDR_RATE_GLOBAL", "0.5")
+    assert HostedConfig().rate_global == 0.5
+
+
+def test_pages_must_fit_under_the_result_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("HDR_PAGE_CHARS", raising=False)
+    hosted.check_limits(cfg(tmp_path))  # the defaults: 120,000 per page under a 140,000 cap
+    hosted.check_limits(cfg(tmp_path, max_result_chars=120_000))  # exactly the cap still fits
+    with pytest.raises(
+        ValueError, match=r"HDR_PAGE_CHARS \(120,000\) is above HDR_MAX_RESULT_CHARS \(119,999\)"
+    ):
+        hosted.check_limits(cfg(tmp_path, max_result_chars=119_999))
+    monkeypatch.setenv("HDR_PAGE_CHARS", "1999")
+    with pytest.raises(ValueError, match=r"at least 2,000; got '1999'"):
+        hosted.check_limits(cfg(tmp_path))
+    monkeypatch.setenv("HDR_PAGE_CHARS", "2000")
+    hosted.check_limits(cfg(tmp_path))
+
+
+def test_main_checks_the_limits_before_serving(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HDR_PAGE_CHARS", "200000")
+    monkeypatch.setattr(hosted, "configure_logging", lambda: None)  # leave other tests' logging alone
+    monkeypatch.setattr(
+        hosted, "build_hosted", lambda *a, **k: pytest.fail("built a server past a bad limit")
+    )
+    with pytest.raises(ValueError, match="above HDR_MAX_RESULT_CHARS"):
+        hosted.main()

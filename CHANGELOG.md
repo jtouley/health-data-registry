@@ -11,6 +11,12 @@ All notable changes to this project are documented here. The format follows
 - `serve --http`: the hosted, read-only connector over stateless Streamable HTTP (hub releases and live reads
   only), with one deadline per tool call, a result-size cap, rate limits per MCP session and overall, and no
   request content in any log; `space/` for a Hugging Face Docker Space and `docs/dev/hosting.md`.
+- Long answers come in pages instead of being refused: every row-returning tool (and the matching CLI commands,
+  `get-series`, `get-aligned-with-gbd`, `get-provenance`, `query-sql` and the analysis tools) takes `page` and
+  `pin`; each page carries real rows, the same provenance line as every answer, and the exact call for the next
+  page, and a pin keeps every page on one version of the data. `query_sql` adds `ORDER BY ALL` when a query has
+  no `ORDER BY`. The hosted server refuses to start with a limit of 0, a negative number, inf or nan, or with
+  `HDR_PAGE_CHARS` above `HDR_MAX_RESULT_CHARS`.
 - Repository scaffolding under the Apache License 2.0, with a NOTICE for material adapted from the author's
   earlier MIT-licensed work.
 - SECURITY.md (private reporting through GitHub advisories, 14-day first response), CONTRIBUTING.md,
