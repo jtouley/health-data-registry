@@ -589,3 +589,58 @@ def test_audit74_anyScope_undeclaredPair_refused(sql: str) -> None:
 )
 def test_audit74_declaredOrSameTable_setOperation_allowed(sql: str) -> None:
     assert allowed(sql)
+
+
+# ------------------------------------------------------------------ with #49's non-additive guard
+
+LOOSE = {"deaths": frozenset({"state"})}  # deaths.state holds a Total row beside its parts
+
+
+def guarded(sql: str) -> str:
+    return guard_sql(sql, allowed_tables=TABLES, declared_joins=JOINS, non_additive=LOOSE).sql
+
+
+@pytest.mark.parametrize(
+    ("sql", "code"),
+    [
+        # an unpinned sum that also stacks an undeclared pair: the join rule refuses first
+        (
+            "SELECT sum(n) FROM (SELECT deaths AS n FROM deaths UNION ALL SELECT rate FROM vax) u",
+            "undeclared_join",
+        ),
+        # a declared pair stacked and summed: the join rule passes, the non-additive rule refuses
+        (
+            "SELECT sum(n) FROM (SELECT deaths AS n FROM deaths UNION ALL SELECT population FROM pop) u",
+            "non_additive",
+        ),
+        # an unpinned sum next to a value that grows too large: the size rule refuses first
+        (
+            "SELECT sum(deaths), " + " || ".join(["state"] * (MAX_GROWTH + 1)) + " FROM deaths",
+            "too_large",
+        ),
+        # a sum pinned by WHERE but built into a list from a subquery
+        ("SELECT ARRAY(SELECT sum(deaths) FROM deaths WHERE state = 'Michigan')", "too_large"),
+        # sizes are fine and the join is declared, but the sum crosses state
+        (
+            "SELECT sum(d.deaths), d.year || '-' || p.year FROM deaths d JOIN pop p ON d.year = p.year "
+            "GROUP BY 2",
+            "non_additive",
+        ),
+    ],
+)
+def test_audit74_bothGuards_refuseCorrectly(sql: str, code: str) -> None:
+    with pytest.raises(SqlRefused) as e:
+        guarded(sql)
+    assert e.value.code == code and e.value.message
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT state, sum(deaths), state || year AS label FROM deaths GROUP BY state, year",
+        "SELECT sum(deaths), concat(year, '-', year) FROM deaths WHERE state = 'Michigan' GROUP BY year",
+        "SELECT sum(d.deaths) FROM deaths d JOIN pop p ON d.year = p.year WHERE d.state = 'Michigan'",
+    ],
+)
+def test_audit74_bothGuards_allowPinnedSmallQueries(sql: str) -> None:
+    assert guarded(sql)

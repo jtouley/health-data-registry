@@ -28,6 +28,28 @@ All notable changes to this project are documented here. The format follows
   compares the copy it publishes. Cached hub files are checked again each time the server reconnects (#74).
   Snapshots built before this change have no file fingerprints and must be rebuilt with `refresh`.
 
+### Fixed
+
+- A summed count never adds up labels that overlap or count different things (hard rule 2). Semantic-model
+  dimensions say `non_additive: true` or `false`, and each `true` says why in plain words
+  (`non_additive_reason`), which the refusal and `describe_dataset` show. A metric or series that neither picks
+  one value of such a dimension nor shows each value on its own row is declined in plain words with a next step.
+  `query_sql` applies the same rule to a typed `sum()`: each such column is filtered to one value in WHERE or
+  grouped by, and a column a model leaves undeclared counts as such. Before, a weekly NNDSS count asked for
+  without a condition added every label together, including Confirmed, Probable and Total and animal rabies.
+  The tools always picked one label, so their answers don't change.
+- `validate` refuses a summed metric that keeps the publisher's total rows while adding up a place or group
+  declared additive (NNDSS areas add up only once TOTAL, US RESIDENTS and the divisions are excluded).
+- Every percent, estimate or rate names the publisher's uncertainty bounds, in the same units, or says
+  `uncertainty: none` and why in plain words; a bound measure no metric returns is a load error. A row whose
+  interval is empty says so.
+- The CDI total case count is read as the one published Total cell (grouping 'All cases'), not a sum. An empty
+  published cell, there or in any other figure read as published, comes back as "suppressed or not published",
+  never a blank.
+- Semantic-model versions: CDI, NNDSS and RESP-NET 0.2.0; Detroit annual and ED-visit models 0.1.1.
+- NHSN contract: two quality rules check that the confidence interval is filled wherever the percent resistant
+  is, and only there, as the publisher's column descriptions state.
+
 ### Changed
 
 - The README is rewritten for clinicians: five setup steps that each say what you'll see (the Start here
