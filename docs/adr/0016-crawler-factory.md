@@ -12,7 +12,7 @@
   - [ADR 0007](0007-odcs-contracts-and-semantic-models.md): contracts and the contract facts rule
   - [ADR 0013](0013-browser-fetcher-on-government-hosts.md): browser fetcher on government hosts
   - [ADR 0014](0014-bibliographic-registries-as-primary-routes.md): bibliographic registries
-  - ADR 0015: ELT, raw data stored as sent (proposed on PR #108)
+  - [ADR 0015](0015-elt-raw-data-stored-as-sent.md): ELT, raw data stored as sent
   - issue [#104](https://github.com/jtouley/health-data-registry/issues/104): the ELT audit
   - issue [#65](https://github.com/jtouley/health-data-registry/issues/65): pacing and locks across machines
   - the audit in [docs/dev/crawler-audit.md](../dev/crawler-audit.md), and PRs #27 and #30

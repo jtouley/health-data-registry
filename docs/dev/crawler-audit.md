@@ -4,8 +4,8 @@ Read on 25 Nov 2026 against `main` at 578e5df, plus the open PRs #27 (`feat/wayn
 reports) and #30 (`feat/croi-index`, the CROI abstract index). No code was changed. This audit is the evidence for
 [ADR 0016](../adr/0016-crawler-factory.md) (crawler factory, proposed). Issue
 [#104](https://github.com/jtouley/health-data-registry/issues/104) audits the same paths for values changed
-before storage (the ELT rule, ADR 0015 on PR #108); this one asks a different question: what in Python is specific
-to one source, and so should be configuration or a named extension.
+before storage (the ELT rule, [ADR 0015](../adr/0015-elt-raw-data-stored-as-sent.md)); this one asks a different
+question: what in Python is specific to one source, and so should be configuration or a named extension.
 
 Each entry below gives:
 
