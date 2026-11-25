@@ -5,6 +5,7 @@ from __future__ import annotations
 import fnmatch
 import importlib.util
 import json
+import os
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -15,6 +16,15 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 A, B = "health_data_registry.a", "health_data_registry.b"
+
+# Under mutmut (which sets MUTANT_UNDER_TEST before its stats run) the tests run in mutants/, whose package
+# sources carry mutmut's trampolines, so splitting them gives a different split from the real one. This script is
+# not mutated (scripts/ is outside [tool.mutmut] source_paths), so the tests that split real modules skip there
+# and no mutant goes unnoticed.
+reads_real_sources = pytest.mark.skipif(
+    "MUTANT_UNDER_TEST" in os.environ,
+    reason="mutants/ holds mutmut's trampolined copy of the package sources",
+)
 
 
 @pytest.fixture
@@ -35,6 +45,7 @@ def Shard(*args: Any, **kwargs: Any) -> Any:  # noqa: N802 - reads like the clas
 # --list ----------------------------------------------------------------------------------------------------
 
 
+@reads_real_sources
 def test_list_json_is_one_sorted_line_without_init_files(mc: ModuleType) -> None:
     out = mc.list_json(
         [
@@ -76,6 +87,7 @@ def test_a_name_that_is_not_a_plain_module_is_refused(mc: ModuleType, name: str)
         mc.list_json([name])
 
 
+@reads_real_sources
 def test_list_all_prints_every_module_as_json(mc: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:
     assert mc.main(["--list", "--all"]) == 0
     mods = json.loads(capsys.readouterr().out)
@@ -320,6 +332,7 @@ def test_an_unreadable_report_is_an_error_not_a_zero(mc: ModuleType, tmp_path: P
 # The eval scorer is mutated too ----------------------------------------------------------------------------
 
 
+@reads_real_sources
 def test_an_eval_module_is_listed_and_accepted(mc: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:
     ids = json.loads(mc.list_json(["eval.stats", "eval.__init__", "health_data_registry.geo"]))
     assert ids == ["eval.stats", "health_data_registry.geo"]
@@ -432,6 +445,7 @@ def test_a_mutant_outside_the_split_is_reported(mc: ModuleType) -> None:
     assert mc.unassigned_mutants(stray, A, bins) == [f"{A}.x_new_function__mutmut_1: matches 0 shards"]
 
 
+@reads_real_sources
 @pytest.mark.parametrize("module", ["health_data_registry.registry", "health_data_registry.query"])
 def test_the_real_split_covers_mutmuts_own_mutants_once(mc: ModuleType, module: str) -> None:
     # mutmut's own generator, no test run: every mutant it makes of the module is in exactly one shard.
@@ -473,6 +487,7 @@ def test_a_malformed_shard_id_is_refused(mc: ModuleType, shard: str) -> None:
         mc.parse_shard_id(shard)
 
 
+@reads_real_sources
 def test_a_shard_id_from_another_version_of_the_source_is_refused(mc: ModuleType) -> None:
     n = len(mc.module_shards("health_data_registry.tools"))
     assert mc.shard_globs(f"health_data_registry.tools#1of{n}")
@@ -480,12 +495,14 @@ def test_a_shard_id_from_another_version_of_the_source_is_refused(mc: ModuleType
         mc.shard_globs(f"health_data_registry.tools#1of{n + 1}")
 
 
+@reads_real_sources
 def test_too_many_shards_for_one_matrix_is_an_error(mc: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mc, "MAX_SHARDS", 3)
     with pytest.raises(ValueError, match="more than one CI matrix"):
         mc.list_shards(["health_data_registry.tools"])
 
 
+@reads_real_sources
 def test_module_mode_fails_closed_on_a_stale_shard_id(mc: ModuleType, tmp_path: Path) -> None:
     report = tmp_path / "r.json"
     assert mc.main(["--module", "health_data_registry.tools#1of99", "--report", str(report)]) == 1
