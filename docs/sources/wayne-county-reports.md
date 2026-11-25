@@ -96,8 +96,8 @@ only by `make test-network`, once the source is catalogued.
 - **Access:** the county's site is a government host (`source.government_host`), so under the maintainer's
   access policy it is paced at least 10 s between requests, robots.txt included, by one access policy per
   server process (`crawl.shared_robots`), with an honest user agent. Index and PDFs are requested as HTML and
-  PDF, not JSON. On 24 Nov 2026 the county's CDN answered 403 from the build environment; a 401, 403 or 429
-  is a block, recorded and never worked around, so check access before review. The government-host
+  PDF, not JSON. On 24 Nov 2026 the county's CDN answered 403 from the build environment; a 401 or 403 on a
+  page is a block, recorded and never worked around (a 429 is backed off), so check access before review. The government-host
   fallback ladder is issue #36.
 
 ## Still open

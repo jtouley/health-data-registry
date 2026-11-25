@@ -16,7 +16,7 @@ import pytest
 
 from health_data_registry import analysis, stats, tools
 from health_data_registry.query import Engine, QueryRefused
-from health_data_registry.registry import Registry, load_registry
+from health_data_registry.registry import LOGICAL_TYPES, Registry, load_registry
 from health_data_registry.store import build_snapshot, write_ndjson
 from tests.conftest import raw_fetch
 
@@ -66,7 +66,7 @@ status: draft
 
 def prop(name: str, typ: str, role: str, desc: str = "toy column", required: bool = False) -> str:
     return (
-        f"      - {{name: {name}, physicalType: {typ}, logicalType: x, required: {str(required).lower()}, "
+        f"      - {{name: {name}, physicalType: {typ}, logicalType: {sorted(LOGICAL_TYPES[typ])[0]}, required: {str(required).lower()}, "
         f"description: {desc}, customProperties: [{{property: role, value: {role}}}]}}\n"
     )
 
@@ -95,7 +95,7 @@ schema:
     customProperties:
       - {property: totalRows, value: "upper(area) = 'US RESIDENTS'"}
     properties:
-      - {name: area, physicalType: VARCHAR, logicalType: x, required: true, description: toy column,
+      - {name: area, physicalType: VARCHAR, logicalType: string, required: true, description: toy column,
          customProperties: [{property: role, value: dimension},
                             {property: partialPlaces, value: {"NEW YORK": "excludes New York City"}}]}
 """

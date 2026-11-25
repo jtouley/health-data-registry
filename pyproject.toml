@@ -52,6 +52,15 @@ dev = [
     "shellcheck-py>=0.10",
     "types-PyYAML>=6",
 ]
+# dbt on DuckDB for the transform/ project (raw -> staging -> intermediate -> marts). Not a server dependency:
+# the MCP server only reads what the build produces.
+transform = [
+    # 1.10 or later: the generated tests put their values under `arguments:`, which dbt-core 1.9 can't read.
+    "dbt-duckdb>=1.10,<2",
+]
+
+[tool.uv]
+default-groups = ["dev", "transform"]
 
 [build-system]
 requires = ["hatchling"]
@@ -105,7 +114,7 @@ branch = true
 [tool.mutmut]
 # Mutation tests run on the modules a change touches (scripts/mutate_changed.py, `make mutate`), not the whole tree.
 source_paths = ["src/health_data_registry/", "eval/"]
-also_copy = ["eval/dev/", "catalog/", "contracts/", "semantic/", "docs/", "licenses/", "template/", "plugin/", ".claude-plugin/", "scripts/", "tools/", "assets/", "pyproject.toml", "README.md", "CLAUDE.md"]
+also_copy = ["eval/dev/", "catalog/", "contracts/", "semantic/", "docs/", "licenses/", "template/", "plugin/", ".claude-plugin/", "scripts/", "tools/", "assets/", "fuzz/", "transform/", "tests/fixtures/", "pyproject.toml", "README.md", "CLAUDE.md"]
 pytest_add_cli_args = ["-m", "not network", "-x", "-q", "-p", "no:cacheprovider"]
 # The fuzz harness tests match known findings by the name of the sql_guard or adapter function an error is raised
 # in, which mutmut's trampolines rename; they test fuzz/ (never mutated), so mutmut leaves them out.

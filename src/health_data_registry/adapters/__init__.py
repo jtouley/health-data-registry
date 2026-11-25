@@ -76,8 +76,8 @@ def _pages(
         from health_data_registry.adapters import tableau
 
         yield from tableau.pages(entry, fetcher, max_rows=max_rows, fields=fields)
-    else:  # pragma: no cover - the catalog model forbids other portals
-        raise ValueError(f"no adapter for portal {entry.source.portal}")
+    else:  # doi: harvested by doi_harvest.py into a private store, never paged here
+        raise ValueError(f"{entry.id} is not read through a portal adapter; see doi_harvest.py")
 
 
 def publisher_fields(entry: CatalogEntry, fetcher: Fetcher) -> set[str]:
@@ -92,4 +92,8 @@ def publisher_fields(entry: CatalogEntry, fetcher: Fetcher) -> set[str]:
         return who_gho.publisher_fields(entry, fetcher)
     if entry.source.portal == "pdf_report":
         return wayne_county.publisher_fields(entry, fetcher)
+    if entry.source.portal == "doi":
+        raise ValueError(
+            f"{entry.id}: DOI harvests are checked by the parser itself (ApiLayoutError) on every run"
+        )
     return https_csv.publisher_fields(entry, fetcher)
