@@ -22,6 +22,22 @@ All notable changes to this project are documented here. The format follows
 - Weekly refresh workflow that runs every source's contract check and opens an issue on failure. Publishing
   snapshots to Hugging Face stays off until the maintainer configures it.
 - Makefile and pre-commit hooks.
+- GitHub Actions pipelines (docs/dev/automation.md): the weekly refresh fetches each public source in its own job
+  and publishes and tags `release-<date>` only when every source passes, otherwise it opens an issue; the CROI
+  and DOI conference crawls and the Space deploy (release tags on main that passed CI only) wait, with a notice,
+  for the code they run; a weekly drift check keeps the scheduled workflows enabled.
+- `health-data-registry sitemaps snapshot` and a weekly workflow: copies of the michigan.gov and kentcountymi.gov
+  sitemaps, with week-to-week diffs, in a private Hugging Face dataset; a refusal opens a "Sitemap refresh
+  blocked" issue and is never worked around.
+- `naming.py`: every Hugging Face repository name built from one convention (docs/dev/naming.md), and
+  `assert-private`, run before every upload to a private or ops dataset. `HDR_HF_OWNER` owns the public dataset
+  and the Space; `HDR_PRIVATE_HF_OWNER` the private and ops datasets.
+- ADR 0013: the browser fetcher may read government hosts with an honest user agent, at least 10 s apart and with
+  no evasion; a challenge page, CAPTCHA, 401, 403 or 429 stops the crawl and is recorded as blocked.
+- Catalog entries carry `hosting: public` or `hosting: private` (the default). Only `hosting: public` sources
+  are refreshed for and published to the open data release, and the pre-publish check refuses data files staged
+  for any other source. It also refuses a snapshot with no rows, or a data file whose row count differs from
+  its snapshot's manifest.
 - The MCP server and its read-only tools: `list_sources`, `search_datasets`, `describe_dataset`,
   `suggest_datasets`, `get_series`, `get_aligned_with_gbd`, `get_provenance`, `list_caveats`, `find_prior_work`
   (says the index isn't built yet), `get_publication_outlook` and the guarded `query_sql`.

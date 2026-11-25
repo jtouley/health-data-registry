@@ -41,3 +41,4 @@ caveats:
 contract: contracts/census_county_pop.odcs.yaml
 semantic_model: semantic/census_county_pop.yaml
 status: draft
+hosting: public
