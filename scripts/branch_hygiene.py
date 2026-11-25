@@ -8,24 +8,29 @@ Usage (from .github/workflows/branch-hygiene.yml; GH_TOKEN in the environment):
 
 Never touched: the default branch; a branch that is protected, by branch protection or by a ruleset that
 restricts deletion (checked through the API for each branch, never assumed); the head or base of an open pull
-request, and the pre-pr/<head> twin of an open pull request's head; dependabot/*; the `keep` list in
-config/branch_keep.yaml; a name outside [A-Za-z0-9._/-]; and any branch pushed to or committed to in the last
-24 hours.
+request from this repository, and the pre-pr/<head> twin of an open pull request's head; dependabot/*; the
+`keep` list in config/branch_keep.yaml; a name outside [A-Za-z0-9._/-]; and any branch pushed to or committed to
+in the last 24 hours. A branch that is the base of an open pull request from a fork is not deleted either: it is
+reported for a maintainer, so an outsider's pull request can't keep a branch silently. Open pull requests are
+checked again right before each delete.
 
 Archived (in this order): a CI probe branch (the `probes` patterns); a pre-pr/* or wip/* branch whose head
 commit belongs only to closed pull requests (merged or abandoned); any branch with no push and no commit for
 7 days. Purged: the `purge` list, deleted with no tag because its content must not stay in the repo (the
-protections and the 24-hour rule still apply).
+protections and the 24-hour rule still apply). One run deletes at most MAX_DELETES branches, purges first;
+the rest wait for the next run. A run that GitHub rate-limits stops deleting and leaves the rest too.
 
 Archiving a branch: create the annotated tag archive/<branch>/<YYYY-MM-DD> at its head (or reuse that tag; a
-tag is never moved), read the tag back and check that it resolves to the head, re-read the branch and its
-protection, check it has not moved, and only then delete it. A branch whose tag can't be verified, or that
-moved or became protected, is reported and never deleted. Every step is idempotent.
+tag is never moved; if it already holds another commit, the tag is archive/<branch>/<YYYY-MM-DD>-<12-hex sha>),
+read the tag back and check that it resolves to the head, re-read the branch, its protection and its open pull
+requests, check it has not moved, and only then delete it. A branch whose tag can't be verified, or that moved,
+became protected or gained an open pull request, is reported and never deleted. Every step is idempotent.
 
 `pr-closed` runs when a pull request closes: when it merged, it tags the head (the repository auto-deletes the
-branch); either way it archives the pull request's pre-pr/<branch> twin, if the twin holds only this pull
-request's commits. Every protection above applies, the 24-hour rule included: a twin pushed to or committed to
-in the last 24 hours is left for the daily sweep, which archives it once it is older (its pull request is closed).
+branch); either way it archives the pull request's pre-pr/<branch> twin, if the twin's head is the pull
+request's head or an ancestor of it, and no other open pull request holds it. Every protection above applies,
+the 24-hour rule included: a twin pushed to or committed to in the last 24 hours is left for the daily sweep,
+which archives it once it is older (its pull request is closed).
 
 Reports are Markdown (the tracking issue, the job summary): branch names are limited to [A-Za-z0-9._/-] and
 free text loses backticks, @ and angle brackets, so a report can't format the issue or mention anyone.
@@ -39,6 +44,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -63,6 +69,13 @@ REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 MAX_REPORT = 60_000  # GitHub caps an issue body at 65,536 characters
 MAX_TAG_DEPTH = 5
 GONE = "gone"  # check_deletable: the branch no longer exists
+# At most this many branches deleted (archived or purged) per run, so one run's blast radius is small and a run
+# stays well under GITHUB_TOKEN's 1,000 requests an hour and the limit on content-creating requests.
+MAX_DELETES = 25
+PAUSE = 2.0  # seconds between deletes in a live run (content-creating requests are limited per minute)
+# A probe pattern with a glob must not match any of these ordinary names.
+ORDINARY = ("main", "a", "x/y", "feat/x", "fix/x", "wip/x", "claude/x", "pre-pr/x", "pre-pr/feat/x", "ci/x")
+GLOB = re.compile(r"[*?\[]")
 
 
 class ApiError(Exception):
@@ -71,6 +84,15 @@ class ApiError(Exception):
     def __init__(self, status: int, message: str) -> None:
         super().__init__(message)
         self.status = status
+
+
+def rate_limited(status: int, headers: Any) -> bool:
+    """True when a refusal is GitHub's rate limit (primary or secondary), not a permission error."""
+    if status == 429:
+        return True
+    return status == 403 and (
+        headers.get("x-ratelimit-remaining") == "0" or headers.get("retry-after") is not None
+    )
 
 
 class Api(Protocol):
@@ -89,6 +111,7 @@ class GitHubApi:
             raise ValueError("no token: set GH_TOKEN")
         self.base = base.rstrip("/")
         self.token = token
+        self.rate_limited = False  # set once GitHub rate-limits a call; apply() then stops deleting
 
     def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> Any:  # pragma: no mutate
         data = json.dumps(body).encode() if body is not None else None
@@ -107,9 +130,13 @@ class GitHubApi:
             with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 - HTTPS only, see above
                 raw = resp.read()
         except urllib.error.HTTPError as e:
+            if rate_limited(e.code, e.headers):
+                self.rate_limited = True
             raise ApiError(e.code, f"{method} {path}: HTTP {e.code}") from None
         except urllib.error.URLError as e:
             raise ApiError(0, f"{method} {path}: {e.reason}") from None
+        except OSError as e:  # a read timeout or a dropped connection while reading the body
+            raise ApiError(0, f"{method} {path}: {type(e).__name__}") from None
         return json.loads(raw) if raw else None
 
 
@@ -152,6 +179,22 @@ def shown(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._/-]", "?", name)[:100]
 
 
+def probe_pattern_ok(name: str) -> bool:
+    """A probe pattern is an exact name, or a glob that names a probe after a fixed first path segment and that
+    matches none of the ORDINARY names. A probe is archived after 24 hours, not 7 days, so a wide pattern would
+    turn the 7-day rule into a 24-hour one for a whole namespace."""
+    first = GLOB.search(name)
+    if first is None:
+        return True
+    prefix = name[: first.start()]
+    return (
+        "probe" in name
+        and "/" in prefix
+        and not prefix.endswith("/")
+        and not any(fnmatch.fnmatchcase(o, name) for o in ORDINARY)
+    )
+
+
 def parse_time(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
@@ -185,8 +228,11 @@ def load_config(path: Path) -> Config:
             name = str(entry["name"])
             if section == "purge" and not safe_name(name):
                 raise ValueError(f"{path}: purge entry {shown(name)!r} is not a plain branch name")
-            if section == "probes" and name.strip("*") == "":
-                raise ValueError(f"{path}: probe pattern {name!r} would match every branch")
+            if section == "probes" and not probe_pattern_ok(name):
+                raise ValueError(
+                    f"{path}: probe pattern {name!r} is too wide: give it a fixed prefix past the first `/`,"
+                    " and the word probe"
+                )
             out[section][name] = str(entry["reason"])
     return Config(keep=out["keep"], purge=out["purge"], probes=out["probes"])
 
@@ -194,15 +240,16 @@ def load_config(path: Path) -> Config:
 @dataclass(frozen=True)
 class RepoState:
     default_branch: str
-    open_heads: frozenset[str]
-    open_bases: frozenset[str]
+    open_heads: frozenset[str]  # head branches of open pull requests from this repository
+    open_bases: frozenset[str]  # base branches of open pull requests from this repository
+    fork_bases: dict[str, int]  # base branch -> an open pull request into it from a fork
 
 
 @dataclass(frozen=True)
 class Decision:
     branch: str
     sha: str
-    action: str  # keep | archive | purge
+    action: str  # keep | archive | purge | hold (would be deleted, but a maintainer must decide)
     reason: str
     committed_at: str = ""
     author: str = ""
@@ -212,18 +259,31 @@ class Decision:
 @dataclass(frozen=True)
 class Outcome:
     branch: str
-    action: str  # archived | purged | tagged | failed | kept | would-archive | would-purge
+    action: str  # archived | purged | tagged | failed | kept | deferred | would-archive | would-purge
     detail: str
     tag: str = ""
 
 
+def from_here(pull: dict[str, Any], repo: str) -> bool:
+    """True when a pull request's head branch is in this repository (a deleted fork's head repo is None)."""
+    head_repo = pull["head"].get("repo") or {}
+    return bool(head_repo.get("full_name") == repo)
+
+
 def read_state(api: Api, repo: str) -> RepoState:
+    """The default branch and the open pull requests. A fork's head branch name says nothing about ours, so only
+    pull requests from this repository protect a branch by name."""
     default = api.request("GET", f"/repos/{repo}")["default_branch"]
     pulls = get_all(api, f"/repos/{repo}/pulls?state=open")
+    ours = [p for p in pulls if from_here(p, repo)]
+    forks = [p for p in pulls if not from_here(p, repo)]
     return RepoState(
         default_branch=str(default),
-        open_heads=frozenset(str(p["head"]["ref"]) for p in pulls),
-        open_bases=frozenset(str(p["base"]["ref"]) for p in pulls),
+        open_heads=frozenset(str(p["head"]["ref"]) for p in ours),
+        open_bases=frozenset(str(p["base"]["ref"]) for p in ours),
+        fork_bases={
+            str(p["base"]["ref"]): int(p["number"]) for p in sorted(forks, key=lambda p: -int(p["number"]))
+        },
     )
 
 
@@ -260,9 +320,24 @@ def deletion_rules(api: Api, repo: str, branch: str) -> str | None:
     return None
 
 
+def open_pull(api: Api, repo: str, branch: str) -> str | None:
+    """Why an open pull request now uses the branch (as head, as base, or its pre-pr/ twin's head), or None."""
+    owner = repo.split("/")[0]
+    heads = [branch] + ([branch[len(TWIN) :]] if branch.startswith(TWIN) else [])
+    for h in heads:
+        if api.request("GET", f"/repos/{repo}/pulls?state=open&head={q(owner)}:{q(h)}&per_page=1"):
+            return "an open pull request uses it now" if h == branch else "its pull request is open again"
+    if api.request("GET", f"/repos/{repo}/pulls?state=open&base={q(branch)}&per_page=1"):
+        return "it is now the base of an open pull request"
+    return None
+
+
 def check_deletable(api: Api, repo: str, branch: str, sha: str) -> str | None:
-    """Right before a delete: None when the branch still points at `sha` and nothing protects it; GONE when it
-    no longer exists; otherwise why it must be kept. Every error keeps the branch."""
+    """Right before a delete: None when the branch still points at `sha`, nothing protects it and no open pull
+    request uses it; GONE when it no longer exists; otherwise why it must be kept. Every error keeps the branch.
+
+    The REST API has no compare-and-delete, so a push in the moment between this check and the delete is lost
+    with the branch; the 24-hour rule makes that unlikely."""
     try:
         b = api.request("GET", f"/repos/{repo}/branches/{q(branch)}")
     except ApiError as e:
@@ -272,7 +347,11 @@ def check_deletable(api: Api, repo: str, branch: str, sha: str) -> str | None:
     head = str(b["commit"]["sha"])
     if head != sha:
         return f"the branch moved to {head}; kept"
-    return deletion_rules(api, repo, branch)
+    try:
+        why = open_pull(api, repo, branch)
+    except ApiError as e:
+        return f"could not read its open pull requests ({e})"
+    return why or deletion_rules(api, repo, branch)
 
 
 def commit_info(api: Api, repo: str, sha: str) -> dict[str, str]:
@@ -300,16 +379,36 @@ def activity(api: Api, repo: str, branch: str, sha: str) -> tuple[dict[str, str]
     return info, active
 
 
-def closed_pr(api: Api, repo: str, sha: str) -> tuple[int, bool] | None:
-    """(number, merged) of the latest pull request this commit belongs to, if it belongs to no open one."""
-    pulls = api.request("GET", f"/repos/{repo}/commits/{sha}/pulls")
-    if not pulls or any(p.get("state") != "closed" for p in pulls):
+def closed_pr(api: Api, repo: str, branch: str, sha: str) -> tuple[int, bool] | None:
+    """(number, merged) of the latest pull request this commit belongs to, if it belongs to no open one.
+
+    GET /commits/{sha}/pulls lists open and merged pull requests only, for a commit not on the default branch,
+    so pull requests closed without merging are found by head branch: the branch itself and, for a pre-pr/
+    twin, the branch it shadows, where the pull request's last head is this commit."""
+    pulls = {int(p["number"]): p for p in api.request("GET", f"/repos/{repo}/commits/{sha}/pulls")}
+    owner = repo.split("/")[0]
+    for h in [branch] + ([branch[len(TWIN) :]] if branch.startswith(TWIN) else []):
+        for p in get_all(api, f"/repos/{repo}/pulls?state=closed&head={q(owner)}:{q(h)}"):
+            if str(p["head"]["sha"]) == sha:
+                pulls[int(p["number"])] = p
+    if not pulls or any(p.get("state") != "closed" for p in pulls.values()):
         return None
-    last = max(pulls, key=lambda p: int(p["number"]))
+    last = pulls[max(pulls)]
     return int(last["number"]), bool(last.get("merged_at"))
 
 
 def decide(
+    api: Api, repo: str, branch: dict[str, Any], state: RepoState, cfg: Config, now: datetime
+) -> Decision:
+    d = classify(api, repo, branch, state, cfg, now)
+    fork_pr = state.fork_bases.get(d.branch)
+    if d.action in ("archive", "purge") and fork_pr is not None:
+        reason = f"base of open pull request #{fork_pr} from a fork; a maintainer decides ({d.reason})"
+        return Decision(d.branch, d.sha, "hold", reason, d.committed_at, d.author, d.subject)
+    return d
+
+
+def classify(
     api: Api, repo: str, branch: dict[str, Any], state: RepoState, cfg: Config, now: datetime
 ) -> Decision:
     name = str(branch["name"])
@@ -330,7 +429,7 @@ def decide(
         return Decision(name, sha, "archive", f"CI probe branch ({probe})", **info)
     if name.startswith((TWIN, "wip/")):
         try:
-            pr = closed_pr(api, repo, sha)
+            pr = closed_pr(api, repo, name, sha)
         except ApiError as e:
             return Decision(name, sha, "keep", f"could not read its pull requests, so kept ({e})", **info)
         if pr is not None:
@@ -366,6 +465,14 @@ def peel(api: Api, repo: str, tag: str) -> str | None:
             raise ApiError(0, f"tag {tag} points at a {obj['type']}, not a commit")
         obj = api.request("GET", f"/repos/{repo}/git/tags/{obj['sha']}")["object"]
     raise ApiError(0, f"tag {tag} is nested too deeply")
+
+
+def free_tag(api: Api, repo: str, branch: str, day: str, sha: str) -> str:
+    """archive/<branch>/<day>, or with -<12-hex sha> added when that tag already holds another commit (a reused
+    branch name, or a restored branch archived again the same day). Never moves a tag."""
+    tag = tag_name(branch, day)
+    got = peel(api, repo, tag)
+    return tag if got in (None, sha) else f"{tag}-{sha[:12]}"
 
 
 def ensure_tag(api: Api, repo: str, tag: str, sha: str, message: str) -> str | None:
@@ -417,29 +524,91 @@ def tag_message(d: Decision) -> str:
     )
 
 
+def tag_and_check(
+    api: Api, repo: str, branch: str, sha: str, day: str, message: str
+) -> tuple[str, str | None]:
+    """(tag, None) once a free archive tag holds `sha` and is verified, else (tag, why not)."""
+    try:
+        tag = free_tag(api, repo, branch, day, sha)
+    except ApiError as e:
+        tag = tag_name(branch, day)
+        return tag, f"could not create or read the tag {tag} ({e})"
+    return tag, ensure_tag(api, repo, tag, sha, message)
+
+
 def archive(api: Api, repo: str, d: Decision, day: str) -> Outcome:
     """Tag, verify the tag, then delete. Any failure keeps the branch and says why."""
-    tag = tag_name(d.branch, day)
-    err = ensure_tag(api, repo, tag, d.sha, tag_message(d))
+    tag, err = tag_and_check(api, repo, d.branch, d.sha, day, tag_message(d))
     if err is None:
         err = delete_branch(api, repo, d)
     return Outcome(d.branch, "failed" if err else "archived", err or d.reason, tag)
 
 
-def apply(api: Api, repo: str, decisions: list[Decision], day: str, dry_run: bool) -> list[Outcome]:
-    out: list[Outcome] = []
+def older_tags(api: Api, repo: str, branch: str) -> str:
+    """For a purged branch: the archive tags that still hold it (the purge removes only the branch)."""
+    try:
+        refs = api.request("GET", f"/repos/{repo}/git/matching-refs/tags/archive/{q(branch)}/")
+    except ApiError as e:
+        return f"; could not list its older archive tags ({e})"
+    names = [str(r["ref"]).removeprefix("refs/tags/") for r in refs]
+    return (
+        f"; older archive tags still hold it, for a maintainer to remove: {', '.join(names)}" if names else ""
+    )
+
+
+def purge(api: Api, repo: str, d: Decision) -> Outcome:
+    err = delete_branch(api, repo, d)
+    if err:
+        return Outcome(d.branch, "failed", err)
+    return Outcome(d.branch, "purged", d.reason + older_tags(api, repo, d.branch))
+
+
+def apply(
+    api: Api,
+    repo: str,
+    decisions: list[Decision],
+    day: str,
+    dry_run: bool,
+    *,
+    out: list[Outcome] | None = None,
+    log: Callable[[Outcome], None] | None = None,
+    pause: Callable[[float], None] | None = None,
+) -> list[Outcome]:
+    """Carry out the plan, purges first, at most MAX_DELETES deletes, stopping if GitHub rate-limits the run.
+
+    Each outcome is appended to `out` and passed to `log` as it happens, so a run that stops on an unexpected
+    error still has the record of what it already deleted."""
+    out = [] if out is None else out
+
+    def record(o: Outcome) -> None:
+        out.append(o)
+        if log is not None:
+            log(o)
+
+    todo = [d for d in decisions if d.action == "purge"] + [d for d in decisions if d.action == "archive"]
     for d in decisions:
-        if d.action == "archive":
-            if dry_run:
-                out.append(Outcome(d.branch, "would-archive", d.reason, tag_name(d.branch, day)))
+        if d.action == "hold":
+            record(Outcome(d.branch, "failed", d.reason))
+    for i, d in enumerate(todo):
+        if i >= MAX_DELETES:
+            record(
+                Outcome(
+                    d.branch, "deferred", f"left for the next run (at most {MAX_DELETES} a run): {d.reason}"
+                )
+            )
+            continue
+        if getattr(api, "rate_limited", False):
+            record(Outcome(d.branch, "deferred", f"left for the next run (GitHub rate limit): {d.reason}"))
+            continue
+        if dry_run:
+            if d.action == "archive":
+                record(Outcome(d.branch, "would-archive", d.reason, tag_name(d.branch, day)))
             else:
-                out.append(archive(api, repo, d, day))
-        elif d.action == "purge":
-            if dry_run:
-                out.append(Outcome(d.branch, "would-purge", d.reason))
-                continue
-            err = delete_branch(api, repo, d)
-            out.append(Outcome(d.branch, "failed" if err else "purged", err or d.reason))
+                record(Outcome(d.branch, "would-purge", d.reason))
+            continue
+        if i and pause is not None:
+            pause(PAUSE)
+        record(archive(api, repo, d, day) if d.action == "archive" else purge(api, repo, d))
     return out
 
 
@@ -463,32 +632,42 @@ def pr_closed(
     out: list[Outcome] = []
     if merged and branch not in cfg.purge:
         d = with_commit(api, repo, branch, sha, f"merged in pull request #{pr}")
-        tag = tag_name(branch, day)
-        err = ensure_tag(api, repo, tag, sha, tag_message(d))
+        tag, err = tag_and_check(api, repo, branch, sha, day, tag_message(d))
         out.append(Outcome(branch, "failed" if err else "tagged", err or d.reason, tag))
     if branch.startswith(TWIN):
         return out
     twin = TWIN + branch
     try:
         head = api.request("GET", f"/repos/{repo}/branches/{q(twin)}")
-        state = read_state(api, repo)
     except ApiError as e:
         if e.status == 404:
             return out
         return [*out, Outcome(twin, "failed", f"could not read the twin branch ({e})")]
+    try:
+        state = read_state(api, repo)
+    except ApiError as e:
+        return [*out, Outcome(twin, "failed", f"could not read the open pull requests ({e})")]
     twin_sha = str(head["commit"]["sha"])
     reason = exclusion(twin, bool(head.get("protected")), state, cfg)
     if reason is not None:
         return [*out, Outcome(twin, "kept", reason)]
-    if twin_sha != sha:
-        try:
-            ours = any(
-                int(p["number"]) == pr for p in api.request("GET", f"/repos/{repo}/commits/{twin_sha}/pulls")
-            )
-        except ApiError as e:
-            return [*out, Outcome(twin, "failed", f"could not read the twin's pull requests ({e})")]
-        if not ours:
-            return [*out, Outcome(twin, "kept", f"its head is not a commit of pull request #{pr}")]
+    try:
+        # The twin holds only this pull request's commits when its head is the pull request's head or an
+        # ancestor of it, whether the pull request merged or not.
+        ours = twin_sha == sha or api.request("GET", f"/repos/{repo}/compare/{twin_sha}...{sha}").get(
+            "status"
+        ) in ("identical", "ahead")
+        others = sorted(
+            int(p["number"])
+            for p in api.request("GET", f"/repos/{repo}/commits/{twin_sha}/pulls")
+            if p.get("state") == "open" and int(p["number"]) != pr
+        )
+    except ApiError as e:
+        return [*out, Outcome(twin, "failed", f"could not read the twin's pull requests ({e})")]
+    if not ours:
+        return [*out, Outcome(twin, "kept", f"its head is not a commit of pull request #{pr}")]
+    if others:
+        return [*out, Outcome(twin, "kept", f"its head is also in open pull request #{others[0]}")]
     try:
         info, active = activity(api, repo, twin, twin_sha)
     except ApiError as e:
@@ -512,14 +691,14 @@ HEADINGS = {
     "purged": "Purged (deleted with no tag)",
     "tagged": "Tagged (merged pull request; GitHub deletes the branch)",
     "failed": "Not deleted: needs a maintainer",
+    "deferred": "Left for the next run",
     "kept": "Kept",
     "would-archive": "Would archive (dry run: nothing changed)",
     "would-purge": "Would purge (dry run: nothing changed)",
 }
 
 
-def changes(outcomes: list[Outcome]) -> str:
-    """Markdown for what a run did or would do; empty when nothing."""
+def change_lines(outcomes: list[Outcome]) -> list[str]:
     lines: list[str] = []
     for action, heading in HEADINGS.items():
         rows = [o for o in outcomes if o.action == action]
@@ -533,42 +712,86 @@ def changes(outcomes: list[Outcome]) -> str:
             lines.append(line)
             if o.action == "archived":
                 lines.append(f"  - restore: `{restore_command(o.branch, o.tag)}`")
-    return "\n".join(lines).strip()
+    return lines[1:]
+
+
+def changes(outcomes: list[Outcome]) -> str:
+    """Markdown for what a run did or would do; empty when nothing."""
+    return "\n".join(change_lines(outcomes))
+
+
+def fit(lines: list[str], budget: int) -> list[str]:
+    """As many whole lines as fit in `budget` characters, then a note of how many were left out. Lines are cut
+    whole, so no code span or HTML tag is ever left open."""
+    used = 0
+    for i, line in enumerate(lines):
+        used += len(line) + 1
+        if used > budget:
+            return [
+                *lines[:i],
+                f"- ... and {len(lines) - i} more lines, cut short; the full list is in the run log",
+            ]
+    return lines
 
 
 def counts(outcomes: list[Outcome]) -> str:
-    n = {a: sum(o.action == a for o in outcomes) for a in ("archived", "purged", "failed")}
-    return f"{n['archived']} archived, {n['purged']} purged, {n['failed']} not deleted (needs a maintainer)"
+    n = {a: sum(o.action == a for o in outcomes) for a in ("archived", "purged", "failed", "deferred")}
+    text = f"{n['archived']} archived, {n['purged']} purged, {n['failed']} not deleted (needs a maintainer)"
+    return text + (f", {n['deferred']} left for the next run" if n["deferred"] else "")
+
+
+def unused_keep(cfg: Config, decisions: list[Decision]) -> list[str]:
+    """Keep entries that matched no branch: a typo there protects nothing, so the report shows them."""
+    return [p for p in cfg.keep if not any(fnmatch.fnmatchcase(d.branch, p) for d in decisions)]
 
 
 def report(
-    decisions: list[Decision], outcomes: list[Outcome], *, dry_run: bool, run_url: str, day: str
+    decisions: list[Decision],
+    outcomes: list[Outcome],
+    *,
+    dry_run: bool,
+    run_url: str,
+    day: str,
+    unused: list[str] | None = None,
+    stopped: str = "",
 ) -> str:
     mode = "dry run (nothing changed)" if dry_run else "live"
     kept = [d for d in decisions if d.action == "keep"]
-    body = [
+    head = [
         f"Branch hygiene, {day}, {mode}. Run: {run_url or '(local)'}",
         "",
         f"{len(decisions)} branches: {counts(outcomes)}, {len(kept)} kept.",
         "",
-        "How it works and how to restore a branch: `docs/dev/branch-hygiene.md`. A restore is:",
+    ]
+    if stopped:
+        head += [
+            f"**The run stopped early ({plain(stopped)}).** Everything it deleted before stopping is listed below;"
+            " the rest is left for the next run.",
+            "",
+        ]
+    if unused:
+        head += [
+            f"Keep entries that matched no branch (a typo?): {', '.join(f'`{plain(p)}`' for p in unused)}",
+            "",
+        ]
+    head += [
+        "How it works and how to restore a branch: `docs/dev/branch-hygiene.md`. The archive tags themselves"
+        " (`git ls-remote --tags origin 'archive/*'`) and the run's job summary are the record to restore from."
+        " A restore is:",
         "",
         "```bash",
         restore_command("<branch>", "archive/<branch>/<date>"),
         "```",
         "",
-        changes(outcomes) or "Nothing to archive or purge today.",
-        "",
-        f"<details><summary>Kept: {len(kept)} branch(es)</summary>",
-        "",
-        *[f"- `{shown(d.branch)}`: {plain(d.reason)}" for d in kept],
-        "",
-        "</details>",
     ]
-    text = "\n".join(body) + "\n"
-    if len(text) > MAX_REPORT:
-        text = text[:MAX_REPORT] + "\n\n(cut short; the full list is in the run log)\n"
-    return text
+    done = change_lines(outcomes) or ["Nothing to archive or purge today."]
+    kept_rows = [f"- `{shown(d.branch)}`: {plain(d.reason)}" for d in kept]
+    frame = ["", f"<details><summary>Kept: {len(kept)} branch(es)</summary>", "", "", "</details>"]
+    budget = MAX_REPORT - sum(len(x) + 1 for x in head + frame) - 200
+    done = fit(done, budget)
+    kept_rows = fit(kept_rows, budget - sum(len(x) + 1 for x in done))
+    body = [*head, *done, *frame[:3], *kept_rows, *frame[3:]]
+    return "\n".join(body) + "\n"
 
 
 def main(argv: list[str] | None = None, api_factory: Callable[[], Api] | None = None) -> int:
@@ -602,23 +825,44 @@ def main(argv: list[str] | None = None, api_factory: Callable[[], Api] | None = 
     day = now.date().isoformat()
 
     if a.cmd == "run":
-        decisions = plan(api, a.repo, cfg, now)
-        outcomes = apply(api, a.repo, decisions, day, a.dry_run)
-        text = report(decisions, outcomes, dry_run=a.dry_run, run_url=a.run_url, day=day)
-        a.changes.write_text(changes(outcomes), encoding="utf-8")
-    else:
-        outcomes = pr_closed(api, a.repo, a.branch, a.sha, a.pr, a.merged, cfg, now)
-        text = (
-            f"Pull request #{a.pr} closed: {counts(outcomes)}.\n\n{changes(outcomes) or 'Nothing to do.'}\n"
+        decisions: list[Decision] = []
+        outcomes: list[Outcome] = []
+        stopped = ""
+        try:
+            decisions = plan(api, a.repo, cfg, now)
+            apply(api, a.repo, decisions, day, a.dry_run, out=outcomes, log=log_outcome, pause=time.sleep)
+        except Exception as e:  # noqa: BLE001 - the report must still record what was already deleted
+            stopped = f"{type(e).__name__}: {e}"
+            print(f"::error::the run stopped early: {plain(stopped)}")
+        text = report(
+            decisions,
+            outcomes,
+            dry_run=a.dry_run,
+            run_url=a.run_url,
+            day=day,
+            unused=unused_keep(cfg, decisions) if decisions else [],
+            stopped=stopped,
         )
+        a.changes.write_text(changes(outcomes), encoding="utf-8")
+        a.report.write_text(text, encoding="utf-8")
+        print(counts(outcomes))
+        # The sweep reports a branch it could not delete and goes on; a run that stopped early shows red.
+        return 1 if stopped else 0
+    outcomes = pr_closed(api, a.repo, a.branch, a.sha, a.pr, a.merged, cfg, now)
+    for o in outcomes:
+        log_outcome(o)
+    text = f"Pull request #{a.pr} closed: {counts(outcomes)}.\n\n{changes(outcomes) or 'Nothing to do.'}\n"
     a.report.write_text(text, encoding="utf-8")
     print(counts(outcomes))
-    for o in outcomes:
-        print(f"{o.action}: {shown(o.branch)}: {plain(o.detail)}")
-        if o.action == "failed":
-            print(f"::warning::{shown(o.branch)} was not deleted: {plain(o.detail)}")
-    # The sweep reports a branch it could not delete and goes on; an event job that failed shows red.
-    return 1 if a.cmd != "run" and any(o.action == "failed" for o in outcomes) else 0
+    # An event job that failed shows red.
+    return 1 if any(o.action == "failed" for o in outcomes) else 0
+
+
+def log_outcome(o: Outcome) -> None:
+    """One line per outcome in the job log as it happens, and a warning for a branch that was not deleted."""
+    print(f"{o.action}: {shown(o.branch)}: {plain(o.detail)}", flush=True)
+    if o.action == "failed":
+        print(f"::warning::{shown(o.branch)} was not deleted: {plain(o.detail)}", flush=True)
 
 
 if __name__ == "__main__":
