@@ -16,9 +16,11 @@ A snapshot directory is never overwritten: its id is the fetch time plus a hash 
 contract and semantic versions, so the same id always means the same inputs. Snapshots written before the
 run-date partition (datasets/<id>/<snapshot_id>/) are still read.
 
-Normalisation is driven only by the contract: rename each publisher field to its column, turn the
-codebook's missing codes into NULL, cast to the declared type. Nothing else changes a value. Flag columns
-are never missing-coded (the registry refuses it): the publisher's flags are kept as published.
+The snapshot table is the silver layer, built by the one generic, contract-driven staging step
+(staging.py): rename each publisher field to its column, turn the codebook's missing codes into NULL, cast
+to the declared type, mark total rows and carry renamed labels and partial places. Nothing else changes a
+value. Flag columns are never missing-coded (the registry refuses it): the publisher's flags are kept as
+published.
 """
 
 from __future__ import annotations
@@ -37,7 +39,8 @@ from typing import Any
 
 import duckdb
 
-from health_data_registry.registry import Contract, Dataset
+from health_data_registry.registry import Dataset
+from health_data_registry.staging import stage, write_parquet
 
 _SNAPSHOT_ID = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{12}$")
 
@@ -78,6 +81,8 @@ class Manifest:
     quality: dict[str, Any] = field(
         default_factory=dict
     )  # the release's data-test results (publish.quality_section)
+    # The silver staging run: layout version, rows, total rows, codes the contract doesn't list (staging.py).
+    silver: dict[str, Any] = field(default_factory=dict)
 
     @staticmethod
     def read(path: Path) -> Manifest:
@@ -160,33 +165,6 @@ def _lit(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-def select_list(contract: Contract) -> str:
-    """The contract-driven projection from raw publisher fields (all read as text) to typed columns."""
-    parts = []
-    for c in contract.columns:
-        src = _q(c.source_field)
-        if c.missing_codes:
-            codes = ", ".join(_lit(m) for m in c.missing_codes)
-            src = f"CASE WHEN trim({src}) IN ({codes}) THEN NULL ELSE {src} END"
-        if c.physical_type == "BOOLEAN":
-            expr = f"CASE lower(trim({src})) WHEN 'true' THEN true WHEN 'false' THEN false ELSE NULL END"
-        elif c.physical_type == "VARCHAR":
-            expr = src
-        elif c.physical_type in ("DATE", "TIMESTAMP"):
-            # Socrata floating timestamps look like 2024-01-06T00:00:00.000
-            expr = f"CAST(CAST(NULLIF(trim({src}), '') AS TIMESTAMP) AS {c.physical_type})"
-        elif c.physical_type in ("BIGINT", "INTEGER"):
-            # Counts arrive as text, "31" or "31.0" (NNDSS from 2025). A plain cast would round "1.5" to 2, so
-            # anything with a fraction stops the load instead of becoming a different count.
-            dec = f"CAST(NULLIF(trim({src}), '') AS DECIMAL(38, 6))"
-            msg = _lit(f"{c.name}: a value has a fraction, so it isn't a whole count; check the contract")
-            expr = f"CASE WHEN {dec} IS NULL THEN NULL WHEN {dec} = trunc({dec}) THEN CAST({dec} AS {c.physical_type}) ELSE error({msg}) END"
-        else:
-            expr = f"CAST(NULLIF(trim({src}), '') AS {c.physical_type})"
-        parts.append(f"{expr} AS {_q(c.name)}")
-    return ",\n  ".join(parts)
-
-
 def write_raw(lake: Path, fetches: Sequence[RawFetch]) -> None:
     raw = lake / "raw"
     raw.mkdir(parents=True, exist_ok=True)
@@ -229,14 +207,9 @@ def build_snapshot(
         files = "[" + ", ".join(_lit(str(p)) for p in records_files) + "]"
         con = duckdb.connect(str(tmp / "data.duckdb"))
         try:
-            con.execute(
-                f"CREATE TABLE {_q(ds.id)} AS SELECT\n  {select_list(ds.contract)}\n"
-                f"FROM read_json({files}, format='newline_delimited', columns={cols})"
-            )
-            row = con.execute(f"SELECT count(*) FROM {_q(ds.id)}").fetchone()  # noqa: S608 - quoted contract identifiers, bound values
-            n = int(row[0]) if row else 0
-            _check_required(con, ds)
-            con.execute(f"COPY {_q(ds.id)} TO {_lit(str(tmp / 'data.parquet'))} (FORMAT parquet)")
+            raw = f"read_json({files}, format='newline_delimited', columns={cols})"
+            report = stage(con, ds.contract, raw, table=ds.id)
+            write_parquet(con, ds.contract, ds.id, str(tmp / "data.parquet"))
         finally:
             con.close()
         manifest = Manifest(
@@ -248,10 +221,12 @@ def build_snapshot(
             retrieved_at=retrieved.isoformat(),
             source_urls=[f.url for f in fetches],
             raw_sha256=[f.sha256 for f in fetches],
-            row_count=n,
+            row_count=report.row_count,
             licence=ds.entry.licence.id,
             redistribution=ds.entry.licence.redistribution,
             partial=partial,
+            notes=report.notes(),
+            silver=report.as_dict(),
         )
         (tmp / "manifest.json").write_text(json.dumps(asdict(manifest), indent=2) + "\n", encoding="utf-8")
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -269,17 +244,6 @@ def _point_latest(lake: Path, dataset_id: str, snapshot_id: str) -> None:
     tmp = latest.with_name(f".LATEST.{os.getpid()}.tmp")
     tmp.write_text(snapshot_id + "\n", encoding="utf-8")
     os.replace(tmp, latest)
-
-
-def _check_required(con: duckdb.DuckDBPyConnection, ds: Dataset) -> None:
-    for c in ds.contract.columns:
-        if c.required:
-            row = con.execute(f"SELECT count(*) FROM {_q(ds.id)} WHERE {_q(c.name)} IS NULL").fetchone()  # noqa: S608 - quoted contract identifiers, bound values
-            nulls = int(row[0]) if row else 0
-            if nulls:
-                raise ValueError(
-                    f"{ds.id}: required column {c.name} has {nulls} empty values; check the contract"
-                )
 
 
 def latest_snapshot(lake: Path, dataset_id: str) -> tuple[Path, Manifest] | None:

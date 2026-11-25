@@ -21,6 +21,19 @@ _ID = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
 _SQL_IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 DUCKDB_TYPES = frozenset({"VARCHAR", "BIGINT", "INTEGER", "DOUBLE", "DATE", "BOOLEAN", "TIMESTAMP"})
+# The ODCS logicalType each physical type may carry: the two must say the same thing about a column.
+LOGICAL_TYPES = {
+    "VARCHAR": frozenset({"string"}),
+    "BIGINT": frozenset({"integer"}),
+    "INTEGER": frozenset({"integer"}),
+    "DOUBLE": frozenset({"number"}),
+    "DATE": frozenset({"date"}),
+    "TIMESTAMP": frozenset({"date", "timestamp"}),
+    "BOOLEAN": frozenset({"boolean"}),
+}
+# Silver column names the generic staging step derives from contract properties (staging.py); a contract
+# column may not take one, so a silver column always has exactly one origin.
+RESERVED_COLUMN = "is_total_row"
 
 
 class RegistryError(ValueError):
@@ -403,6 +416,17 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
             raise RegistryError(
                 f"{expected_id}.{name}: physicalType {ptype!r} is not a supported DuckDB type"
             )
+        logical = str(p.get("logicalType", ""))
+        if logical not in LOGICAL_TYPES[ptype]:
+            raise RegistryError(
+                f"{expected_id}.{name}: logicalType {logical!r} does not match physicalType {ptype} "
+                f"(expected {' or '.join(sorted(LOGICAL_TYPES[ptype]))})"
+            )
+        if name == RESERVED_COLUMN or "__" in name:
+            raise RegistryError(
+                f"{expected_id}.{name}: {RESERVED_COLUMN} and names with '__' are kept for the columns staging "
+                "derives from the contract (totalRows, renamedLabels, partialPlaces)"
+            )
         desc = str(p.get("description") or "").strip()
         if not desc:
             raise RegistryError(f"{expected_id}.{name}: every column needs a description in clinical words")
@@ -425,7 +449,7 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
             Column(
                 name=name,
                 physical_type=ptype,
-                logical_type=str(p.get("logicalType", "")),
+                logical_type=logical,
                 description=desc,
                 required=bool(p.get("required", False)),
                 role=role,

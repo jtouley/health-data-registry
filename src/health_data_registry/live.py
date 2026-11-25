@@ -19,7 +19,8 @@ from typing import Any
 import duckdb
 
 from health_data_registry.registry import Dataset
-from health_data_registry.store import Manifest, RawFetch, select_list
+from health_data_registry.staging import StagingReport, stage
+from health_data_registry.store import Manifest, RawFetch
 
 LIVE_TTL_S = 600.0  # how long parsed publisher records stay in memory; never written to disk
 
@@ -87,8 +88,8 @@ def fetch_live(ds: Dataset, get: Any) -> LiveTable:
     return LiveTable(records=records, manifest=m, fetched=time.monotonic())
 
 
-def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[str, Any]]) -> None:
-    """Normalise records into an in-memory table named after the dataset.
+def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[str, Any]]) -> StagingReport:
+    """Stage records into an in-memory silver table named after the dataset (the same step as the lake).
 
     Refuses a file-backed connection: the source's terms forbid keeping a copy (ADR 0009), so this checks the
     connection itself rather than trusting the caller. A table that can't be normalised leaves nothing behind.
@@ -113,6 +114,6 @@ def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[st
                 f"INSERT INTO {q(raw)} VALUES ({marks})",  # noqa: S608 - quoted contract identifiers, bound values
                 [[r.get(f) for f in fields] for r in records],
             )
-        con.execute(f"CREATE TEMP TABLE {q(ds.id)} AS SELECT\n  {select_list(ds.contract)}\nFROM {q(raw)}")  # noqa: S608 - quoted contract identifiers
+        return stage(con, ds.contract, q(raw), table=ds.id, temp=True)
     finally:
         con.execute(f"DROP TABLE IF EXISTS {q(raw)}")
