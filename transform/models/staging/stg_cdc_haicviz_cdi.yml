@@ -10,6 +10,7 @@ models:
     tags:
     - staging
   meta:
+    contract: contracts/cdc_haicviz_cdi.odcs.yaml
     contract_id: cdc_haicviz_cdi
     contract_version: 0.1.0
     contract_status: draft

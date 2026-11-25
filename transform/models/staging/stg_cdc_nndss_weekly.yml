@@ -10,6 +10,7 @@ models:
     tags:
     - staging
   meta:
+    contract: contracts/cdc_nndss_weekly.odcs.yaml
     contract_id: cdc_nndss_weekly
     contract_version: 0.1.0
     contract_status: draft

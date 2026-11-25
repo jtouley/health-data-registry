@@ -11,6 +11,7 @@ models:
     tags:
     - staging
   meta:
+    contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
     contract_id: cdc_nhsn_ar_hai
     contract_version: 0.1.0
     contract_status: draft

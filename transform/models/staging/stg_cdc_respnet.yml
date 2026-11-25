@@ -11,6 +11,7 @@ models:
     tags:
     - staging
   meta:
+    contract: contracts/cdc_respnet.odcs.yaml
     contract_id: cdc_respnet
     contract_version: 0.1.0
     contract_status: draft

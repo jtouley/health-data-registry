@@ -10,6 +10,7 @@ models:
     tags:
     - staging
   meta:
+    contract: contracts/census_county_pop.odcs.yaml
     contract_id: census_county_pop
     contract_version: 0.1.0
     contract_status: draft

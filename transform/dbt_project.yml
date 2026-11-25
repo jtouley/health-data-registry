@@ -1,19 +1,24 @@
 # The transform project: raw -> staging -> intermediate -> marts, on DuckDB (dbt-duckdb).
-# Staging is generated from contracts/ by `make contracts`; never edit models/staging/ by hand.
+# Every input is a raw source or a control-plane export with an ODCS contract; there are no seeds and no data
+# files here. Staging and every model's column list are generated from contracts/ by `make contracts`.
 name: health_data_registry
 version: "0.1.0"
 config-version: 2
 profile: health_data_registry
 
 model-paths: ["models"]
-seed-paths: ["seeds"]
 test-paths: ["tests"]
 macro-paths: ["macros"]
 target-path: target
 clean-targets: [target, dbt_packages]
 
 # Raw records are read from HDR_RAW_RECORDS (default ../lake/raw_records: raw_records/<id>/<snapshot id>.ndjson);
-# CI points it at the synthetic fixtures in fixtures/raw_records.
+# CI points it at the synthetic fixtures in tests/fixtures/transform/raw_records.
+
+vars:
+  # The MMWR years the calendar covers (contracts/models/mmwr_calendar.odcs.yaml).
+  mmwr_first_year: 2015
+  mmwr_last_year: 2030
 
 models:
   health_data_registry:
@@ -22,7 +27,6 @@ models:
     staging:
       +materialized: table
       +schema: staging
-
-seeds:
-  health_data_registry:
-    +schema: reference
+    reference:
+      +materialized: table
+      +schema: reference

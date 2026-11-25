@@ -89,7 +89,7 @@ jobs:
         run: make test
 
   # The dbt project: staging models generated from contracts/ must be exactly what `make contracts` writes,
-  # then `dbt build` (models, seeds and tests) runs on the synthetic fixtures in transform/fixtures only.
+  # then `dbt build` (models and tests) runs on the synthetic fixtures in tests/fixtures/transform only.
   transform:
     name: Transform (dbt build on fixtures)
     runs-on: ubuntu-latest

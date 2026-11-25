@@ -24,8 +24,8 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 | `make kit` | Build the Claude Projects kit into `dist/projects-kit/` ([docs/dev/distribution.md](docs/dev/distribution.md)) |
 | `make refresh` / `make serve` | Fetch every source into the lake / run the MCP server on stdio |
 | `make check-contracts` | Check each publisher still serves the fields its contract reads |
-| `make contracts` | Regenerate the dbt staging models, raw sources and MMWR calendar in `transform/` from `contracts/`; CI fails if the committed files differ |
-| `make transform` | `dbt build` (staging, seeds, tests) on the synthetic fixtures in `transform/fixtures/`, as CI runs it |
+| `make contracts` | Regenerate `transform/`'s raw sources, staging models and every model's schema from `contracts/`; CI fails if the committed files differ |
+| `make transform` | `dbt build` (models and tests) on the synthetic fixtures in `tests/fixtures/transform/`, as CI runs it |
 | `make eval` | Verify the sealed sets; never run or read the held-out pool while developing |
 | `uv run health-data-registry refresh <id> [--max-rows N]` | One dataset; `--max-rows` marks the snapshot partial |
 | `uv run health-data-registry validate` | Cross-check every catalog entry, contract and semantic model |
@@ -92,7 +92,7 @@ src/health_data_registry/
                   raw_records/<id>/<snapshot>.ndjson (parsed records that dbt staging reads)
   staging.py      the one contract-driven typed projection (names, types, missing codes, required, code
                   lists); the lake, the live read and the generated dbt staging models all use it
-  transform_gen.py  `make contracts`: writes transform/'s raw sources, staging models and MMWR calendar
+  transform_gen.py  `make contracts`: writes transform/'s raw sources, staging models and model schemas
   crawl.py        fetch one source into a lake (refresh, fetch, and run-time fetches)
   publish.py      export-public to the open data hub: cards, licence, manifest, pre-publish checks, tag
   hub.py          hosted read path: immutable hub release, sha256 and contract checks, bounded cache
@@ -103,12 +103,13 @@ src/health_data_registry/
   adapters/       socrata.py (CDC portals), who_gho.py (WHO GHO OData), https_csv.py (one CSV file, e.g. Census)
 catalog/          one reviewed YAML per dataset (6 sources: 5 infectious-disease, plus Census county population
                   as the denominator; contracts all draft)
-contracts/        one ODCS v3.2.0 contract per dataset, and the ODPS data product
+contracts/        one ODCS v3.2.0 contract per dataset, the ODPS data product, and models/: one contract per
+                  model computed in dbt (e.g. the MMWR calendar)
 semantic/         one dbt-style semantic model per dataset
 transform/        the dbt project on DuckDB (dbt-duckdb): models/staging/ generated from contracts/ (never edit),
                   then intermediate (business rules, flag_* review queues) and marts (dims, one fact per
-                  source); seeds/ holds small reference code lists (FIPS, MMWR calendar), never data
-                  snapshots or owner decisions; fixtures/ holds synthetic raw records for CI
+                  source). Every input is a raw source or a control-plane export with an ODCS contract: no
+                  seeds, no data files (a test enforces it); CI's synthetic raw records are in tests/fixtures/
 eval/sealed/      held-out blind sets, hash-sealed, when present; don't read them while developing
 tests/            synthetic data only; tests/golden holds golden SQL; tests/integration the live `network` checks
 scripts/          mutate_changed.py, write_template.py (make docs, make kit)
