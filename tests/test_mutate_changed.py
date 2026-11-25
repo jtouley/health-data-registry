@@ -1080,7 +1080,10 @@ def test_mutmut_scope_restores_the_file_when_the_run_is_terminated(
     before = signal.getsignal(signal.SIGTERM)
     with pytest.raises(SystemExit) as stop, mc.mutmut_scope(["src/a.py"], ["tests/test_a.py"]):
         assert "only_mutate" in pyproject.read_text(encoding="utf-8")
-        os.kill(os.getpid(), signal.SIGTERM)
+        # The handler a SIGTERM would run, called directly: a real signal could end a test worker instead.
+        handler = signal.getsignal(signal.SIGTERM)
+        assert handler is mc._exit_on_signal
+        handler(signal.SIGTERM, None)
     assert stop.value.code == 128 + signal.SIGTERM
     assert pyproject.read_text(encoding="utf-8") == text
     assert signal.getsignal(signal.SIGTERM) == before
