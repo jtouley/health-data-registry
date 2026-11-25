@@ -41,6 +41,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- New source, draft (contract not yet reviewed): `cdc_nssp_lab_positivity`, CDC's weekly NSSP commercial
+  laboratory NAAT tests, positives and percent positive for COVID-19, influenza and RSV by state (data.cdc.gov
+  jqxy-cyu2), on the existing Socrata adapter. Read as published and never added; a count or percent CDC
+  suppressed (under 10 tests or 10 positives) is no value, never zero. A national or county question is told the
+  table is by state only.
 - The Trusted gate (`.github/workflows/trusted-gate.yml`, `python -m health_data_registry.ratchet`, `make
   ratchet`): a check a pull request cannot edit, run from main's copy on `pull_request_target` with a read-only
   token, reading the pull request as data only (a required check once the `main` ruleset lists it, #138). It fails

@@ -288,6 +288,73 @@ sources:
       data_type: varchar
       description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
         the exact bytes the publisher sent.'
+  - name: cdc_nssp_lab_positivity
+    description: 'Raw records of NSSP Commercial Laboratory Data for COVID, FLU and RSV as the adapter hands them
+      on, every value as text: the publisher''s own fields, or for a wide table the adapter''s structural reshaping
+      of them (see the staging model). Only the full load the dataset''s LATEST pointer names is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_nssp_lab_positivity.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - geography_type
+      - geography_value
+      - mmwr_week_end
+      - mmwr_week_start
+      - pathogen
+      - percent_pos
+      - positive_count
+      - test_count
+    columns:
+    - name: geography_type
+      data_type: varchar
+      description: 'Publisher field geography_type, as text; read into geography_type (The kind of place, as published:
+        ''state'' in every row (the dataset description says results are reported at the state level).)'
+    - name: geography_value
+      data_type: varchar
+      description: 'Publisher field geography_value, as text; read into geography_value (The state or territory,
+        as its two-letter postal code: the 50 states, DC, Puerto Rico (PR), Guam (GU) and the US Virgin Islands
+        (VI). The patient''s ZIP code of residence places the test, or the ordering provider''s where that is missing
+        (dataset description).)'
+    - name: mmwr_week_end
+      data_type: varchar
+      description: Publisher field mmwr_week_end, as text; read into mmwr_week_end (The Saturday that ends the MMWR
+        week the specimens were collected in (column mmwr_week_end).)
+    - name: mmwr_week_start
+      data_type: varchar
+      description: Publisher field mmwr_week_start, as text; read into mmwr_week_start (The Sunday that starts the
+        MMWR week the specimens were collected in (column mmwr_week_start; results are aggregated by week of specimen
+        collection, dataset description).)
+    - name: pathogen
+      data_type: varchar
+      description: 'Publisher field pathogen, as text; read into pathogen (The virus tested for, as CDC labels it:
+        COVID-19 (SARS-CoV-2), Influenza or RSV (respiratory syncytial virus). Each is by NAAT only (dataset description).)'
+    - name: percent_pos
+      data_type: varchar
+      description: 'Publisher field percent_pos, as text; read into percent_pos (Percent of the week''s NAAT tests
+        for the virus in the state that were positive: positives divided by tests classified positive or negative,
+        times 100 (dataset description). Counts tests, not people. Empty where CDC suppressed it or no test was
+        reported, never zero.)'
+    - name: positive_count
+      data_type: varchar
+      description: Publisher field positive_count, as text; read into positive_count (Number of those NAAT tests
+        that were positive (dataset description). Empty where CDC suppressed it.)
+    - name: test_count
+      data_type: varchar
+      description: 'Publisher field test_count, as text; read into test_count (Number of NAAT tests for the virus
+        classified as positive or negative that week in the state: the denominator of the percent. Unknown, indeterminate
+        and uninterpretable results are excluded (dataset description). Empty where CDC suppressed it.)'
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
   - name: cdc_respnet
     description: 'Raw records of RESP-NET Rates and Clinical Data as the adapter hands them on, every value as text:
       the publisher''s own fields, or for a wide table the adapter''s structural reshaping of them (see the staging

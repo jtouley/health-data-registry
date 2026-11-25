@@ -115,6 +115,13 @@ outputPorts:
     contractId: cdc_respnet
     customProperties:
       - {property: hosted, value: true}
+  - name: cdc_nssp_lab_positivity
+    description: NSSP weekly commercial laboratory NAAT tests, positives and percent positive for COVID-19, influenza and RSV, by state.
+    type: tables
+    version: 0.1.0
+    contractId: cdc_nssp_lab_positivity
+    customProperties:
+      - {property: hosted, value: true}
   - name: census_county_pop
     description: Census Bureau county and state resident population estimates, the denominator for rates.
     type: tables

@@ -1,0 +1,209 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: cdc_nssp_lab_positivity
+name: NSSP Commercial Laboratory Data for COVID, FLU and RSV
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Weekly counts of NAAT tests for SARS-CoV-2 (COVID-19), influenza and RSV reported by participating commercial laboratories to CDC's National Syndromic Surveillance Program, with the number positive and the percent positive, by state (dataset description, https://data.cdc.gov/api/views/jqxy-cyu2.json)."
+  usage: "Read one virus, state and week as published, or follow one virus in one state over the weeks. Never add percents; never add counts across states to make a national figure, or across viruses (each comes from different laboratories and test panels)."
+  limitations: "Commercial laboratories only, not a representative sample of US testing; tests, not people; suppressed below 10 tests or 10 positives; by state only; earlier weeks may be revised."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://data.cdc.gov/d/jqxy-cyu2", description: "Publisher dataset page"}
+    - {type: businessDefinition, url: "https://data.cdc.gov/api/views/jqxy-cyu2.json", description: "Socrata metadata: the dataset description (laboratories, NAAT only, the percent's formula, suppression, geography, week aggregation, limitations), read 2026-11-25. The column descriptions are empty."}
+servers:
+  - id: data_cdc_gov
+    server: data.cdc.gov
+    type: api
+    location: https://data.cdc.gov/resource/jqxy-cyu2.json
+    description: "Socrata SODA API; the adapter keeps only the columns listed in the schema."
+schema:
+  - name: cdc_nssp_lab_positivity
+    physicalName: cdc_nssp_lab_positivity
+    physicalType: table
+    logicalType: object
+    description: "Long table: one row per virus, MMWR week and state, from commercial laboratories."
+    dataGranularityDescription: "virus x MMWR week (its Saturday) x state or territory"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://data.cdc.gov/api/views/jqxy-cyu2.json"}
+    customProperties:
+      - property: totalRows
+        value: none
+        description: "No national, regional or all-virus row: every row is one state (geography_type 'state') and one virus (18,144 rows on 2026-11-25: 112 weeks x 54 states and territories x 3 viruses)."
+      - {property: tableShape, value: surveillance_series}
+      - property: idDimensions
+        value:
+          condition: pathogen
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: null
+          period: mmwr_week_end
+          provisionalFlag: null
+        description: "Condition is the virus in pathogen. A positive test is a laboratory result, not a case, so there is no case definition or case status. Period is the MMWR week, by its Saturday. The dataset description says values for earlier weeks may change as results arrive; there is no per-row provisional column (#191)."
+    properties:
+      - name: pathogen
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "The virus tested for, as CDC labels it: COVID-19 (SARS-CoV-2), Influenza or RSV (respiratory syncytial virus). Each is by NAAT only (dataset description)."
+        examples: ["COVID-19", "Influenza", "RSV"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: pathogen}
+        quality:
+          - id: pathogen_codes
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["COVID-19", "Influenza", "RSV"]}
+            mustBe: 0
+            description: "The dataset description names three viruses (SARS-CoV-2, influenza and RSV), published as these three labels on 2026-11-25. A new label is a new virus to catalogue, and it also shows in the flag_unmapped_labels review queue; it is a warning so that queue still builds."
+          - id: every_virus_has_a_percent
+            dimension: completeness
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(DISTINCT pathogen) FROM {object} WHERE percent_pos IS NOT NULL AND pathogen IN ('COVID-19', 'Influenza', 'RSV')"
+            mustBe: 3
+            description: "Fill rate by virus: each of the three viruses has at least one row with a percent. A virus with none would leave its questions unanswered while every value check still passes."
+      - name: mmwr_week_start
+        physicalType: DATE
+        logicalType: date
+        required: true
+        description: "The Sunday that starts the MMWR week the specimens were collected in (column mmwr_week_start; results are aggregated by week of specimen collection, dataset description)."
+        examples: ["2026-11-15"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: mmwr_week_start}
+      - name: mmwr_week_end
+        physicalType: DATE
+        logicalType: date
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "The Saturday that ends the MMWR week the specimens were collected in (column mmwr_week_end)."
+        examples: ["2026-11-21"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: mmwr_week_end}
+        quality:
+          - id: week_is_sunday_to_saturday
+            dimension: conformity
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE dayofweek(mmwr_week_end) <> 6 OR date_diff('day', mmwr_week_start, mmwr_week_end) <> 6"
+            mustBe: 0
+            description: "The columns name the start and end of an MMWR week, which runs Sunday to Saturday (CDC's MMWR week, as in the project's reviewed MMWR calendar): the end is a Saturday six days after the start."
+      - name: geography_type
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The kind of place, as published: 'state' in every row (the dataset description says results are reported at the state level)."
+        examples: ["state"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: geography_type}
+        quality:
+          - id: every_row_is_a_state
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["state"]}
+            mustBe: 0
+            description: "The dataset description says the data are reported at the state level, so every row is a state or territory. Another kind of place would be a national or regional row, which this contract does not read."
+      - name: geography_value
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 3
+        description: "The state or territory, as its two-letter postal code: the 50 states, DC, Puerto Rico (PR), Guam (GU) and the US Virgin Islands (VI). The patient's ZIP code of residence places the test, or the ordering provider's where that is missing (dataset description)."
+        examples: ["MI", "OH", "PR", "GU"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: geography_value}
+      - name: test_count
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Number of NAAT tests for the virus classified as positive or negative that week in the state: the denominator of the percent. Unknown, indeterminate and uninterpretable results are excluded (dataset description). Empty where CDC suppressed it."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: test_count}
+          - {property: unit, value: "tests"}
+      - name: positive_count
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Number of those NAAT tests that were positive (dataset description). Empty where CDC suppressed it."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: positive_count}
+          - {property: unit, value: "tests"}
+        quality:
+          - id: positives_within_tests
+            dimension: consistency
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE positive_count > test_count"
+            mustBe: 0
+            description: "The dataset description divides positive NAATs by all NAATs classified positive or negative, so the positives are part of the tests and can't outnumber them."
+          - id: small_counts_suppressed
+            dimension: conformity
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE test_count BETWEEN 1 AND 9 OR positive_count BETWEEN 1 AND 9"
+            mustBe: 0
+            description: "The dataset description says counts are suppressed when there are fewer than 10 tests or fewer than 10 positive tests, and that zeros are not suppressed: a published count from 1 to 9 would mean the rule changed."
+      - name: percent_pos
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Percent of the week's NAAT tests for the virus in the state that were positive: positives divided by tests classified positive or negative, times 100 (dataset description). Counts tests, not people. Empty where CDC suppressed it or no test was reported, never zero."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: percent_pos}
+          - {property: unit, value: "%"}
+        quality:
+          - id: percent_between_0_and_100
+            dimension: conformity
+            severity: error
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE percent_pos < 0 OR percent_pos > 100"
+            mustBe: 0
+            description: "The dataset description defines the percent as (positive tests / tests classified positive or negative) x 100, so it lies between 0 and 100."
+          - id: percent_suppressed_with_its_counts
+            dimension: consistency
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE percent_pos IS NOT NULL AND (test_count IS NULL OR positive_count IS NULL)"
+            mustBe: 0
+            description: "The dataset description suppresses the counts and the percent together, so a percent published beside a suppressed count would mean the rule changed."
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: licenceSource, value: "No licence field in the Socrata metadata (read 2026-11-25). A CDC work on data.cdc.gov, a US federal work under 17 USC 105. A maintainer confirms the wording (see openQuestions)."}
+  - {property: citation, value: "Centers for Disease Control and Prevention, National Syndromic Surveillance Program. NSSP Commercial Laboratory Data for COVID, FLU and RSV. https://data.cdc.gov/d/jqxy-cyu2"}
+  - {property: refresh, value: weekly}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "CDC says values for earlier weeks may change as more results are reported, so each refresh stores the complete table as a dated, append-only load; older loads are never overwritten."
+  - {property: geographyBasis, value: "patient residence: the patient's ZIP code of residence, or the ordering provider's ZIP code where that is not available (dataset description)"}
+  - property: unreliableRule
+    value:
+      kind: publisher_suppressed
+      threshold: 10
+      description: "Dataset description: 'counts and percent positivity are suppressed when the denominator (i.e., tests performed) or the number of positive tests is fewer than 10 tests. Zeros are not suppressed.' A suppressed cell is empty, never zero."
+  - property: openQuestions
+    value:
+      - "Licence: the Socrata metadata has no licence field (2026-11-25). public-domain-us-federal is assumed from its being a CDC work; a maintainer confirms the wording."
+      - "Empty column descriptions: every column description in the Socrata metadata is empty, so each column's meaning here comes from the dataset description and the column names. A maintainer confirms them, in particular that test_count is the percent's denominator (tests classified positive or negative), not all tests performed: the suppression sentence calls the denominator 'tests performed'."
+      - "Zero tests: 2,304 rows on 2026-11-25 have test_count 0, positive_count 0 and no percent (nothing to divide by). Is a 0 a real zero (no test from the participating laboratories) or no report? Kept as published."
+      - "Which laboratories report each virus and state, and has that changed over the weeks? The dataset description says not all laboratories contribute every virus and that volumes vary by laboratory, virus, state and time. Not in the table."
+      - "Revisions: how far back are weeks revised in a later load? Each load is kept so an answer can name the load it came from. A dataset-wide provisional status waits for #191."
+      - "Rounding: is the percent rounded to one decimal place by CDC (every value seen on 2026-11-25 had at most one decimal)? Not stated."
+      - "Territories: Guam (GU) and the US Virgin Islands (VI) are published; the place matcher names the 50 states, DC and Puerto Rico only, so questions about GU or VI need query_sql."
+      - "Proposed GBD keys (catalog gbd.causes): COVID-19 to the cause COVID-19; influenza and RSV to Lower respiratory infections with pathogens Influenza and Respiratory syncytial virus. A test positivity percent is not a GBD measure, so the keys align by cause only. A maintainer reviews the mapping."
