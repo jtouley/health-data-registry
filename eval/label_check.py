@@ -81,7 +81,8 @@ class Affected:
     reasons: tuple[str, ...]
 
 
-def _git(repo: Path, *args: str) -> str:
+def run_git(repo: Path, *args: str) -> str:
+    """`git -C repo <args>`'s stdout; LabelCheckError if git fails."""
     proc = subprocess.run(  # noqa: S603 - fixed git argument list, no shell
         ["git", "-C", str(repo), *args],  # noqa: S607 - git from PATH, as every script here runs it
         capture_output=True,
@@ -98,7 +99,7 @@ def resolve_commit(repo: Path, commit: str) -> str:
     if not COMMIT_RE.fullmatch(commit):
         raise LabelCheckError(f"{commit!r} is not a full 40-character commit sha.")
     try:
-        return _git(
+        return run_git(
             repo, "rev-parse", "--verify", "--quiet", "--end-of-options", f"{commit}^{{commit}}"
         ).strip()
     except LabelCheckError:
@@ -132,13 +133,13 @@ def parse_name_status(out: str) -> list[tuple[Status, str]]:
 def catalog_changes(repo: Path, base: str, head: str) -> list[CatalogChange]:
     """Every catalog entry added, changed or removed between two commits, with the YAML text to match against."""
     old, new = resolve_commit(repo, base), resolve_commit(repo, head)
-    out = _git(repo, "diff", "--name-status", "-z", "--no-renames", old, new, "--", CATALOG_DIR)
+    out = run_git(repo, "diff", "--name-status", "-z", "--no-renames", old, new, "--", CATALOG_DIR)
     changes = []
     for status, path in parse_name_status(out):
-        text = _git(repo, "show", f"{old if status == 'removed' else new}:{path}")
+        text = run_git(repo, "show", f"{old if status == 'removed' else new}:{path}")
         dataset_id = _dataset_id(path, text)
         if status == "modified":
-            old_text = _git(repo, "show", f"{old}:{path}")
+            old_text = run_git(repo, "show", f"{old}:{path}")
             old_id = _dataset_id(path, old_text)
             if old_id != dataset_id:  # `id:` changed in place: the old id is gone and the new one is added
                 changes.append(CatalogChange(old_id, "removed", old_text))
