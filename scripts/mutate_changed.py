@@ -89,10 +89,12 @@ SEP = "ǁ"
 # about 3 minutes of mutants per shard. Measured 25 Nov 2026 on GitHub's runners (PR #49, CI run 45536523615):
 # mutants ran at 54 to 145 a minute, except registry.py's at 13 a minute (most tests load the registry, so each of
 # its mutants runs most of the suite). 150 is under 3 minutes at the slowest ordinary rate, and 40 is about that
-# for registry.py. Setup comes on top (3.5 to 6.5 minutes then); mutmut_scope cuts it to generating one module's
-# mutants (2.9 s for sql_guard on 25 Nov 2026, CI run 45637460459) and a stats run over the tests that import it
-# (about 3 minutes there). The shard job's timeout-minutes (8) is the hard stop. Add a module here when its
-# shards run long.
+# for registry.py. Setup comes on top (3.5 to 6.5 minutes then). With mutmut_scope (CI run 45643738512, 25 Nov
+# 2026, scoped shards): sql_guard took 7.5 minutes in all, of which checkout and install 14 s, generating its
+# mutants 3 s, mutmut's stats run 3.0 minutes and its clean test run 2.9 minutes over the 48 test files that reach
+# it, then 99 mutants in 1.2 minutes; registry.py took 5.1 minutes. Setup is now most of a shard; caching the stats
+# run is #115's work. The shard job's timeout-minutes (12) is the hard stop. Add a module here when its shards run
+# long.
 SHARD_TARGET = 150
 SHARD_TARGET_BY_MODULE = {"health_data_registry.registry": 40}
 # GitHub runs at most 256 jobs from one matrix.

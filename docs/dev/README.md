@@ -184,7 +184,7 @@ Everything a clinician reads (tool descriptions, helpers, refusals) follows the 
   other modules, scripts/ and tools/ included, or by loading a file by path (a test left out can only lower the
   score). Shards are named `<module>#<k>of<n>@<split>`: the changed functions, split by function, and a big
   function by the last digit of its mutant numbers, to about 3 minutes of mutants each (`SHARD_TARGET`, smaller
-  for `registry.py`; the job's limit is 8 minutes). The split comes from the module's source and the changed
+  for `registry.py`; the job's limit is 12 minutes). The split comes from the module's source and the changed
   functions alone, read with the same Python 3.12 in `--list` and in every shard; `<split>` is a hash of it, and a
   shard refuses an id whose hash differs from its own split, so an edit made after `--list` (in CI or during
   precheck) fails the shard instead of running the wrong mutants. Each shard also checks that every mutant of its
