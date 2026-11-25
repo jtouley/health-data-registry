@@ -148,13 +148,17 @@ jobs:
   # covers, or that left no report fails the check, as does a module only some of whose shards were expected. A
   # clean shard with no mutable function has nothing to mutate.
   # They run on pull requests and on pushes to pre-pr/** (the gate must check what the PR will), not on main.
-  # Reuse (pull requests only): the pre-PR gate has already mutated the PR's head commit on pre-pr/<branch>, so
-  # the list job first asks the Actions API (scripts/mutation_reuse.py, this run's own GITHUB_TOKEN, actions:
-  # read) for a completed, successful "Mutation tests (changed modules)" job of this workflow, from a push to a
-  # pre-pr/** branch of this repository, for exactly the head SHA in the event payload, on a PR whose base is
-  # main. If there is one, it lists no modules, the shards are skipped, and the aggregate passes naming the reused
-  # run. A failed, cancelled, still-running or other-SHA run never counts, and an API error means no reuse, so the
-  # shards then run as usual. Every other job still runs on the PR, and every required check still reports.
+  # Reuse (pull requests only): the pre-PR gate has already mutated the PR's head commit on pre-pr/<branch>. A
+  # pull_request run tests the merge of that head into main, which has the head's own tree only when the head
+  # already contains the PR's base commit. So the list job reuses the head SHA's pre-pr verdict only when the PR
+  # is into main and the event payload's base SHA is an ancestor of its head SHA (the branch is up to date with
+  # main), and the Actions API (scripts/mutation_reuse.py, this run's own GITHUB_TOKEN, actions: read) shows a
+  # completed, successful "Mutation tests (changed modules)" job of this workflow (by workflow id and path), from
+  # a push to a pre-pr/** branch of this repository, for exactly that head SHA. If so, it lists no modules, the
+  # shards are skipped, and the aggregate passes naming the reused run. A branch behind main, or a failed,
+  # cancelled, still-running or other-SHA run, never counts; any lookup error (API, git, or the command itself
+  # failing) means no reuse, so the shards then run as usual. Every other job still runs on the PR, and every
+  # required check still reports.
   mutation-list:
     name: Mutation tests (list changed modules)
     if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pre-pr/')
@@ -177,9 +181,12 @@ jobs:
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: "3.12"
-      # The head SHA and base come from the event payload, never from text a contributor writes; the script
-      # checks both and the repository name, and prints a run id only for an exact, green pre-pr match. Like
-      # mutate_changed.py, it comes from the PR's own checkout: it adds no trust beyond what a PR's CI already has.
+      # The head and base SHAs and the base branch come from the event payload, never from text a contributor
+      # writes; the script checks them and the repository name, and prints a run id only for an exact, green
+      # pre-pr match on a branch that already contains its base. The lookup script is the base branch's copy
+      # (origin/<base>), so a PR cannot skip its own shards by editing it; only while the base has no copy (before
+      # this lookup lands on main) is the PR's own copy used. If the command fails at all, run_id is empty and the
+      # shards run: a lookup failure can cost time, never fail or skip the check.
       - name: Look for a green pre-pr mutation verdict on this commit
         id: reuse
         if: github.event_name == 'pull_request'
@@ -187,9 +194,19 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           BASE_REF: ${{ github.base_ref }}
         run: |
-          run_id="$(uv run --no-project python scripts/mutation_reuse.py --repo "${REPO}" --sha "${HEAD_SHA}" --base "${BASE_REF}")"
+          script="scripts/mutation_reuse.py"
+          if git cat-file -e "origin/${BASE_REF}:${script}" 2> /dev/null; then
+            git show "origin/${BASE_REF}:${script}" > "${RUNNER_TEMP}/mutation_reuse.py"
+            script="${RUNNER_TEMP}/mutation_reuse.py"
+          fi
+          echo "Lookup script: ${script}"
+          run_id="$(uv run --no-project python "${script}" --repo "${REPO}" --sha "${HEAD_SHA}" --base "${BASE_REF}" --base-sha "${BASE_SHA}")" || {
+            echo "::warning::The pre-pr verdict lookup failed, so the shards run."
+            run_id=""
+          }
           if ! [[ "${run_id}" =~ ^[0-9]*$ ]]; then
             echo "Unexpected lookup output; the shards run."
             run_id=""
@@ -207,7 +224,7 @@ jobs:
           REUSED_RUN: ${{ steps.reuse.outputs.run_id }}
         run: |
           if [ -n "${REUSED_RUN}" ]; then
-            echo "Run ${REUSED_RUN} already mutated this commit on pre-pr/ and passed; no shards here."
+            echo "Run ${REUSED_RUN} already mutated this head commit on pre-pr/ and passed, and the head contains its base; no shards here."
             echo "modules=[]" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -301,7 +318,8 @@ jobs:
           pattern: mutation-*
           path: mutation-reports/
           merge-multiple: true
-      # Reuse: the list job found the pre-pr run that mutated this exact head commit and passed (see mutation-list).
+      # Reuse: the list job found the pre-pr run that mutated this head commit and passed, and the head already
+      # contains the PR's base commit, so the merge tested here has the same tree (see mutation-list).
       - name: Report the reused pre-pr verdict
         if: needs.mutation-list.outputs.reused_run != ''
         env:
