@@ -261,20 +261,63 @@ NNDSS_ROWS = [
 ]
 
 
-def _run_flag(name: str) -> list[tuple[Any, ...]]:
+def _flag_sql(name: str) -> str:
+    project = yaml.safe_load((REPO / "transform" / "dbt_project.yml").read_text())
+    sql = (FLAGS / f"{name}.sql").read_text().replace("{{ ref('int_cdc_nndss_weekly') }}", "n")
+    return re.sub(r"\{\{ var\('(\w+)'\) \}\}", lambda m: str(project["vars"][m.group(1)]), sql)
+
+
+def _nndss(rows: list[tuple[Any, ...]], *, threads: int = 1) -> duckdb.DuckDBPyConnection:
     from health_data_registry.registry import label_key
 
-    con = duckdb.connect()
+    con = duckdb.connect(config={"threads": threads})
     con.execute("CREATE TABLE n (states VARCHAR, year BIGINT, week BIGINT, label VARCHAR, m1 BIGINT, m1_flag VARCHAR, "
                 "m3 BIGINT, m3_flag VARCHAR, states_key VARCHAR, is_total_row BOOLEAN)")  # fmt: skip
     con.executemany(
         "INSERT INTO n VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [(*r, label_key(r[0]), r[0] == "TOTAL") for r in NNDSS_ROWS],
+        [(*r, label_key(r[0]), r[0] == "TOTAL") for r in rows],
     )
-    project = yaml.safe_load((REPO / "transform" / "dbt_project.yml").read_text())
-    sql = (FLAGS / f"{name}.sql").read_text().replace("{{ ref('int_cdc_nndss_weekly') }}", "n")
-    sql = re.sub(r"\{\{ var\('(\w+)'\) \}\}", lambda m: str(project["vars"][m.group(1)]), sql)
-    return con.execute(sql + " ORDER BY ALL").fetchall()
+    return con
+
+
+def _run_flag(name: str) -> list[tuple[Any, ...]]:
+    return _nndss(NNDSS_ROWS).execute(_flag_sql(name) + " ORDER BY ALL").fetchall()
+
+
+# Two spellings of one area in the same week: the cases where an arbitrary pick (any_value, arg_max on a tie)
+# would show a different spelling from one build to the next.
+TIED_ROWS = [
+    *NNDSS_ROWS,
+    ("IDAHO", 2025, 2, "Anthrax", None, "-", None, "-"),
+    ("Idaho", 2025, 2, "Anthrax", None, "-", None, "-"),
+    ("ohio", 2024, 52, "Candida auris, clinical", 1, None, 99, None),
+    ("ohio", 2024, 52, "Candida auris, screening", 3, None, 2, None),
+]
+
+
+@pytest.mark.parametrize(
+    "name", sorted(p.stem for p in FLAGS.glob("flag_*.sql") if p.stem != "flag_unmapped_labels")
+)
+def test_flag_queues_are_idempotent(name: str) -> None:
+    """Two builds from the same snapshot give identical rows (ADR 0017): the same checksum whatever order the rows
+    arrive in and however many threads run, including where one area has two spellings in the same week."""
+    import random
+
+    sql = _flag_sql(name)
+    orders = [
+        TIED_ROWS,
+        TIED_ROWS[::-1],
+        # A reproducible shuffle, not a secret.
+        *(random.Random(seed).sample(TIED_ROWS, len(TIED_ROWS)) for seed in range(12)),  # noqa: S311
+    ]
+    checksums = set()
+    for i, rows in enumerate(orders):
+        con = _nndss(rows, threads=1 + i % 4)
+        (checksum,) = con.execute(
+            f"SELECT md5(coalesce(string_agg(CAST(q AS VARCHAR), '|' ORDER BY CAST(q AS VARCHAR)), '')) FROM ({sql}) AS q"  # noqa: S608 - a test's own SQL
+        ).fetchone()
+        checksums.add(checksum)
+    assert len(checksums) == 1, name
 
 
 def test_flag_cauris_swap_lists_clinical_above_screening_at_the_latest_week() -> None:
