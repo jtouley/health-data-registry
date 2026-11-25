@@ -46,9 +46,9 @@ docs: ## Regenerate docs/helpers.md, the template's skills, the plugin and the t
 kit: ## Build the Claude Projects kit into KIT_DIR (default dist/projects-kit, not committed)
 	$(UV) run python scripts/write_template.py --kit $(KIT_DIR)
 
-check: lint typecheck test mutate ## Everything CI runs: lint, typecheck, test, mutation tests on changed modules
+check: lint typecheck test mutate ## The quick local loop (not all of CI): lint, typecheck, test, mutation tests on changed modules
 
-precheck: ## The pre-PR gate: every CI step locally (hooks, lint, types, tests, kit, docs drift, mutation shards); stops at the first failure
+precheck: ## The pre-PR gate's local half: the CI checks plus docs drift (hooks, lint, types, tests, smoke, kit, docs drift, mutation shards); stops at the first failure
 	UV="$(UV)" MAKE="$(MAKE)" BASE="$(BASE)" COV_FLOOR="$(COV_FLOOR)" MUTATION_FLOOR="$(MUTATION_FLOOR)" bash scripts/precheck.sh
 
 refresh: ## Fetch every catalogued source into the local lake
