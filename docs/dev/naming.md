@@ -1,8 +1,9 @@
 # Hugging Face repository names
 
 Every Hugging Face repository of this project starts `<owner>/health-data-registry`, so one prefix finds all
-of them, and a token's repository list can be checked at a glance. `<owner>` is `jtouley`, or
-`HDR_PRIVATE_HF_OWNER` where a workflow or the hosted server sets it.
+of them, and a token's repository list can be checked at a glance. `<owner>` is `jtouley` unless a variable
+says otherwise: `HDR_HF_OWNER` for the public dataset and the Space, `HDR_PRIVATE_HF_OWNER` for the private and
+ops datasets (where a workflow or the hosted server sets it).
 
 | Repository | Name | Visibility | Read by | Written by |
 |---|---|---|---|---|
@@ -31,7 +32,17 @@ uv run python -m health_data_registry.naming --owner "$OWNER" ops croi-crawl
 ```
 
 No other file spells a name out. `refresh.yml` accepts `HDR_RAW_DATASET` only when it equals the `raw-archive`
-name, so a variable can't point the archive at another repository. A new private source or job gets its name
+name built with `HDR_PRIVATE_HF_OWNER`, so a variable can't point the archive at another repository or account.
+
+Before any upload to a private or ops dataset, code calls `naming.assert_private(api, repo)` and workflows call
+
+```bash
+uv run python -m health_data_registry.naming assert-private "$REPO"
+```
+
+It refuses any repo that isn't `<HDR_PRIVATE_HF_OWNER>/health-data-registry-private-...` or `...-ops-...`,
+creates the repo private if it is missing, and refuses if Hugging Face reports it public. `hf upload --private`
+alone is not enough: it is ignored for a repo that already exists. A new private source or job gets its name
 from `naming.py`; it is created by the maintainer before its first run, except `ops-sitemaps`, which
 `sitemaps snapshot` creates private at run time if it is missing.
 

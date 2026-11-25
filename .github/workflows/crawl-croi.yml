@@ -10,7 +10,10 @@
 #       metadata rows so far (private/croi_abstracts_index/)
 #   <owner>/health-data-registry-private-croi-abstracts-index   metadata rows, read by the hosted server
 #   <owner>/health-data-registry-private-croi-abstracts-text    abstract text: private tier only, never public
-# The maintainer creates these three private datasets; this workflow never creates a repository.
+# The maintainer creates the state and text datasets: the restore step fails if either is missing, so a fresh
+# checkpoint never overwrites the real one. Before every upload, `naming assert-private` checks each dataset is a
+# private dataset of HDR_PRIVATE_HF_OWNER (it would create the index dataset private if it were missing) and
+# refuses if Hugging Face reports it public: `hf upload --private` is ignored for an existing repo.
 #
 # robots.txt is read first on every run by `index-croi` (polite.py), and its Crawl-delay and Disallow rules
 # are obeyed. Only one CROI crawl runs at a time (concurrency group croi-crawl).
@@ -20,7 +23,8 @@
 # croi_abstracts_index will say `hosting: private` (the default) when it is catalogued; until a maintainer changes
 # that in a reviewed pull request, nothing from this crawl reaches the public release.
 #
-# Secrets: HF_TOKEN (HF_CRAWL_TOKEN, if set, overrides it with a token limited to the three datasets above).
+# Secrets: HF_TOKEN (HF_CRAWL_TOKEN, if set, overrides it with a token limited to the three datasets above). It is
+# set only on the restore and save steps, never on the crawl step that parses CROI's pages.
 #
 # `index-croi` is on the wip/croi-index branch and not merged yet: until it is, each run skips with a notice.
 name: CROI crawl
@@ -56,8 +60,8 @@ jobs:
     timeout-minutes: 360
     env:
       HDR_LAKE: ${{ github.workspace }}/lake
-      HF_TOKEN: ${{ secrets.HF_CRAWL_TOKEN || secrets.HF_TOKEN }}
       HF_HUB_DISABLE_TELEMETRY: "1"
+      HDR_PRIVATE_HF_OWNER: ${{ vars.HDR_PRIVATE_HF_OWNER }}
       PRIVATE_OWNER: ${{ vars.HDR_PRIVATE_HF_OWNER || 'jtouley' }}
       YEAR_IN: ${{ inputs.year || vars.HDR_CROI_YEAR || '2025' }}
       MAX_IN: ${{ inputs.max_requests || '140' }}
@@ -74,12 +78,14 @@ jobs:
 
       - name: Check the crawler, the token and the inputs
         id: gate
+        env:
+          HAS_TOKEN: ${{ (secrets.HF_CRAWL_TOKEN || secrets.HF_TOKEN) && 'true' || 'false' }}
         run: |
           go=true
           if ! uv run --no-sync health-data-registry index-croi --help >/dev/null 2>&1; then
             echo "::notice::index-croi is not on this branch yet (it is on wip/croi-index). Skipping the crawl."
             go=false
-          elif [ -z "$HF_TOKEN" ]; then
+          elif [ "$HAS_TOKEN" != "true" ]; then
             echo "::notice::No HF_TOKEN secret: the crawl state can't be kept between runs, so nothing is crawled."
             go=false
           fi
@@ -112,6 +118,7 @@ jobs:
       - name: Restore the crawl state and rows so far
         if: steps.gate.outputs.go == 'true'
         env:
+          HF_TOKEN: ${{ secrets.HF_CRAWL_TOKEN || secrets.HF_TOKEN }}
           STATE_DATASET: ${{ steps.gate.outputs.state_repo }}
           INDEX_REPO: ${{ steps.gate.outputs.index_repo }}
           TEXT_REPO: ${{ steps.gate.outputs.text_repo }}
@@ -136,6 +143,8 @@ jobs:
           YEAR: ${{ steps.gate.outputs.year }}
           MAX_REQUESTS: ${{ steps.gate.outputs.max }}
         run: |
+          # pipefail: a failed crawl fails the step, not tee's exit code.
+          set -o pipefail
           uv run --no-sync health-data-registry index-croi --year "$YEAR" --max-requests "$MAX_REQUESTS" \
             | tee crawl-summary.txt
           if grep -q "the year is complete" crawl-summary.txt; then
@@ -145,10 +154,15 @@ jobs:
       - name: Save the crawl state and rows
         if: ${{ always() && steps.gate.outputs.go == 'true' && steps.crawl.outcome != 'skipped' }}
         env:
+          HF_TOKEN: ${{ secrets.HF_CRAWL_TOKEN || secrets.HF_TOKEN }}
           STATE_DATASET: ${{ steps.gate.outputs.state_repo }}
           INDEX_REPO: ${{ steps.gate.outputs.index_repo }}
           TEXT_REPO: ${{ steps.gate.outputs.text_repo }}
         run: |
+          # Every target must be a private dataset of HDR_PRIVATE_HF_OWNER before anything is uploaded (hard rule 10).
+          for repo in "$STATE_DATASET" "$INDEX_REPO" "$TEXT_REPO"; do
+            uv run --no-sync python -m health_data_registry.naming assert-private "$repo"
+          done
           msg="CROI crawl state, run ${GITHUB_RUN_ID}"
           # State and metadata so far (no abstract text) to the ops dataset.
           uv run --no-sync hf upload "$STATE_DATASET" lake . --repo-type dataset --private \

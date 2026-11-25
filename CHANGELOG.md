@@ -29,7 +29,11 @@ All notable changes to this project are documented here. The format follows
 - `health-data-registry sitemaps snapshot` and a weekly workflow: copies of the michigan.gov and kentcountymi.gov
   sitemaps, with week-to-week diffs, in a private Hugging Face dataset; a refusal opens a "Sitemap refresh
   blocked" issue and is never worked around.
-- `naming.py`: every Hugging Face repository name built from one convention (docs/dev/naming.md).
+- `naming.py`: every Hugging Face repository name built from one convention (docs/dev/naming.md), and
+  `assert-private`, run before every upload to a private or ops dataset. `HDR_HF_OWNER` owns the public dataset
+  and the Space; `HDR_PRIVATE_HF_OWNER` the private and ops datasets.
+- ADR 0013: the browser fetcher may read government hosts with an honest user agent, at least 10 s apart and with
+  no evasion; a challenge page, CAPTCHA, 401, 403 or 429 stops the crawl and is recorded as blocked.
 - Catalog entries carry `hosting: public` or `hosting: private` (the default). Only `hosting: public` sources
   are refreshed for and published to the open data release, and the pre-publish check refuses data files staged
   for any other source. It also refuses a snapshot with no rows, or a data file whose row count differs from

@@ -18,7 +18,12 @@ CI, CodeQL, Scorecard, release and npm-publish are unchanged and described in th
 Every action is pinned to a full commit SHA. Every workflow's top-level token is `contents: read`; `issues:
 write` is granted only to the jobs that open an issue, `actions: write` only to the keep-alive job and
 `actions: read` only to the deploy's verify job. Every checkout drops its credentials, and no workflow pushes to
-git. Each source has its own concurrency group, and no group cancels a running job.
+git. Each source has its own concurrency group, and no group cancels a running job. `HF_TOKEN` is set only on
+the steps that talk to Hugging Face, never job-wide, so dependency installs, the browser and the crawlers'
+parsers never see it. Before every upload to a private or ops dataset, `python -m health_data_registry.naming
+assert-private <repo>` checks that the repo is a private or ops dataset of `HDR_PRIVATE_HF_OWNER`, creates it
+private if it is missing, and refuses unless Hugging Face reports it private (`hf upload --private` is ignored
+for a repo that already exists).
 
 ## Guarded until another pull request merges
 
@@ -46,8 +51,10 @@ ends green with a notice and does nothing. Each starts working on its next run a
 3. **raw** (optional) uploads the raw publisher bytes (`raw/<sha256>`) and fetch logs to a maintainer-only
    PRIVATE dataset named by the `HDR_RAW_DATASET` variable, which must be
    `<owner>/health-data-registry-ops-raw-archive` ([naming.md](naming.md)). They never go in the public release.
-   Skipped with a notice if the variable or token is missing; fails if the variable names any other dataset.
-4. **publish** (main only, full runs only) runs only when every fetch job passed. It checks that each planned
+   Skipped with a notice if the variable or token is missing; fails if the variable names any other dataset
+   (the owner must be `HDR_PRIVATE_HF_OWNER`, never the variable's own) or if that dataset is public.
+4. **publish** (main only, full runs only, in the GitHub environment `hub-publish`) runs only when every fetch
+   job passed. It checks that each planned
    source has a snapshot, merges the per-source lakes, runs `validate` and `check-contracts` (publishers still
    serve every contract field), stages the release locally (all pre-publish checks, including that every
    snapshot has rows and each data file has exactly the rows its snapshot's manifest records), then runs `export-public --to hf://datasets/<repo>`, which tags the hub
@@ -76,7 +83,8 @@ Each run:
    can never overwrite the real one.
 3. Runs `health-data-registry index-croi --year <year> --max-requests <n>`. It reads robots.txt first on every
    run and obeys its Crawl-delay and Disallow rules; it writes a checkpoint after every request.
-4. Uploads the state, even if the slice failed or hit its step timeout.
+4. Uploads the state, even if the slice failed or hit its step timeout, after checking each dataset is private.
+   A failed crawl fails the run (`set -o pipefail` before the `tee`).
 
 The names come from `naming.py` ([naming.md](naming.md)); `<owner>` is `HDR_PRIVATE_HF_OWNER` (default `jtouley`).
 
@@ -119,19 +127,28 @@ pages). The crawlers read that diff as their queue.
   are never written to git.
 - **How:** headless Chromium (`browser_fetch.py`, Playwright) with the repo's honest user agent
   (`health-data-registry/<version> (+repo URL)`). michigan.gov's edge network (Akamai) refuses plain HTTPS from
-  cloud IPs and serves the same public sitemap to a browser. robots.txt is read first, by the same browser, and
-  its Disallow and Crawl-delay rules are obeyed. `--fetcher http` uses the guarded plain fetcher instead.
-- **Refused:** a 401, 403 or 429, an edge challenge page, or a robots.txt that disallows the path is final. The
-  seed is not taken, the others are still uploaded, the job fails, and **report-blocked** opens the issue
-  "Sitemap refresh blocked" (or comments on the open one) with the reasons. The job never retries another way.
-  A maintainer can download the sitemap in their own browser and run
-  `health-data-registry sitemaps snapshot --from-file NAME=PATH` instead.
+  cloud IPs and serves the same public sitemap to a browser. The maintainer allowed the browser fetcher on
+  government hosts under stop conditions: [ADR 0013](../adr/0013-browser-fetcher-on-government-hosts.md).
+  robots.txt is read first, by the same browser, and its Disallow and Crawl-delay rules are obeyed; requests to
+  one host are at least 10 s apart. `--fetcher http` uses the guarded plain fetcher instead.
+- **Hosts:** only seed hosts a catalog entry names, plus the two ADR 0013 records as exceptions until the
+  Michigan catalog entries land (`www.michigan.gov`, `www.kentcountymi.gov`). Child sitemaps must be HTTPS on
+  the seed's own host; a gzipped sitemap is never expanded past 50 MB (the sitemaps protocol's limit).
+- **Refused:** a 401, 403 or 429, an edge challenge or access-denied page, a CAPTCHA, or a robots.txt that
+  disallows the path or that the host refuses to show (only a 404 or 410 for robots.txt means "no rules") is
+  final. The seed is not taken, the others are still uploaded, the job fails, and **report-blocked** opens the
+  issue "Sitemap refresh blocked" (or comments on the open one) with the reasons. The job never retries another
+  way. A maintainer can download the sitemap in their own browser and run
+  `health-data-registry sitemaps snapshot --seed NAME --from-file NAME=PATH` instead.
+- **Same-day re-runs:** each day's diff is against the last run on an earlier day, so a second run the same day
+  (for example with `--from-file`) never empties that day's diff.
 
 Until `browser_fetch.py` is on main, the job uses `--fetcher http` with a notice.
 
 ### Deploy the Space (`deploy-space.yml`)
 
 Deploys only from a release tag (`vX.Y.Z`), never on a push to a branch and never from a pull request. The
+deploy job runs in the GitHub environment `space`, whose deployment rule allows only `v*.*.*` tags. The
 **verify** job checks, through the GitHub API, that the tagged commit is on main and that CI passed on main for
 that commit; only then does the **deploy** job, which alone gets the token, upload `space/` to the Space as one
 commit. To redeploy a tag, run the workflow by hand with "Use workflow from" set to that tag; any other ref is
@@ -170,10 +187,29 @@ Sources: GitHub Docs, "Actions limits", "Events that trigger workflows" (schedul
 
 ## Secrets and variables
 
-Set these under Settings → Secrets and variables → Actions.
+### GitHub environments (maintainer, once)
 
-**`HF_TOKEN` is the one secret** (already set). Every workflow uses it. Three optional secrets can override it
-for one use each, if the maintainer later wants narrower tokens; none is needed.
+A repository secret can be read by any workflow run on any branch by someone with write access, so the two
+jobs that write public things read their token from a GitHub **environment** whose deployment rule GitHub
+enforces, even if a workflow file is edited. Under Settings → Environments, the maintainer creates:
+
+| Environment | Used by | Deployment branches and tags | Secrets to move into it |
+|---|---|---|---|
+| `space` | `deploy-space.yml` deploy | Selected tags only: `v*.*.*` | `HF_TOKEN` (or `HF_SPACE_TOKEN`) |
+| `hub-publish` | `refresh.yml` publish | Selected branches only: `main` | `HF_TOKEN` (or `HF_PUBLISH_TOKEN`) |
+
+Required reviewers can be added to either. Until the environments exist, GitHub creates them on the first run
+with no rules and the jobs read the repository secrets, so the workflows' own checks (`verify`, `main` only)
+are the only guard; they stay as defence in depth after. Once both environments hold the token, the crawl
+workflows still need a repository-level `HF_CRAWL_TOKEN` (or `HF_TOKEN`) limited to the private and ops
+datasets.
+
+### Secrets and variables
+
+Set these under Settings → Secrets and variables → Actions (or in the environments above).
+
+**`HF_TOKEN` is the one secret** (already set). Every workflow uses it, on the upload steps only. Three optional
+secrets can override it for one use each, if the maintainer later wants narrower tokens; none is needed.
 
 | Secret | Used by | Access it needs |
 |---|---|---|
@@ -184,7 +220,8 @@ for one use each, if the maintainer later wants narrower tokens; none is needed.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `HDR_PRIVATE_HF_OWNER` | `jtouley` | Owner of every repository the workflows write (`naming.py`): public dataset, Space, private and ops datasets |
+| `HDR_HF_OWNER` | `jtouley` | Owner of the public dataset and the Space (`naming.py`) |
+| `HDR_PRIVATE_HF_OWNER` | `jtouley` | Owner of every private and ops dataset (`naming.py`); every private upload is checked against it |
 | `HDR_RAW_DATASET` | unset (no archive) | PRIVATE dataset for raw bytes and fetch logs; only `<owner>/health-data-registry-ops-raw-archive` is accepted |
 | `HDR_CROI_YEAR` | `2025` | CROI year to crawl |
 
@@ -212,7 +249,8 @@ gh run watch                                                 # follow the run yo
 
 The same steps run locally from a checkout: `make refresh`, `make check-contracts`,
 `uv run health-data-registry export-public --to build/release-preview` (stages and checks without uploading),
-`uv run health-data-registry sitemaps snapshot --fetcher http --seed kentcounty`, and, once merged,
+`uv run health-data-registry sitemaps snapshot --fetcher http --seed kentcounty` (it writes to
+`<HDR_PRIVATE_HF_OWNER>/health-data-registry-ops-sitemaps` unless `--repo` says otherwise), and, once merged,
 `uv run health-data-registry index-croi --year 2025 --max-requests 10` and
 `uv run python scripts/crawl_doi.py idweek`.
 
@@ -222,6 +260,9 @@ The same steps run locally from a checkout: `make refresh`, `make check-contract
   fall back until they are. Check the CLI flags and step outputs still match when each merges.
 - The sitemap job installs Playwright through the `browser` extra; if the Michigan PR names the extra
   differently, that step fails and the blocked issue says so.
+- `--fetcher http` reads robots.txt through `crawl.Robots`, which today treats a 401 or 403 for robots.txt as
+  "can't read it now" and fetches anyway ([#23](https://github.com/jtouley/health-data-registry/issues/23); `crawl.py` is also being changed in PR #19). The
+  browser path (`BrowserRobots`) blocks on 401, 403 and 429.
 - The keep-alive relies on the enable API resetting GitHub's inactivity timer; if GitHub changes that, push a
   commit within 60 days or re-enable the workflows by hand.
 - A pending run in a concurrency group is replaced by a newer one, so a CROI slice can be skipped when the

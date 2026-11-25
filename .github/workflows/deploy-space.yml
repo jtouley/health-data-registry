@@ -9,7 +9,12 @@
 # notice. The Space's files are replaced by space/ exactly: anything in the Space that is not in space/ is
 # deleted, so space/ must hold the Space's README.md (its config header).
 #
-# Secrets: HF_TOKEN (HF_SPACE_TOKEN, if set, overrides it with a token limited to the Space).
+# The deploy job runs in the GitHub environment `space`, whose deployment rule allows only v*.*.* tags
+# (docs/dev/automation.md); its secrets live there, so no other ref or workflow can read them. `verify` stays
+# as defence in depth.
+#
+# Secrets: HF_TOKEN (HF_SPACE_TOKEN, if set, overrides it with a token limited to the Space), set only on the
+# upload step. Variable: HDR_HF_OWNER owns the Space (default jtouley).
 name: Deploy Space
 
 on:
@@ -63,21 +68,23 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment: space
     env:
-      HF_TOKEN: ${{ secrets.HF_SPACE_TOKEN || secrets.HF_TOKEN }}
       HF_HUB_DISABLE_TELEMETRY: "1"
-      HDR_PRIVATE_HF_OWNER: ${{ vars.HDR_PRIVATE_HF_OWNER }}
+      HDR_HF_OWNER: ${{ vars.HDR_HF_OWNER }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Check space/ and the token
         id: gate
+        env:
+          HAS_TOKEN: ${{ (secrets.HF_SPACE_TOKEN || secrets.HF_TOKEN) && 'true' || 'false' }}
         run: |
           if [ ! -f space/README.md ]; then
             echo "::notice::No space/README.md at this tag yet (the HTTP server is on wip/http-server). Nothing deployed."
             echo "go=false" >> "$GITHUB_OUTPUT"
-          elif [ -z "$HF_TOKEN" ]; then
+          elif [ "$HAS_TOKEN" != "true" ]; then
             echo "::notice::No HF_TOKEN secret. Nothing deployed."
             echo "go=false" >> "$GITHUB_OUTPUT"
           else
@@ -94,6 +101,7 @@ jobs:
       - name: Upload space/ as one commit
         if: steps.gate.outputs.go == 'true'
         env:
+          HF_TOKEN: ${{ secrets.HF_SPACE_TOKEN || secrets.HF_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
           space_repo=$(uv run --no-sync python -m health_data_registry.naming space)

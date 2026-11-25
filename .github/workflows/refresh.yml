@@ -14,7 +14,10 @@
 #   report-failure  opens (or comments on) one issue when any job fails on main
 #
 # Secrets: HF_TOKEN is the one secret. HF_PUBLISH_TOKEN and HF_CRAWL_TOKEN, if ever set, override it for the
-# publish and the raw archive (narrower tokens); they are optional.
+# publish and the raw archive (narrower tokens); they are optional. The publish job runs in the GitHub
+# environment `hub-publish`, whose deployment rule allows only main (docs/dev/automation.md); its secrets live
+# there. The token is set only on the steps that upload.
+# Variables: HDR_HF_OWNER owns the public dataset; HDR_PRIVATE_HF_OWNER owns the private raw archive.
 #
 # Docs: docs/dev/automation.md. Restricted sources (WHO GHO) are never fetched here: they are read live.
 name: Weekly refresh
@@ -126,13 +129,13 @@ jobs:
       - name: Is a private raw archive configured?
         id: gate
         env:
-          HF_TOKEN: ${{ secrets.HF_CRAWL_TOKEN || secrets.HF_TOKEN }}
+          HAS_TOKEN: ${{ (secrets.HF_CRAWL_TOKEN || secrets.HF_TOKEN) && 'true' || 'false' }}
           RAW_DATASET: ${{ vars.HDR_RAW_DATASET }}
         run: |
           if [ -z "$RAW_DATASET" ]; then
             echo "::notice::Raw bytes not archived: set the repository variable HDR_RAW_DATASET to a PRIVATE dataset named <owner>/health-data-registry-ops-raw-archive (docs/dev/naming.md)."
             echo "go=false" >> "$GITHUB_OUTPUT"
-          elif [ -z "$HF_TOKEN" ]; then
+          elif [ "$HAS_TOKEN" != "true" ]; then
             echo "::notice::Raw bytes not archived: no HF_TOKEN secret (or HF_CRAWL_TOKEN override)."
             echo "go=false" >> "$GITHUB_OUTPUT"
           else
@@ -160,15 +163,20 @@ jobs:
         if: steps.gate.outputs.go == 'true'
         env:
           HF_TOKEN: ${{ secrets.HF_CRAWL_TOKEN || secrets.HF_TOKEN }}
+          HF_HUB_DISABLE_TELEMETRY: "1"
+          HDR_PRIVATE_HF_OWNER: ${{ vars.HDR_PRIVATE_HF_OWNER }}
           RAW_DATASET: ${{ vars.HDR_RAW_DATASET }}
         run: |
-          # Only the governed name is accepted (naming.py, docs/dev/naming.md), so the crawl token's repo list holds.
-          want=$(uv run --no-sync python -m health_data_registry.naming --owner "${RAW_DATASET%%/*}" ops raw-archive) \
-            || { echo "::error::HDR_RAW_DATASET's owner is not a Hugging Face user or organisation name"; exit 1; }
+          # Only the governed name is accepted (naming.py, docs/dev/naming.md). The owner is HDR_PRIVATE_HF_OWNER
+          # (default jtouley), never the variable's own owner, so HDR_RAW_DATASET can't point at another account.
+          want=$(uv run --no-sync python -m health_data_registry.naming ops raw-archive) \
+            || { echo "::error::HDR_PRIVATE_HF_OWNER is not a Hugging Face user or organisation name"; exit 1; }
           if [ "$RAW_DATASET" != "$want" ]; then
             echo "::error::HDR_RAW_DATASET must be $want (docs/dev/naming.md)"
             exit 1
           fi
+          # `hf upload --private` is ignored for an existing repo: refuse unless Hugging Face reports it private.
+          uv run --no-sync python -m health_data_registry.naming assert-private "$RAW_DATASET"
           # raw/<sha256> is content-addressed, so a file already archived is the same bytes.
           uv run --no-sync hf upload "$RAW_DATASET" lake . --repo-type dataset --private \
             --include "raw/*" --include "fetch_log/*" \
@@ -182,6 +190,9 @@ jobs:
     if: ${{ success() && github.ref == 'refs/heads/main' && !inputs.source }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    # The environment's deployment rule allows only main, and its secrets are readable only here, so a workflow
+    # edited on another branch can't publish; the `if:` above stays as defence in depth.
+    environment: hub-publish
     env:
       HDR_LAKE: ${{ github.workspace }}/lake
     steps:
@@ -224,7 +235,7 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_PUBLISH_TOKEN || secrets.HF_TOKEN }}
           HF_HUB_DISABLE_TELEMETRY: "1"
-          HDR_PRIVATE_HF_OWNER: ${{ vars.HDR_PRIVATE_HF_OWNER }}
+          HDR_HF_OWNER: ${{ vars.HDR_HF_OWNER }}
         run: |
           hub_repo=$(uv run --no-sync python -m health_data_registry.naming public)
           if [ -z "$HF_TOKEN" ]; then

@@ -4,15 +4,20 @@
 # created private by the command on its first run if it is missing; an existing public one is refused.
 #
 # Fetcher: headless Chromium (browser_fetch.py, Playwright) with the repo's honest user agent, because
-# michigan.gov's edge network (Akamai) refuses plain HTTPS from cloud IPs. browser_fetch.py arrives with the
-# Michigan adapters (branch wip/michigan-adapters, PR feat/michigan-tableau); until it is on main this job falls
-# back to `--fetcher http` with a notice, and the Michigan seeds are expected to be refused.
+# michigan.gov's edge network (Akamai) refuses plain HTTPS from cloud IPs and serves the same public sitemap to a
+# browser. The maintainer allowed the browser fetcher on government hosts under stop conditions, recorded in
+# docs/adr/0013-browser-fetcher-on-government-hosts.md: honest user agent, at least 10 s between requests to a
+# host, robots.txt obeyed, no evasion. The seed hosts are catalogued hosts or ADR 0013's recorded exceptions.
+# browser_fetch.py arrives with the Michigan adapters (PR feat/michigan-tableau); until it is on main this job
+# falls back to `--fetcher http` with a notice, and the Michigan seeds are expected to be refused.
 #
-# A refusal is final. When any seed is not taken (refused or failed), report-blocked opens, or comments on, the
-# "Sitemap refresh blocked" issue. Nothing is retried another way, and nothing is written to git: the job has
-# a read-only token and never pushes.
+# A refusal is final (ADR 0013): a challenge or access-denied page, a CAPTCHA, a 401, 403 or 429, or a robots.txt
+# that disallows the path or that the host refuses to show. The seed is not taken and report-blocked opens, or
+# comments on, the "Sitemap refresh blocked" issue. Nothing is retried another way, and nothing is written to
+# git: the job has a read-only token and never pushes.
 #
-# Secrets: HF_TOKEN (HF_CRAWL_TOKEN, if set, overrides it with a token limited to the ops dataset).
+# Secrets: HF_TOKEN (HF_CRAWL_TOKEN, if set, overrides it with a token limited to the ops dataset). It is set only
+# on the step that uploads, never on the dependency or browser installs.
 name: Weekly sitemap snapshots
 
 on:
@@ -32,11 +37,10 @@ jobs:
   snapshot:
     name: Snapshot the seed sitemaps
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 10 s between requests to a host (ADR 0013): up to 3 x 201 sitemaps fit inside two hours.
+    timeout-minutes: 120
     env:
-      HF_TOKEN: ${{ secrets.HF_CRAWL_TOKEN || secrets.HF_TOKEN }}
       HF_HUB_DISABLE_TELEMETRY: "1"
-      HDR_PRIVATE_HF_OWNER: ${{ vars.HDR_PRIVATE_HF_OWNER }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -67,6 +71,8 @@ jobs:
 
       - name: Take and upload the snapshots
         env:
+          HF_TOKEN: ${{ secrets.HF_CRAWL_TOKEN || secrets.HF_TOKEN }}
+          HDR_PRIVATE_HF_OWNER: ${{ vars.HDR_PRIVATE_HF_OWNER }}
           FETCHER: ${{ steps.fetcher.outputs.kind }}
         run: |
           if [ -z "$HF_TOKEN" ]; then

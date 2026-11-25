@@ -9,7 +9,8 @@
 # scripts/crawl_doi.py arrives with the DOI harvester (branch wip/doi-harvest, PR feat/doi-harvest). Until it is
 # on main, every job skips with a notice and harvests nothing; once it merges, the next run harvests.
 #
-# Secrets: HF_TOKEN (HF_CRAWL_TOKEN, if set, overrides it with a token limited to the private datasets).
+# Secrets: HF_TOKEN (HF_CRAWL_TOKEN, if set, overrides it with a token limited to the private datasets). It is set
+# only on the upload step, never while the harvester runs.
 name: DOI conference crawl
 
 on:
@@ -35,7 +36,6 @@ jobs:
         source: [idweek, shea, apic, icid]
     env:
       HDR_LAKE: ${{ github.workspace }}/lake
-      HF_TOKEN: ${{ secrets.HF_CRAWL_TOKEN || secrets.HF_TOKEN }}
       HF_HUB_DISABLE_TELEMETRY: "1"
       HDR_PRIVATE_HF_OWNER: ${{ vars.HDR_PRIVATE_HF_OWNER }}
       SOURCE: ${{ matrix.source }}
@@ -46,11 +46,13 @@ jobs:
 
       - name: Check the harvester and the token
         id: gate
+        env:
+          HAS_TOKEN: ${{ (secrets.HF_CRAWL_TOKEN || secrets.HF_TOKEN) && 'true' || 'false' }}
         run: |
           if [ ! -f scripts/crawl_doi.py ]; then
             echo "::notice::scripts/crawl_doi.py is not on main yet (it comes with the DOI harvester PR, feat/doi-harvest). Nothing harvested for $SOURCE."
             echo "go=false" >> "$GITHUB_OUTPUT"
-          elif [ -z "$HF_TOKEN" ]; then
+          elif [ "$HAS_TOKEN" != "true" ]; then
             echo "::notice::No HF_TOKEN secret: the harvest could not be kept, so nothing is harvested for $SOURCE."
             echo "go=false" >> "$GITHUB_OUTPUT"
           else
@@ -77,6 +79,7 @@ jobs:
       - name: Upload to the source's private dataset
         if: steps.gate.outputs.go == 'true'
         env:
+          HF_TOKEN: ${{ secrets.HF_CRAWL_TOKEN || secrets.HF_TOKEN }}
           FOLDER: ${{ steps.harvest.outputs.folder }}
           PRIVATE_REPO: ${{ steps.harvest.outputs.private_repo }}
           SOURCE_ID: ${{ steps.harvest.outputs.source }}
@@ -92,6 +95,8 @@ jobs:
             echo "::notice::Nothing harvested for $SOURCE_ID; nothing uploaded."
             exit 0
           fi
+          # `hf upload --private` is ignored for an existing repo: refuse unless Hugging Face reports it private.
+          uv run --no-sync python -m health_data_registry.naming assert-private "$PRIVATE_REPO"
           uv run --no-sync hf upload "$PRIVATE_REPO" "$FOLDER" . --repo-type dataset --private \
             --include "*.jsonl" --include "**/*.jsonl" --commit-message "DOI harvest ${SOURCE}, run ${GITHUB_RUN_ID}"
           if [ "$COMPLETE" != "true" ]; then
