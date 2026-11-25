@@ -41,6 +41,19 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- The crawler factory's core (ADR 0016, step 1 and the types step 2 names). Every source is read by one generic
+  adapter type chosen in its catalog entry (`type:`; the older `portal:` is read for one more release and `validate`
+  warns about it), configured by that type's strict block, plus named extensions it opts in to. New types:
+  `https_file` (csv, xlsx, or one member of a zip; xlsx values as stored with their number format, never the displayed
+  text), `html_table` (one table by selector, or a resumable listing of item pages) and `pdf_table` (reports linked
+  from an index page, plus facts a report prints once, read by a `parse` extension). `socrata`, `odata` (WHO GHO),
+  `https_csv`, `tableau` and `doi` read exactly as before. One fetch core: a source reaches only its own hosts and
+  declared paths (catalogued patterns matched whole, on the linear-time RE2 engine), config can only slow the pace,
+  robots.txt is reread after 24 hours and its Request-rate honoured, keys never reach provenance, and a source stops
+  being crawled only after 8 weeks of continuous failure. The row-level guard (hard rule 4) runs on every page of
+  every type, with no way to switch it off. A snapshot's identity now includes how its records were read (the type,
+  its config and extensions), so a config-only change builds a new snapshot; existing snapshots are rebuilt once on
+  their next refresh.
 - `serve --http`: the hosted, read-only connector over stateless Streamable HTTP (hub releases and live reads
   only), with one deadline per tool call, a result-size cap, rate limits per MCP session and overall, and no
   request content in any log; `space/` for a Hugging Face Docker Space and `docs/dev/hosting.md`.

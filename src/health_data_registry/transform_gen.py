@@ -45,7 +45,7 @@ import yaml
 
 from health_data_registry.dbt_raw import PROVENANCE, SHA256_COLUMN, SNAPSHOT_COLUMN
 from health_data_registry.registry import Contract, Dataset, Registry, load_registry, parse_contract
-from health_data_registry.staging import silver_schema, typed_select
+from health_data_registry.staging import raw_fields, silver_schema, staged_source, typed_select
 
 MODELS_DIR = Path("transform/models")
 STAGING_DIR = MODELS_DIR / "staging"
@@ -104,7 +104,8 @@ def _dump(header: str, doc: Mapping[str, Any]) -> str:
 def raw_sources(registry: Registry) -> str:
     tables = []
     for ds in stored(registry):
-        fields = source_fields(ds.contract)
+        fields = raw_fields(ds.entry, source_fields(ds.contract))
+        staged = ", ".join(u.name for u in ds.entry.source.extensions if u.hook == "staging")
         read_into: dict[str, list[str]] = {}
         for c in ds.contract.columns:
             read_into.setdefault(c.source_field, []).append(f"{c.name} ({c.description})")
@@ -112,7 +113,12 @@ def raw_sources(registry: Registry) -> str:
             {
                 "name": f,
                 "data_type": "varchar",
-                "description": f"Publisher field {f}, as text; read into " + "; ".join(read_into[f]),
+                "description": f"Publisher field {f}, as text; "
+                + (
+                    "read into " + "; ".join(read_into[f])
+                    if f in read_into
+                    else f"read by staging ({staged})"
+                ),
             }
             for f in fields
         ]
@@ -151,12 +157,14 @@ def raw_sources(registry: Registry) -> str:
 
 def staging_sql(ds: Dataset) -> str:
     provenance = ",\n  ".join(f'"{p}"' for p in PROVENANCE)
+    # The source's staging extensions (if any) wrap the raw relation: the same SQL the lake and the live read run.
+    raw = f"{{{{ source('raw', '{ds.id}') }}}}"
     return (
         f"-- {HEADER.format(src=ds.entry.contract)}\n"  # noqa: S608 - generated from quoted contract identifiers
         "-- Types the load the dataset's LATEST pointer names; every business rule lives in intermediate models.\n"
         "-- No row is dropped or deduplicated: a duplicate key fails the model's one-row-per-key test.\n"
         f"select\n  {typed_select(ds.contract)},\n  {provenance}\n"
-        f"from {{{{ source('raw', '{ds.id}') }}}}\n"
+        f"from {staged_source(ds.entry, raw, None)[0]}\n"
     )
 
 

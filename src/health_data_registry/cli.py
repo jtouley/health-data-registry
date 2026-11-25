@@ -49,6 +49,11 @@ def validate(registry: Registry, lake: Path) -> int:
         print(
             f"ok   {ds.id}: contract {ds.contract.version} ({ds.entry.status}), {len(ds.semantic.metrics)} metrics"
         )
+        if ds.entry.source.portal is not None:
+            print(
+                f"warn {ds.id}: source.portal is the older name of source.type and is read for one more release; "
+                f"write type: {ds.entry.source.kind}"
+            )
     engine = Engine(registry=registry, lake=lake, hub=None, fetch_at_run_time=False)
     failed = 0
     for ds_id, extra in unlisted_condition_labels(registry, engine).items():
@@ -84,13 +89,13 @@ def export_public(registry: Registry, to: str, *, lake: Path, run_date: str | No
 
 def check_contracts(registry: Registry) -> int:
     """Does each publisher still serve every field its contract reads? (The nightly drift check.)"""
-    from health_data_registry.adapters import publisher_fields
+    from health_data_registry.adapters import capabilities, publisher_fields
 
     get = _fetcher(registry)
     bad = 0
     for ds in registry:
-        if ds.entry.source.portal == "doi":
-            print(f"skip {ds.id}: harvested by DOI; every harvest checks the APIs' answers as it reads them")
+        if capabilities(ds.entry).checks_layout_on_read:
+            print(f"skip {ds.id}: its adapter type checks the publisher's layout on every read")
             continue
         try:
             served = publisher_fields(ds.entry, get)
