@@ -336,7 +336,10 @@ def test_build_snapshot_manifest_and_pointer(est: tuple[Registry, Engine, Path],
         "layouts": {},
     }
     assert (lake / "datasets" / "toy_cases" / "LATEST").read_text() == m.snapshot_id + "\n"
-    assert sorted(p.name for p in lake.iterdir()) == ["datasets", "raw", "raw_records"]  # no temporary folder
+    assert sorted(p.name for p in lake.iterdir()) == [
+        "datasets",
+        "raw",
+    ]  # partial: no raw_records; no temp folder
     assert (path / "data.parquet").stat().st_size > 0
     # The same bytes loaded in full are different inputs, so a new snapshot, never the partial one relabelled.
     again = build_snapshot(lake, reg.get("toy_cases"), [early, late], [f])
