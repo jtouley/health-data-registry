@@ -25,18 +25,18 @@ description:
 servers:
 - id: crossref
   server: api.crossref.org
-  type: https
+  type: api
   location: https://api.crossref.org/journals/0196-6553/works
   description: JSON, cursor-paged; without a mailto list queries are limited to 1 a second, one at a time (Crossref
     docs).
 - id: openalex
   server: api.openalex.org
-  type: https
+  type: api
   location: https://api.openalex.org/works
   description: JSON, looked up by DOI (filter=doi:a|b, at most 100 values); 10 requests a second without a key.
 - id: europepmc
   server: www.ebi.ac.uk
-  type: https
+  type: api
   location: https://www.ebi.ac.uk/europepmc/webservices/rest/search
   description: JSON, looked up by DOI (resultType=core); robots.txt asks 10 s between requests.
 schema:

@@ -732,9 +732,9 @@ def _port_errors(root: Path, registry: Registry, port: OutputPort, private_ports
     # Public versus private (hard rule 10).
     if port.tier == "private" and port.hosting == "public-hub":
         errs.append(f"{where}: a private-tier port is never on the public hub")
-    live_only = [
-        i for i in port.inputs if i in registry.datasets and not registry.get(i).entry.licence.redistribution
-    ]
+    # A catalogued source read live only (registry tier live: its licence forbids redistribution and it has no
+    # reviewed private store) is never stored anywhere (live.is_live).
+    live_only = [i for i in port.inputs if i in registry.datasets and registry.get(i).entry.tier == "live"]
     if port.is_public:
         read_private = [i for i in port.inputs if i in private_ports]
         if read_private:
@@ -766,11 +766,27 @@ def _port_errors(root: Path, registry: Registry, port: OutputPort, private_ports
                     f"(its catalog entry's hosted is true) (not: {', '.join(not_public) or 'pending sources'})"
                 )
     if port.hosting == "private-hf":
-        no_copy = [x for x in inherited if x not in PRIVATE_COPY_LICENCES or x.startswith(UNRESOLVED)]
-        if no_copy or live_only:
+        # A catalogued source may be stored privately when its own catalog entry says so after review (a private
+        # store, registry tier private) or its licence is reviewed for a stored copy; never when it is live only.
+        # A pending source only by its licence, since no reviewed catalog entry says anything yet.
+        no_copy = [
+            i
+            for i in port.inputs
+            if i in registry.datasets
+            and (
+                registry.get(i).entry.tier == "live"
+                or (
+                    registry.get(i).entry.tier != "private"
+                    and registry.get(i).entry.licence.id not in PRIVATE_COPY_LICENCES
+                )
+            )
+        ]
+        no_copy += [p.licence for p in port.pending if p.licence not in PRIVATE_COPY_LICENCES]
+        if no_copy:
             errs.append(
-                f"{where}: stored in a private Hugging Face dataset only when every source's licence allows a "
-                f"stored copy; use hosting live or none (not: {', '.join(sorted(set(no_copy) | set(live_only)))})"
+                f"{where}: stored in a private Hugging Face dataset only when every source may be stored (a "
+                f"reviewed private store or a licence that allows a stored copy); use hosting live or none "
+                f"(not: {', '.join(sorted(set(no_copy)))})"
             )
     return errs
 

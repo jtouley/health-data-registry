@@ -354,8 +354,8 @@ def test_a_never_stored_source_is_never_given_private_hf_hosting(tmp_path: Path)
     )
     write(root, product_doc("toys", live), "toys.odps.yaml")
     assert errors(root) == [
-        "toys/toy_text: stored in a private Hugging Face dataset only when every source's licence allows a stored "
-        "copy; use hosting live or none (not: CC-BY-NC-SA-3.0-IGO, toy_listed)"
+        "toys/toy_text: stored in a private Hugging Face dataset only when every source may be stored (a reviewed "
+        "private store or a licence that allows a stored copy); use hosting live or none (not: toy_listed)"
     ]
     # The same port read live, or not built yet, is fine.
     for hosting in ("live", "none"):
@@ -371,9 +371,34 @@ def test_a_never_stored_source_is_never_given_private_hf_hosting(tmp_path: Path)
         assert errors(root) == [], hosting
     # A pending source whose licence isn't reviewed for a stored copy (CROI text) can't be planned there either.
     assert "croi-abstract-text" not in product.PRIVATE_COPY_LICENCES
+    croi = port(
+        "toy_text",
+        "toy_text",
+        inputs=["croi_abstracts_text"],
+        licences=["croi-abstract-text"],
+        tier="private",
+        hosting="private-hf",
+        pendingInputs=[{"id": "croi_abstracts_text", "licence": "croi-abstract-text", "fillsFrom": "PR #30"}],
+        stub=True,
+        openQuestions=["q"],
+    )
+    write(root, product_doc("toys", croi), "toys.odps.yaml")
+    assert any("(not: croi-abstract-text)" in e for e in errors(root))
     # A public-domain source may be stored privately.
     pd = port("toy_text", "toy_text", inputs=["toy_cases"], tier="private", hosting="private-hf")
     write(root, product_doc("toys", pd), "toys.odps.yaml")
+    assert errors(root) == []
+    # So may a restricted source whose reviewed catalog entry keeps it in its own private store.
+    cat = root / "catalog" / "toy_listed.yaml"
+    cat.write_text(cat.read_text() + "private_store: true\nhosting: private\n")
+    contract = root / "contracts" / "toy_listed.odcs.yaml"
+    contract.write_text(
+        contract.read_text().replace(
+            "customProperties:\n", "customProperties:\n  - {property: tier, value: private}\n", 1
+        )
+    )
+    assert load_registry(root).get("toy_listed").entry.tier == "private"
+    write(root, product_doc("toys", live), "toys.odps.yaml")
     assert errors(root) == []
 
 
@@ -444,7 +469,10 @@ def test_the_real_private_ports_stay_private() -> None:
     text = product.port_contract(reg.root, reg, "id_abstracts_text")
     assert product.private_columns(text) == ["abstract_text"]
     # The hub (what export-public publishes) never lists a port of the other products.
-    assert set(load_ports(reg.root)) == {ds.id for ds in reg}
+    # Private-store sources are not part of the public hub product (publish.public_sources).
+    from health_data_registry.publish import public_sources
+
+    assert set(load_ports(reg.root)) == {ds.id for ds in public_sources(reg)}
 
 
 def test_stubs_are_draft_unhosted_and_name_what_fills_them(tmp_path: Path) -> None:
@@ -838,8 +866,8 @@ def test_port_errors_say_exactly_what_is_wrong(tmp_path: Path) -> None:
         "['l', 'public-domain-us-federal']",
         "toys/Toy-Index: version 0.2.0 differs from contract version 0.1.0",
         "toys/Toy-Index: tier x differs from its contract's tier public",
-        "toys/Toy-Index: stored in a private Hugging Face dataset only when every source's licence allows a "
-        "stored copy; use hosting live or none (not: l)",
+        "toys/Toy-Index: stored in a private Hugging Face dataset only when every source may be stored (a "
+        "reviewed private store or a licence that allows a stored copy); use hosting live or none (not: l)",
     ]
     ftp = port("toy_index", "toy_index", inputs=["toy_cases"], hosting="ftp")
     write(root, product_doc("toys", ftp), "toys.odps.yaml")

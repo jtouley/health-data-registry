@@ -48,9 +48,10 @@ A port's answers also carry its sources' licence terms and caveats (`inherited_c
 - A public port never reads a private-tier port. Every column of a port contract declares `tier: public` or
   `tier: private`; a column with no tier counts as private, and a public port has none.
 - A private-tier port is never on the public hub. It is stored in a private Hugging Face dataset
-  (`hosting: private-hf`) only when every source's licence is one a maintainer has reviewed as allowing a stored
-  copy (`product.PRIVATE_COPY_LICENCES`); a source read live only (WHO, the Detroit and MDHHS dashboards) never
-  is, so such a port is `live` or `none`. Abstract text under a restrictive licence (CROI, ESCMID, CC BY-NC-ND
+  (`hosting: private-hf`) only when every source may be stored: a catalogued source kept in its own reviewed
+  private store (`private_store: true`, registry tier `private`), or one whose licence a maintainer has reviewed
+  as allowing a stored copy (`product.PRIVATE_COPY_LICENCES`). A source read live only (registry tier `live`:
+  WHO, the Detroit and MDHHS dashboards) never is, so such a port is `live` or `none`. Abstract text under a restrictive licence (CROI, ESCMID, CC BY-NC-ND
   supplements) is never public.
 - `hosted` on a hub port is `true` or `false`; any other value fails `validate`, and only `true` counts as hosted.
 - If two hub ports claim one source, `validate` fails, `get_provenance` refuses that one source in plain words,
