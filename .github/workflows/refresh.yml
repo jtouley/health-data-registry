@@ -229,6 +229,21 @@ jobs:
       # rows its snapshot's manifest records. Any problem stops the run before anything is uploaded.
       - name: Stage the release locally (pre-publish and row-count checks, no upload)
         run: uv run --no-sync health-data-registry export-public --to build/release-preview
+      # The release gate: dbt builds staging, intermediate and the review queues from this run's raw records and
+      # runs every contract rule as a test; the gate serves the release only if no model failed, every check ran
+      # and every error-severity check passed. A held build stops here, so nothing is uploaded and the release
+      # already on the hub stays the one served. dbt's own exit status is not used: the gate reads its run record.
+      - name: Transform build and release gate
+        env:
+          HDR_RAW_RECORDS: ${{ github.workspace }}/lake/raw_records
+          HDR_TRANSFORM_DB: ${{ runner.temp }}/transform.duckdb
+          DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
+        run: |
+          release="release-$(date -u +%Y-%m-%d)"
+          dbt_status=0
+          uv run --no-sync --directory transform dbt build --profiles-dir . --project-dir . || dbt_status=$?
+          echo "dbt build exited ${dbt_status}; the gate decides from its run record."
+          uv run --no-sync health-data-registry gate "$release" --target transform/target --ops "$HDR_LAKE/ops"
       # export-public tags the hub commit release-<run date> (release-<run date>.N for a correction); a tag is
       # never moved or deleted. It runs its own pre-publish checks and uploads nothing if one fails.
       - name: Publish the release and tag it on the open data hub

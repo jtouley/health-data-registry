@@ -78,7 +78,15 @@ flowchart LR
    The typed projection lives in one place (`staging.py`). The dbt project in `transform/` (dbt-duckdb) reads
    the same full loads from `raw_records/<id>/<snapshot_id>.ndjson`: its staging models are generated from
    the contracts by `make contracts` and only type, dedupe on the contract's primary key and keep the latest
-   load; business rules go in intermediate models and dimensions and one fact per source in marts.
+   load; business rules go in intermediate models (also generated from the contracts), review queues in
+   `flag_*` models, and dimensions and one fact per source in marts. Every raw load is kept once, with a
+   `<snapshot_id>.meta.json` naming its fetches (URL, route, time, sha256, status, robots overrides) and its
+   load mode (`rawLoad`: snapshot today; incremental needs a reviewed row key).
+   Each contract's quality rules run on every snapshot and live read (`quality.py`) and, as named dbt tests,
+   in the transform build. A failed data check is a caveat on answers; a rule that can't run is kept apart for
+   maintainers. The weekly refresh publishes a hub release only when the release gate (`release_gate.py`)
+   finds no failed model, no check that couldn't run and no failed error-severity check; otherwise the
+   release already served stays.
 5. **DuckDB read-only views.** `store.py` builds views over the snapshot from the contract. Connections are
    read-only.
 6. **Tools.** `get_series`, `get_aligned_with_gbd` and the other tools compile semantic-model metrics to SQL over

@@ -31,6 +31,7 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 | `make eval` | Verify the sealed sets; never run or read the held-out pool while developing |
 | `uv run health-data-registry refresh <id> [--max-rows N]` | One dataset; `--max-rows` marks the snapshot partial |
 | `uv run health-data-registry validate` | Cross-check every catalog entry, contract and semantic model |
+| `uv run health-data-registry gate <release>` | Serve a hub release only if its dbt build passed every error-severity test; logs to `lake/ops/` |
 
 ## How changes land
 
@@ -80,7 +81,7 @@ One review round, one fix round, merge, then follow-ups. We don't get stuck in r
 ```text
 src/health_data_registry/
   cli.py          serve, refresh <dataset>|--all, fetch <source>, export-public --to, check-contracts, validate,
-                  eval, publication-outlook, and the analysis tools (get-rate, compare-rates, get-trend,
+                  eval, gate, publication-outlook, and the analysis tools (get-rate, compare-rates, get-trend,
                   age-adjust, check-signal)
   server.py       the MCP server (stdio): registers the tools (listed below) and the helper prompts; wraps
                   every failure as a plain-words refusal
@@ -103,7 +104,13 @@ src/health_data_registry/
                   raw_records/<id>/<snapshot>.ndjson (parsed records that dbt staging reads)
   staging.py      the one contract-driven typed projection (names, types, missing codes, required, code
                   lists); the lake, the live read and the generated dbt staging models all use it
-  transform_gen.py  `make contracts`: writes transform/'s raw sources, staging models and model schemas
+  transform_gen.py  `make contracts`: writes transform/'s raw sources, staging and intermediate models,
+                  every model schema, the contract rules as dbt tests and the unmapped-labels queue
+  quality.py      runs each contract's ODCS quality rules (with dimension and severity) and fill-rate
+                  checks on every snapshot and live read; data failures become caveats, rule errors
+                  stay apart for maintainers
+  release_gate.py the release gate: serves a hub release only after a clean dbt build; ops/builds.jsonl,
+                  ops/serving_log.jsonl and ops/SERVING under the lake
   crawl.py        fetch one source into a lake (refresh, fetch, and run-time fetches)
   publish.py      export-public to the open data hub: cards, licence, manifest, pre-publish checks, tag
   hub.py          hosted read path: immutable hub release, sha256 and contract checks, bounded cache
@@ -118,8 +125,9 @@ contracts/        one ODCS v3.2.0 contract per dataset, the ODPS data product, a
                   model computed in dbt (e.g. the MMWR calendar)
 semantic/         one dbt-style semantic model per dataset
 transform/        the dbt project on DuckDB (dbt-duckdb): models/staging/ generated from contracts/ (never edit),
-                  then intermediate (business rules, flag_* review queues) and marts (dims, one fact per
-                  source). Every input is a raw source or a control-plane export with an ODCS contract: no
+                  then intermediate/ (generated: total rows, renamed labels, partial places, flag meanings,
+                  every contract rule as a named dbt test), flag/ (review queues that remove nothing) and
+                  marts (dims, one fact per source). Every input is a raw source or a control-plane export with an ODCS contract: no
                   seeds, no data files (a test enforces it); CI's synthetic raw records are in tests/fixtures/
 eval/sealed/      held-out blind sets, hash-sealed, when present; don't read them while developing
 tests/            synthetic data only; tests/golden holds golden SQL; tests/integration the live `network` checks
