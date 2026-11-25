@@ -15,9 +15,11 @@
 #            then `export-public` publishes a new immutable release-<run date> tag to the hub, and the gate
 #            records that exact tag as served. A release is never partial: if any source fails, nothing is
 #            published or tagged and report-failure opens an issue instead. Skipped with a notice when no
-#            Hugging Face token is set (then nothing is recorded as served); runs only on main.
-#            The gate's state (SERVING, builds.jsonl, serving_log.jsonl) is restored from and kept in the
-#            private ops dataset <owner>/health-data-registry-ops-release-gate (naming.py), checked private first.
+#            Hugging Face token is set (then nothing is recorded as served); runs only on main, and only after
+#            mutation-gate: the latest nightly mutation run covering this commit is green and no survivor issue
+#            is open (hard rule 13). The gate's state (SERVING, builds.jsonl, serving_log.jsonl) is restored from
+#            and kept in the private ops dataset <owner>/health-data-registry-ops-release-gate (naming.py),
+#            checked private first.
 #   report-failure  opens (or comments on) one issue when any job fails on main
 #
 # Secrets: HF_TOKEN is the one secret. HF_PUBLISH_TOKEN and HF_CRAWL_TOKEN, if ever set, override it for the
@@ -233,9 +235,31 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  # The release gate (hard rule 13): the latest nightly mutation run covering this commit is green, and no
+  # mutation-survivors issue is open (scripts/mutation_nightly.py gate). Any doubt blocks the release.
+  mutation-gate:
+    name: Mutation gate
+    if: github.ref == 'refs/heads/main' && !inputs.source
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read # the nightly mutation runs
+      issues: read # open survivor issues
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Nightly mutation run green on this commit, no survivor issue open
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: python3 scripts/mutation_nightly.py gate --repo "${REPO}" --sha "${SHA}"
+
   publish:
     name: Check and publish the release
-    needs: [plan, fetch, transform]
+    needs: [plan, fetch, transform, mutation-gate]
     # Only a full refresh on main publishes, and only when every fetch passed (success() is explicit so the
     # rule can't be lost by a later edit); a single-source run never does.
     if: ${{ success() && github.ref == 'refs/heads/main' && !inputs.source }}
@@ -367,8 +391,7 @@ jobs:
 
   report-failure:
     name: Open or update the failure issue
-    needs: [plan, fetch, raw, transform, publish]
-
+    needs: [plan, fetch, raw, transform, mutation-gate, publish]
     if: ${{ failure() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -381,7 +404,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TITLE: "Weekly refresh failed"
         run: |
-          body="The weekly refresh, contract check or publish failed: $RUN_URL
+          body="The weekly refresh, contract check, mutation gate or publish failed: $RUN_URL
 
           A source may have changed shape, moved, or be down. Check the run log, then update the
           adapter or contract in a pull request. No release is published or tagged until every source passes."
