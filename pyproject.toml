@@ -105,6 +105,6 @@ branch = true
 [tool.mutmut]
 # Mutation tests run on the modules a change touches (scripts/mutate_changed.py, `make mutate`), not the whole tree.
 source_paths = ["src/health_data_registry/", "eval/"]
-also_copy = ["eval/dev/", "catalog/", "contracts/", "semantic/", "docs/", "licenses/", "template/", "plugin/", ".claude-plugin/", "scripts/", "pyproject.toml", "README.md", "CLAUDE.md"]
+also_copy = ["eval/dev/", "catalog/", "contracts/", "semantic/", "docs/", "licenses/", "template/", "plugin/", ".claude-plugin/", "scripts/", "transform/models/", "transform/seeds/", "pyproject.toml", "README.md", "CLAUDE.md"]
 pytest_add_cli_args = ["-m", "not network", "-x", "-q", "-p", "no:cacheprovider"]
 pytest_add_cli_args_test_selection = ["tests/", "--ignore=tests/integration", "--ignore=tests/test_metamorphic.py"]
