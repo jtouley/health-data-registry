@@ -48,7 +48,7 @@ ends green with a notice and does nothing. Each starts working on its next run a
    others). Each job starts from an empty lake, fetches fresh from the publisher and uploads its lake as an
    artifact kept 7 days. Nothing is restored from the Actions cache, and `setup-uv` caching is off, so a
    release never depends on, or is poisoned by, another run's cache.
-3. **raw** (optional) uploads the raw publisher bytes (`raw/<sha256>`) and fetch logs to a maintainer-only
+3. **raw** (optional) uploads the raw publisher bytes (`raw/<sha256>`), fetch logs and parsed raw records with their load metadata (`raw_records/`) to a maintainer-only
    PRIVATE dataset named by the `HDR_RAW_DATASET` variable, which must be
    `<owner>/health-data-registry-ops-raw-archive` ([naming.md](naming.md)). They never go in the public release.
    Skipped with a notice if the variable or token is missing; fails if the variable names any other dataset
@@ -61,7 +61,20 @@ ends green with a notice and does nothing. Each starts working on its next run a
    commit `release-<date>`. `export-public` stops before uploading if a check fails, never moves a tag, and
    publishes a correction for the same date as `release-<date>.2`. A release is never partial: if any source
    fails, nothing is published or tagged. Without a token, the release is staged and checked and the job ends
-   with a notice instead of publishing.
+   with a notice instead of publishing, and nothing is recorded as served.
+
+   Before publishing, the **release gate** judges dbt's run record from the **transform** job, which runs
+   `dbt build` on this run's raw records outside the `hub-publish` environment and holds no secret (so dbt and
+   its dependencies never share a job with the publish token); it hands over only `run_results.json` and
+   `manifest.json`, as an artifact. The gate holds the release unless every model, seed and snapshot built, at
+   least one test ran, nothing was skipped, every check ran and every error-severity test and unit test passed.
+   A pass records only the verdict. After `export-public` has uploaded the release, `gate --confirm <tag>`
+   records the exact tag it created (`release-<date>`, or `release-<date>.N` for a correction) as served and
+   swaps `SERVING` to it. The gate's state (`SERVING`, `builds.jsonl`, `serving_log.jsonl`) is restored at
+   the start of the job from, and kept at the end (after a hold too) in, the private ops dataset
+   `<owner>/health-data-registry-ops-release-gate`, checked with `naming assert-private` both times. A failed
+   restore fails the job, so an empty state never overwrites the real one. Not an Actions artifact: artifacts
+   expire, and a later run can't read an earlier run's artifacts without a broader token.
 5. **report-failure** opens the issue "Weekly refresh failed", or comments on the open one, whenever any job
    fails, so a week with no release always has an issue.
 
