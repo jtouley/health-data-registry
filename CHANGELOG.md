@@ -41,6 +41,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- New source, draft and not yet hosted: `cdc_nrevss_positivity`, CDC's weekly national percent of laboratory tests
+  positive for COVID-19, influenza and RSV (NREVSS, data.cdc.gov seuz-s2cv), on the existing Socrata adapter. One
+  figure for the whole country each week; a question about a state or region is told so.
 - The Trusted gate (`.github/workflows/trusted-gate.yml`, `python -m health_data_registry.ratchet`, `make
   ratchet`): a check a pull request cannot edit, run from main's copy on `pull_request_target` with a read-only
   token, reading the pull request as data only (a required check once the `main` ruleset lists it, #138). It fails

@@ -1,0 +1,47 @@
+dataset: cdc_nrevss_positivity
+# 0.1.0: first draft. Each figure is read from its one published cell, for the United States as a whole; nothing is
+# added (a percent never is).
+version: 0.1.0
+dimensions:
+  - {name: virus, column: pathogen, type: categorical, non_additive: true, non_additive_reason: "each virus's percent comes from its own set of tests, so two viruses' percents can't be added", description: "The virus tested for: COVID-19, Influenza or RSV, as CDC names it."}
+  - {name: week_ending, column: week_end, type: time, non_additive: true, non_additive_reason: "a percent for one week can't be added to the next week's", description: "The Saturday that ends the MMWR week the tests were counted in."}
+measures:
+  - {name: test_positivity, column: percent_test_positivity, kind: percent, unit: "% of laboratory tests", description: "Percent of laboratory tests for the virus that were positive in the week, nationally."}
+metrics:
+  - name: weekly_percent_tests_positive
+    description: "Weekly test positivity: the national percent of laboratory tests positive for one virus in one week, read as published and never added up."
+    measure: test_positivity
+    aggregation: none
+    exclude_total_rows: false
+    filters: []
+    uncertainty: none
+    # Structural: the contract has no interval column and no test count to compute one from.
+    uncertainty_reason: "CDC's table gives no confidence interval for these percents and does not publish the number of tests behind them."
+series:
+  - condition: "COVID-19"
+    label: "COVID-19 percent of tests positive (NREVSS, national)"
+    metric: weekly_percent_tests_positive
+    measure: percent
+    filters: {virus: "COVID-19"}
+    place_coverage: "the United States as a whole (this table has no state or regional breakdown)"
+    time_dimension: week_ending
+  - condition: "Influenza"
+    label: "Influenza percent of tests positive (clinical laboratories, national)"
+    metric: weekly_percent_tests_positive
+    measure: percent
+    filters: {virus: "Influenza"}
+    place_coverage: "the United States as a whole (this table has no state or regional breakdown)"
+    time_dimension: week_ending
+  - condition: "RSV"
+    label: "RSV percent of tests positive (NREVSS, national)"
+    metric: weekly_percent_tests_positive
+    measure: percent
+    filters: {virus: "RSV"}
+    place_coverage: "the United States as a whole (this table has no state or regional breakdown)"
+    time_dimension: week_ending
+# Any virus in the catalog (conditions.labels): the weekly national percent, as published, never added.
+generic_series:
+  - metric: weekly_percent_tests_positive
+    measure: percent
+    place_coverage: "the United States as a whole (this table has no state or regional breakdown)"
+    time_dimension: week_ending
