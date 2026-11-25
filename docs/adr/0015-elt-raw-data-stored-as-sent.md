@@ -5,7 +5,8 @@
 - **Spec:** none; the maintainer's decision of 25 Nov 2026
 - **Related:** [ADR 0005](0005-raw-fetches-hash-addressed.md) (raw fetches are kept, hash-addressed),
   [ADR 0007](0007-odcs-contracts-and-semantic-models.md) (contracts and the contract facts rule), Hard rule 15 in
-  `CLAUDE.md`
+  `CLAUDE.md`, issue [#104](https://github.com/jtouley/health-data-registry/issues/104) (audit of raw values changed
+  before storage)
 
 ## Context
 
@@ -24,11 +25,20 @@ We load first and transform later (ELT, not ETL).
 - Every change to a value happens later, in staging and the dbt models.
 - Metadata we add to a dataset has its type declared up front in the dataset's contract, and is written in that
   type. Otherwise the ingestion service records it in the snapshot manifest, and the dataset is left unchanged.
+- Existing snapshots are never rewritten or migrated.
+- A change to what raw holds is a contract change: we bump the contract version and re-pull to a new snapshot.
+- Raw contracts are loose: they hold every field the publisher sends, kept as sent, with no projection and no
+  casts.
+- Strictness lives in staging.
+
+In the maintainer's words: "Don't break the data, just version and repull. This is a contract change and our raw
+schemas should be loose anyways."
 
 ## Consequences
 
 - Each stored value can be checked against the publisher's own file, and each change to it is a reviewed dbt
   model with its tests.
 - A column we add without a declared type in the contract is a contract error, not a guess at its type.
+- Old snapshots stay readable as they were stored; a fix shows up as a new contract version and a new snapshot.
 - Load code that changes a publisher's value today moves into staging or a later dbt model. This record changes no
-  code by itself; that work gets its own pull requests.
+  code by itself; that work is tracked in issue #104 and gets its own pull requests.

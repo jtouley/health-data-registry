@@ -212,11 +212,16 @@ These come from the spec and [docs/adr/](docs/adr/README.md). A PR that breaks o
     survivors with a test, or say in the PR why a mutant is equivalent.
 14. **Sealed sets stay sealed.** Don't read `eval/sealed/` while developing, and never change prompts, contracts or
     metrics because of a held-out result.
-15. **ELT, not ETL** ([ADR 0015](docs/adr/0015-elt-raw-data-stored-as-sent.md), proposed). Raw data from a
-    publisher is stored exactly as the publisher sent it. We may add metadata, but we never change a value the
-    publisher sent; changes happen later, in staging and the dbt models. Metadata we add has its type declared up
-    front in the contract and is written in that type, or the ingestion service records it in the snapshot
-    manifest instead of changing the dataset.
+15. **ELT, not ETL** ([ADR 0015](docs/adr/0015-elt-raw-data-stored-as-sent.md), proposed; audit in
+    [#104](https://github.com/jtouley/health-data-registry/issues/104)). Raw data from a publisher is stored
+    exactly as the publisher sent it. We may add metadata, but we never change a value the publisher sent;
+    changes happen later, in staging and the dbt models. Metadata we add has its type declared up front in the
+    contract and is written in that type, or the ingestion service records it in the snapshot manifest instead of
+    changing the dataset.
+    - Existing snapshots are never rewritten or migrated.
+    - A change to what raw holds is a contract change: bump the contract version and re-pull to a new snapshot.
+    - Raw contracts are loose: every field the publisher sends, kept as sent, with no projection and no casts.
+    - Strictness lives in staging.
 
 ## Skills and how to use them
 
