@@ -1,0 +1,57 @@
+id: cdc_abcs_pneumococcal
+title: Active Bacterial Core surveillance (ABCs) Streptococcus pneumoniae
+agency: CDC
+publisher: "Centers for Disease Control and Prevention, Emerging Infections Program, Active Bacterial Core surveillance (ABCs)"
+level: federal
+country: US
+research_areas: [infectious_disease]
+id_areas: [respiratory, vaccine_preventable, hais_amr]
+years: {start: 1997, end: null}
+# ABCs surveillance areas: a catchment of selected counties in some states, not the United States and not a GBD
+# location.
+geography: [surveillance_areas]
+shape: rate_table
+grain: "One row is one year and one published figure for invasive Streptococcus pneumoniae disease in the ABCs surveillance areas: a case or death rate per 100,000 (overall, by age group or by race), a rate for a group of vaccine serotypes in an age group, a count of cases, deaths or survivals, the percent of cases with a syndrome, or the percent of isolates resistant to an antibiotic (or the number of isolates tested)."
+refresh: annual
+licence:
+  # No licence field in the dataset's Socrata metadata (checked 2026-11-25). A CDC dataset on data.cdc.gov is a
+  # US federal work (17 USC 105); a maintainer confirms the wording on review (see the contract's open questions).
+  id: public-domain-us-federal
+  redistribution: true
+  terms_url: https://www.usa.gov/government-works
+citation: "Centers for Disease Control and Prevention, Active Bacterial Core surveillance. Active Bacterial Core surveillance (ABCs) Streptococcus pneumoniae. https://data.cdc.gov/d/en3s-hzsr (accessed <retrieved_at>)."
+source:
+  portal: socrata
+  host: data.cdc.gov
+  dataset: en3s-hzsr
+  landing_url: https://www.cdc.gov/abcs/bact-facts/data-dashboard.html
+  api_url: https://data.cdc.gov/resource/en3s-hzsr.json
+codebook_url: https://www.cdc.gov/abcs/methodology/index.html
+caveats:
+  - "Figures are for the ABCs surveillance areas, a catchment of selected counties in some states. They are not figures for the United States and are not keyed to any GBD location."
+  - "The surveillance areas, the laboratory isolate collection areas and the methods have changed over time, and the handling of missing data changed in 2010 (to multiple imputation), so CDC says trends should be read with caution."
+  - "Each topic is its own measure: case rates, death rates and serotype rates per 100,000, counts of cases and deaths, percents of cases by syndrome, and percents of isolates resistant. They are never added to each other."
+  - "Rates are never added. Age groups sit beside Overall, and the serotype groups overlap (PCV13 serotypes are inside PCV15, PCV20 and PCV21, and All Serotypes covers them all), so they are never added either."
+  - "Small numbers for some topics can make year-to-year changes hard to read (dataset footnote)."
+  - "Figures here may differ from other ABCs publications, which can use different datasets or methods (dataset footnote)."
+  - "Whether these rates are for the surveillance areas only or projected to the whole country is not yet confirmed (see the contract's open questions)."
+gbd:
+  # Proposed GBD keys, not reviewed (hard rules 1 and 3). Pathogen Streptococcus pneumoniae; invasive pneumococcal
+  # disease spans GBD causes (lower respiratory infections, meningitis) and bacteremia, and sepsis is not a GBD
+  # cause. No GBD location: location_column is null and every series names the ABCs surveillance areas.
+  location_column: null
+  causes:
+    - {condition: "Streptococcus pneumoniae", cause: "Lower respiratory infections", pathogen: "Streptococcus pneumoniae"}
+    - {condition: "Streptococcus pneumoniae", cause: "Meningitis", pathogen: "Streptococcus pneumoniae"}
+conditions:
+  dimension: bacterium
+  # Provenance: every distinct value of the bacteria column at https://data.cdc.gov/resource/en3s-hzsr.json, read
+  # 2026-11-25 (one value).
+  source: "CDC's name for the bacterium this ABCs table covers, as published on data.cdc.gov (checked 25 Nov 2026): invasive disease caused by Streptococcus pneumoniae."
+  labels:
+    - "Streptococcus pneumoniae"
+  aliases: []
+contract: contracts/cdc_abcs_pneumococcal.odcs.yaml
+semantic_model: semantic/cdc_abcs_pneumococcal.yaml
+status: draft
+hosting: public

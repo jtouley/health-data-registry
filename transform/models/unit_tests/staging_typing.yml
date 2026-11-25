@@ -59,3 +59,22 @@ unit_tests:
     - geography: C
       suppressed: null
       percent_resistant: null
+- name: stg_cdc_abcs_pneumococcal_types_year_and_value_and_keeps_an_empty_value_empty
+  model: stg_cdc_abcs_pneumococcal
+  given:
+  - input: source('raw', 'cdc_abcs_pneumococcal')
+    format: sql
+    rows: |
+      select 'Streptococcus pneumoniae' as "bacteria", 'Case Rates' as "topic", 'Per 100,000 population' as "units", '9.3' as "value", 'Age' as "viewby", '≥65 years old' as "viewby2", '2024' as "year", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select 'Streptococcus pneumoniae' as "bacteria", 'Antibiotic resistance' as "topic", 'Percent' as "units", ' ' as "value", 'Penicillin1' as "viewby", cast(null as varchar) as "viewby2", '2024' as "year", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+  expect:
+    rows:
+    - year: 2024
+      topic: Case Rates
+      viewby2: ≥65 years old
+      value: 9.3
+    - year: 2024
+      topic: Antibiotic resistance
+      viewby2: null
+      value: null
