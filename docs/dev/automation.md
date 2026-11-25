@@ -19,8 +19,9 @@ CI, CodeQL, Scorecard, release and npm-publish are unchanged and described in th
 
 Every action is pinned to a full commit SHA. Every workflow's top-level token is `contents: read`; `issues:
 write` is granted only to the jobs that open an issue, `actions: write` only to the keep-alive job and
-`actions: read` only to the deploy's verify job and the two fuzzing jobs (to read earlier runs' corpus
-artifacts). The ClusterFuzzLite actions are pinned by SHA too, but they pull OSS-Fuzz's runner images by their
+`actions: read` only to the deploy's verify job, the two fuzzing jobs (to read earlier runs' corpus
+artifacts) and CI's mutation list job (to find a green pre-pr verdict for the same commit, [the pre-PR
+gate](README.md#the-pre-pr-gate)). The ClusterFuzzLite actions are pinned by SHA too, but they pull OSS-Fuzz's runner images by their
 `v1` tag inside the action, which a workflow can't pin. Every checkout drops its credentials, and no workflow pushes to
 git. Each source has its own concurrency group, and no scheduled workflow's group cancels a running job. The PR
 fuzzing group (`cflite_pr.yml`) is the exception: a newer push to the same PR or `pre-pr/` branch cancels the
