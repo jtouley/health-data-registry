@@ -1,15 +1,33 @@
 dataset: cdc_haicviz_cdi
-version: 0.1.0
-# non_additive (hard rule 2): topic is a count, a rate or a strain type (the contract: value's meaning depends on
-# topic); each view covers the same cases (contract, viewby); grouping holds all cases beside the epi-class split;
-# stratum holds the Total row beside its parts, and whether the strata of one view add up to it is not stated (an
-# open question in the contract), so each stratum is read on its own. Years are separate periods.
+# 0.2.0: the total is read from its one published cell (grouping 'All cases'); counts by epi class, sex or age are
+# read one patient group at a time; rates state that CDC gives no interval.
+version: 0.2.0
 dimensions:
   - {name: year, column: yearname, type: time, non_additive: false, description: "Surveillance year."}
-  - {name: topic, column: topic, type: categorical, non_additive: true, description: "Case count, case rate per 100,000, or strain type."}
-  - {name: view, column: viewby, type: categorical, non_additive: true, description: "Total, Age, Sex, Race or Ribotype breakdown."}
-  - {name: epi_grouping, column: grouping, type: categorical, non_additive: true, description: "All cases, or split into healthcare- vs community-associated."}
-  - {name: stratum, column: series, type: categorical, non_additive: true, description: "Specific stratum, e.g. 'HA - 65+ years' or 'Total'."}
+  - name: topic
+    column: topic
+    type: categorical
+    non_additive: true
+    non_additive_reason: "a case count, a rate and a strain share are different measures"
+    description: "What the figure measures: number of cases, cases per 100,000 people, or strain type."
+  - name: view
+    column: viewby
+    type: categorical
+    non_additive: true
+    non_additive_reason: "each breakdown counts the same patients again"
+    description: "How the patients are broken down: all patients, or by age, sex, race or ribotype."
+  - name: epi_grouping
+    column: grouping
+    type: categorical
+    non_additive: true
+    non_additive_reason: "all cases sit beside the same cases split by where they began"
+    description: "All cases, or the cases split by where the infection began (healthcare- or community-associated)."
+  - name: stratum
+    column: series
+    type: categorical
+    non_additive: true
+    non_additive_reason: "the total for all patients sits beside its groups, and CDC doesn't say the groups add up to it"
+    description: "The patient group the figure is for: healthcare- or community-associated onset, an age group, a sex, a race, a ribotype, or the total for all patients."
 measures:
   - {name: cdi_cases, column: value, kind: count, unit: "cases", description: "Number of C. difficile infection cases in EIP catchment areas."}
   - {name: cdi_rate, column: value, kind: rate, unit: "per 100,000 population", description: "C. difficile infection cases per 100,000 catchment population."}
@@ -19,21 +37,23 @@ metrics:
     measure: cdi_cases
     aggregation: none
     exclude_total_rows: false
-    filters: ["lower(topic) = 'number of cases'", "viewby = 'Total'", "series = 'Total'"]
+    # The Total cell sits under grouping 'All cases' in every year (contract totalRows); pinning it means exactly one
+    # published cell per year, never the epi-class rows ('Epi Class' or 'Epi class') beside it.
+    filters: ["lower(topic) = 'number of cases'", "viewby = 'Total'", "series = 'Total'", "lower(grouping) = 'all cases'"]
   - name: cdi_cases_by_epi_class
-    description: "C. difficile infection cases by healthcare-associated vs community-associated onset, one row per stratum (group by stratum or choose one)."
+    description: "C. difficile infection cases with healthcare-associated or community-associated onset; one row per onset group, never added together."
     measure: cdi_cases
     aggregation: sum
     exclude_total_rows: true
     filters: ["lower(topic) = 'number of cases'", "viewby = 'Total'", "lower(grouping) = 'epi class'"]
   - name: cdi_cases_by_sex
-    description: "C. difficile infection cases among female and male patients, all epidemiologic classes."
+    description: "C. difficile infection cases for one sex (female or male), all epidemiologic classes; one row per sex, never added together."
     measure: cdi_cases
     aggregation: sum
     exclude_total_rows: true
     filters: ["lower(topic) = 'number of cases'", "viewby = 'Sex'", "lower(grouping) = 'all cases'"]
   - name: cdi_cases_by_age
-    description: "C. difficile infection cases by age group, all epidemiologic classes."
+    description: "C. difficile infection cases for one age group, all epidemiologic classes; one row per age group, never added together."
     measure: cdi_cases
     aggregation: sum
     exclude_total_rows: true
@@ -43,13 +63,18 @@ metrics:
     measure: cdi_rate
     aggregation: none
     exclude_total_rows: false
-    filters: ["topic = 'Case rates (cases per 100,000)'", "viewby = 'Total'", "series = 'Total'"]
+    filters: ["topic = 'Case rates (cases per 100,000)'", "viewby = 'Total'", "series = 'Total'", "lower(grouping) = 'all cases'"]
+    uncertainty: none
+    # Structural: the contract's columns have no interval column.
+    uncertainty_reason: "CDC's table gives no confidence interval for these rates."
   - name: cdi_incidence_rate_by_stratum
     description: "C. difficile infection incidence per 100,000 for one published stratum (epi class, age, sex or race); never added."
     measure: cdi_rate
     aggregation: none
     exclude_total_rows: false
     filters: ["topic = 'Case rates (cases per 100,000)'"]
+    uncertainty: none
+    uncertainty_reason: "CDC's table gives no confidence interval for these rates."
 series:
   - condition: "Clostridioides difficile infection"
     label: "C. difficile infection (EIP sites, all ages)"

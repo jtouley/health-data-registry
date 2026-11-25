@@ -708,6 +708,9 @@ def dimension_values(ds: Dataset, engine: Engine | None) -> dict[str, dict[str, 
                 else ""
             ),
         }
+        if d.non_additive_reason:
+            # Why counts are never added across these values, so a refused question can be asked again well.
+            out[d.name]["never_added_up_because"] = d.non_additive_reason
     return out
 
 
@@ -881,6 +884,11 @@ def series_rows(
             status = (
                 f"no total: {n_empty} value{'s' if n_empty != 1 else ''} suppressed or missing in the source"
             )
+        elif get(r, "not_published"):
+            # A published cell left empty is a gap, never a blank read as a value (hard rule 2).
+            status = "suppressed or not published: the publisher's cell for this row is empty"
+        elif "lower" in at and (get(r, "lower") is None or get(r, "upper") is None):
+            status += "; the publisher gives no uncertainty interval for this row"
         rows.append(
             SeriesRow(label, year, r[n_keys], status, get(r, "lower"), get(r, "upper"),
                       get(r, "flag"), "year_end_ytd" if running else "as_published", partial)

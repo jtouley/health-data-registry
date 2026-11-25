@@ -1,21 +1,19 @@
 dataset: cdc_nhsn_ar_hai
 version: 0.1.0
-# non_additive (hard rule 2): every stratifier holds an "all" margin beside its parts, geography holds the US and
-# census divisions beside states, and each phenotype is a different organism and resistance pattern, so none may
-# be added across. Years are separate periods.
+# Years are separate periods (non_additive: false); each other dimension says why it can't be added.
 dimensions:
-  - {name: geography, column: geography, type: categorical, non_additive: true, description: "United States, census division, or state (incl. DC and Puerto Rico)."}
-  - {name: geographic_level, column: source, type: categorical, non_additive: true, description: "national, region or state."}
+  - {name: geography, column: geography, type: categorical, non_additive: true, non_additive_reason: "the United States and census divisions sit beside the states they include", description: "United States, census division, or state (incl. DC and Puerto Rico)."}
+  - {name: geographic_level, column: source, type: categorical, non_additive: true, non_additive_reason: "national and regional rows include the state rows", description: "national, region or state."}
   - {name: year, column: year, type: time, non_additive: false, description: "Calendar year of the reported HAI isolates."}
-  - {name: phenotype, column: phenotype, type: categorical, non_additive: true, description: "Organism and resistance pattern, e.g. MRSA, carbapenem-resistant Enterobacterales."}
-  - {name: hai_type, column: event_type, type: categorical, non_additive: true, description: "CLABSI, CAUTI, SSI or all combined."}
-  - {name: age_group, column: age_category, type: categorical, non_additive: true, description: "Adults, pediatric or all ages."}
-  - {name: sex, column: sex, type: categorical, non_additive: true, description: "Male, female or all."}
-  - {name: teaching_status, column: teaching_hospital, type: categorical, non_additive: true, description: "Teaching hospital status (general acute care hospitals only) or all."}
-  - {name: hospital_size, column: hospital_size, type: categorical, non_additive: true, description: "200 or more beds vs fewer, or all."}
-  - {name: facility_type, column: facility, type: categorical, non_additive: true, description: "Acute care, inpatient rehabilitation, long-term acute care, or all."}
-  - {name: surgical_procedure, column: procedure, type: categorical, non_additive: true, description: "NHSN procedure type for SSI, or all."}
-  - {name: unit_type, column: location, type: categorical, non_additive: true, description: "ICU, NICU, oncology, other unit, or all."}
+  - {name: phenotype, column: phenotype, type: categorical, non_additive: true, non_additive_reason: "each is a different organism and resistance pattern", description: "Organism and resistance pattern, e.g. MRSA, carbapenem-resistant Enterobacterales."}
+  - {name: hai_type, column: event_type, type: categorical, non_additive: true, non_additive_reason: "all infection types combined sits beside each type", description: "CLABSI, CAUTI, SSI or all combined."}
+  - {name: age_group, column: age_category, type: categorical, non_additive: true, non_additive_reason: "all ages sits beside each age group", description: "Adults, pediatric or all ages."}
+  - {name: sex, column: sex, type: categorical, non_additive: true, non_additive_reason: "all sexes sits beside each sex", description: "Male, female or all."}
+  - {name: teaching_status, column: teaching_hospital, type: categorical, non_additive: true, non_additive_reason: "all hospitals sits beside each teaching status", description: "Teaching hospital status (general acute care hospitals only) or all."}
+  - {name: hospital_size, column: hospital_size, type: categorical, non_additive: true, non_additive_reason: "all sizes sits beside each size", description: "200 or more beds vs fewer, or all."}
+  - {name: facility_type, column: facility, type: categorical, non_additive: true, non_additive_reason: "all facilities sits beside each facility type", description: "Acute care, inpatient rehabilitation, long-term acute care, or all."}
+  - {name: surgical_procedure, column: procedure, type: categorical, non_additive: true, non_additive_reason: "all procedures sits beside each procedure", description: "NHSN procedure type for SSI, or all."}
+  - {name: unit_type, column: location, type: categorical, non_additive: true, non_additive_reason: "all units sits beside each unit", description: "ICU, NICU, oncology, other unit, or all."}
 measures:
   - {name: percent_resistant, column: percent_resistant, kind: percent, unit: "%", description: "Percent of tested isolates resistant."}
   - {name: percent_resistant_lower, column: lower_confidence_interval, kind: lower_bound, unit: "%", description: "Lower 95% confidence bound of percent resistant."}
