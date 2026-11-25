@@ -319,9 +319,9 @@ schema:
       value: attribute
   - name: retrieved_at
     physicalType: VARCHAR
-    logicalType: timestamp
+    logicalType: string
     required: true
-    description: When that Crossref response was received (ISO 8601, UTC).
+    description: When that Crossref response was received (ISO 8601 text in UTC with its offset, e.g. 2026-11-24T12:00:00+00:00).
     customProperties:
     - property: role
       value: attribute
@@ -343,9 +343,9 @@ schema:
       value: attribute
   - name: openalex_retrieved_at
     physicalType: VARCHAR
-    logicalType: timestamp
+    logicalType: string
     required: false
-    description: When that OpenAlex response was received (ISO 8601, UTC).
+    description: When that OpenAlex response was received (ISO 8601 text in UTC with its offset, e.g. 2026-11-24T12:00:00+00:00).
     customProperties:
     - property: role
       value: attribute
@@ -367,9 +367,9 @@ schema:
       value: attribute
   - name: europepmc_retrieved_at
     physicalType: VARCHAR
-    logicalType: timestamp
+    logicalType: string
     required: false
-    description: When that Europe PMC response was received (ISO 8601, UTC).
+    description: When that Europe PMC response was received (ISO 8601 text in UTC with its offset, e.g. 2026-11-24T12:00:00+00:00).
     customProperties:
     - property: role
       value: attribute
