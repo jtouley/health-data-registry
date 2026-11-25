@@ -7,7 +7,8 @@
 #                is here, builds the server at that commit (`uv sync --locked`), fetches the ciphertext and
 #                checks its hash, builds a fresh lake of the public sources from their publishers, checks that
 #                the driver can ask one DEV question through the server, and only then decrypts with
-#                EVAL_TEST_KEY. It hands the driver the questions alone (eval/drive.py, ANTHROPIC_API_KEY), scores
+#                EVAL_TEST_KEY. It hands the driver the questions alone (eval/drive.py, ANTHROPIC_API_KEY and the
+#                variable EVAL_MODEL), scores
 #                the run with eval/scorer.py and writes the aggregate tables of eval/report.py to the job summary.
 #   label-check  (mode label-check) in `eval`: checks both commits are on main, base before commit, then
 #                decrypts the labels and lists the TEST item ids whose labels depend on catalog entries changed
@@ -27,7 +28,8 @@
 #
 # Owner steps (docs/dev/automation.md): create the environment `eval` with deployment branches "main" only (the
 # inputs job refuses to run without it), add the maintainer as a required reviewer, and add EVAL_TEST_KEY (the age identity, one AGE-SECRET-KEY-1... line), ANTHROPIC_API_KEY and, for a source in the
-# ops dataset, EVAL_HF_TOKEN (read access to <owner>/health-data-registry-ops-eval). Docs: eval/README.md.
+# ops dataset, EVAL_HF_TOKEN (read access to <owner>/health-data-registry-ops-eval). Add the environment variable
+# (not a secret) EVAL_MODEL: the id of the model that answers; the driver has no default. Docs: eval/README.md.
 name: Sealed TEST eval
 
 on:
@@ -169,6 +171,7 @@ jobs:
           EVAL_TEST_KEY: ${{ secrets.EVAL_TEST_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           EVAL_HF_TOKEN: ${{ secrets.EVAL_HF_TOKEN }}
+          EVAL_MODEL: ${{ vars.EVAL_MODEL }}
           CIPHERTEXT: ${{ inputs.ciphertext }}
         run: |
           set +x
@@ -182,6 +185,10 @@ jobs:
           fi
           if [ -z "$ANTHROPIC_API_KEY" ]; then
             echo "::error::The eval environment has no ANTHROPIC_API_KEY secret, or it is empty. The driver needs it to ask the questions; add it under Settings > Environments > eval."
+            bad=1
+          fi
+          if [ -z "${EVAL_MODEL// /}" ]; then
+            echo "::error::The eval environment has no EVAL_MODEL variable, or it is empty. Set it to the id of the model that answers (the driver has no default) under Settings > Environments > eval > Environment variables."
             bad=1
           fi
           if [[ "$CIPHERTEXT" != release:* ]] && [ -z "$EVAL_HF_TOKEN" ]; then
@@ -207,9 +214,9 @@ jobs:
             echo "::error::Commit $COMMIT is not on main. The sealed set is run only on reviewed code: pick a commit from main's history."
             exit 1
           fi
-          # The driver asks each question through the server with a pinned-model client and writes the
-          # transcript and answers (eval/README.md, "Running a report"). It is the evaluator's, and not in the
-          # repository yet; stop here, before anything is fetched or decrypted, so no use of TEST is spent.
+          # The driver asks each question through the server with the model EVAL_MODEL names and writes the
+          # transcript and answers (eval/README.md, "Driving a run"). If it is missing from this commit, stop
+          # here, before anything is fetched or decrypted, so no use of TEST is spent.
           if [ ! -f eval/drive.py ]; then
             echo "::error::The question driver eval/drive.py is not on main yet, so the sealed set can't be asked. Nothing was fetched or decrypted. Add the driver in a reviewed pull request, then run again."
             exit 1
@@ -305,6 +312,7 @@ jobs:
         working-directory: harness
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          EVAL_MODEL: ${{ vars.EVAL_MODEL }}
         run: |
           set +x
           export HDR_LAKE="$RUNNER_TEMP/lake"
@@ -348,6 +356,7 @@ jobs:
         working-directory: harness
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          EVAL_MODEL: ${{ vars.EVAL_MODEL }}
         run: |
           set +x
           umask 077
@@ -369,6 +378,7 @@ jobs:
           COMMIT: ${{ inputs.commit }}
           HARNESS: ${{ github.sha }}
           WAVE: ${{ inputs.wave }}
+          EVAL_MODEL: ${{ vars.EVAL_MODEL }}
           PLAIN_SHA: ${{ steps.expect.outputs.plaintext_sha256 }}
           CIPHER_SHA: ${{ steps.expect.outputs.ciphertext_sha256 }}
         run: |
@@ -387,6 +397,7 @@ jobs:
             echo
             echo "- Commit evaluated (server): \`$COMMIT\`"
             echo "- Harness and scorer commit (this workflow's main): \`$HARNESS\`"
+            echo "- Model that answered (EVAL_MODEL): \`$EVAL_MODEL\`"
             echo "- Ciphertext sha256: \`$CIPHER_SHA\`"
             echo "- Labels sha256: \`$PLAIN_SHA\`"
             echo "- Decryptor: \`$(head -n 1 "$RUNNER_TEMP/age-version.txt")\`"

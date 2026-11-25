@@ -474,7 +474,28 @@ def test_turn_cap_stops_a_model_that_never_answers(turns: int) -> None:
     out, recorded = ask(api, s=setup(turns=turns))
     # Assert
     assert (out.status, out.turns, len(api.requests), len(recorded)) == ("turn_cap", turns, turns, turns)
-    assert out.answer == "again"
+    assert out.answer == ""  # interim text from a tool-use turn is never kept as the answer
+
+
+def test_a_deadline_after_a_tool_use_turn_keeps_no_interim_answer() -> None:
+    # Arrange: the first turn asks for a tool with some interim text, then the next request hangs to the deadline
+    calls = 0
+
+    class HangSecond(ScriptedAPI):
+        async def __call__(self, **request: Any) -> Message:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                await anyio.sleep_forever()
+            return await super().__call__(**request)
+
+    api = HangSecond(
+        message(block_text("Let me look up 42."), block_tool("get_series", {"x": "1"}), stop="tool_use")
+    )
+    # Act
+    out, _ = ask(api, s=setup(question_timeout_s=0.2, api_timeout_s=0.2))
+    # Assert
+    assert (out.status, out.turns, out.answer) == ("deadline", 1, "")
 
 
 def test_call_cap_runs_the_first_calls_and_refuses_the_rest() -> None:
@@ -700,7 +721,10 @@ def test_read_questions_keeps_id_and_question_only(tmp_path: Path) -> None:
         (['{"id": "a", "question": "  "}'], "Line 1 of q.jsonl needs"),
         (['{"id": 3, "question": "secret words"}'], "Line 1 of q.jsonl needs"),
         (['["secret words"]'], "Line 1 of q.jsonl needs"),
-        (['{"id": "a", "question": "secret words"}', '{"id": "a", "question": "secret words"}'], "repeats"),
+        (
+            ['{"id": "a", "question": "secret words"}', "", '{"id": "a", "question": "secret words"}'],
+            "Line 3 of q.jsonl repeats a question id. Give each question its own id.",
+        ),
         ([""], "holds no questions"),
     ],
 )
@@ -736,7 +760,9 @@ def test_require_lake(tmp_path: Path) -> None:
     assert drive.require_lake({"HDR_LAKE": str(tmp_path)}) == tmp_path.resolve()
     with pytest.raises(DriveError, match="HDR_LAKE is not set"):
         drive.require_lake({"HDR_LAKE": " "})
-    with pytest.raises(DriveError, match="not a directory"):
+    with pytest.raises(
+        DriveError, match=r"not a directory\. Point it at a lake \(`make refresh` builds one\)\.$"
+    ):
         drive.require_lake({"HDR_LAKE": str(tmp_path / "missing")})
 
 
@@ -831,8 +857,12 @@ def test_prepare_out_refuses_a_directory_that_holds_a_run(tmp_path: Path) -> Non
         (api_error(anthropic.AuthenticationError, 401), "did not accept the credentials"),
         (anthropic.CredentialsError("no key"), "did not accept the credentials"),
         (api_error(anthropic.NotFoundError, 404), "Check EVAL_MODEL"),
-        (api_error(anthropic.BadRequestError, 400), "status 400, BadRequestError"),
-        (ValueError("secret words"), "The run stopped (ValueError). Details are withheld"),
+        (
+            api_error(anthropic.BadRequestError, 400),
+            "status 400, BadRequestError). Check EVAL_MODEL and the request limits, then run the same command "
+            "on DEV to see the cause.",
+        ),
+        (ValueError("secret words"), "The run stopped (ValueError). Details are withheld because"),
         (ExceptionGroup("g", [ExceptionGroup("h", [DriveError("ours, grouped")])]), "ours, grouped"),
         (ExceptionGroup("g", [ValueError("secret"), KeyError("secret")]), "The run stopped (ExceptionGroup)"),
     ],
@@ -988,7 +1018,8 @@ def test_a_failure_mid_run_prints_a_plain_message_only(
     assert code == 1 and "SENTINEL" not in captured.out + captured.err
     assert (
         captured.err
-        == "drive: The run stopped (ValueError). Details are withheld: they could quote a question.\n"
+        == "drive: The run stopped (ValueError). Details are withheld because they could quote a question. "
+        "Run the same command on DEV to see the cause, or read drive.log in --out.\n"
     )
 
 
@@ -1074,7 +1105,11 @@ def test_scorer_readers_skip_the_drive_header() -> None:
 
 
 def test_answers_by_question_refuses_a_question_answered_twice() -> None:
-    with pytest.raises(ScorerError, match="^an answers file answers a question more than once$"):
+    with pytest.raises(
+        ScorerError,
+        match=r"^The answers file answers a question more than once: two runs were mixed\. "
+        r"Score each run's --out on its own\.$",
+    ):
         answers_by_question([{"id": "syn-1", "answer": "a"}, {"id": "syn-1", "answer": "b"}])
 
 
@@ -1392,12 +1427,18 @@ def test_parser_defaults_types_and_help() -> None:
     )
     assert isinstance(b.max_calls, int) and isinstance(b.question_timeout, float)
     assert help_text.startswith(
-        "usage: python -m eval.drive [-h] --questions QUESTIONS --server-dir SERVER_DIR --out OUT"
+        "usage: python -m eval.drive [-h] (--questions QUESTIONS | --check) --server-dir SERVER_DIR --out OUT"
     )
     for phrase in (
         "Ask each question through the MCP server with the Claude API (eval/README.md).",
         "--questions QUESTIONS jsonl with id and question on each line",
-        "--server-dir SERVER_DIR the server checkout to run (uv sync'd)",
+        "--server-dir SERVER_DIR the server checkout to run (after uv sync)",
+        "--check ask the first DEV question alone; exit 0 only if it was answered",
+        "--max-turns MAX_TURNS API requests per question (default 12)",
+        "--max-calls MAX_CALLS tool calls per question (default 25)",
+        "--tool-timeout TOOL_TIMEOUT seconds per tool call (default 120.0)",
+        "--api-timeout API_TIMEOUT seconds per API request (default 300.0)",
+        "--question-timeout QUESTION_TIMEOUT seconds per question, retries included (default 900.0)",
         "--out OUT an empty directory for the run's files",
         "--protocol {A,B} B hides and refuses query_sql",
         "--max-calls MAX_CALLS",
@@ -1505,3 +1546,173 @@ def test_main_builds_the_sdk_client_with_its_own_retries_off(
     )
     # Assert
     assert code == 0 and built == [{"max_retries": 0, "timeout": 7.0}] and len(api.requests) == 1
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Fix round of #165: --check, limits, the last retry at the deadline, warnings
+
+
+@pytest.mark.parametrize(
+    ("field_", "value", "says"),
+    [
+        ("turns", 0, "The limit turns is 0; it must be a whole number, 1 or more."),
+        ("calls", -1, "The limit calls is -1; it must be a whole number, 1 or more."),
+        ("turns", 1.5, "The limit turns is 1.5; it must be a whole number, 1 or more."),
+        ("tool_timeout_s", 0.0, "The limit tool_timeout_s is 0.0; it must be a number of seconds above 0."),
+        ("api_timeout_s", -2.0, "The limit api_timeout_s is -2.0; it must be a number of seconds above 0."),
+        ("question_timeout_s", float("nan"), "The limit question_timeout_s is nan; it must be"),
+        ("question_timeout_s", float("inf"), "The limit question_timeout_s is inf; it must be"),
+    ],
+)
+def test_limits_refuse_values_that_would_end_every_question(field_: str, value: Any, says: str) -> None:
+    with pytest.raises(DriveError) as err:
+        Limits(**{field_: value})
+    assert str(err.value).startswith(says)
+
+
+def test_the_smallest_limits_are_allowed() -> None:
+    got = Limits(turns=1, calls=1, tool_timeout_s=0.01, api_timeout_s=0.01, question_timeout_s=0.01)
+    assert (got.turns, got.calls) == (1, 1)
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [["--question-timeout", "0"], ["--max-calls", "0"], ["--tool-timeout", "nan"], ["--max-turns", "-1"]],
+)
+def test_main_refuses_a_limit_that_would_end_every_question(
+    tmp_path: Path,
+    run_env: dict[str, str],
+    connect: drive.Connect,
+    capsys: pytest.CaptureFixture[str],
+    flags: list[str],
+) -> None:
+    # Arrange
+    api = ScriptedAPI(message(block_text("never")))
+    # Act
+    code, out = run_main(tmp_path, run_env, connect, api, [{"id": "a", "question": "q"}], *flags)
+    # Assert
+    assert code == 2 and api.requests == [] and not out.exists()
+    assert capsys.readouterr().err.startswith("drive: The limit ")
+
+
+def test_a_last_try_that_fails_at_the_deadline_ends_the_question_not_the_run() -> None:
+    # Arrange: every request times out; the clock reaches the deadline exactly as the sixth one fails
+    api = ScriptedAPI(message(block_text("never")), hang=True)
+    # Act / Assert
+    with pytest.raises(drive.DeadlineReached):
+        retry(api, lambda: 0.0 if len(api.requests) < 6 else 100.0, deadline=100.0, api_timeout_s=0.01)
+    assert len(api.requests) == 6
+
+
+def test_a_retryable_error_at_the_deadline_ends_the_question() -> None:
+    # Arrange: the first request is rate limited and the clock has reached the deadline when it fails
+    api = ScriptedAPI(api_error(anthropic.RateLimitError, 429), message(block_text("ok")))
+    times = iter([0.0, 50.0])
+    # Act / Assert
+    with pytest.raises(drive.DeadlineReached):
+        retry(api, lambda: next(times), deadline=50.0)
+    assert len(api.requests) == 1
+
+
+@pytest.mark.filterwarnings("always")
+def test_library_warnings_go_to_drive_log_not_stderr(
+    tmp_path: Path, run_env: dict[str, str], connect: drive.Connect, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Arrange: the API client warns with text that could quote a question
+    import logging
+    import warnings
+
+    def warn_then_answer(request: dict[str, Any]) -> Message:
+        warnings.warn("SENTINEL-QUESTION in a library warning", UserWarning, stacklevel=1)
+        return message(block_text("ok"))
+
+    before, handlers = warnings.showwarning, list(logging.getLogger().handlers)
+    # Act
+    code, out = run_main(
+        tmp_path, run_env, connect, ScriptedAPI(warn_then_answer), [{"id": "a", "question": "q"}]
+    )
+    # Assert
+    captured = capsys.readouterr()
+    assert code == 0 and "SENTINEL" not in captured.out + captured.err
+    assert "SENTINEL-QUESTION in a library warning" in (out / "drive.log").read_text()
+    assert warnings.showwarning is before and logging.getLogger().handlers == handlers
+
+
+def check_main(
+    tmp_path: Path,
+    env: dict[str, str],
+    connect: drive.Connect,
+    api: ScriptedAPI,
+    monkeypatch: pytest.MonkeyPatch,
+    *extra: str,
+) -> tuple[int, Path]:
+    dev = tmp_path / "dev.jsonl"
+    dev.write_text(
+        '{"id": "dev-1", "question": "first", "expected_class": "ANSWER"}\n{"id": "dev-2", "question": "second"}\n'
+    )
+    monkeypatch.setattr(drive, "DEV_QUESTIONS", dev)
+    out = tmp_path / "out"
+    server = git_checkout(tmp_path / "server")
+    argv = ["--check", "--server-dir", str(server), "--out", str(out), *extra]
+    return drive.main(argv, env=env, create=api, connect=connect), out
+
+
+def test_check_asks_the_first_dev_question_alone_and_passes_when_answered(
+    tmp_path: Path,
+    run_env: dict[str, str],
+    connect: drive.Connect,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Arrange
+    api = ScriptedAPI(message(block_text("ok")))
+    # Act
+    code, out = check_main(tmp_path, run_env, connect, api, monkeypatch)
+    # Assert
+    assert code == 0 and len(api.requests) == 1
+    assert api.requests[0]["messages"][0]["content"] == "first"
+    answers = read_jsonl(out / "answers.jsonl")
+    assert answers[0][DRIVE_HEADER_KEY]["questions"] == 1
+    assert [a["id"] for a in answers[1:]] == ["dev-1"]
+    assert capsys.readouterr().out.splitlines() == ["1/1 done", "drive: answered 1"]
+
+
+@pytest.mark.parametrize(
+    ("step", "status"),
+    [
+        (message(block_text("cut"), stop="max_tokens"), "max_tokens"),
+        (message(block_tool("get_series", {"x": "1"}), stop="tool_use"), "turn_cap"),
+    ],
+)
+def test_check_fails_unless_the_dev_question_was_answered(
+    tmp_path: Path,
+    run_env: dict[str, str],
+    connect: drive.Connect,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    step: Message,
+    status: str,
+) -> None:
+    # Act
+    code, _ = check_main(tmp_path, run_env, connect, ScriptedAPI(step), monkeypatch, "--max-turns", "1")
+    # Assert
+    assert code == 1
+    assert capsys.readouterr().err == (
+        f"drive: The DEV check question ended as {status}, not answered. "
+        "Read answers.jsonl, server.log and drive.log in --out.\n"
+    )
+
+
+def test_check_and_questions_are_exclusive_and_one_is_required() -> None:
+    ap = drive.parser()
+    assert ap.parse_args(["--check", "--server-dir", "s", "--out", "o"]).check is True
+    assert ap.parse_args(["--questions", "q", "--server-dir", "s", "--out", "o"]).check is False
+    with pytest.raises(SystemExit):
+        ap.parse_args(["--check", "--questions", "q", "--server-dir", "s", "--out", "o"])
+    with pytest.raises(SystemExit):
+        ap.parse_args(["--server-dir", "s", "--out", "o"])
+
+
+def test_the_check_question_file_is_the_public_dev_set() -> None:
+    assert drive.DEV_QUESTIONS == ROOT / "eval" / "dev" / "dev.jsonl"
+    assert drive.read_questions(drive.DEV_QUESTIONS)

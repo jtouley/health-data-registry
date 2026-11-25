@@ -1407,6 +1407,9 @@ def answers_by_question(records: Sequence[Mapping[str, Any]]) -> dict[str, str]:
             continue
         qid = str(rec["id"])
         if qid in out:
-            raise ScorerError("an answers file answers a question more than once")
+            raise ScorerError(
+                "The answers file answers a question more than once: two runs were mixed. "
+                "Score each run's --out on its own."
+            )
         out[qid] = str(rec.get("answer") or "")
     return out

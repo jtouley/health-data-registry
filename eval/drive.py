@@ -17,13 +17,18 @@ offered and the limits. The scorer skips it.
 Usage (EVAL_MODEL, ANTHROPIC_API_KEY and HDR_LAKE come from the environment; eval/README.md):
 
     uv run python -m eval.drive --questions eval/dev/dev.jsonl --server-dir . --out ../run-dev [--protocol B]
+    uv run python -m eval.drive --check --server-dir . --out ../check
+
+`--check` asks the first DEV question alone and exits 0 only if it was answered: the sealed workflow's readiness
+check before it decrypts anything.
 
 Protocol B takes `query_sql` out of the tools offered, and refuses it if the model calls it anyway; a refused
 call never reaches the server, so it is listed in the answer's `refused_calls`, not in the transcript.
 
 Privacy: the sealed workflow runs this on TEST, so nothing here prints a question, an answer, a tool argument
 or a tool result. Progress lines give counts only, every error message is one this module wrote, and any other
-failure is reported by its type alone. The server's stderr and Python's own warnings go to files in `--out`.
+failure is reported by its type alone. The server's stderr goes to `server.log` in `--out`; log records and
+Python's warnings (`logging.captureWarnings`) go to `drive.log` there.
 
 Why a hand-written tool loop rather than the SDK's tool runner: the driver needs a cap on turns and on tool
 calls, a timeout on each call, a deadline per question, protocol B's refusal and a record of every call, and the
@@ -36,6 +41,7 @@ import argparse
 import hashlib
 import json
 import logging
+import math
 import os
 import subprocess
 import sys
@@ -52,6 +58,8 @@ from .scorer import DRIVE_HEADER_KEY as HEADER_KEY
 
 DRIVER_VERSION = "1"
 PROMPT_PATH = Path(__file__).with_name("drive_prompt.md")
+# --check asks this file's first question: DEV is public, so a check spends no use of TEST.
+DEV_QUESTIONS = Path(__file__).with_name("dev") / "dev.jsonl"
 # Bump with every change to drive_prompt.md; tests/test_eval_drive.py pins each version's sha256.
 PROMPT_VERSION = "1"
 
@@ -103,6 +111,17 @@ class Limits:
     tool_timeout_s: float = 120.0  # one tool call
     api_timeout_s: float = 300.0  # one API request
     question_timeout_s: float = 900.0  # the whole question, retries and waits included
+
+    def __post_init__(self) -> None:
+        # A zero, negative or NaN limit would end every question at once and still give a run to score.
+        for name in ("turns", "calls"):
+            value = getattr(self, name)
+            if not (isinstance(value, int) and value >= 1):
+                raise DriveError(f"The limit {name} is {value}; it must be a whole number, 1 or more.")
+        for name in ("tool_timeout_s", "api_timeout_s", "question_timeout_s"):
+            value = getattr(self, name)
+            if not (math.isfinite(value) and value > 0):
+                raise DriveError(f"The limit {name} is {value}; it must be a number of seconds above 0.")
 
 
 @dataclass(frozen=True)
@@ -166,6 +185,7 @@ def read_questions(path: Path) -> list[Question]:
     except OSError as exc:
         raise DriveError(f"Could not read the questions file {path.name} ({type(exc).__name__}).") from exc
     out: list[Question] = []
+    seen: set[str] = set()
     for n, line in enumerate(lines, 1):
         if not line.strip():
             continue
@@ -177,11 +197,12 @@ def read_questions(path: Path) -> list[Question]:
         text = rec.get("question") if isinstance(rec, dict) else None
         if not (isinstance(qid, str) and qid and isinstance(text, str) and text.strip()):
             raise DriveError(f"Line {n} of {path.name} needs a non-empty string id and question.")
+        if qid in seen:
+            raise DriveError(f"Line {n} of {path.name} repeats a question id. Give each question its own id.")
+        seen.add(qid)
         out.append(Question(qid, text))
     if not out:
         raise DriveError(f"{path.name} holds no questions.")
-    if len({q.id for q in out}) != len(out):
-        raise DriveError(f"{path.name} repeats a question id.")
     return out
 
 
@@ -200,7 +221,9 @@ def require_lake(env: Mapping[str, str]) -> Path:
         raise DriveError("HDR_LAKE is not set. Point it at the lake the server should read.")
     path = Path(lake).resolve()
     if not path.is_dir():
-        raise DriveError(f"HDR_LAKE is {path}, which is not a directory.")
+        raise DriveError(
+            f"HDR_LAKE is {path}, which is not a directory. Point it at a lake (`make refresh` builds one)."
+        )
     return path
 
 
@@ -351,6 +374,10 @@ async def create_with_retry(
             if not is_retryable(exc):
                 raise
             error = exc
+        # A request that failed at or after the deadline ends the question, even on the last try: running out of
+        # the question's time is not the API being down, so it must not stop the run.
+        if clock() >= deadline:
+            raise DeadlineReached
         if attempt == API_ATTEMPTS - 1:
             raise DriveError(
                 f"The Claude API was still overloaded, rate limited or unreachable after {API_ATTEMPTS} tries "
@@ -431,12 +458,14 @@ async def ask(
             out.turns += 1
             out.stop_reason = response.stop_reason
             _usage(out.usage, response.usage)
-            out.answer = _text(response.content)
             # The whole content goes back unchanged, thinking blocks included.
             messages.append({"role": "assistant", "content": response.content})
             if response.stop_reason == "pause_turn":
                 continue
             if response.stop_reason != "tool_use":
+                # Only a final turn's text is the answer. A question cut off by turn_cap or deadline keeps "",
+                # so interim text ("Let me look up ...") is never scored as an answer.
+                out.answer = _text(response.content)
                 out.status = STOP_STATUS.get(response.stop_reason, "stopped")
                 return out
             results = []
@@ -658,8 +687,14 @@ def explain(exc: BaseException) -> str:
     if isinstance(exc, anthropic.NotFoundError):
         return "The Claude API does not serve the model EVAL_MODEL names. Check EVAL_MODEL."
     if isinstance(exc, anthropic.APIStatusError):
-        return f"The Claude API refused a request (status {exc.status_code}, {type(exc).__name__})."
-    return f"The run stopped ({type(exc).__name__}). Details are withheld: they could quote a question."
+        return (
+            f"The Claude API refused a request (status {exc.status_code}, {type(exc).__name__}). "
+            "Check EVAL_MODEL and the request limits, then run the same command on DEV to see the cause."
+        )
+    return (
+        f"The run stopped ({type(exc).__name__}). Details are withheld because they could quote a question. "
+        "Run the same command on DEV to see the cause, or read drive.log in --out."
+    )
 
 
 def parser() -> argparse.ArgumentParser:
@@ -667,16 +702,43 @@ def parser() -> argparse.ArgumentParser:
         prog="python -m eval.drive",
         description="Ask each question through the MCP server with the Claude API (eval/README.md).",
     )
-    ap.add_argument("--questions", required=True, type=Path, help="jsonl with id and question on each line")
-    ap.add_argument("--server-dir", required=True, type=Path, help="the server checkout to run (uv sync'd)")
+    which = ap.add_mutually_exclusive_group(required=True)
+    which.add_argument("--questions", type=Path, help="jsonl with id and question on each line")
+    which.add_argument(
+        "--check",
+        action="store_true",
+        help="ask the first DEV question alone; exit 0 only if it was answered",
+    )
+    ap.add_argument(
+        "--server-dir", required=True, type=Path, help="the server checkout to run (after uv sync)"
+    )
     ap.add_argument("--out", required=True, type=Path, help="an empty directory for the run's files")
     ap.add_argument("--protocol", choices=("A", "B"), default="A", help="B hides and refuses query_sql")
     d = Limits()
-    ap.add_argument("--max-turns", type=int, default=d.turns)
-    ap.add_argument("--max-calls", type=int, default=d.calls)
-    ap.add_argument("--tool-timeout", type=float, default=d.tool_timeout_s)
-    ap.add_argument("--api-timeout", type=float, default=d.api_timeout_s)
-    ap.add_argument("--question-timeout", type=float, default=d.question_timeout_s)
+    ap.add_argument(
+        "--max-turns", type=int, default=d.turns, help="API requests per question (default %(default)s)"
+    )
+    ap.add_argument(
+        "--max-calls", type=int, default=d.calls, help="tool calls per question (default %(default)s)"
+    )
+    ap.add_argument(
+        "--tool-timeout",
+        type=float,
+        default=d.tool_timeout_s,
+        help="seconds per tool call (default %(default)s)",
+    )
+    ap.add_argument(
+        "--api-timeout",
+        type=float,
+        default=d.api_timeout_s,
+        help="seconds per API request (default %(default)s)",
+    )
+    ap.add_argument(
+        "--question-timeout",
+        type=float,
+        default=d.question_timeout_s,
+        help="seconds per question, retries included (default %(default)s)",
+    )
     return ap
 
 
@@ -692,17 +754,19 @@ def main(
     try:
         require_model(env)
         require_lake(env)
-        questions = read_questions(a.questions)
+        limits = Limits(a.max_turns, a.max_calls, a.tool_timeout, a.api_timeout, a.question_timeout)
+        questions = read_questions(DEV_QUESTIONS)[:1] if a.check else read_questions(a.questions)
         prepare_out(a.out)
     except DriveError as exc:
         sys.stderr.write(f"drive: {exc}\n")
         return 2
-    limits = Limits(a.max_turns, a.max_calls, a.tool_timeout, a.api_timeout, a.question_timeout)
-    # Library warnings (mcp, the SDK, asyncio) can quote a request, so they go to a file in --out, never stderr:
-    # a handler on the root logger also stops logging's last-resort handler from writing to stderr.
+    # Library log records and warnings (mcp, the SDK, pydantic, asyncio) can quote a request, so they go to a
+    # file in --out, never stderr: a handler on the root logger also stops logging's last-resort handler from
+    # writing to stderr, and captureWarnings sends warnings.warn through logging instead of to stderr.
     log = logging.FileHandler(a.out / "drive.log", encoding="utf-8")
     root = logging.getLogger()
     root.addHandler(log)
+    logging.captureWarnings(True)
     try:
         if create is None:  # the real API
             import anthropic
@@ -726,12 +790,20 @@ def main(
         sys.stderr.write(f"drive: {explain(exc)}\n")
         return 1
     finally:
+        logging.captureWarnings(False)
         root.removeHandler(log)
         log.close()
     counts: dict[str, int] = {}
     for o in outcomes:
         counts[o.status] = counts.get(o.status, 0) + 1
     sys.stdout.write("drive: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())) + "\n")
+    if a.check and outcomes[0].status != "answered":
+        # DEV is public, so the status may be named; drive.log and server.log in --out say more.
+        sys.stderr.write(
+            f"drive: The DEV check question ended as {outcomes[0].status}, not answered. "
+            "Read answers.jsonl, server.log and drive.log in --out.\n"
+        )
+        return 1
     return 0
 
 

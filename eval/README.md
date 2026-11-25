@@ -154,54 +154,69 @@ It needs three environment variables:
 |---|---|
 | `ANTHROPIC_API_KEY` | The Claude API key |
 | `EVAL_MODEL` | The model id that answers. There is no default: the driver stops with a message when it's unset |
-| `HDR_LAKE` | The lake the server reads, as for `make serve` |
+| `HDR_LAKE` | The lake the server reads, as for `make serve`. It must be an existing directory; a DEV run needs a filled lake (`make refresh`) |
 
-`--server-dir` must be a git checkout that has been `uv sync`'d. The Claude API client lives in the `eval`
+The server process gets only the `HDR_*` variables (except `HDR_PRIVATE_HF_TOKEN` and `HDR_SIGNING_KEY`) and the
+proxy and CA settings, besides mcp's safe defaults such as `PATH` and `HOME`. It never gets the API key.
+
+`--server-dir` must be a git checkout that has had `uv sync` run in it. The Claude API client lives in the `eval`
 dependency group: a plain `uv sync` installs it through `dev`, and a `--no-dev` environment needs
-`uv sync --locked --no-dev --group eval`, as the sealed workflow runs. On DEV, from the repo root:
+`uv sync --locked --no-dev --group eval`, as the sealed workflow runs. On DEV, from the repo root, after
+`make refresh` and with `ANTHROPIC_API_KEY` already set:
 
 ```sh
 export EVAL_MODEL=<model id> HDR_LAKE=$PWD/lake
 uv run python -m eval.drive --questions eval/dev/dev.jsonl --server-dir . --out ../run-dev
 uv run python -m eval.drive --questions eval/dev/dev.jsonl --server-dir . --out ../run-dev-b --protocol B
+uv run python -m eval.drive --check --server-dir . --out ../check
 ```
 
+`--check` takes the place of `--questions`: it asks the first question of `eval/dev/dev.jsonl` alone and exits 0
+only if that question ends as `answered`; otherwise it exits 1 and names the status. The sealed workflow runs it
+before it decrypts anything.
+
 - **Inputs.** Only each line's `id` and `question` are read; the expected fields are never sent or read.
-- **Prompt.** The system prompt is `drive_prompt.md` followed by the server's own `instructions`, as an MCP
-  client hands them to the model. Changing the prompt changes its sha256: bump `PROMPT_VERSION` in `drive.py`
+- **Prompt.** The system prompt is `drive_prompt.md` followed by the server's own `instructions` (when the
+  server sends any), as an MCP client hands them to the model. Changing the prompt changes its sha256: bump `PROMPT_VERSION` in `drive.py`
   and pin the new hash in `tests/test_eval_drive.py`.
 - **Protocol B** (`--protocol B`) takes `query_sql` out of the tools offered and refuses it if the model calls
   it anyway. A refused call never reaches the server, so it is listed in the answer's `refused_calls`, not in
   the transcript.
-- **Limits.** 12 API requests and 25 tool calls per question, 120 seconds per tool call, 300 per API request
-  and 900 for the whole question (`--max-turns`, `--max-calls`, `--tool-timeout`, `--api-timeout`,
-  `--question-timeout`). A question that hits one ends with `status` `turn_cap` or `deadline`; a tool call over
-  its timeout returns an error to the model and the question goes on. Overload, rate limits and server errors
-  are retried 6 times with backoff (2, 4, 8 ... seconds, or the API's `retry-after`); any other API error, or
-  retries running out, stops the run.
+- **Limits.** Per question: 12 turns (a turn is one API request), 25 tool calls, 120 seconds per tool call,
+  300 seconds per API request and 900 seconds for the whole question (`--max-turns`, `--max-calls`,
+  `--tool-timeout`, `--api-timeout`, `--question-timeout`). Each must be above 0, and the turn and call limits
+  whole numbers; the driver refuses any other value before it starts. A question that hits one ends with
+  `status` `turn_cap` or `deadline` and an empty `answer`, so interim text from a tool-use turn is never scored;
+  a tool call over its timeout returns an error to the model and the question goes on. Overload, rate limits,
+  server errors and dropped connections are tried up to 6 times, with backoff (2, 4, 8 ... seconds, up to 60, or
+  the API's `retry-after`, also capped at 60). A request that fails once the question's time is up ends that
+  question as `deadline`. Any other API error, or 6 failed tries, stops the run.
 - **Temperature is not set.** The API rejects sampling parameters, so two runs of the same questions can
   differ. Compare runs with McNemar's test, not by eye.
 - **Privacy.** Nothing is printed but counts (`12/55 done`) and plain error messages: no question, answer,
   argument or tool result. Everything goes to `--out`, which must not already hold a run: `transcript.jsonl`,
-  `answers.jsonl`, the server's stderr in `server.log` and library warnings in `drive.log`. The sealed
-  workflow relies on this to run TEST.
+  `answers.jsonl`, the server's stderr in `server.log`, and library log records and Python warnings in
+  `drive.log`. The sealed workflow relies on this to run TEST. After a run that stopped partway, start again
+  with a new `--out`: the partial files are not a run to score.
 
-Both files start with one header record, `{"drive_header": {...}}`: the model, the prompt's version and
-sha256, the server instructions' sha256, the server commit (and whether its tree was dirty), the snapshot id
-each dataset's `LATEST` names in the lake, the protocol, the tools offered and the limits. Then:
+Both files start with one header record, `{"drive_header": {...}}`: the driver's version, the model, the
+prompt's version and sha256, the server's name and its instructions' sha256, the server commit (and whether its
+tree was dirty), the snapshot id each dataset's `LATEST` names in the lake, the protocol, the tools offered, the
+limits, `max_tokens`, the temperature note, the number of questions and the start time. Then:
 
 - `transcript.jsonl`: one object per tool call that reached the server: `id`, `tool`, `args`, `result` (the
   text the tool returned), `turn`, `is_error` and `seconds`.
 - `answers.jsonl`: one object per question: `id`, `answer` (the final text), `status` (`answered`,
   `turn_cap`, `deadline`, `refusal`, `max_tokens` or `stopped`), `turns`, `tool_calls`, `refused_calls`,
-  `stop_reason` and `usage` (tokens, for cost).
+  `stop_reason` and `usage` (tokens, for cost). `refusal` means the model declined to answer; it is not the
+  same as a Protocol B refused call, which is listed in `refused_calls`.
 
 ### A new baseline
 
 Scores from this driver start a new baseline. The earlier runs (DEV 28/29 and TEST 46/55 at `f8f3625`) were
 produced by an agent acting as the client by hand, not by this driver, with a different prompt and no caps, so
 they are not directly comparable with a driver run. Compare driver runs with driver runs, at the same
-`EVAL_MODEL` and prompt sha256.
+`EVAL_MODEL`, driver version and prompt sha256.
 
 ## Running a report
 
@@ -302,17 +317,19 @@ sha256s, the age version and the lake's snapshot ids. The plaintext stays in mem
 0600), and the last step deletes it. No artifact, cache or log line holds a question, a label, an answer or a
 per-question row. Error messages from parsers are withheld, because they can quote a record.
 
-**The driver** is the evaluator's and is not in this repository yet. Until `eval/drive.py` is on main, `evaluate`
-stops before it fetches or decrypts anything, so no use of TEST is spent. The workflow calls it twice, with
-`HDR_LAKE` and `ANTHROPIC_API_KEY` set:
+**The driver** is `eval/drive.py` ([Driving a run](#driving-a-run)). If a commit lacks it, `evaluate` stops
+before it fetches or decrypts anything, so no use of TEST is spent. The workflow calls it twice, with
+`HDR_LAKE`, `ANTHROPIC_API_KEY` and `EVAL_MODEL` set (`EVAL_MODEL` is a variable of the `eval` environment, not a
+secret, and the job summary names it):
 
 ```sh
 python -m eval.drive --check --server-dir <server checkout> --out <dir>
 python -m eval.drive --questions <questions.jsonl> --server-dir <server checkout> --out <dir>
 ```
 
-`--check` asks one DEV question through the server and exits 0 if it got an answer; it runs before the labels
-are decrypted. `--questions` is a file of `{"id", "question"}` objects, one per line, written by
+`--check` asks the first DEV question through the server and exits 0 only if it was answered; it runs before the
+labels are decrypted. `tests/test_sealed_test_workflow.py` parses both calls with the driver's own flags, so the
+two can't drift apart. `--questions` is a file of `{"id", "question"}` objects, one per line, written by
 `sealed_run.py questions`: the driver never sees a label, so no expected answer can reach the model or its API.
 The second call must write `<dir>/transcript.jsonl` and `<dir>/answers.jsonl` in the formats under
 [Running a report](#running-a-report) and exit 0. Its output goes to a file that is never printed, since it can
