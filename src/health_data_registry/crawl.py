@@ -43,7 +43,6 @@ BLOCK_STATUSES = frozenset({401, 403, 429})
 # What each portal's pages are. APIs answer JSON; a PDF-report source serves an HTML index and PDF reports.
 _ACCEPT = {"pdf_report": "text/html, application/pdf;q=0.9, */*;q=0.8"}
 _ACCEPT_DEFAULT = "application/json"
-TIME_BUDGET_MESSAGE = "The publisher would take longer than one question may wait, so the read stopped there."
 
 Getter = Callable[[str], RawFetch]
 # The path of the answer that carries a Tableau view's data.
@@ -119,13 +118,16 @@ class Robots:
             )
 
     def _rules(self, host: str) -> RobotFileParser | None:
+        from health_data_registry import deadline
         from health_data_registry.fetch import FetchRefused, fetch
 
         if host in self.rules:
             return self.rules[host]
         rp = RobotFileParser()
         try:
-            r = fetch(f"https://{host}/robots.txt", allowed_hosts=self.hosts, timeout=ROBOTS_TIMEOUT_S)
+            r = fetch(
+                f"https://{host}/robots.txt", allowed_hosts=self.hosts, timeout=deadline.cap(ROBOTS_TIMEOUT_S)
+            )
             status, body = r.status, r.content
         except FetchRefused as e:
             if e.status is None:
@@ -165,11 +167,12 @@ class Robots:
             return False
         return rp is None or rp.can_fetch(ROBOTS_AGENT, url)
 
-    def wait_turn(self, url: str, *, deadline: float | None = None) -> bool:
+    def wait_turn(self, url: str) -> bool:
         """Refuse a blocked host, or a path robots.txt disallows (not on a government host); then wait out the
-        host's pace. Returns True when robots.txt disallowed the path and the government-host policy overrode it.
-        With a `deadline` (on this policy's clock), a turn that would come after it is refused, not waited for.
+        host's pace, within the budget. Returns True when robots.txt disallowed the path and the government-host
+        policy overrode it.
         """
+        from health_data_registry import deadline
         from health_data_registry.fetch import FetchRefused
 
         host = (urlsplit(url).hostname or "").lower()
@@ -193,8 +196,9 @@ class Robots:
             now = self.clock()
             due = self.last[host] + delay - now
             if due > 0:
-                if deadline is not None and now + due > deadline:
-                    raise FetchRefused("time_budget", TIME_BUDGET_MESSAGE)
+                left = deadline.remaining()
+                if left is not None and left <= due:  # inside a hosted call: never sleep past its deadline
+                    raise deadline.DeadlineExceeded()
                 ours = max(0.0, self.last[host] + floor - now)
                 charged = due - ours
                 if self.waited + charged > self.budget:
@@ -264,7 +268,6 @@ def fetcher(
     sleep: Callable[[float], None] = time.sleep,
     robots: Robots | None | bool = True,
     browser: Callable[..., BrowserResult] | None = None,
-    budget_s: float | None = None,
 ) -> PoliteGetter:
     """A getter for catalogued publisher URLs that paces the hosts the policy targets, honours robots.txt (by the
     access policy), stops at a block, retries slow publishers and logs every attempt. `robots=True` (the default)
@@ -274,10 +277,11 @@ def fetcher(
     getter returns the view's captured bootstrapSession answer (the data), not the page around it, under the
     view's own URL (the session URL it was captured from is kept in the fetch log beside it).
 
-    `budget_s` bounds the whole read from this getter's creation (a live read per question): waits for the host's
-    turn, request timeouts and retry back-offs all stop at it, and what can't finish in time is refused in plain
-    words (`time_budget`). It is kept on the access policy's clock.
+    Inside a call deadline (deadline.call_deadline, the hosted server), every attempt is capped by what is left of
+    the budget and no retry starts once the budget can't cover its back-off: the call stops with
+    deadline.DeadlineExceeded instead of retrying past it.
     """
+    from health_data_registry import deadline
     from health_data_registry.fetch import FetchRefused, fetch
 
     hosts = registry.hosts
@@ -285,29 +289,16 @@ def fetcher(
     blocked = policy.blocked if policy is not None else set()
     paced = (policy or policy_for(registry)).paced  # retries back off at the pace even without robots.txt
     overridden: list[str] = []
-    clock = policy.clock if policy is not None else time.monotonic
-    deadline = None if budget_s is None else clock() + budget_s
     host_portal = {d.entry.source.host: d.entry.source.portal for d in registry}
 
-    def time_left(wanted: float) -> float:
-        """`wanted` seconds, or what is left of the budget; refused when nothing is left."""
-        if deadline is None:
-            return wanted
-        left = deadline - clock()
-        if left <= 0:
-            raise FetchRefused("time_budget", TIME_BUDGET_MESSAGE)
-        return min(wanted, left)
-
-    def one(url: str) -> FetchResult:
+    def one(url: str, timeout: float) -> FetchResult:
         host = (urlsplit(url).hostname or "").lower()
         src = _source_for(registry, url)
         if src is None or not src.browser:
             # A report linked from an index page isn't under a catalogued URL: its host's portal decides.
             portal = src.portal if src is not None else host_portal.get(host)
             accept = _ACCEPT.get(portal or "", _ACCEPT_DEFAULT)
-            return fetch(
-                url, allowed_hosts=hosts, headers={"Accept": accept}, timeout=time_left(FETCH_TIMEOUT_S)
-            )
+            return fetch(url, allowed_hosts=hosts, headers={"Accept": accept}, timeout=timeout)
         from health_data_registry.browser_fetch import browser_fetch
 
         tableau = src.portal == "tableau"
@@ -316,7 +307,7 @@ def fetcher(
             url,
             allowed_hosts=hosts,
             capture=[TABLEAU_DATA] if tableau else [],
-            timeout=FETCH_TIMEOUT_S,
+            timeout=timeout,
             allow=policy.allowed if policy is not None else None,
         )
         if not tableau:
@@ -342,7 +333,7 @@ def fetcher(
                     f"{host} refused this program's requests earlier in this run, so it is not asked again. This "
                     "is recorded and not worked around.",
                 )
-            if policy is not None and policy.wait_turn(url, deadline=deadline):
+            if policy is not None and policy.wait_turn(url):
                 overridden.append(url)
                 note = "robots_overridden: robots.txt disallows this address; fetched under the government-host policy"
         except FetchRefused as e:
@@ -351,8 +342,9 @@ def fetcher(
             raise
         for attempt in range(RETRIES):
             when = datetime.now(UTC)
+            budget = deadline.cap(FETCH_TIMEOUT_S)  # raises DeadlineExceeded when nothing is left
             try:
-                r = one(url)
+                r = one(url, budget)
             except FetchRefused as e:
                 if e.status in BLOCK_STATUSES and e.code != "blocked":
                     # fetch.py calls a 401/403/429 an http_error; under the access policy it is a block.
@@ -369,11 +361,15 @@ def fetcher(
                 # A slow or briefly unreachable publisher is retried, never sooner than the pace allows; a refused
                 # URL or host, and a block, never are.
                 if e.code not in ("timeout", "connect_failed") or attempt == RETRIES - 1:
+                    left = deadline.remaining()
+                    if e.code == "timeout" and left is not None and left <= 0:
+                        raise deadline.DeadlineExceeded() from e
                     raise e from None
-                backoff = MIN_INTERVAL_S * 2**attempt if host in paced else 2 ** (attempt + 1)
-                if time_left(backoff) < backoff:
-                    raise FetchRefused("time_budget", TIME_BUDGET_MESSAGE) from None
-                sleep(backoff)
+                pause = MIN_INTERVAL_S * 2**attempt if host in paced else 2 ** (attempt + 1)
+                left = deadline.remaining()
+                if left is not None and left <= pause:
+                    raise deadline.DeadlineExceeded() from e
+                sleep(pause)
                 continue
             if r.status != 200:
                 msg = f"the publisher answered with status {r.status} instead of the data"

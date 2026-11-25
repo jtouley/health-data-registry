@@ -7,18 +7,22 @@ so a clinician (or a grader) can check the number without trusting the model tha
 from __future__ import annotations
 
 import threading
+from collections import OrderedDict
 from collections.abc import Mapping, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import duckdb
 
+from health_data_registry import deadline
 from health_data_registry.registry import Column, Dataset, Metric, Registry, label_key
 from health_data_registry.sql_guard import GuardedQuery, guard_sql, harden, run_guarded
-from health_data_registry.store import Manifest, latest_snapshot
+from health_data_registry.store import Manifest, latest_snapshot, snapshot_dir
 
 MAX_ROWS = 5000
+MAX_PINNED = 2  # engines kept on older pinned versions, so the next page of an answer needn't rebuild one
 LOADED_VALUES_TIMEOUT_S = 5.0  # describe_dataset never waits longer than this for one column's values
 FilterValue = str | int | float | bool | Sequence[str | int | float | bool]
 
@@ -46,6 +50,14 @@ NEXT_STEPS: dict[str, str] = {
     "needs_single_value": "Ask for the year's total, or for one week.",
     "not_a_human_count": "Use get_series to read these counts as published; they are not cases in people, so "
     "there is no rate per 100,000 people.",
+    "bad_page": "Ask for page=1, or leave page out.",
+    "no_such_page": "Ask for a page the answer has, or leave page out for page 1.",
+    "bad_pin": "Copy the Next line from the previous page exactly, or ask again without page and pin.",
+    "page_data_changed": "Ask the same question again without page and pin, and set the older pages aside.",
+    "page_rows_changed": "Ask the same question again without page and pin, and set the older pages aside.",
+    "too_slow": "Try again in a few minutes, or narrow the question: one condition, fewer places or fewer years.",
+    "busy": "Try again in a minute.",
+    "too_large": "Ask again for fewer columns or one measure.",
 }
 
 
@@ -76,6 +88,7 @@ def _single(value: Any) -> bool:
 def live_refusal(ds: Dataset, e: BaseException) -> QueryRefused:
     """A plain-words refusal for a live read that failed, with what the clinician can do instead."""
     from health_data_registry.adapters.pdf_tables import LayoutError
+    from health_data_registry.deadline import DeadlineExceeded
     from health_data_registry.fetch import FetchRefused
 
     e_ = ds.entry
@@ -100,7 +113,7 @@ def live_refusal(ds: Dataset, e: BaseException) -> QueryRefused:
             f"{e_.publisher}'s website asks automated tools not to read it, so {e_.title} was not read. Open the "
             f"reports yourself at {page}.",
         )
-    if isinstance(e, FetchRefused) and e.code == "time_budget":
+    if isinstance(e, DeadlineExceeded):
         return QueryRefused(
             "publisher_too_slow",
             f"Reading {e_.title} from {e_.publisher} would take longer than one question may wait, so it stopped. "
@@ -504,8 +517,18 @@ class Engine:
     _hub_files: dict[str, tuple[Path, Manifest]] = field(default_factory=dict)
     _live: dict[str, Any] = field(default_factory=dict)  # dataset id -> live.LiveTable (memory only)
     _live_failed: set[str] = field(default_factory=set)  # live tables that could not be loaded (refused once)
+    # Lake snapshots to read instead of LATEST (dataset id -> snapshot id): a later page pinned to older data.
+    lake_pins: dict[str, str] = field(default_factory=dict)
+    # The sources the current call has read, in order (paging.respond clears it per call and reads it after).
+    touched: dict[str, None] = field(default_factory=dict)
+    _pinned: OrderedDict[tuple[tuple[str, tuple[str, str | None]], ...], Engine] = field(
+        default_factory=OrderedDict
+    )
 
     def connect(self) -> duckdb.DuckDBPyConnection:
+        # Every read starts here: a call past its deadline (one the hosted guard gave up on) stops before it
+        # touches the connection, so it never uses the engine alongside the next call.
+        deadline.check()
         if self._con is not None:
             return self._con
         from health_data_registry.live import load_live
@@ -524,7 +547,7 @@ class Engine:
                     self._live_failed.add(ds.id)
                     continue
                 manifest = table.manifest
-            elif (found := latest_snapshot(self.lake, ds.id)) is not None:
+            elif (found := self._lake_snapshot(ds.id)) is not None:
                 path, manifest = found
                 alias = f"snap_{ds.id}"
                 db = str(path / "data.duckdb").replace("'", "''")
@@ -545,6 +568,13 @@ class Engine:
         self._con = con
         return con
 
+    def _lake_snapshot(self, dataset_id: str) -> tuple[Path, Manifest] | None:
+        sid = self.lake_pins.get(dataset_id)
+        if sid is None:
+            return latest_snapshot(self.lake, dataset_id)
+        path = snapshot_dir(self.lake, dataset_id, sid)
+        return (path, Manifest.read(path / "manifest.json")) if (path / "manifest.json").is_file() else None
+
     def _reconnect(self) -> None:
         if self._con is not None:
             self._con.close()
@@ -554,6 +584,7 @@ class Engine:
 
     def _obtain(self, ds: Dataset) -> bool:
         """Bring one source in: from the hub release, or live from the publisher (memory only)."""
+        from health_data_registry.deadline import DeadlineExceeded
         from health_data_registry.hub import HubError
 
         if ds.entry.licence.redistribution:
@@ -566,17 +597,25 @@ class Engine:
             return True
         if not self.fetch_at_run_time:
             return False
+        from health_data_registry import deadline
         from health_data_registry.crawl import fetcher, shared_robots
         from health_data_registry.live import LIVE_READ_BUDGET_S, fetch_live
 
-        # One access policy per server process: two live sources on one host keep its pace between them. A
-        # question's read is bounded in time, except a dashboard's, which takes minutes and is kept for an hour.
-        budget = None if ds.entry.source.browser else LIVE_READ_BUDGET_S
-        get = self.getter or fetcher(
-            self.registry, None, robots=shared_robots(self.registry), budget_s=budget
+        # One access policy per server process: two live sources on one host keep its pace between them.
+        get = self.getter or fetcher(self.registry, None, robots=shared_robots(self.registry))
+        # A question's live read has its own time budget (a call deadline, nested inside any hosted one), except a
+        # dashboard's, which takes minutes and is kept for an hour.
+        bound: AbstractContextManager[None] = (
+            nullcontext() if ds.entry.source.browser else deadline.call_deadline(LIVE_READ_BUDGET_S)
         )
         try:
-            self._live[ds.id] = fetch_live(ds, get)
+            with bound:
+                self._live[ds.id] = fetch_live(ds, get)
+        except DeadlineExceeded as e:
+            left = deadline.remaining()
+            if left is not None and left <= 0:
+                raise  # the hosted call's budget ran out: its own plain message, not "unreachable"
+            raise live_refusal(ds, e) from e
         except Exception as e:  # noqa: BLE001 - any publisher failure becomes one plain refusal
             raise live_refusal(ds, e) from e
         return True
@@ -600,6 +639,8 @@ class Engine:
                 "read (a value did not match its column), so no numbers are shown for it. Other sources are not "
                 "affected. Try again later; if it keeps happening, run the Something's wrong helper.",
             )
+        if m is not None:
+            self.touched[dataset_id] = None
         if m is None:
             raise QueryRefused(
                 "no_snapshot",
@@ -607,6 +648,81 @@ class Engine:
                 "publisher is read), so there are no numbers to show.",
             )
         return m
+
+    def _serves(self, pins: Mapping[str, tuple[str, str | None]]) -> bool:
+        """Does this engine read exactly these versions (snapshot id, hub release tag) of these sources?"""
+        for dataset_id, version in pins.items():
+            if dataset_id not in self.registry.datasets:
+                return False
+            try:
+                m = self.manifest(dataset_id)
+            except QueryRefused:
+                return False
+            if (m.snapshot_id, m.release_ref) != version:
+                return False
+        return True
+
+    def _hub_at(self, pins: Mapping[str, tuple[str, str | None]]) -> Any:
+        """The hub read at the pinned release tag, when the pins name one and this hub can be read at another."""
+        from health_data_registry.hub import RELEASE_TAG, Hub
+
+        refs = {r for _, r in pins.values() if r}
+        if not refs or self.hub is None:
+            return self.hub
+        ref = refs.pop()
+        # One answer reads one release; a local hub copy has only its own; and a pin may only name a tagged
+        # release, never a bare commit (which could be any unreleased or pull-request commit of the hub).
+        if refs or not self.hub.is_remote or not RELEASE_TAG.fullmatch(ref):
+            return None
+        if self.hub.revision() == ref:
+            return self.hub
+        return Hub(url=f"{self.hub.url.split('@')[0]}@{ref}", cache=self.cache, max_bytes=self.hub.max_bytes,
+                   api=self.hub.api)  # fmt: skip
+
+    def at(self, pins: Mapping[str, tuple[str, str | None]]) -> Engine | None:
+        """An engine that reads exactly the pinned versions (this one when it does), or None when they are gone.
+
+        A later page names the versions its first page read. This engine serves them if it still does; otherwise
+        an engine on the pinned hub release or lake snapshot (kept for the next page, at most two) serves them;
+        restricted sources are never re-read for an old page, because their copies are never kept.
+        """
+        key = tuple(sorted(pins.items()))
+        try:
+            if self._serves(pins):
+                return self
+            if key in self._pinned:
+                self._pinned.move_to_end(key)
+                return self._pinned[key]
+            hub = self._hub_at(pins)
+            if hub is None and any(r for _, r in pins.values()):
+                return None
+            alt = Engine(registry=self.registry, lake=self.lake, hub=hub, cache=self.cache, fetch_at_run_time=False,
+                         getter=self.getter, lake_pins={i: s for i, (s, r) in pins.items() if r is None})  # fmt: skip
+            if not alt._serves(pins):
+                alt.close(release_hub=alt.hub is not self.hub)
+                return None
+        except deadline.DeadlineExceeded:
+            raise  # out of time is not "the data changed" (DeadlineExceeded is an OSError)
+        except (QueryRefused, ValueError, OSError):  # an old release that can't be read is gone
+            return None
+        self._pinned[key] = alt
+        while len(self._pinned) > MAX_PINNED:
+            _, old = self._pinned.popitem(last=False)
+            old.close(release_hub=old.hub is not self.hub)
+        return alt
+
+    def engines(self) -> list[Engine]:
+        """This engine and the pinned ones it keeps: every connection a call may be using."""
+        return [self, *self._pinned.values()]
+
+    def close(self, *, release_hub: bool = True) -> None:
+        """Close the connection and (unless another engine shares the hub) give back the hub files its views
+        read, so the cache may evict them."""
+        if self._con is not None:
+            self._con.close()
+            self._con = None
+        if release_hub and hasattr(self.hub, "release_files"):
+            self.hub.release_files()
 
     def provenance(self, dataset_id: str) -> dict[str, Any]:
         """Where a source's numbers come from, without downloading anything: origin, contract, product, release."""
@@ -729,7 +845,7 @@ class Engine:
     def query_sql(self, sql: str) -> dict[str, Any]:
         self.connect()
         available = {ds.id: ds.contract.column_names for ds in self.registry}
-        q: GuardedQuery = guard_sql(sql, allowed_tables=available, max_rows=MAX_ROWS)
+        q: GuardedQuery = guard_sql(sql, allowed_tables=available, max_rows=MAX_ROWS, ordered=True)
         for t in sorted(q.tables):
             if t in self.registry.datasets:
                 self.manifest(t)  # brings a hub or run-time source onto this computer on first use

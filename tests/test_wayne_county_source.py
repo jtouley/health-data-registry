@@ -8,6 +8,7 @@ import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import duckdb
 import pytest
@@ -190,30 +191,11 @@ def test_contract_everyRowFramedOutWayne_neverStored(ds: Dataset) -> None:
     assert ds.contract.unreliable.kind == "publisher_suppressed" and ds.contract.unreliable.threshold == 6
 
 
-class Clock:
-    def __init__(self) -> None:
-        self.now = 0.0
-        self.slept: list[float] = []
-
-    def sleep(self, s: float) -> None:
-        self.slept.append(s)
-        self.now += s
-
-    def __call__(self) -> float:
-        return self.now
-
-
-def _county_policy(clock: Clock) -> crawl.Robots:
-    return crawl.Robots(
-        load_registry(ROOT).hosts,
-        government_hosts=frozenset({"www.waynecountymi.gov"}),
-        sleep=clock.sleep,
-        clock=clock,
-    )
-
-
 def test_policy_countyHost_pacedAtTheGovernmentHostInterval() -> None:
-    assert "www.waynecountymi.gov" in crawl.policy_for(load_registry(ROOT)).paced
+    reg = load_registry(ROOT)
+    county = urlsplit(reg.get("wayne_cd_reports").entry.source.api_url)
+    assert county.scheme == "https" and county.hostname == "www.waynecountymi.gov"
+    assert crawl.policy_for(reg).paced >= {county.hostname}  # an exact host, never a substring of a URL
 
 
 # --- review round fixes (PR #27) -----------------------------------------------------------------------
@@ -377,20 +359,6 @@ def test_contract_requiredColumns_eachHaveAFillRateCheck(ds: Dataset) -> None:
             assert "nullValues" in metrics, prop["name"]
 
 
-def test_waitTurn_deadline_turnAfterItRefused(monkeypatch: pytest.MonkeyPatch) -> None:
-    from health_data_registry.fetch import FetchRefused
-
-    _fake_fetch(monkeypatch, [])
-    clock = Clock()
-    policy = _county_policy(clock)
-    policy.wait_turn(f"{BASE}/a.pdf", deadline=10.0)  # after robots.txt at 0: due at 10, exactly on time
-    assert clock.slept == [10.0]
-    with pytest.raises(FetchRefused) as e:
-        policy.wait_turn(f"{BASE}/b.pdf", deadline=19.9)
-    assert e.value.code == "time_budget"
-    assert clock.slept == [10.0]  # refused, not waited for
-
-
 def _fake_fetch(monkeypatch: pytest.MonkeyPatch, seen: list[tuple[str, dict[str, Any]]]) -> None:
     from health_data_registry import fetch
 
@@ -415,40 +383,47 @@ def test_fetcher_pdfReportsAskedAsHtmlAndPdf_apisAsJson(monkeypatch: pytest.Monk
     assert seen[-1][1]["headers"]["Accept"] == "application/json"
 
 
-def test_fetcher_budget_boundsTimeoutsAndRefusesPastIt(monkeypatch: pytest.MonkeyPatch) -> None:
-    from health_data_registry.fetch import FetchRefused
+@pytest.mark.parametrize(
+    ("outer_s", "code"),
+    [
+        pytest.param(None, "publisher_too_slow", id="own-budget"),
+        pytest.param(3600.0, "publisher_too_slow", id="inside-a-longer-hosted-call"),
+    ],
+)
+def test_obtain_liveReadPastItsBudget_plainRefusal(
+    ds: Dataset, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outer_s: float | None, code: str
+) -> None:
+    from contextlib import nullcontext
 
-    seen: list[tuple[str, dict[str, Any]]] = []
-    _fake_fetch(monkeypatch, seen)
-    clock = Clock()
-    policy = crawl.Robots(load_registry(ROOT).hosts, sleep=clock.sleep, clock=clock)
-    get = crawl.fetcher(load_registry(ROOT), robots=policy, budget_s=50.0)
-    clock.now = 20.0
-    get("https://data.cdc.gov/resource/a.json")
-    assert seen[-1][1]["timeout"] == 30.0
-    clock.now = 50.0
-    with pytest.raises(FetchRefused) as e:
-        get("https://data.cdc.gov/resource/b.json")
-    assert e.value.code == "time_budget"
-    unbounded = crawl.fetcher(load_registry(ROOT), robots=False)
-    unbounded(f"{BASE}/c.pdf")
-    assert seen[-1][1]["timeout"] == crawl.FETCH_TIMEOUT_S
+    from health_data_registry import deadline, live
+    from health_data_registry.query import Engine
+
+    seen: list[float | None] = []
+
+    def slow(url: str) -> RawFetch:
+        seen.append(deadline.remaining())
+        raise deadline.DeadlineExceeded()
+
+    monkeypatch.setattr(live, "LIVE_READ_BUDGET_S", 5.0)
+    eng = Engine(registry=load_registry(ROOT), lake=tmp_path, hub=None, fetch_at_run_time=True, getter=slow)
+    with deadline.call_deadline(outer_s) if outer_s else nullcontext(), pytest.raises(QueryRefused) as e:
+        eng._obtain(ds)
+    assert e.value.code == code and "longer than one question" in str(e.value)
+    assert seen and seen[0] is not None and 0 < seen[0] <= 5.0  # read under its own 5 s budget
 
 
-def test_fetcher_budget_retryBackoffPastItRefused(monkeypatch: pytest.MonkeyPatch) -> None:
-    from health_data_registry import fetch
-    from health_data_registry.fetch import FetchRefused
+def test_obtain_hostedCallOutOfTime_keepsItsOwnMessage(
+    ds: Dataset, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from health_data_registry import deadline
+    from health_data_registry.query import Engine
 
-    def slow(url: str, **kw: Any) -> Any:
-        raise FetchRefused("timeout", "slow")
+    def slow(url: str) -> RawFetch:
+        raise deadline.DeadlineExceeded()
 
-    monkeypatch.setattr(fetch, "fetch", slow)
-    clock = Clock()
-    policy = crawl.Robots(frozenset(), sleep=clock.sleep, clock=clock)
-    get = crawl.fetcher(load_registry(ROOT), robots=policy, sleep=clock.sleep, budget_s=1.0)
-    with pytest.raises(FetchRefused) as e:
-        get("https://data.cdc.gov/resource/a.json")
-    assert e.value.code == "time_budget" and clock.slept == []
+    eng = Engine(registry=load_registry(ROOT), lake=tmp_path, hub=None, fetch_at_run_time=True, getter=slow)
+    with deadline.call_deadline(0.0), pytest.raises(deadline.DeadlineExceeded):
+        eng._obtain(ds)
 
 
 def test_liveRead_capsReportsAndKeepsTheNote(ds: Dataset) -> None:
@@ -468,15 +443,22 @@ def test_liveRead_capsReportsAndKeepsTheNote(ds: Dataset) -> None:
         pytest.param(wc.ReconciliationError("x"), "publisher_layout_unreadable", "report layout", id="sums"),
         pytest.param("robots_disallowed", "publisher_disallows_reading", "asks automated tools", id="robots"),
         pytest.param("blocked", "publisher_blocked", "refused this program", id="blocked"),
-        pytest.param("time_budget", "publisher_too_slow", "longer than one question", id="slow"),
+        pytest.param("deadline", "publisher_too_slow", "longer than one question", id="slow"),
         pytest.param(RuntimeError("x"), "publisher_unreachable", "could not be reached", id="other"),
     ],
 )
 def test_liveRefusal_saysWhatHappenedAndWhatToDo(ds: Dataset, error: Any, code: str, words: str) -> None:
+    from health_data_registry.deadline import DeadlineExceeded
     from health_data_registry.fetch import FetchRefused
     from health_data_registry.query import live_refusal
 
-    e = FetchRefused(error, "m") if isinstance(error, str) else error
+    e = (
+        DeadlineExceeded()
+        if error == "deadline"
+        else FetchRefused(error, "m")
+        if isinstance(error, str)
+        else error
+    )
     got = live_refusal(ds, e)
     assert got.code == code and words in str(got)
     if code != "publisher_unreachable":

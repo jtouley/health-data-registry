@@ -17,7 +17,7 @@ Please check which of my research tools are working in this chat. Try each one w
 4. Any others I have connected (Data Commons, OpenEvidence).
 5. For any tool that is missing, give me the exact steps to add it, one step at a time, and remind me that a tool added during a chat only appears in a new chat. Don't use technical words without explaining them in one line.
 
-Rules for this whole conversation: cite every number to the tool it came from, with its source and date; never fill a number from memory or the news; show uncertainty ranges where GBD gives them and say that observed counts have none; flag provisional, suppressed or partial-geography numbers; and never ask me for, or accept, patient information.
+Rules for this whole conversation: cite every number to the tool it came from, with its source and date; never fill a number from memory or the news; show uncertainty ranges where GBD gives them and say that observed counts have none; flag provisional, suppressed or partial-geography numbers; when an answer comes in pages, fetch every page and save all the rows to one CSV file or artifact rather than pasting them into the chat; and never ask me for, or accept, patient information.
 ```
 
 ## Build my research story
@@ -34,7 +34,7 @@ I want to build a research story. My area, if I have one: [area]
 5. Then follow the build-story workflow for the piece I need.
 6. Before each change of step, tell me in one line where we are and what comes next.
 
-Rules for this whole conversation: cite every number to the tool it came from, with its source and date; never fill a number from memory or the news; show uncertainty ranges where GBD gives them and say that observed counts have none; flag provisional, suppressed or partial-geography numbers; and never ask me for, or accept, patient information.
+Rules for this whole conversation: cite every number to the tool it came from, with its source and date; never fill a number from memory or the news; show uncertainty ranges where GBD gives them and say that observed counts have none; flag provisional, suppressed or partial-geography numbers; when an answer comes in pages, fetch every page and save all the rows to one CSV file or artifact rather than pasting them into the chat; and never ask me for, or accept, patient information.
 ```
 
 ## Scope my area
@@ -49,7 +49,7 @@ My area or research question, in my own words: [area]
 3. Tell me which parts of my question need my hospital's own data, which stays in approved systems and never comes into this chat.
 4. Suggest two or three questions in this area worth refining, each in one sentence, and ask me which to take to Refine my hypothesis. A worked method for choosing them isn't written yet, so say why you picked each one.
 
-Rules for this whole conversation: cite every number to the tool it came from, with its source and date; never fill a number from memory or the news; show uncertainty ranges where GBD gives them and say that observed counts have none; flag provisional, suppressed or partial-geography numbers; and never ask me for, or accept, patient information.
+Rules for this whole conversation: cite every number to the tool it came from, with its source and date; never fill a number from memory or the news; show uncertainty ranges where GBD gives them and say that observed counts have none; flag provisional, suppressed or partial-geography numbers; when an answer comes in pages, fetch every page and save all the rows to one CSV file or artifact rather than pasting them into the chat; and never ask me for, or accept, patient information.
 ```
 
 ## Find research opportunities
@@ -65,7 +65,7 @@ Help me find a research opportunity. Anything I'm drawn to (a pathogen, a place,
 
 What we end with: an opportunity brief. Three to five candidate questions, each with the signal behind it (with source and date), the data that could answer it, and what's already published.
 
-Rules for this whole conversation: cite every number to the tool it came from, with its source and date; never fill a number from memory or the news; show uncertainty ranges where GBD gives them and say that observed counts have none; flag provisional, suppressed or partial-geography numbers; and never ask me for, or accept, patient information.
+Rules for this whole conversation: cite every number to the tool it came from, with its source and date; never fill a number from memory or the news; show uncertainty ranges where GBD gives them and say that observed counts have none; flag provisional, suppressed or partial-geography numbers; when an answer comes in pages, fetch every page and save all the rows to one CSV file or artifact rather than pasting them into the chat; and never ask me for, or accept, patient information.
 ```
 
 ## Refine my hypothesis
@@ -76,14 +76,14 @@ Rules for this whole conversation: cite every number to the tool it came from, w
 My idea: [idea]. Help me turn it into a hypothesis I can test, one round at a time.
 
 1. State it as one testable sentence: who, where, when, and what changed. Check it with me.
-2. Check the data: the IHME GBD connector for the modelled trend (with uncertainty ranges) up to 2023; this public health data tool's get_series for what was actually reported, including years after 2023 if available, and get_aligned_with_gbd to line the two up. Show one small table side by side and say whether the change is bigger than GBD's uncertainty range.
+2. Check the data: the IHME GBD connector for the modelled trend (with uncertainty ranges) up to 2023; this public health data tool's get_series for what was actually reported, including years after 2023 if available, and get_aligned_with_gbd to line the two up. Show one small table side by side and say whether the change is bigger than GBD's uncertainty range. If an answer says 'Page 1 of N', fetch every page and save the rows to one CSV file or artifact first, then build the small table from that file.
 3. Check it's new: search PubMed (and OpenEvidence if I have it), then this public health data tool's find_prior_work for abstracts, case reports and health department reports PubMed misses. List what has been done (title, year, venue, link) and say where the gap is. If a tool isn't connected or its index isn't built yet, say so plainly instead of guessing.
 4. Name the confounders and what the data can't say (case definition changes, provisional years, missing places); run list_caveats and include anything that matters.
 5. Revise the sentence and go round again until we agree it is test-ready, needs another revision, or should be dropped.
 
 What we end with: a hypothesis card. The hypothesis in one sentence, the data that supports it (each number with its source and date), what's already published, the confounders, what the data can't say, and a verdict: test-ready, revise or drop.
 
-Rules for this whole conversation: cite every number to the tool it came from, with its source and date; never fill a number from memory or the news; show uncertainty ranges where GBD gives them and say that observed counts have none; flag provisional, suppressed or partial-geography numbers; and never ask me for, or accept, patient information.
+Rules for this whole conversation: cite every number to the tool it came from, with its source and date; never fill a number from memory or the news; show uncertainty ranges where GBD gives them and say that observed counts have none; flag provisional, suppressed or partial-geography numbers; when an answer comes in pages, fetch every page and save all the rows to one CSV file or artifact rather than pasting them into the chat; and never ask me for, or accept, patient information.
 ```
 
 ## Write my pitch or abstract
@@ -101,7 +101,7 @@ Help me build my story on: [topic]
 
 What we end with: the piece I asked for (a one-page pitch, an IDWeek abstract or a poster outline), with every number's source, date and case definition, and a citation list.
 
-Rules for this whole conversation: cite every number to the tool it came from, with its source and date; never fill a number from memory or the news; show uncertainty ranges where GBD gives them and say that observed counts have none; flag provisional, suppressed or partial-geography numbers; and never ask me for, or accept, patient information.
+Rules for this whole conversation: cite every number to the tool it came from, with its source and date; never fill a number from memory or the news; show uncertainty ranges where GBD gives them and say that observed counts have none; flag provisional, suppressed or partial-geography numbers; when an answer comes in pages, fetch every page and save all the rows to one CSV file or artifact rather than pasting them into the chat; and never ask me for, or accept, patient information.
 ```
 
 ## Something's wrong
@@ -116,10 +116,11 @@ Match it to these known problems and give me the fix one step at a time, checkin
 2. It says the open data hub has no published release yet: the hub's first data release isn't out. Nothing is wrong on my side; try again later, or ask a WHO question, which is read live.
 3. It says a place or year isn't covered: run describe_dataset to see what is covered.
 4. It refused a query: the message says why; ask the same question in plain words instead.
-5. The app asks for a password or my login: stop; this tool never needs one.
-6. If none match, ask me one question at a time until we find it. Never ask for patient information.
+5. It says 'Page 1 of N': nothing is wrong, the answer is long. Ask for every page with the Next line it gives, and save all the rows to one CSV file or artifact. If a later page says the data changed, start again from page 1.
+6. The app asks for a password or my login: stop; this tool never needs one.
+7. If none match, ask me one question at a time until we find it. Never ask for patient information.
 
-Rules for this whole conversation: cite every number to the tool it came from, with its source and date; never fill a number from memory or the news; show uncertainty ranges where GBD gives them and say that observed counts have none; flag provisional, suppressed or partial-geography numbers; and never ask me for, or accept, patient information.
+Rules for this whole conversation: cite every number to the tool it came from, with its source and date; never fill a number from memory or the news; show uncertainty ranges where GBD gives them and say that observed counts have none; flag provisional, suppressed or partial-geography numbers; when an answer comes in pages, fetch every page and save all the rows to one CSV file or artifact rather than pasting them into the chat; and never ask me for, or accept, patient information.
 ```
 
 ## Walk me through an install
