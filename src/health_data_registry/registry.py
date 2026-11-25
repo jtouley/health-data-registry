@@ -729,7 +729,7 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
         columns=tuple(cols),
         total_rows=None if total_s.lower() == "none" else total_s,
         table_shape=str(obj_custom.get("tableShape", "")),
-        open_questions=_open_questions(oq, expected_id, frozenset(names)),
+        open_questions=tuple(str(q) for q in oq),
         raw=doc,
         unreliable=_unreliable(top_custom.get("unreliableRule"), expected_id),
         geography_basis=_text(top_custom.get("geographyBasis")),
@@ -742,48 +742,6 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
             frozenset(c.name for c in cols if c.required),
         ),
     )
-
-
-OPEN_QUESTION_KEYS = frozenset({"id", "question", "columns", "answeredBy"})
-ANSWERED_BY = ("publisher_codebook", "maintainer_review")
-
-
-def _open_questions(value: Any, where: str, columns: frozenset[str]) -> tuple[str, ...]:
-    """customProperties.openQuestions as the plain-words questions every answer shows.
-
-    An entry is a question in plain words, or a structured one: {id, question, columns, answeredBy}. `columns`
-    names the contract columns whose reading waits on the answer; `answeredBy` says who can settle it, the
-    publisher's codebook or a maintainer's reviewed declaration (hard rule 1). Only the question is shown.
-    """
-    if not isinstance(value, list):
-        raise RegistryError(f"{where}: openQuestions must be a list")
-    out: list[str] = []
-    ids: set[str] = set()
-    for q in value:
-        if not isinstance(q, Mapping):
-            out.append(str(q))
-            continue
-        qid, text = str(q.get("id") or ""), str(q.get("question") or "").strip()
-        if set(q) - OPEN_QUESTION_KEYS or not _ID.fullmatch(qid) or not text:
-            raise RegistryError(
-                f"{where}: a structured open question needs an id (snake_case) and a question, and may name "
-                "columns and answeredBy, nothing else"
-            )
-        if qid in ids:
-            raise RegistryError(f"{where}: open question id {qid} is used twice")
-        ids.add(qid)
-        cols = q.get("columns") or []
-        if not isinstance(cols, list) or (unknown := sorted({str(c) for c in cols} - columns)):
-            raise RegistryError(
-                f"{where}: open question {qid} needs columns as a list of the contract's columns"
-                + (f"; it doesn't have {', '.join(unknown)}" if isinstance(cols, list) else "")
-            )
-        if q.get("answeredBy") is not None and q.get("answeredBy") not in ANSWERED_BY:
-            raise RegistryError(
-                f"{where}: open question {qid} answeredBy must be one of {', '.join(ANSWERED_BY)}"
-            )
-        out.append(text)
-    return tuple(out)
 
 
 def _quality(doc: Mapping[str, Any], where: str) -> tuple[Any, ...]:
