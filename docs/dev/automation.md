@@ -260,7 +260,7 @@ maintainer creates:
 | `space` | `deploy-space.yml` deploy | Selected tags only: `v*.*.*` | `HF_TOKEN` (or `HF_SPACE_TOKEN`) |
 | `hub-publish` | `refresh.yml` publish | Selected branches only: `main` | `HF_TOKEN` (or `HF_PUBLISH_TOKEN`) |
 | `crawl` | `check-crawl-keys.yml` check | Selected branches only: `main` (required: the workflow's own main-only check is only an early refusal) | `CENSUS_API_KEY`, `SOCRATA_APP_TOKEN`, `OPENALEX_API_KEY` |
-| `eval` | `sealed-test.yml` evaluate and label-check | Selected branches only: `main` (required: the workflow refuses to start without it). Add the maintainer as a required reviewer too, so each decryption of TEST waits for a deliberate approval | `EVAL_TEST_KEY` (the age identity: one `AGE-SECRET-KEY-1...` line), `ANTHROPIC_API_KEY` (for the driver), and `EVAL_HF_TOKEN` (read access to `<owner>/health-data-registry-ops-eval`) when the ciphertext is in the ops dataset |
+| `eval` | `sealed-test.yml` evaluate and label-check | Selected branches only: `main` (required: the workflow refuses to start without it). Add the maintainer as a required reviewer too, so each decryption of TEST waits for a deliberate approval | `EVAL_TEST_KEY` (the age identity: one `AGE-SECRET-KEY-1...` line), `ANTHROPIC_API_KEY` (for the driver), and `EVAL_HF_TOKEN` (read access to `<owner>/health-data-registry-ops-eval`) when the ciphertext is in the ops dataset. Also the environment variable (not a secret) `EVAL_MODEL`: the id of the model that answers; the driver has no default |
 
 Required reviewers can be added to any of them; a run then waits for approval, so it may look stuck until
 someone approves it. Until the environments exist, GitHub creates them on the first run
