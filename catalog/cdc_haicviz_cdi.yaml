@@ -36,8 +36,7 @@ gbd:
     - {condition: "Clostridioides difficile infection", cause: "Diarrheal diseases", pathogen: "Clostridium difficile"}
 conditions:
   dimension: null
-  # Provenance: the contract's idDimensions (one condition throughout, no condition column).
-  source: "This source covers one condition only: Clostridioides difficile infection."
+  source: "The contract's idDimensions: the whole dataset is one condition, Clostridioides difficile infection, so there is no condition column."
   labels:
     - "Clostridioides difficile infection"
   aliases: []

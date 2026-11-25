@@ -53,9 +53,6 @@ def validate(registry: Registry, lake: Path) -> int:
     for ds_id, extra in unlisted_condition_labels(registry, engine).items():
         if extra is None:
             print(f"skip {ds_id}: no local snapshot, so its condition labels weren't checked")
-        elif isinstance(extra, str):
-            failed += 1
-            print(f"FAIL {ds_id}: {extra}", file=sys.stderr)
         elif extra:
             failed += 1
             print(
