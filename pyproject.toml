@@ -89,7 +89,10 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
-markers = ["network: hits a live publisher (deselected in CI by default)"]
+markers = [
+    "network: hits a live publisher (deselected in CI by default)",
+    "smoke: the C. auris in Michigan reference journey on a synthetic lake (make smoke; also part of make test)",
+]
 
 [tool.coverage.run]
 source = ["health_data_registry", "eval"]

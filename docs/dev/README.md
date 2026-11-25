@@ -33,6 +33,7 @@ work is not committed to the PR branch: it stays uncommitted or goes on a separa
 | `make typecheck` | mypy, strict |
 | `make test` | Offline tests with coverage; fails under 85% (`COV_FLOOR`) |
 | `make test-network` | Live publisher tests in `tests/integration` (marker `network`) |
+| `make smoke` | The C. auris in Michigan reference journey on a synthetic lake (marker `smoke`; see [Smoke journey](#smoke-journey)) |
 | `make mutate` | Mutation tests on modules changed since `BASE` (default `origin/main`); fails under 70% killed (`MUTATION_FLOOR`) |
 | `make docs` | Regenerate `docs/helpers.md` from `src/health_data_registry/helpers.py` |
 | `make refresh` | `health-data-registry refresh --all` into the local lake |
@@ -152,6 +153,49 @@ Everything a clinician reads (tool descriptions, helpers, refusals) follows the 
   or crashed, or left no report. A module with no mutable function has nothing to mutate and passes, locally and
   in CI.
 - **New features and fixes add tests.** A bug fix includes a test that fails without it.
+
+## Smoke journey
+
+`make smoke` runs the project spec's reference journey: a clinician asks about C. auris in Michigan in 2024.
+The spec itself is not in this repo; [docs/architecture.md](../architecture.md) describes the design it set
+out, and the journey is defined by `tests/smoke/test_c_auris_journey.py`. CI runs it on every pull request as
+the job "Smoke: C. auris journey". It is part of `make test` too.
+
+- **Offline, enforced.** `tests/smoke/conftest.py` makes any connection or DNS lookup off this machine fail the
+  test, so a stray fetch can't quietly read live data.
+- **What it drives.** The real MCP server (`server.build_server`) over the real `catalog/`, `contracts/` and
+  `semantic/`, reading a lake built at test time from hand-written rows in `tests/smoke/fixtures.py`. The
+  numbers are made up and unlike the published ones, and nothing is written to the repo.
+
+The steps, one test each (`test_stepN_...` in `tests/smoke/test_c_auris_journey.py`):
+
+1. `suggest_datasets` offers `cdc_nndss_weekly` and nothing else.
+2. `describe_dataset` names both C. auris series and the flag codes.
+3. `get_series` returns clinical and screening as separate series. Each has its year-end running total and
+   next year's unverified restatement. They are never added, and total rows are left out.
+4. A flagged place stays empty with its flag, never a zero.
+5. `get_rate` divides by the Census population, returns the 95% interval with each rate, and never adds the
+   two rates.
+6. `list_caveats` keeps NNDSS, CDC's tracking page and the AR Lab Network apart.
+7. An uncatalogued source shows no number, and only NNDSS is offered for it.
+8. `get_provenance` names the exact fetch.
+
+Every table's provenance line must be complete and carry the sha256 of the raw bytes.
+
+- **The DEV trial questions.** The eval has two splits: DEV (`eval/dev/dev.jsonl`), which anyone may read and
+  tune against, and TEST, which is held out and sealed ([eval/README.md](../../eval/README.md)). The smoke test
+  scores the four DEV questions tagged `source: trial` with `eval/scorer.py`. A scripted client
+  (`tests/smoke/client.py`) writes a reply from the tool responses only, and the reply must pass Class, Target,
+  Provenance and the fabrication gate. Three pass today: C. auris, measles and vaccination. HIV care waits on
+  #37 (see below). Replies that add clinical to screening, add two rates, or give a number no tool returned
+  must fail. The smoke test never reads the TEST split or `eval/sealed/`.
+- **Only NNDSS is catalogued for C. auris.** CDC's tracking page and the AR Lab Network have no catalog entry
+  yet, so their steps check that the server shows no number for them. When one is catalogued, add its series
+  to the journey.
+- **Behaviour still to come** is `xfail(strict=True, raises=AssertionError)`, naming its issue: HIV care
+  declined rather than offered RESP-NET (#37 item 9), the AR Lab Network question offered only NNDSS (#48), and
+  decline fields that a machine can read in csv (#37 item 3). When the fix lands the test fails as XPASS;
+  remove the mark in the same pull request.
 
 ## Adding a dataset
 
