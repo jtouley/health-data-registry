@@ -114,6 +114,22 @@ A pull request's CI should pass the first time. So a commit is checked twice bef
 3. **When every check is green**, open the PR from that exact commit, or fast-forward the PR branch to it
    (`git push origin <green sha>:<pr-branch>`).
 
+**The PR reuses the pre-pr mutation verdict.** The mutation shards are by far the dearest part of a CI run, and
+the account runs only a few jobs at once, so a PR does not mutate a commit the gate already mutated. On a
+`pull_request` event, the list job runs `scripts/mutation_reuse.py`, which asks the Actions API, with the run's own
+read-only `GITHUB_TOKEN` (`actions: read` on that job only), for a CI run that:
+
+- was triggered by a `push` to a `pre-pr/**` branch of this repository (not a fork), from `.github/workflows/ci.yml`;
+- is for exactly the PR's head SHA, taken from the event payload (`github.event.pull_request.head.sha`);
+- has a "Mutation tests (changed modules)" job, in its latest attempt, that completed with conclusion `success`;
+
+and only when the PR's base is `main`, the branch a pre-pr run compares with. If one exists, the list job lists no
+modules, the shards are skipped, and "Mutation tests (changed modules)" passes on the PR with a log line naming the
+reused run. A failed, cancelled, skipped or still-running verdict never counts, nor does one for another SHA, and
+an API error means no reuse, so the shards run as before. Lint, types, tests, smoke, the kit, pre-commit and
+CodeQL still run on the PR, and every required check still reports. So push the green pre-pr commit unchanged:
+any new commit on the PR branch has no pre-pr verdict and runs the shards.
+
 Red on the pre-pr branch? Fix it there, run `make precheck` again, and push again. Fix-round commits and merges
 of main take the same path.
 
