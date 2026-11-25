@@ -99,7 +99,10 @@ def test_state_for_another_host_is_refused_on_restore(tmp_path: Path) -> None:
     with pytest.raises(CrawlStopped) as e:
         client(tmp_path, site, clock)
     assert e.value.code == "state_host_mismatch"
-    assert "other.example.com" in str(e.value)
+    assert str(e.value) == (
+        f"the crawl state {tmp_path / 'state.json'} was written for other.example.com, not {HOST}, so it was "
+        "not reused"
+    )
     assert site.calls == []
     with pytest.raises(CrawlStopped):  # still refused: the state was not overwritten
         client(tmp_path, site, clock)
