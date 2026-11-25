@@ -15,7 +15,8 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 | Command | What it does |
 |---|---|
 | `make install` | `uv sync` |
-| `make check` | lint, typecheck, test, mutate: what CI runs; run before every push |
+| `make check` | lint, typecheck, test, mutate: the quick local loop, not all of CI |
+| `make precheck` | The pre-PR gate's local half: the CI checks plus a docs-drift check, stopping at the first failure; run before every pre-pr push |
 | `make hooks` | Install the pre-commit hooks (`uv run pre-commit install`); once per checkout |
 | `make test` | Offline tests with coverage (floor 85%) |
 | `make test-network` | Live publisher checks in `tests/integration` (marker `network`) |
@@ -35,9 +36,18 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 
 One review round, one fix round, merge, then follow-ups. We don't get stuck in review rounds.
 
-1. **Pull request.** Every change lands through a pull request; there are no direct pushes to main. Before opening
-   it, `make check` passes (mutation tests on changed modules included) and every commit carries the required
-   trailers. The PR body names the skills used and what each changed.
+1. **Green before the pull request.** Every change lands through a pull request; there are no direct pushes to
+   main. CI must be green before a commit reaches a PR branch ([docs/dev/README.md](docs/dev/README.md#the-pre-pr-gate)):
+   - Merge `origin/main` into the branch first. A PR's CI tests the branch merged with current main, while a
+     pre-pr run tests the branch tip, so the two agree only when the branch already contains main.
+   - `make precheck` passes locally: the CI checks plus a docs-drift check, stopping at the first failure.
+   - Then push the commit to `pre-pr/<branch>` and wait until every CI check there is green. If one is red, fix it
+     on the pre-pr branch, run `make precheck` again, and push again.
+   - Only then open the PR, or fast-forward the PR branch, to that exact green commit.
+   - Fix-round pushes follow the same path. Merging main into a branch is a change like any other: precheck, then
+     pre-pr, then the PR branch.
+
+   Every commit carries the required trailers, and the PR body names the skills used and what each changed.
    Every commit, by people, subagents and the lead, goes through the pre-commit hooks (`make hooks`); `--no-verify`
    is never used. Unfinished work is not committed to the PR branch: it stays uncommitted or goes on a separate WIP
    branch until it passes the hooks.
