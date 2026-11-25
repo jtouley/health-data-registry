@@ -52,6 +52,17 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+      # The pre-PR gate at push time (scripts/pre_push_gate.py): a push to a PR branch (feat/, fix/, ci/, docs/,
+      # transform/) needs a completed, all-green CI run for that exact commit on pre-pr/**; a push to pre-pr/**
+      # runs ruff, mypy and the changed modules' tests first. Fast feedback only: the PR-branch ruleset on GitHub
+      # is the rule that counts.
+      - id: pre-push-gate
+        name: pre-PR gate (green pre-pr commit before a PR branch; fast checks before pre-pr/)
+        entry: uv run --frozen python scripts/pre_push_gate.py
+        language: system
+        stages: [pre-push]
+        always_run: true
+        pass_filenames: false
       # Data belongs in the lake or the Hugging Face dataset, never in git.
       - id: forbid-data-files
         name: forbid lake/, mutants/, sitemaps/, *.parquet, *.duckdb, *.xml.gz

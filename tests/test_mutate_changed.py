@@ -88,11 +88,21 @@ def test_list_json_of_nothing_is_an_empty_array(mc: ModuleType) -> None:
         "health_data_registry",
         "health_data_registry..tools",
         "health_data_registry.tools ",
+        "scripts.mutate_changed",
+        "scripts.branch_hygiene.x",
     ],
 )
 def test_a_name_that_is_not_a_plain_module_is_refused(mc: ModuleType, name: str) -> None:
     with pytest.raises(ValueError, match="not a plain module name"):
         mc.list_json([name])
+
+
+def test_the_branch_hygiene_script_is_mutated(mc: ModuleType) -> None:
+    assert mc._module("scripts/branch_hygiene.py") == "scripts.branch_hygiene"
+    # Not list_json on the real file: inside mutmut's sandbox the file is the mutated copy, which shards differently.
+    assert mc.MODULE_NAME.fullmatch("scripts.branch_hygiene")
+    assert mc.module_path("scripts.branch_hygiene") == mc.ROOT / "scripts" / "branch_hygiene.py"
+    assert "scripts/branch_hygiene.py" in mc.PACKAGE_DIRS
 
 
 @reads_real_sources

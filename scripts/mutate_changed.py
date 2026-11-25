@@ -58,13 +58,15 @@ PKG = ROOT / "src" / "health_data_registry"
 # Mutated packages: the server, and the eval scorer that decides release gates. Keep in step with
 # [tool.mutmut] source_paths in pyproject.toml.
 PACKAGES = (PKG, ROOT / "eval")
-PACKAGE_DIRS = ("src/health_data_registry", "eval")
+# Scripts that decide something on their own (which branches get deleted) are mutated too, one file each.
+MUTATED_SCRIPTS = ("scripts/branch_hygiene.py",)
+PACKAGE_DIRS = ("src/health_data_registry", "eval", *MUTATED_SCRIPTS)
 # mutmut statuses (mutmut/stats.py). Killed ones raise the score; every other status lowers it.
 KILLED_STATUSES = frozenset({"killed", "caught by type check"})
 # A run that leaves any of these did not finish checking its mutants: the shard fails, whatever its score.
 INCOMPLETE_STATUSES = frozenset({"not checked", "check was interrupted by user", "segfault"})
 # Module names reach CI job names, artifact names and the mutmut command line: allow nothing else.
-MODULE_NAME = re.compile(r"^(?:health_data_registry|eval)(\.[a-z_][a-z0-9_]*)+$")
+MODULE_NAME = re.compile(r"^(?:(?:health_data_registry|eval)(\.[a-z_][a-z0-9_]*)+|scripts\.branch_hygiene)$")
 # A shard id: a module name, alone (the whole module) or with `#<k>of<n>@<split>` (shard k of n of the split whose
 # hash is <split>, split_hash). `#` and `@` are valid in a GitHub job name, an artifact name and a file name; the
 # workflow and precheck quote the id wherever it reaches a shell.
@@ -93,22 +95,15 @@ SEP = "ǁ"
 # 2026, scoped shards): sql_guard took 7.5 minutes in all, of which checkout and install 14 s, generating its
 # mutants 3 s, mutmut's stats run 3.0 minutes and its clean test run 2.9 minutes over the 48 test files that reach
 # it, then 99 mutants in 1.2 minutes; registry.py took 5.1 minutes. Setup is now most of a shard; caching the stats
-# run is #115's work. The shard job's timeout-minutes (12) is the hard stop. Add a module here when its shards run
-# long. crawl.py: its 6 shards at 150 took 5 to 10.5 minutes, and one hit the 12-minute stop (pre-pr run of the
-# crawler-factory core, 25 Nov 2026); most adapter and access tests reach it, so its mutants run slowly too.
-# fetch.py: one of its 2 shards at 150 hit the stop in the same run, for the same reason.
-# registry.py: at 40, a shard ran 7 minutes of mutants without finishing in that run (5 minutes of setup), as the
-# adapter-type tests build catalog entries through its validators; 30 keeps each shard under the stop, and lower
-# would take `--list --all` past MAX_SHARDS.
-# staging.py and store.py: at 150 their shards' setup took 6.5 minutes and most hit the stop in the same run.
+# run is #115's work. Add a module here when its shards run long against the shard job's timeout-minutes in
+# .github/workflows/mutation.yml. That stop was 12 minutes while mutation shards ran on every pull request; since
+# #122 they run nightly only, with 60. In a pre-pr run under the 12-minute stop (crawler-factory core, 25 Nov 2026),
+# crawl.py's shards at 150 took 5 to 10.5 minutes, registry.py's at 40 ran 7 minutes of mutants after 5 of setup,
+# and some shards of fetch.py, staging.py and store.py hit the stop. With five times that stop, they keep the
+# ordinary targets. Smaller targets for them would take `--list --all` past MAX_SHARDS (285 shards with crawl 75, fetch 60,
+# registry 30, staging 40 and store 40, once main added ratchet.py and branch_hygiene.py).
 SHARD_TARGET = 150
-SHARD_TARGET_BY_MODULE = {
-    "health_data_registry.registry": 30,
-    "health_data_registry.crawl": 75,
-    "health_data_registry.fetch": 60,
-    "health_data_registry.staging": 40,
-    "health_data_registry.store": 40,
-}
+SHARD_TARGET_BY_MODULE = {"health_data_registry.registry": 40}
 # GitHub runs at most 256 jobs from one matrix.
 MAX_SHARDS = 256
 DIGITS = "0123456789"
@@ -1202,6 +1197,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         mods = select_modules(
             [_module(str(p.relative_to(ROOT))) for pkg in PACKAGES for p in pkg.rglob("*.py")]
+            + [_module(s) for s in MUTATED_SCRIPTS]
             if a.all
             else changed_modules(base)
         )
