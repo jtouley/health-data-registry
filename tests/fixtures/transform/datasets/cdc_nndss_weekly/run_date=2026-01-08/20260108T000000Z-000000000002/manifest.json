@@ -1,0 +1,18 @@
+{
+  "dataset": "cdc_nndss_weekly",
+  "snapshot_id": "20260108T000000Z-000000000002",
+  "contract_version": "synthetic",
+  "semantic_version": "synthetic",
+  "catalog_status": "draft",
+  "retrieved_at": "2026-01-08T00:00:00+00:00",
+  "source_urls": [
+    "https://example.invalid/synthetic/cdc_nndss_weekly.json"
+  ],
+  "raw_sha256": [
+    "3333333333333333333333333333333333333333333333333333333333333333"
+  ],
+  "row_count": 3,
+  "licence": "synthetic",
+  "redistribution": true,
+  "partial": false
+}

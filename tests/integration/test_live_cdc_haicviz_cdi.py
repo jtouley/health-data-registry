@@ -29,7 +29,20 @@ def test_contract_structure(live):
     _live.check_structure(con, rows, served)
 
 
-def _counts(rows, year, viewby, grouping):
+def test_total_cases_two_ways(live):
+    _cat, con, sem, rows, _ = live
+    # The one published Total cell: grouping 'All cases', never the epi-class rows beside it.
+    cells = [
+        float(r["value"])
+        for r in rows
+        if r["yearname"] == "2019" and r["topic"].lower() == "number of cases" and r["viewby"] == "Total"
+        and r["series"] == "Total" and r["grouping"].lower() == "all cases"
+    ]  # fmt: skip
+    assert len(cells) == 1
+    assert _live.duckdb_metric(con, sem, rows, "cdi_cases_total", {"yearname": 2019}) == cells[0]
+
+
+def _stratum(rows, year, viewby, grouping, series):
     return [
         float(r["value"])
         for r in rows
@@ -37,29 +50,37 @@ def _counts(rows, year, viewby, grouping):
         and r["topic"].lower() == "number of cases"
         and r["viewby"] == viewby
         and r["grouping"].lower() == grouping
+        and r["series"] == series
         and r.get("value")
     ]
 
 
-def test_total_cases_two_ways(live):
-    _cat, con, sem, rows, _ = live
-    loop = sum(
-        float(r["value"])
-        for r in rows
-        if r["yearname"] == "2019" and r["topic"].lower() == "number of cases" and r["series"] == "Total"
-    )
-    assert _live.duckdb_metric(con, sem, rows, "cdi_cases_total", {"yearname": 2019}) == loop
-
-
 @pytest.mark.parametrize("year", [2019, 2021])  # 2021 uses the 'Epi class' spelling
-def test_cases_by_epi_class_two_ways(live, year):
+@pytest.mark.parametrize("stratum", ["Healthcare-associated", "Community-associated"])
+def test_cases_by_epi_class_one_stratum_two_ways(live, year, stratum):
     _cat, con, sem, rows, _ = live
-    loop = sum(_counts(rows, year, "Total", "epi class"))
-    assert loop > 0
-    assert _live.duckdb_metric(con, sem, rows, "cdi_cases_by_epi_class", {"yearname": year}) == loop
+    loop = _stratum(rows, year, "Total", "epi class", stratum)
+    assert len(loop) == 1 and loop[0] > 0
+    got = _live.duckdb_metric(con, sem, rows, "cdi_cases_by_epi_class", {"yearname": year, "series": stratum})
+    assert got == loop[0]
 
 
-def test_cases_by_sex_two_ways(live):
+def test_cases_by_epi_class_across_strata_is_refused(live):
+    """HA + CA is not added: whether the strata add up to the Total is an open question in the contract."""
     _cat, con, sem, rows, _ = live
-    loop = sum(_counts(rows, 2019, "Sex", "all cases"))
-    assert _live.duckdb_metric(con, sem, rows, "cdi_cases_by_sex", {"yearname": 2019}) == loop
+    with pytest.raises(_live.NonAdditive, match="stratum"):
+        _live.duckdb_metric(con, sem, rows, "cdi_cases_by_epi_class", {"yearname": 2019})
+
+
+def test_cases_by_sex_one_stratum_two_ways(live):
+    _cat, con, sem, rows, _ = live
+    sexes = sorted({r["series"] for r in rows if r["viewby"] == "Sex" and r["yearname"] == "2019"})
+    assert sexes
+    for sex in sexes:
+        loop = _stratum(rows, 2019, "Sex", "all cases", sex)
+        if not loop:
+            continue
+        got = _live.duckdb_metric(con, sem, rows, "cdi_cases_by_sex", {"yearname": 2019, "series": sex})
+        assert got == sum(loop), sex
+    with pytest.raises(_live.NonAdditive, match="stratum"):
+        _live.duckdb_metric(con, sem, rows, "cdi_cases_by_sex", {"yearname": 2019})

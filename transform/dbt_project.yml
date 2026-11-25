@@ -1,0 +1,41 @@
+# The transform project: raw -> staging -> intermediate -> marts, on DuckDB (dbt-duckdb).
+# Every input is a raw source or a control-plane export with an ODCS contract; there are no seeds and no data
+# files here. Staging and every model's column list are generated from contracts/ by `make contracts`.
+name: health_data_registry
+version: "0.1.0"
+config-version: 2
+profile: health_data_registry
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+target-path: target
+clean-targets: [target, dbt_packages]
+
+# Raw sources are resolved by the dbt_raw plugin (profiles.yml) from the lake at HDR_LAKE (default ../lake): the
+# full load each dataset's LATEST pointer names, raw_records/<id>/<snapshot id>.ndjson. A source with no such load
+# is empty, with a warning. CI points HDR_LAKE at the synthetic fixture lake in tests/fixtures/transform.
+
+vars:
+  # The MMWR years the calendar covers (contracts/models/mmwr_calendar.odcs.yaml).
+  mmwr_first_year: 2015
+  mmwr_last_year: 2030
+
+models:
+  health_data_registry:
+    # The contract's descriptions become DuckDB table and column comments, readable wherever the file goes.
+    +persist_docs: {relation: true, columns: true}
+    staging:
+      +materialized: table
+      +schema: staging
+    reference:
+      +materialized: table
+      +schema: reference
+    # Business rules (total rows, renamed labels, partial places, conformed keys) and review queues.
+    intermediate:
+      +materialized: table
+      +schema: intermediate
+    # Dimensions and one fact per source; metrics read them.
+    marts:
+      +materialized: table
+      +schema: marts

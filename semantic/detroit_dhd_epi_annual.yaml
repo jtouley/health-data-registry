@@ -1,9 +1,10 @@
 dataset: detroit_dhd_epi_annual
-version: 0.1.0
+# 0.1.1: the rate says the dashboard gives no interval.
+version: 0.1.1
 dimensions:
-  - {name: condition, column: worksheet, type: categorical, description: "The condition, by the code of the dashboard's yearly chart: TByear = tuberculosis; ChlamydiaYear = chlamydia; HepCyear = hepatitis C (acute, chronic or both is not stated); SyphilisPSyear = primary and secondary syphilis; SyphilisLyear = late syphilis; SyphilisCyear = congenital syphilis. Each is a different condition, so their counts are never added together."}
-  - {name: place, column: location_label, type: categorical, description: "Detroit or Michigan, as the chart's legend names them ('Detroit Case Rate', 'Michigan Case Rate'). Michigan's figures include Detroit's, so the two are never added together."}
-  - {name: year, column: year, type: time, description: "The calendar year (January to December) the chart's x-axis places the cases in, as the dashboard labels it; not an MMWR year. Whether a case is placed by its report, diagnosis or onset date is not stated."}
+  - {name: condition, column: worksheet, type: categorical, non_additive: true, non_additive_reason: "each is a different condition", description: "The condition, by the code of the dashboard's yearly chart: TByear = tuberculosis; ChlamydiaYear = chlamydia; HepCyear = hepatitis C (acute, chronic or both is not stated); SyphilisPSyear = primary and secondary syphilis; SyphilisLyear = late syphilis; SyphilisCyear = congenital syphilis. Each is a different condition, so their counts are never added together."}
+  - {name: place, column: location_label, type: categorical, non_additive: true, non_additive_reason: "Michigan's figures include Detroit's", description: "Detroit or Michigan, as the chart's legend names them ('Detroit Case Rate', 'Michigan Case Rate'). Michigan's figures include Detroit's, so the two are never added together."}
+  - {name: year, column: year, type: time, non_additive: false, description: "The calendar year (January to December) the chart's x-axis places the cases in, as the dashboard labels it; not an MMWR year. Whether a case is placed by its report, diagnosis or onset date is not stated."}
 measures:
   - {name: cases, column: cases, kind: count, unit: "cases", description: "Cases counted in the year."}
   - {name: case_rate, column: rate, kind: rate, unit: "as published (denominator unconfirmed)", description: "The case rate the dashboard plots."}
@@ -23,6 +24,9 @@ metrics:
     aggregation: none
     exclude_total_rows: false
     filters: []
+    uncertainty: none
+    # Structural: the contract's columns have no interval column.
+    uncertainty_reason: "The Detroit Health Department's chart gives no confidence interval for these rates."
 series:
   - {condition: TByear, label: "Tuberculosis cases (Detroit Health Department)", metric: annual_cases, measure: cases, filters: {condition: TByear}, location_dimension: place, time_dimension: year}
   - {condition: TByear, label: "Tuberculosis case rate (Detroit Health Department)", metric: annual_case_rate, measure: rate, filters: {condition: TByear}, location_dimension: place, time_dimension: year}

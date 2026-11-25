@@ -3,6 +3,9 @@
 - **Status:** Accepted
 - **Date:** 2026-11-24
 - **Spec:** "Privacy and licences"; README tab, proposed ADR 002 and "Sandbox problems seen"
+- **Related:** [ADR 0014](0014-bibliographic-registries-as-primary-routes.md): DOI registration agencies and open
+  bibliographic indexes a DOI resolves through (Crossref, OpenAlex, Europe PMC) are primary-source routes, not
+  aggregators
 
 ## Context
 
