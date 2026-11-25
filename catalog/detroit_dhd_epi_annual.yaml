@@ -39,7 +39,7 @@ source:
       - {view: Syphilis-PS, worksheets: {SyphilisPSyear: 848988d619fa5bcaba303b0a211b46914647f026793241244723268f30476144}}
 codebook_url: https://codtableau.detroitmi.gov/t/DHD/views/EpidemiologyDashboard_17430955327340/NotesResources
 caveats:
-  - "Detroit and Michigan figures come from the dashboard's yearly charts. The rate's denominator is not stated; don't compare these rates with another source until it is confirmed (an open question in the contract)."
+  - "Detroit and Michigan figures come from the dashboard's yearly charts; the dashboard does not state the rate's denominator, so the unit is an open question in the contract (congenital syphilis is plausibly per 100,000 live births, the others per 100,000 people)."
   - "The place is the chart's legend label ('Detroit Case Rate', 'Michigan Case Rate'); Michigan includes Detroit."
   - "Rates are never added; counts for Detroit and Michigan are never added together (Michigan already includes Detroit)."
   - "The Detroit Health Department states no terms for reuse, so this source is read live from the city and never stored or published."

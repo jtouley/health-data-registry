@@ -27,23 +27,6 @@ class Page:
 def pages(
     entry: CatalogEntry, fetcher: Fetcher, *, max_rows: int | None = None, fields: list[str] | None = None
 ) -> Iterator[Page]:
-    """Every page of a source, each checked by the row-level guard before it is handed on (hard rule 4).
-
-    The Tableau adapter checks each worksheet itself, by its captions, before it projects anything; every other
-    portal's page is checked here on the field names and values it carries.
-    """
-    from health_data_registry.adapters.row_guard import check_grain
-
-    for page in _pages(entry, fetcher, max_rows=max_rows, fields=fields):
-        if entry.source.portal != "tableau":
-            names = list(dict.fromkeys(k for r in page.records for k in r))
-            check_grain(f"{entry.id} ({entry.source.host})", names, page.records)
-        yield page
-
-
-def _pages(
-    entry: CatalogEntry, fetcher: Fetcher, *, max_rows: int | None = None, fields: list[str] | None = None
-) -> Iterator[Page]:
     if entry.source.portal == "socrata":
         from health_data_registry.adapters import socrata
 

@@ -66,11 +66,11 @@ def test_disallowed_paths_are_refused_and_robots_is_read_once(monkeypatch: pytes
 def test_crawl_delay_is_honoured_within_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     fake(monkeypatch, {"data.cdc.gov": "User-agent: *\nCrawl-delay: 20\n"})
     clock = Clock()
-    rb = crawl.Robots(HOSTS, sleep=clock.sleep, clock=clock, budget_s=45)
-    for _ in range(2):
+    rb = crawl.Robots(HOSTS, sleep=clock.sleep, clock=clock, budget_s=25)
+    for _ in range(3):
         rb.wait_turn("https://data.cdc.gov/a")
-    # 20 s after robots.txt and between pages; a host the 10 s floor doesn't target is charged all of it
-    assert clock.slept == [20.0, 20.0] and rb.waited == 40.0
+    # 20 s each; only the 10 s beyond our own 10 s floor is charged to the budget
+    assert clock.slept == [20.0, 20.0] and rb.waited == 20.0
     with pytest.raises(fetch_mod.FetchRefused) as e:
         rb.wait_turn("https://data.cdc.gov/a")
     assert e.value.code == "crawl_delay_budget"

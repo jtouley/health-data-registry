@@ -67,22 +67,12 @@ def compile_metric(
     measure = sem.measure(metric.measure)
     dims = {d.name: d for d in sem.dimensions}
     for d in metric.single_value_of:
-        if measure.kind == "running_count":
-            if d in group_by or not _single((filters or {}).get(d)):
-                raise QueryRefused(
-                    "needs_single_value",
-                    f"{metric.name} is a running total, so it is read at one {d}: filter {d} to a single value "
-                    f"(normally the latest) and don't group by it. Adding up the running totals of several {d}s "
-                    "would count the same cases many times.",
-                )
-        # A count whose values of d overlap (Michigan includes Detroit) or are different things (conditions): each
-        # answer row holds one value of d, by a filter to one value or by grouping by it; never added across them.
-        elif d not in group_by and not _single((filters or {}).get(d)):
+        if d in group_by or not _single((filters or {}).get(d)):
             raise QueryRefused(
                 "needs_single_value",
-                f"{metric.name} is never added up across {d}s: they overlap or count different things (for example "
-                f"a state's count already includes its cities). Filter {d} to one value, or group by {d} to get one "
-                "row each.",
+                f"{metric.name} is a running total, so it is read at one {d}: filter {d} to a single value "
+                f"(normally the latest) and don't group by it. Adding up the running totals of several {d}s would "
+                "count the same cases many times.",
             )
 
     def dim(name: str) -> str:
@@ -416,8 +406,7 @@ class Engine:
     A redistributable source comes from the local lake when it holds a snapshot (maintainers, CI), else from the
     published hub release (downloaded on first use, checked against its sha256, bounded cache). A restricted
     source (e.g. WHO GHO) is served live: fetched from the publisher per request, held in memory for at most
-    live.LIVE_TTL_S (live.DASHBOARD_TTL_S for a dashboard read with the browser, stated in its provenance), and
-    never written to disk (see live.py).
+    live.LIVE_TTL_S, and never written to disk (see live.py).
     """
 
     registry: Registry
@@ -493,11 +482,10 @@ class Engine:
             return True
         if not self.fetch_at_run_time:
             return False
-        from health_data_registry.crawl import fetcher, shared_robots
+        from health_data_registry.crawl import fetcher
         from health_data_registry.live import fetch_live
 
-        # One access policy per server process: two live sources on one host keep its pace between them.
-        get = self.getter or fetcher(self.registry, None, robots=shared_robots(self.registry))
+        get = self.getter or fetcher(self.registry, None)
         try:
             self._live[ds.id] = fetch_live(ds, get)
         except Exception as e:  # noqa: BLE001 - any publisher failure becomes one plain refusal

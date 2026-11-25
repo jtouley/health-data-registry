@@ -58,7 +58,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Final
-from urllib.parse import SplitResult, urljoin, urlsplit
+from urllib.parse import SplitResult, urlencode, urljoin, urlsplit
 
 from health_data_registry import __version__
 
@@ -499,8 +499,13 @@ def fetch(
     max_bytes: int = 50_000_000,
     timeout: float = 60.0,
     headers: Mapping[str, str] | None = None,
+    form: Mapping[str, str] | None = None,
 ) -> FetchResult:
     """GET ``url`` from a catalogued host over HTTPS, following checked redirects. See the module doc.
+
+    With ``form``, the request is a POST of those fields, URL-encoded (Tableau's bootstrapSession, which hands
+    out a public view's aggregate data only in answer to a form post). A POST is never redirected: a publisher
+    that answers one with a redirect is refused, so a form is never re-sent anywhere else.
 
     Args:
         url: the link from the catalog.
@@ -508,6 +513,7 @@ def fetch(
         max_bytes: cap on the body, on the wire and after decompression.
         timeout: deadline for the whole fetch, redirects included, in seconds.
         headers: extra request headers (e.g. an API app token), sent only to the original host.
+        form: fields to POST instead of a GET (the same host checks, no redirects).
 
     Raises:
         FetchRefused: with a ``code`` and a plain-language ``message``.
@@ -518,6 +524,7 @@ def fetch(
     if not timeout > 0:
         raise ValueError(f"timeout must be positive, got {timeout!r}")
     extra = _check_headers(headers)
+    payload = None if form is None else urlencode(dict(form)).encode("ascii")
     proxy = _proxy_from_env()
     if proxy is not None:
         _warn_proxy_once()
@@ -539,16 +546,26 @@ def fetch(
             "Accept": "*/*",
             "Accept-Encoding": "gzip, deflate",
             "Connection": "close",
+            **({"Content-Type": "application/x-www-form-urlencoded"} if payload is not None else {}),
             **(extra if host == origin_host else {}),
         }
         watchdog = _Watchdog(connection, deadline.remaining())
         response: http.client.HTTPResponse | None = None
         try:
-            connection.request("GET", target, headers=request_headers)
+            if payload is None:
+                connection.request("GET", target, headers=request_headers)
+            else:
+                connection.request("POST", target, body=payload, headers=request_headers)
             if connection.live_socket is not None:
                 connection.live_socket.settimeout(min(READ_TIMEOUT_S, deadline.remaining()))
             response = connection.getresponse()
             status = response.status
+            if status in REDIRECT_STATUSES and payload is not None:
+                raise FetchRefused(
+                    "http_error",
+                    "The publisher answered a form post with a redirect, which is not followed.",
+                    status=status,
+                )
             if status in REDIRECT_STATUSES:
                 location = response.getheader("Location")
                 if not location:

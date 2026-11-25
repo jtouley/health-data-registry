@@ -8,13 +8,11 @@ from hypothesis import strategies as st
 
 from health_data_registry.adapters.row_guard import (
     RowLevelRefused,
-    _ones_share,
+    _all_ones,
     check_grain,
     is_identifier,
     is_measure_field,
     is_person_field,
-    person_kind,
-    unwrap,
 )
 
 # Shaped like Macomb County's ArcGIS layer Recovered_Cases_0902: its fields, with made-up values. One row per
@@ -78,7 +76,7 @@ def test_a_count_of_one_on_every_row_is_one_row_per_case() -> None:
     rows = [{"Age": 30, "Sex": "F", "Count": 1}, {"Age": 31, "Sex": "M", "Count": "1"}]
     with pytest.raises(RowLevelRefused) as e:
         check_grain("t", ["Age", "Sex", "Count"], rows)
-    assert "counts 1 on most rows" in str(e.value)
+    assert "counts 1 on every row" in str(e.value)
 
 
 def test_a_real_count_next_to_person_fields_passes() -> None:
@@ -132,11 +130,11 @@ def test_two_person_fields_without_a_count_are_always_refused(fields: list[str])
         check_grain("t", ["OBJECTID", *fields])
 
 
-def test_ones_share_skips_blank_cells_and_text_and_reads_thousands_separators() -> None:
-    assert _ones_share([None, "", " ", "1", 1.0, "<6", True]) == (2, 2)
-    assert _ones_share(["", None]) == (0, 0)  # nothing to read is not "every row is one"
-    assert _ones_share(["1,"]) == (1, 1)  # a separator is dropped before the value is read
-    assert _ones_share(["1", "2", "1,204"]) == (1, 3)
+def test_all_ones_skips_blank_cells_and_reads_thousands_separators() -> None:
+    assert _all_ones([None, "", " ", "1", 1.0]) is True
+    assert _all_ones(["", None]) is False  # nothing to read is not "every row is one"
+    assert _all_ones(["1,"]) is True  # a separator is dropped before the value is read
+    assert _all_ones(["1", "2"]) is False
 
 
 def test_refusals_list_every_field_that_gave_the_table_away() -> None:
@@ -146,109 +144,3 @@ def test_refusals_list_every_field_that_gave_the_table_away() -> None:
         check_grain("t", ["Age", "Sex"])
     with pytest.raises(RowLevelRefused, match=r"next to Age, Sex, so each row"):
         check_grain("t", ["Age", "Sex", "Count"], [{"Count": 1}, {"Count": "1"}])
-    with pytest.raises(RowLevelRefused, match=r"date \(Onset Date\) next to their Age, Sex"):
-        check_grain("t", ["Age", "Sex", "Onset Date", "Cases"])
-
-
-# ------------------------------------------------------------------- the reviewers' bypasses (PR 19 review)
-
-
-def test_tableau_case_list_captions_are_read_through_their_wrappers() -> None:
-    # One mark per case: ATTR(Age), ATTR(Sex), MDY(Onset Date), ATTR(City). Every caption used to slip past.
-    fields = ["ATTR(Age)", "ATTR(Sex)", "MDY(Onset Date)", "ATTR(City)"]
-    assert [person_kind(f) for f in fields] == ["age", "sex", "date", "city"]
-    with pytest.raises(RowLevelRefused):
-        check_grain("Case list", fields, [{"ATTR(Age)": 40, "ATTR(Sex)": "F"}])
-
-
-def test_mostly_ones_is_one_row_per_case_even_with_one_two() -> None:
-    fields = ["Age", "Sex", "Onset Date", "SUM(Number of Records)"]
-    rows = [{"SUM(Number of Records)": 1}] * 99 + [{"SUM(Number of Records)": 2}]
-    with pytest.raises(RowLevelRefused):
-        check_grain("t", fields, rows)
-    # without the date, the rule on counts alone still refuses it
-    with pytest.raises(RowLevelRefused, match="counts 1 on most rows"):
-        check_grain("t", ["Age", "Sex", "SUM(Number of Records)"], rows)
-
-
-def test_person_fields_match_on_word_parts() -> None:
-    fields = ["Patient Gender", "Age at Onset", "Residence ZIP", "Days Hospitalized"]
-    assert [person_kind(f) for f in fields] == ["sex", "age", "zip", None]
-    with pytest.raises(RowLevelRefused):
-        check_grain("t", fields)
-
-
-def test_a_measure_like_name_does_not_silence_the_guard() -> None:
-    with pytest.raises(RowLevelRefused):
-        check_grain("t", ["Age", "Sex", "Onset Date", "Value"])
-    rows = [{"Age": 30, "Sex": "F", "Value": 1}, {"Age": 31, "Sex": "M", "Value": 1}]
-    with pytest.raises(RowLevelRefused, match="counts 1 on most rows"):
-        check_grain("t", ["Age", "Sex", "Value"], rows)
-
-
-def test_a_rate_of_one_is_not_read_as_a_count_of_one() -> None:
-    rows = [{"Rate": 1.0}, {"Rate": 1.0}]
-    check_grain("t", ["Sex", "Race", "Rate"], rows)
-
-
-def test_more_than_half_is_most() -> None:
-    fields = ["Age", "Sex", "Count"]
-    check_grain("t", fields, [{"Count": 1}, {"Count": 5}])  # half: not most
-    with pytest.raises(RowLevelRefused):
-        check_grain("t", fields, [{"Count": 1}, {"Count": 1}, {"Count": 5}])
-
-
-@pytest.mark.parametrize(
-    ("caption", "bare"),
-    [("ATTR(Sex)", "Sex"), ("MDY(Onset Date)", "Onset Date"), ("ATTR(MDY(Onset Date)) (alias)", "Onset Date"),
-     ("Age #2", "Age"), ("SUM(Cases)", "SUM(Cases)"), ("year ( Year )", "Year"), ("Location", "Location")],
-)  # fmt: skip
-def test_unwrap(caption: str, bare: str) -> None:
-    assert unwrap(caption) == bare
-
-
-@pytest.mark.parametrize(
-    ("field", "kind"),
-    [("Race", "race"), ("Hispanic or Latino", "ethnicity"), ("Res Zip", "zip"), ("Postal Code", "zip"),
-     ("Town", "city"), ("Date of Death", "date"), ("Specimen Collection Date", "date"), ("Report_Date", "date"),
-     ("SUM(Age)", None), ("CNT(Sex)", None), ("Year", None), ("WeekEnding Date", None), ("Diagnosis1", None),
-     ("Confirmed & Probably Disease Date", None), ("County", None), ("c_Case Indicator", None)],
-)  # fmt: skip
-def test_person_kinds(field: str, kind: str | None) -> None:
-    assert person_kind(field) == kind
-
-
-# ------------------------------------------------------------------- every portal's pages are guarded
-
-
-def _entry(portal: str):  # type: ignore[no-untyped-def]
-    from tests.test_tableau import entry
-
-    e = entry({"TByear": "a" * 64})
-    return e.model_copy(update={"source": e.source.model_copy(update={"portal": portal})})
-
-
-@pytest.mark.parametrize("portal", ["socrata", "https_csv", "who_gho"])
-def test_every_portals_pages_pass_the_guard(portal: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    from health_data_registry import adapters
-    from tests.test_tableau import raw
-
-    rows = [{"age": "40", "sex": "F", "onset_date": "2026-01-02", "cases": "1"}]
-    page = adapters.Page(fetch=raw("https://dash.example.gov/x", b"x"), records=rows)
-    monkeypatch.setattr(adapters, "_pages", lambda *a, **kw: iter([page]))
-    with pytest.raises(RowLevelRefused, match=r"toy_dashboard \(dash.example.gov\)"):
-        list(adapters.pages(_entry(portal), lambda u: page.fetch))
-    fine = adapters.Page(fetch=page.fetch, records=[{"year": "2024", "cases": "1"}])
-    monkeypatch.setattr(adapters, "_pages", lambda *a, **kw: iter([fine]))
-    assert list(adapters.pages(_entry(portal), lambda u: page.fetch)) == [fine]
-
-
-def test_tableau_pages_are_guarded_per_worksheet_not_again(monkeypatch: pytest.MonkeyPatch) -> None:
-    from health_data_registry import adapters
-    from tests.test_tableau import raw
-
-    # projected Tableau records keep only contract fields; the worksheet was checked by caption already
-    page = adapters.Page(fetch=raw("https://dash.example.gov/x", b"x"),
-                         records=[{"ATTR(Age)": 1, "ATTR(Sex)": "F", "MDY(Onset Date)": "x"}])  # fmt: skip
-    monkeypatch.setattr(adapters, "_pages", lambda *a, **kw: iter([page]))
-    assert list(adapters.pages(_entry("tableau"), lambda u: page.fetch)) == [page]

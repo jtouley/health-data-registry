@@ -461,8 +461,7 @@ def test_fetcher_arguments_and_retries(tmp_path: Path, reg: Registry, monkeypatc
     get = crawl.fetcher(reg, None, sleep=sleeps.append, robots=False)
     with pytest.raises(fetch_mod.FetchRefused):
         get("https://data.cdc.gov/x")
-    # a plain open-data host keeps the short backoff; the 10 s pace is for the hosts the access policy targets
-    assert len(seen) == crawl.RETRIES == 4 and sleeps == [2, 4, 8]
+    assert len(seen) == crawl.RETRIES == 4 and sleeps == [10, 20, 40]  # never sooner than the 10 s pace
     url, kw = seen[0]
     assert url == "https://data.cdc.gov/x"
     assert kw == {
