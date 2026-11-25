@@ -60,10 +60,12 @@ How NNDSS annual counts are read: the tool takes CDC's running year-to-date colu
 that year. Weekly counts are **never** added up to make a year, because late reports land in the running total,
 not in the week they happened: for Michigan in 2023, adding the weekly column gives 62 cases, the year-end running
 total 103. A year-to-date column is added across places only at one week; the tool refuses it otherwise.
+`query_sql` follows the same rules: it refuses a sum of weekly counts or of year-to-date counts across weeks, and
+a sum across places leaves CDC's total rows (US, regions, territories combined) out.
 
-An empty NNDSS count flagged `-` is CDC's "no reported cases" (dataset notes), so it is read as **0**, with the
-flag kept beside it. Every other flag (`U` unavailable, `N` not reportable, `NN`, `NP`, `NC`) leaves the cell
-empty, never zero.
+An empty NNDSS count flagged `-` is CDC's "no reported cases" (dataset notes). It comes back empty, with the flag
+and its meaning beside it, and is **never read as 0**: no total, rate or trend point is worked out from it. Every
+other flag (`U` unavailable, `N` not reportable, `NN`, `NP`, `NC`) leaves the cell empty too.
 
 Other sources:
 
@@ -76,18 +78,18 @@ Other sources:
 ## Empty cells: suppression and missing codes
 
 An empty value means the publisher marked it missing, not reportable or suppressed. **It is never a zero**, and
-the tool never fills it in or back-calculates it. The one exception is a code the publisher's own codebook
-defines as "no reported cases" (NNDSS `-`): that cell is read as 0, always with its flag beside it.
+the tool never fills it in or back-calculates it. That includes a code the publisher's codebook defines as "no
+reported cases" (NNDSS `-`): the cell stays empty, with its flag and that meaning beside it.
 
 | Source | What an empty cell can mean |
 |---|---|
-| NNDSS weekly | A flag explains it: `U` the jurisdiction could not send data; `N` not reportable there; `NN` not nationally notifiable; `NP` notifiable but not published; `NC` not calculated. A flag of `-` with an empty count means no reported cases (dataset notes), so it is read as 0 with the flag kept. |
+| NNDSS weekly | A flag explains it: `U` the jurisdiction could not send data; `N` not reportable there; `NN` not nationally notifiable; `NP` notifiable but not published; `NC` not calculated. A flag of `-` with an empty count means no reported cases (dataset notes); it stays empty with the flag, never 0. |
 | NHSN resistance | Resistant count and percent resistant are shown only when at least 20 isolates were tested; smaller cells are empty. |
 | RESP-NET | Some estimated cumulative rates for the current season are published empty. |
 | WHO tuberculosis | No value published for that country and year. |
 
-NNDSS's `-` stays stored as published (empty, with the flag); only reading it turns it into 0, labelled "no
-reported cases". A maintainer confirms this on review of the contract (its `noCasesCode`).
+NNDSS's `-` is stored and returned as published (empty, with the flag). Whether it ever means a true zero is an
+open question in the contract until a maintainer declares it from CDC's documentation.
 
 ## Uncertainty
 
@@ -169,6 +171,8 @@ like it rose or fell.
   [ndc.services.cdc.gov](https://ndc.services.cdc.gov/)). NNDSS does not publish confirmed and probable cases
   separately here, so each count may combine them as the condition's definition allows, and they cannot be split.
 - **C. auris:** clinical cases and screening (colonisation) cases are separate series. Never add them.
+  Screening counts people found to carry *C. auris*, not new cases of disease, so the tools give no rate per
+  100,000 people for it (the NNDSS contract's `notIncidence`); its counts are still returned.
 - **RESP-NET** counts only laboratory-confirmed COVID-19, influenza and RSV hospitalisations.
 - **NHSN** covers pathogens from healthcare-associated infections reported to NHSN (CLABSI, CAUTI and SSI). It is
   not all clinical isolates in a state. Some phenotypes count non-susceptible rather than strictly resistant

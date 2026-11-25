@@ -227,7 +227,7 @@ sources:
       data_type: varchar
       description: Publisher field m1, as text; read into m1 (Cases reported for this condition and area in this
         MMWR week (publisher column 'Current week'). Empty when the flag column m1_flag holds a code; '-' means
-        no reported cases.)
+        no reported cases, and the count stays empty (never read as 0).)
     - name: m1_flag
       data_type: varchar
       description: 'Publisher field m1_flag, as text; read into m1_flag (Why the current-week count is empty. Codes

@@ -386,7 +386,7 @@ the same, preceding and following 4 weeks in each of the past 5 years.
 
 **Returns:** `location`, `condition`, `year`, `weeks`, `current_4_week_total`, `historical_mean`, `historical_sd`,
 `ratio`, `lower_limit`, `upper_limit`, `signal` (above, below or within limits), `source_id`, `computed`. A
-missing week is never counted as zero: it refuses instead. A flag means more or fewer reports than usual, not an
+week with no number, CDC's `-` (no reported cases) included, is never counted as zero: it refuses instead. A flag means more or fewer reports than usual, not an
 outbreak.
 
 **Try:** "Were legionellosis reports in Michigan unusual in week 20 of 2024?"
@@ -406,9 +406,10 @@ Results are capped at 5,000 rows, in pages when they are long (see [pages](#long
 `ORDER BY` is run with `ORDER BY ALL`, so its rows and pages come in a fixed order.
 
 It refuses anything but a careful read: more than one statement, anything that writes or reads files, functions
-not on its allowlist, joins between tables that aren't declared, and queries that run too long. Prefer the named
-tools: they apply the contract's rules for you (which rows are totals, what can be added up), and `query_sql`
-leaves that to whoever writes the query.
+not on its allowlist, joins between tables that aren't declared, and queries that run too long. A sum follows
+the contract's rules too: across places it leaves the publisher's total rows out (the method says so); it never
+adds weekly counts or year-to-date counts across weeks; and an empty value (CDC's `-` included) stops it rather
+than counting as 0. Prefer the named tools: they apply every rule of the contract for you.
 
 ## When a tool says no
 
@@ -423,6 +424,9 @@ The common ones:
 | "Rates and estimates can't be added up …" | More than one published rate matches, and rates are never combined | Choose the breakdown it names |
 | "… is a running total, so it is read once per …" or "… is read at one …" | A running total asked for the wrong way | Ask by year, for one place at a time, or at one week |
 | "'…' matches more than one series …" | `compare_rates` needs the same series on both sides | Use the full name of one series |
+| "No rate per 100,000 people is given for '…'" | The counts are not new cases of disease in people (animal rabies; *C. auris* screening, which finds colonisation) | Use `get_series` for the counts, or ask about the clinical cases |
+| "This would add up counts across several weeks …" | Weekly counts of a year undercount it: late reports reach only the year-to-date count | Ask `get_series` for the year, or ask for one week |
+| "This sum includes a value the publisher left empty …" | `query_sql` met an empty value (no reported cases, unavailable or suppressed), which is never counted as 0 | Ask for the rows without adding them up, or use `get_series` |
 | "Population counts (Census) aren't loaded yet …" | `get_rate` has no denominator on this setup | Use `get_series`, or a published rate |
 | "… could not be reached to download …" | A restricted source (WHO) is fetched from the publisher, and the publisher's site didn't answer | Try again in a few minutes |
 | "The hub release … has no file …" or "… does not list …" | The hub release the server reads from is incomplete | Try again later, or [open an issue](https://github.com/jtouley/health-data-registry/issues) |

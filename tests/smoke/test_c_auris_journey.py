@@ -166,13 +166,17 @@ def test_step5_rates_use_the_census_denominator_and_are_never_summed(journey: Jo
     rows = {r["condition"]: r for r in client.table_rows(out)}
     assert set(rows) == {CLINICAL, SCREENING}
     # Hard rule 2: the 95% interval comes back with every rate. Pinned to the exact Poisson (Garwood) bounds for
-    # 21 and 57 cases in 1,000,000, so a change of interval method fails here too.
-    expected = ((CLINICAL, "21.0", "2.1", "1.3", "3.21"), (SCREENING, "57.0", "5.7", "4.317", "7.385"))
-    for cond, cases, rate, lower, upper in expected:
-        r = rows[cond]
-        assert (r["cases"], r["population"], r["rate_per_100k"]) == (cases, "1000000.0", rate)
-        assert (r["lower_95"], r["upper_95"]) == (lower, upper), r
-        assert float(r["lower_95"]) <= float(r["rate_per_100k"]) <= float(r["upper_95"])
+    # 21 cases in 1,000,000, so a change of interval method fails here too.
+    r = rows[CLINICAL]
+    assert (r["cases"], r["population"], r["rate_per_100k"]) == ("21.0", "1000000.0", "2.1")
+    assert (r["lower_95"], r["upper_95"]) == ("1.3", "3.21"), r
+    assert float(r["lower_95"]) <= float(r["rate_per_100k"]) <= float(r["upper_95"])
+    # Screening counts colonisation found by screening, not new cases of disease (the contract's notIncidence),
+    # so its count comes back with no rate per 100,000 people (issue #173; it was 5.7).
+    s = rows[SCREENING]
+    assert (s["cases"], s["rate_per_100k"], s["lower_95"], s["upper_95"]) == ("57.0", "", "", ""), s
+    assert "not new cases of disease" in s["flags"]
+    for r in rows.values():
         assert (r["case_source"], r["population_source"]) == (NNDSS, CENSUS)
         assert "provisional" in r["flags"]
     assert "Garwood) 95% interval" in out
@@ -296,14 +300,14 @@ def test_trial_measles_returns_indigenous_and_imported_apart(
         ("Measles, Indigenous", "2023"): ("1", ""),
         ("Measles, Imported", "2023"): ("3", ""),
         ("Measles, Indigenous", "2024"): ("6", ""),
-        # Imported 2024 is empty with '-' in every week. The zero comes from the publisher's codebook, not a
-        # guess (hard rule 1): the NNDSS contract quotes the dataset notes, '-' = no reported cases, as m3's
-        # noCasesCode. The flag stays beside it and the row says why, so the zero is never a bare number.
-        ("Measles, Imported", "2024"): ("0", "-"),
+        # Imported 2024 is empty with '-' in every week: it comes back empty with its flag and the codebook's
+        # meaning (no reported cases), never as 0 (issue #173).
+        ("Measles, Imported", "2024"): ("", "-"),
     }, out
     assert journey.registry.get(NNDSS).contract.flag_column("m3").no_cases_code == "-"  # type: ignore[union-attr]
     (imported_2024,) = [r for r in rows if r["condition"] == "Measles, Imported" and r["year"] == "2024"]
-    assert "no reported cases" in imported_2024["period_status"], imported_2024
+    assert "'-' = no reported cases" in imported_2024["period_status"], imported_2024
+    assert "never read as 0" in imported_2024["period_status"], imported_2024
     assert_provenance_on_every_number(journey, out)
     scored = score_question(trials["trial-29479c90"], journey.calls, journey.responses, client.answer([out]))
     assert scored.a.passed, scored

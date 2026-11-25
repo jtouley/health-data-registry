@@ -22,7 +22,7 @@ measures:
   - {name: cases_prior_year_to_date, column: m4, kind: running_count, unit: "cases", description: "Cumulative cases in the previous MMWR year up to the same week; a running total, added across places only at one week."}
 metrics:
   - name: weekly_cases
-    description: "Number of cases of one notifiable condition label reported in a given week, added across the chosen places and weeks; one row per label, never added across labels."
+    description: "Number of cases of one notifiable condition label reported in a given week, added across the chosen places (total rows left out); one row per label and per week: weeks are never added into a year, because late reports reach only the year-to-date count (annual_cases reads that)."
     measure: cases_this_week
     aggregation: sum
     exclude_total_rows: true
@@ -65,7 +65,7 @@ metrics:
     exclude_total_rows: false
     filters: ["upper(states) IN ('US RESIDENTS', 'U.S. RESIDENTS')"]
   - name: us_resident_weekly_cases
-    description: "Cases among US residents reported in a given week, read from the published US RESIDENTS row and added across weeks."
+    description: "Cases among US residents reported in a given week, read from the published US RESIDENTS row; one row per week, never added into a year (us_resident_annual_cases reads the year)."
     measure: cases_this_week
     aggregation: sum
     exclude_total_rows: false

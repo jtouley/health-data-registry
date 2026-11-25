@@ -955,7 +955,7 @@ def _dataset_notes(ds: Dataset, m: Any, method: str, got: Sequence[SeriesRow]) -
             f"{ds.id}: the flag column gives the publisher's reason for an empty value: "
             + "; ".join(f"'{c}' = {t}" for c, t in pairs.items())
             + ". '-' means no cases were reported, which is different from data that are unavailable or not "
-            "published."
+            "published; it is shown empty with its flag, never as 0, so no total or rate is worked out from it."
         )
     return notes
 

@@ -620,7 +620,7 @@ def test_signal_flags_the_outbreak_by_hand(env: tuple[Registry, Engine]) -> None
 def test_signal_refusals(env: tuple[Registry, Engine]) -> None:
     reg, eng = env
     gap = analysis.check_signal(reg, eng, condition="legionellosis", location="Ohio", year=2024, week=30)
-    assert "can't be counted as zero" in str(gap) and "2022 weeks" in str(gap)
+    assert "never counted as zero" in str(gap) and "2022 weeks" in str(gap)
     short = analysis.check_signal(
         reg, eng, condition="legionellosis", location="Michigan", year=2018, week=20
     )

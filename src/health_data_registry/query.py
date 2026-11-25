@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
+import sqlglot
 
 from health_data_registry import deadline
 from health_data_registry.registry import (
@@ -27,7 +28,14 @@ from health_data_registry.registry import (
     unpinned_non_additive,
 )
 from health_data_registry.registry import label_key_sql as registry_label_key_sql
-from health_data_registry.sql_guard import GuardedQuery, guard_sql, harden, run_guarded
+from health_data_registry.sql_guard import (
+    GuardedQuery,
+    SumRules,
+    guard_sql,
+    harden,
+    run_guarded,
+    weekly_sum_message,
+)
 from health_data_registry.store import Manifest, latest_snapshot, snapshot_dir
 
 MAX_ROWS = 5000
@@ -61,6 +69,11 @@ NEXT_STEPS: dict[str, str] = {
     "one on its own row.",
     "not_a_human_count": "Use get_series to read these counts as published; they are not cases in people, so "
     "there is no rate per 100,000 people.",
+    "not_incidence": "Use get_series to read these counts as published, or ask about the clinical cases, which "
+    'do take a rate. For a trend in the counts themselves, ask get_trend with fit_on="counts".',
+    "weekly_sum": "Use get_series for each year's count, which reads the year-to-date figure at the year's last "
+    "week, or ask for one week at a time.",
+    "empty_in_sum": "Ask for the rows without adding them up, to see each value with its flag, or use get_series.",
     "bad_page": "Ask for page=1, or leave page out.",
     "no_such_page": "Ask for a page the answer has, or leave page out for page 1.",
     "bad_pin": "Copy the Next line from the previous page exactly, or ask again without page and pin.",
@@ -88,6 +101,18 @@ class QueryRefused(ValueError):
 
 def _q(ident: str) -> str:
     return '"' + ident.replace('"', '""') + '"'
+
+
+def within_period(sem: Any) -> str | None:
+    """The dimension a source's running total is kept along within each period (NNDSS: mmwr_week), or None.
+
+    Declared by the semantic model's cumulative_latest metric (its order_by). In such a source, late reports are
+    added to the running total, not to the week they belong to, so a count per week is never added up across
+    that dimension into a period's total: the running total at the period's last week is the period's count.
+    """
+    return next(
+        (str(m.order_by) for m in sem.metrics if m.aggregation == "cumulative_latest" and m.order_by), None
+    )
 
 
 @dataclass(frozen=True)
@@ -134,6 +159,15 @@ def compile_metric(
                 f"a state's count already includes its cities). Filter {d} to one value, or group by {d} to get one "
                 "row each.",
             )
+    within = within_period(sem)
+    if (
+        metric.aggregation == "sum"
+        and measure.kind == "count"
+        and within is not None
+        and within not in group_by
+        and not is_single_value((filters or {}).get(within))
+    ):
+        raise QueryRefused("weekly_sum", weekly_sum_message(within))
 
     def dim(name: str) -> str:
         if name not in dims:
@@ -228,15 +262,14 @@ def compile_metric(
     params = params + period_params
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
     if metric.aggregation == "sum":
-        # A group with any empty (suppressed or missing) value has no total: sum() would skip the empty rows and
-        # return a smaller number as if it were the whole count. suppressed_rows says how many were empty. An
-        # empty value whose flag is the codebook's "no reported cases" code is a zero, not a gap.
+        # A group with any empty value has no total: sum() would skip the empty rows and return a smaller number
+        # as if it were the whole count. suppressed_rows says how many were empty. An empty value is never read
+        # as 0, whatever its flag: the codebook's "no reported cases" code ('-') stays an empty value with its
+        # flag, never a number (issue #173).
         zero = flag.no_cases_code if flag else None
-        is_empty = f"{m_col} IS NULL" + (
-            f" AND {_q(flag.name)} IS DISTINCT FROM {_lit(zero)}" if flag and zero is not None else ""
-        )
+        is_empty = f"{m_col} IS NULL"
         empty = f"count(*) FILTER (WHERE {is_empty})"
-        total = f"coalesce(sum({m_col}), 0)" if zero is not None else f"sum({m_col})"
+        total = f"sum({m_col})"
         sel = [
             *select_dims,
             f"CASE WHEN {empty} = 0 THEN {total} END AS {_q(metric.name)}",
@@ -263,8 +296,8 @@ def compile_metric(
             + ". A group with any suppressed or missing value has no total (never a partial sum); "
             "suppressed_rows gives how many of its values were empty."
             + (
-                f" An empty value flagged '{zero}' counts as 0: the publisher's codebook defines '{zero}' as no "
-                "reported cases."
+                f" An empty value flagged '{zero}' (no reported cases, in the publisher's codebook) is not read as 0: "
+                "it stays empty with its flag, so a group that has one has no total."
                 if zero is not None
                 else ""
             )
@@ -301,6 +334,29 @@ def non_additive_columns(ds: Dataset) -> frozenset[str]:
         d.column
         for d in ds.semantic.dimensions
         if d.non_additive or (d.non_additive is None and d.type == "categorical")
+    )
+
+
+def sum_rules(ds: Dataset) -> SumRules:
+    """What a typed-SQL sum over this source must respect (sql_guard.SumRules), from its contract and model:
+    the contract's totalRows and the columns that name an area (series' place dimensions and the columns
+    totalRows reads), its measure columns (an empty one never counts as 0), and, where the model keeps a running
+    total within each period, the per-week counts and running totals never added up across weeks."""
+    sem = ds.semantic
+    places = [s.location_dimension for s in sem.series] + [g.location_dimension for g in sem.generic_series]
+    areas = {sem.dimension(p).column for p in places if p}
+    if ds.contract.total_rows:
+        tree = sqlglot.parse_one(ds.contract.total_rows, dialect="duckdb")
+        areas |= {c.name for c in tree.find_all(sqlglot.exp.Column)}
+    within = within_period(sem)
+    return SumRules(
+        total_rows=ds.contract.total_rows,
+        areas=frozenset(a.casefold() for a in areas),
+        measures=frozenset(c.name.casefold() for c in ds.contract.columns if c.role == "measure"),
+        per_week=frozenset(
+            m.column.casefold() for m in sem.measures if within and m.kind in ("count", "running_count")
+        ),
+        within=sem.dimension(within).column.casefold() if within else None,
     )
 
 
@@ -394,12 +450,6 @@ def _compile_cumulative(
             f"arg_max({v}, {ob}) FILTER (WHERE {v} IS NOT NULL) AS v, "
             f"max({ob}) FILTER (WHERE {v} IS NOT NULL) AS v_at, max({ob}) AS last_at, {last_flag} AS last_flag"
         )
-        if fc is not None and fc.no_cases_code is not None:
-            # Every empty value in the period carries the codebook's "no reported cases" code.
-            aggs += (
-                f", coalesce(bool_and(coalesce({_q(fc.name)}, '') = {_lit(fc.no_cases_code)}) "
-                f"FILTER (WHERE {v} IS NULL), false) AS none_reported"
-            )
         return f"SELECT {cols}, {aggs} FROM base GROUP BY ALL"  # noqa: S608 - quoted contract identifiers
 
     m_flag = ds.contract.flag_column(m_col)
@@ -408,19 +458,17 @@ def _compile_cumulative(
         f" || ': ' || {_flag_text(m_flag, 'c.last_flag')} || ')' ELSE '' END"
     )
     zero = m_flag.no_cases_code if m_flag else None
-    # A period whose running total is empty in every week, each flagged with the codebook's "no reported cases"
-    # code, has no reported cases: read as 0 and labelled so (never stored as a number).
-    none_status = (
-        f" WHEN c.v IS NULL AND c.none_reported THEN CASE WHEN {{ended}} THEN 'provisional: as published at {span} "
-        f"end: no reported cases (through {unit} ' || c.last_at || '; flag ''{zero}'' = no reported cases)' ELSE "
-        f"'provisional: running total so far: no reported cases (through {unit} ' || c.last_at || '; flag "
-        f"''{zero}'' = no reported cases)' END"
+    # A period with no number (e.g. '-' in every week) stays empty, with its flag: the codebook's "no reported
+    # cases" code is never read as 0, so it is never added up or turned into a rate (issue #173).
+    not_zero = (
+        f" || CASE WHEN c.last_flag = {_lit(zero)} THEN '; shown as published, never read as 0' ELSE '' END"
         if zero is not None
         else ""
     )
     status = (
-        f"CASE{none_status} WHEN c.v IS NULL THEN 'no number published through {unit} ' || c.last_at"
+        f"CASE WHEN c.v IS NULL THEN 'no number published through {unit} ' || c.last_at"
         f" || CASE WHEN c.last_flag <> '' THEN ' (flag: ' || {_flag_text(m_flag, 'c.last_flag')} || ')' ELSE '' END"
+        f"{not_zero}"
         f" WHEN c.v_at < c.last_at THEN 'incomplete: running total last published at {unit} ' || c.v_at"
         f" || ' of ' || c.last_at || {gap} || ', so this is not the {span} total'"
         f" WHEN {{ended}} THEN 'provisional: as published at {span} end (through {unit} ' || c.v_at || ')'"
@@ -428,8 +476,7 @@ def _compile_cumulative(
     )
     flag_out = "CASE WHEN c.v_at IS DISTINCT FROM c.last_at THEN nullif(c.last_flag, '') END"
     ctes = f"WITH base AS (SELECT * FROM {_q(ds.id)}{where_sql}), cur AS ({running(m_col, t)})"  # noqa: S608 - quoted contract identifiers
-    value = "CASE WHEN c.v IS NULL AND c.none_reported THEN 0 ELSE c.v END" if zero is not None else "c.v"
-    sel = [*(f"c.{_q(g)}" for g in group_by), f"{value} AS {_q(metric.name)}"]
+    sel = [*(f"c.{_q(g)}" for g in group_by), f"c.v AS {_q(metric.name)}"]
     columns = [*group_by, metric.name, "period_status", "flag"]
     join = ""
     if metric.restated_by:
@@ -988,6 +1035,7 @@ class Engine:
             max_rows=MAX_ROWS,
             ordered=True,
             non_additive={ds.id: non_additive_columns(ds) for ds in self.registry},
+            sum_rules={ds.id: sum_rules(ds) for ds in self.registry},
         )
         for t in sorted(q.tables):
             if t in self.registry.datasets:
@@ -1003,8 +1051,9 @@ class Engine:
         if len(ids) == 1:
             ds = self.registry.get(ids[0])
             out = envelope(
-                ds, self.manifests[ids[0]], cols, rows, sql=q.sql, params=[], method="Read-only SQL."
-            )
+                ds, self.manifests[ids[0]], cols, rows, sql=q.sql, params=[],
+                method=" ".join(["Read-only SQL.", *q.notes]),
+            )  # fmt: skip
             return out
         caveats = list(notices)
         for i in ids:  # each source's review state and licence travel with a joined answer too
@@ -1019,7 +1068,7 @@ class Engine:
             "rows": [list(r) for r in rows],
             "sql": q.sql,
             "sources": [_source(self.registry.get(i), self.manifests[i]) for i in ids],
-            "method": "Read-only SQL across datasets.",
+            "method": " ".join(["Read-only SQL across datasets.", *q.notes]),
             "caveats": caveats,
         }
 

@@ -71,7 +71,8 @@ models:
   - name: m1
     data_type: bigint
     description: Cases reported for this condition and area in this MMWR week (publisher column 'Current week').
-      Empty when the flag column m1_flag holds a code; '-' means no reported cases.
+      Empty when the flag column m1_flag holds a code; '-' means no reported cases, and the count stays empty (never
+      read as 0).
     meta:
       logical_type: integer
       physical_type: BIGINT
