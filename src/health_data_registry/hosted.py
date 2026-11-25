@@ -17,6 +17,10 @@ The same tools as the stdio server (server.build_server), with these rules on to
   whenever the bind address isn't the explicitly public 0.0.0.0 or ::.
 - One deadline per tool call (HDR_TOOL_TIMEOUT_S, default 200 s, under claude.ai's 240 s) that caps every
   fetch, retry and download (deadline.py); one call reads the engine at a time.
+- Every query runs in a child process with an OS memory limit and a hard kill at the deadline (isolation.py), so
+  no query can outrun its deadline, exhaust the server's memory or touch the server's state. Anything that outlives
+  its call anyway (a child that won't die, a tool body stuck in a library call, a hub download still running)
+  poisons the engine until it ends: new questions get a plain BUSY refusal that says so, and /healthz reports it.
 - Long answers come in pages (paging.py, in the tools layer, so stdio and the CLI page the same way): each page
   stays under HDR_PAGE_CHARS (default 120,000, both copies counted), carries real rows, its provenance and the
   exact call for the next page. HDR_MAX_RESULT_CHARS (default 140,000, under claude.ai's ~150,000) stays as a
@@ -55,7 +59,8 @@ from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from health_data_registry import __version__, tools
-from health_data_registry.deadline import DeadlineExceeded, call_deadline
+from health_data_registry.deadline import DeadlineExceeded, call_deadline, stragglers
+from health_data_registry.isolation import POISONED
 from health_data_registry.paging import MIN_PAGE_CHARS, page_budget, sign, wire_size
 from health_data_registry.server import Fmt, Out
 
@@ -199,8 +204,11 @@ class CallGuard:
 
     The engine lock is never held past a call's deadline: when a body ignores its deadline (stuck inside a library
     call), the guard interrupts every engine connection, takes the lock back from the stuck worker and answers.
-    The worker stops at its next step (query.Engine.connect checks the deadline) and never releases a lock it no
-    longer owns. At most MAX_WAITING calls queue for the engine; the rest get BUSY at once.
+    The worker never releases a lock it no longer owns. A thread can't be killed, so until the stuck worker ends
+    the engine is poisoned: every new call is refused in plain words (POISONED) before it touches the engine, so
+    nothing the stuck worker does can mix with the next question. The same holds while a query child won't die
+    (isolation.Isolation.poisoned) or a bounded download outlived its call (deadline.stragglers). At most
+    MAX_WAITING calls queue for the engine; the rest get BUSY at once.
     """
 
     def __init__(self, cfg: HostedConfig, metrics: Metrics, engine: Any = None) -> None:
@@ -211,6 +219,15 @@ class CallGuard:
         self._state = threading.Lock()  # guards _owner and _waiting
         self._owner: object | None = None  # the call that holds _lock now
         self._waiting = 0
+        self._stuck: list[threading.Thread] = []  # workers that outlived their deadline and are still running
+
+    def poisoned(self) -> bool:
+        """True while anything that outlived its call is still running; it clears itself when they end."""
+        with self._state:
+            self._stuck = [t for t in self._stuck if t.is_alive()]
+            stuck = bool(self._stuck)
+        isolation = getattr(self.engine, "isolation", None)
+        return stuck or stragglers() > 0 or (isolation is not None and bool(isolation.poisoned()))
 
     def _interrupt(self) -> None:
         """Interrupt every connection a call may be using: the engine's and its pinned engines' (later pages)."""
@@ -250,11 +267,18 @@ class CallGuard:
         box: dict[str, Any] = {"status": "error"}
         owner = object()
 
+        if self.poisoned():  # refused before any thread or lock: the earlier work may still be running
+            self.metrics.record(tool, "poisoned", time.monotonic() - start)
+            return tools.message(POISONED, fmt, refused="busy")
+
         def work() -> None:
             if not self._acquire(owner, budget - (time.monotonic() - start)):
                 box["status"], box["out"] = "busy", tools.message(BUSY, fmt, refused="busy")
                 return
             try:
+                if self.poisoned():  # became poisoned while this call waited for the engine
+                    box["status"], box["out"] = "poisoned", tools.message(POISONED, fmt, refused="busy")
+                    return
                 left = budget - (time.monotonic() - start)
                 with call_deadline(left):
                     box["out"], box["status"] = fn(), "ok"
@@ -272,6 +296,8 @@ class CallGuard:
         worker.join(budget + GRACE_S)
         if worker.is_alive():  # the body ignored its deadline (e.g. inside a library call): answer anyway
             self._interrupt()
+            with self._state:
+                self._stuck.append(worker)  # poisoned until it ends: no new call runs beside it
             self._release(owner)  # never let the stuck worker hold the engine for the calls behind it
             box["status"], box["out"] = "timeout", tools.refusal(DeadlineExceeded(budget), fmt)
         out: Out = box["out"]
@@ -540,6 +566,7 @@ def build_hosted(
     `host` is the address the server binds to: Host and Origin are checked unless it is explicitly public.
     """
     from health_data_registry.hub import Hub
+    from health_data_registry.isolation import Isolation
     from health_data_registry.query import Engine
     from health_data_registry.registry import load_registry
     from health_data_registry.server import build_server
@@ -550,7 +577,9 @@ def build_hosted(
         cfg.cache.mkdir(parents=True, exist_ok=True)
         hub = Hub(url=cfg.hub_url, cache=cfg.cache)
         # Never a local lake: an empty directory that nothing writes to, so only the hub and live tiers answer.
-        engine = Engine(registry=reg, lake=cfg.cache / "no-local-lake", hub=hub, cache=cfg.cache)
+        # Every query runs in a killable child process (isolation.py).
+        engine = Engine(registry=reg, lake=cfg.cache / "no-local-lake", hub=hub, cache=cfg.cache,
+                        isolation=Isolation())  # fmt: skip
     metrics = Metrics(cfg.metrics_every_s, clock=clock)
     guard = CallGuard(cfg, metrics, engine)
     limiter = RateLimiter(cfg.rate_per_session, cfg.rate_global, clock=clock)
@@ -558,13 +587,18 @@ def build_hosted(
     mcp = build_server(reg, engine, guard=guard)
 
     async def healthz(_: Request) -> Response:
+        poisoned = guard.poisoned()
+        isolation = getattr(engine, "isolation", None)
         return JSONResponse(
             {
-                "status": "ok",
+                "status": "poisoned" if poisoned else "ok",
+                "poisoned": poisoned,
                 "version": __version__,
                 "warm": state.warm["done"],
                 "release": state.warm["release"],
-            }
+                "query_isolation": isolation.status() if isolation is not None else None,
+            },
+            status_code=503 if poisoned else 200,
         )
 
     async def index(request: Request) -> Response:

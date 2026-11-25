@@ -146,6 +146,26 @@ def test_http_round_trip_with_the_sdk_client_and_no_logging(
     assert state.engine.manifests["toy_cases"].origin == "hub"  # read from the hub release, not a lake
 
 
+def test_hosted_queries_run_in_a_child_and_a_poisoned_engine_shows_on_health(
+    tmp_path: Path, reg: Registry, hub_engine: Engine, log_stream: io.StringIO
+) -> None:
+    from health_data_registry.isolation import Isolation
+
+    hub_engine.isolation = Isolation()
+    app, state = build_hosted(cfg(tmp_path), reg, hub_engine)
+    with Running(app) as srv:
+        _, series, _ = asyncio.run(_session_calls(srv.url))
+        health = httpx.get(srv.url + "/healthz")
+        state.guard._stuck.append(threading.Thread())  # stand-in for a worker that outlived its call
+        state.guard._stuck[0].is_alive = lambda: True  # type: ignore[method-assign]
+        sick = httpx.get(srv.url + "/healthz")
+    assert series.startswith("location,year,value")  # the same numbers, from a child process
+    assert health.status_code == 200 and health.json()["poisoned"] is False
+    iso = health.json()["query_isolation"]
+    assert iso["memory_limit_mb"] == 4096 and iso["poisoned"] is False
+    assert sick.status_code == 503 and sick.json()["status"] == "poisoned" and sick.json()["poisoned"] is True
+
+
 def test_initialize_gets_an_opaque_session_id_and_rate_limits_answer_429(
     tmp_path: Path, reg: Registry, hub_engine: Engine, log_stream: io.StringIO
 ) -> None:

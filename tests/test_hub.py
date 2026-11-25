@@ -771,6 +771,26 @@ def test_a_slow_release_lookup_ends_by_the_call_deadline(tmp_path: Path) -> None
     assert time.monotonic() - start < 1.5 and h._rev is None
 
 
+def test_a_helper_that_outlives_its_call_is_a_straggler_until_it_ends() -> None:
+    """A late hub download may still write the cache: the hosted guard takes no question while one runs."""
+    import threading
+    import time
+
+    from health_data_registry import deadline
+
+    done = threading.Event()
+    base = deadline.stragglers()
+    with deadline.call_deadline(0.05), pytest.raises(deadline.DeadlineExceeded):
+        deadline.bounded(lambda: done.wait(5))
+    assert deadline.stragglers() == base + 1
+    done.set()
+    for _ in range(100):
+        if deadline.stragglers() == base:
+            break
+        time.sleep(0.01)
+    assert deadline.stragglers() == base
+
+
 def test_bounded_and_check_outside_and_inside_a_deadline(monkeypatch: Any) -> None:
     import time
 

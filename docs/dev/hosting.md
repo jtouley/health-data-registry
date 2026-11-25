@@ -25,7 +25,9 @@ Claude (Anthropic's servers) --HTTPS 443--> <owner>-<space>.hf.space (Hugging Fa
 - **Every tool is read-only** (`readOnlyHint`), as on stdio.
 - **Warm start:** at start-up a background thread resolves the release, reads its manifest and opens the
   engine, so the first question doesn't wait for that. `/healthz` answers at once with
-  `{"status": "ok", "warm": true|false, "release": "release-<date>"}`.
+  `{"status": "ok", "poisoned": false, "warm": true|false, "release": "release-<date>", "query_isolation": {...}}`;
+  while the engine is poisoned (see Query isolation) it answers HTTP 503 with `"status": "poisoned"`, so the
+  image's `HEALTHCHECK` reports the Space unhealthy.
 - **Cache:** `HDR_CACHE_DIR`; else `/data/health-data-registry` when storage is attached at `/data` and
   writable; else `/tmp/health-data-registry` (lost on restart). Bounded by `HDR_CACHE_MAX_GB` (default 5),
   least recently used files evicted first.
@@ -40,6 +42,8 @@ Claude (Anthropic's servers) --HTTPS 443--> <owner>-<space>.hf.space (Hugging Fa
 | Tool calls per MCP session | `HDR_RATE_PER_SESSION` (30 a minute) | one conversation can't crowd out others |
 | Tool calls overall | `HDR_RATE_GLOBAL` (300 a minute) | the free hardware: 2 vCPU, 16 GB RAM |
 | Request body | 4 MiB (the SDK's default) | |
+| Memory of one query | `HDR_QUERY_MEMORY_MB` (4,096 MiB of address space, at least 1,024) | DuckDB's 2 GB `memory_limit` doesn't count every allocation |
+| Reply of one query | `HDR_QUERY_RESULT_MB` (64 MiB) | a child can't fill the server's memory with its reply |
 
 Every limit must be a positive number: `0`, a negative number, `inf`, `nan` or text never means "no limit", and
 the server refuses to start with it (unset the variable to use the default). `HDR_PAGE_CHARS` is a whole number of
@@ -50,7 +54,26 @@ answer would then be dropped instead of paged.
   read could retry 4 times at up to 180 s each (`crawl.RETRIES`, `crawl.FETCH_TIMEOUT_S`), per page. Each
   attempt is shortened to what is left, no retry starts once its back-off would pass the deadline, and the
   clinician gets "This question needed more time than the hosted server allows…" with a next step. If a library
-  call ignores the deadline, the guard answers anyway after the grace and interrupts DuckDB.
+  call ignores the deadline, the guard answers anyway after the grace, and the engine is poisoned until that
+  call ends (see Query isolation).
+- **Query isolation** ([isolation.py](../../src/health_data_registry/isolation.py), issue #64). Every query,
+  `query_sql` and compiled metric SQL alike, runs in a child process forked from a preloaded forkserver: about
+  40 ms more per query than in-process (measured on the synthetic lake, Linux). The child attaches the snapshot
+  files read-only, sets `RLIMIT_AS` (`HDR_QUERY_MEMORY_MB`), `RLIMIT_FSIZE` 0 and `RLIMIT_CORE` 0, and sends one
+  JSON reply (never pickle) over a pipe, capped at `HDR_QUERY_RESULT_MB` and checked again as the server reads
+  it. At the deadline the child is SIGKILLed, whatever it is doing: one long `lpad` or `repeat` call that
+  `con.interrupt()` can't stop is killed too. Over the memory limit the clinician is told the question needed
+  more memory than one question may use; the server itself is untouched.
+- **Poisoned engine.** Anything that outlives its call (a child that SIGKILL didn't reap, a tool body stuck in a
+  library call, a hub download still running after its call gave up) poisons the engine until it ends: every
+  new call gets "The hosted server is still stopping an earlier question…" at once, before it touches the
+  engine, and `/healthz` answers 503. So nothing a timed-out worker does can change shared state after the next
+  call starts. It clears itself when the stuck work ends; a restart clears it too.
+- **Platforms.** Linux (the Space) gets all of the above. macOS doesn't enforce `RLIMIT_AS`, and Windows has no
+  `resource` module and spawns each child (slower); there the kill and the reply cap still hold, but memory is
+  bounded only by DuckDB's `memory_limit` (`query_isolation.memory_limit_enforced` is false on `/healthz`). The
+  local stdio server keeps running queries in-process: one clinician on their own computer, where a runaway query
+  costs only their own session, and where the child would mostly add time without the memory limit.
 - **One engine user at a time:** `query.Engine` holds one DuckDB connection and isn't thread safe, so calls
   queue; a call that can't start within its budget gets a plain "busy, try again in a minute".
 - **Result size: pages, not refusals.** Measured as the text block plus the SDK's structured copy of it (the SDK
@@ -58,9 +81,10 @@ answer would then be dropped instead of paged.
   `HDR_PAGE_CHARS` comes back as page 1 with real rows, a `Page 1 of N: rows 1–k of T` header, a Next line with
   the exact call for page 2 (same arguments plus `page` and `pin`), the guidance to fetch every page and save
   the rows to a CSV file or artifact, and provenance on every page. `HDR_PAGE_CHARS` must not be above
-  `HDR_MAX_RESULT_CHARS` (checked at start). The cap stays as a backstop only (a single row too long for any page): such a result
-  is replaced by "One row of this answer is too long to send in a reply…". `HDR_MAX_RESULT_CHARS` is a whole
-  number of at least 2,000.
+  `HDR_MAX_RESULT_CHARS` (checked at start). Pages are cut from estimated row sizes, then every page is measured
+  and re-cut when one is over, so no page goes over `HDR_PAGE_CHARS`; a single row too long for any page is
+  refused with "One row of this answer is too long to send in a reply…". The cap stays as a backstop only.
+  `HDR_MAX_RESULT_CHARS` is a whole number of at least 2,000.
 - **Consistent pages across releases.** The pin names each source's snapshot id and, from the hub, its release
   tag, then the whole answer's row count and a hash of its row keys, then an HMAC-SHA256 signature
   (`toy_cases:<snapshot>@release-<date>~<rows>~<hash>~<signature>`). The key is the Space secret
@@ -91,8 +115,8 @@ answer would then be dropped instead of paged.
   when it is sent and otherwise as soon as the bytes read pass the cap; nothing past it is held in memory.
 - **The engine is never held past a deadline.** Hub downloads and the release lookup run within what is left of
   the call's budget; when a call overruns anyway, the guard interrupts every engine connection (pinned ones
-  included), takes the engine lock back and answers. At most 8 calls queue for the engine; the rest are told
-  the server is busy at once.
+  included), takes the engine lock back, answers, and keeps the engine poisoned until the overrunning call ends.
+  At most 8 calls queue for the engine; the rest are told the server is busy at once.
 - **Host checks.** `serve --http` binds to 127.0.0.1 unless `--host` says otherwise, and the Host and Origin
   headers are checked (the SDK's DNS-rebinding protection) whenever the address isn't the explicitly public
   `0.0.0.0` or `::`. The Space passes `--host 0.0.0.0` behind Hugging Face's proxy.

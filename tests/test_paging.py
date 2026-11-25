@@ -933,3 +933,75 @@ def test_pages_keep_named_parts_and_declines_keep_their_fields(registry: Registr
                 series(registry, eng, page=0, fmt="json"),
                 series(registry, eng, page=2, pin=signed("other_source:s"), fmt="json")):  # fmt: skip
         assert out["refused"] in ("bad_pin", "bad_page", "page_data_changed") and out["next_step"], out
+
+
+# ------------------------------------------------------------------- pathological wide rows (issue #64)
+
+
+def _wide(registry: Registry, eng: Engine, rows: list[list[Any]], fmt: str, page: int, budget: int,
+          extra: dict[str, list[str]] | None = None) -> Any:  # fmt: skip
+    return paging.respond(
+        "query_sql", {"sql": "SELECT 1", "fmt": fmt}, eng,
+        lambda e: tools.Result(["a", "b", "c"], [list(r) for r in rows], ["a note"], dict(extra or {})),
+        page=page, pin=None, fmt=fmt, budget=budget,
+    )  # fmt: skip
+
+
+def _walk_wide(registry: Registry, eng: Engine, rows: list[list[Any]], fmt: str, budget: int,
+               extra: dict[str, list[str]] | None = None) -> list[Any]:  # fmt: skip
+    pages, n = [], 1
+    while True:
+        out = _wide(registry, eng, rows, fmt, n, budget, extra)
+        pages.append(out)
+        last = (
+            out.get("page", {}).get("next") is None
+            if isinstance(out, dict)
+            else "This is the last page" in out
+        )
+        if last or (isinstance(out, dict) and "refused" in out):
+            return pages
+        n += 1
+
+
+@pytest.mark.parametrize("fmt", ["csv", "json"])
+def test_pathological_wide_rows_never_make_a_page_go_over_budget(
+    registry: Registry, eng: Engine, fmt: str
+) -> None:
+    """Quotes, commas, newlines, wide Unicode and very uneven widths: every page stays under the budget."""
+    budget = 20_000
+    nasty = ['"' * 900, ",\n" * 450, "é" * 800, '\r\n"",', None, 'x"' * 400]
+    rows = [[nasty[i % 6], nasty[(i * 5) % 6] if i % 3 else "", i * 10**12] for i in range(60)]
+    extra = {"presentation_rules": ["rule " * 40]}  # extra lines that a CSV page renders as notes
+    pages = _walk_wide(registry, eng, rows, fmt, budget, extra)
+    assert len(pages) > 3
+    for p in pages:
+        assert paging.wire_size(p) <= budget and not (isinstance(p, dict) and "refused" in p)
+
+
+@pytest.mark.parametrize("fmt", ["csv", "json"])
+def test_a_single_row_too_wide_for_any_page_is_refused_in_plain_words(
+    registry: Registry, eng: Engine, fmt: str
+) -> None:
+    budget = 6_000
+    rows = [["small", "", 1], ["y" * 5_000, '"' * 500, 2], ["small", "", 3]]
+    outs = [_wide(registry, eng, rows, fmt, n, budget) for n in (1, 2, 3)]
+    assert all(paging.wire_size(o) <= budget for o in outs)
+    refused = outs[1]
+    text = refused if isinstance(refused, str) else refused["message"]
+    assert "One row of this answer is too long to send" in text and "fewer columns" in text
+    if isinstance(refused, dict):
+        assert refused["refused"] == "too_large" and refused["next_step"]
+    for ok in (outs[0], outs[2]):  # the rows around it still come back, on their own pages
+        assert "small" in (ok if isinstance(ok, str) else json.dumps(ok))
+
+
+def test_plan_recuts_when_its_estimate_is_short() -> None:
+    """A render longer than the row estimates (here: a note that grows with the page's rows) is re-cut."""
+    res = tools.Result(["a"], [["x" * 50] for _ in range(40)], [])
+
+    def render(lo: int, hi: int, n: int, bounds: list[tuple[int, int]]) -> Any:
+        return "h" * 100 + "x" * 60 * (hi - lo) * 2  # each row costs twice its estimate
+
+    bounds = paging.plan(res, "csv", 2_000, render)
+    assert all(paging.wire_size(render(lo, hi, 0, bounds)) <= 2_000 for lo, hi in bounds if hi - lo > 1)
+    assert [b for b in bounds if b[1] > b[0]] and bounds[-1][1] == 40
