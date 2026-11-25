@@ -23,6 +23,8 @@ records are not rewritten.
 | [0015](0015-elt-raw-data-stored-as-sent.md) | ELT, not ETL: raw data is stored as the publisher sent it; values change only in staging and the dbt models; the raw source contract is loose; a change to the raw layer is a new contract version and a new snapshot, never a rewrite | Proposed |
 | [0017](0017-immutable-raw-reproducible-builds.md) | Immutable raw, reproducible builds: one raw writer, a build manifest pinning every input, outputs keyed by build id, determinism rules, a rebuild-from-raw test, and data-quality gates on LATEST and publishing | Proposed |
 
+ADR 0016 (crawler factory) is proposed on PR #118 and not yet merged; 0017 refers to it by number.
+
 The spec's current positioning (three layers: crawler and lake, an open health data hub on Hugging Face, and the MCP
 server with analysis tools; datasets hosted on the hub wherever the licence allows; restricted sources "listed, not
 hosted" and fetched by the server at run time) changes where restricted sources are fetched in 0001 and how the
