@@ -80,6 +80,12 @@ def csv_rows(text: str) -> tuple[list[str], list[list[str]]]:
     return table[0], [r for r in table[1:] if r]
 
 
+def signed(versions: str, rows: int = 0, keys: str = "0" * 16) -> str:
+    """A pin this server would accept: the versions, a row count and row-key hash, and their signature."""
+    body = f"{versions}~{rows}~{keys}"
+    return f"{body}~{paging.sign('pin', body)}"
+
+
 def next_call(out: Any) -> tuple[int, str] | None:
     """(page, pin) from a page's Next line, or None on the last page."""
     text = out if isinstance(out, str) else "\n".join(out["notes"])
@@ -115,7 +121,11 @@ def test_over_budget_gives_page_one_with_rows_a_header_and_the_next_call(
     assert cols[:3] == ["location", "year", "value"] and len(rows) == hi
     m = latest_snapshot(eng.lake, "toy_cases")
     assert m is not None
-    pin = f"toy_cases:{m[1].snapshot_id}"
+    nxt = next_call(out)
+    assert nxt is not None and nxt[0] == 2
+    pin = nxt[1]
+    assert pin.startswith(f"toy_cases:{m[1].snapshot_id}~{TOTAL}~")  # versions, then the whole answer's size
+    assert paging.parse_pin(pin).rows == TOTAL
     assert f"# Next: get_series(condition='legionellosis', page=2, pin='{pin}')" in out
     assert "save all the rows to one CSV file or artifact rather than pasting them into the chat" in out
     assert paging.wire_size(out) <= 8000
@@ -231,7 +241,7 @@ def test_a_pinned_version_that_is_gone_gives_a_plain_refusal(
     # A newer snapshot lands; the pinned one is still in the lake, so page 2 still comes from it.
     snapshot(eng.lake, registry, tmp_path, big_records(bump=7), day=25)
     fresh = Engine(registry=registry, lake=eng.lake, hub=None)
-    assert fresh.manifest("toy_cases").snapshot_id != nxt[1].split(":")[1]
+    assert fresh.manifest("toy_cases").snapshot_id != nxt[1].split("~")[0].split(":")[1]
     assert series(registry, fresh, page=2, pin=nxt[1]) == page2
     assert next_call(series(registry, fresh)) != nxt  # page 1 now pins the new data
     # The pinned snapshot is removed: refused in plain words, never a page from other data.
@@ -243,7 +253,9 @@ def test_a_pinned_version_that_is_gone_gives_a_plain_refusal(
     assert gone["refused"] == "page_data_changed"
     assert "no longer available here" in gone["message"] and "start from page 1" in gone["message"]
     assert "Traceback" not in gone["message"] and "Error" not in gone["message"]
-    unknown = series(registry, eng, page=2, pin="other_source:20261124T120000Z-abcdefabcdef", fmt="json")
+    unknown = series(
+        registry, eng, page=2, pin=signed("other_source:20261124T120000Z-abcdefabcdef"), fmt="json"
+    )
     assert unknown["refused"] == "page_data_changed"
 
 
@@ -358,7 +370,7 @@ def test_a_new_hub_release_keeps_old_pages_on_the_pinned_release(
     old = hub_engine(reg, tmp_path, f"release-{RUN}")
     first = tools.get_series(reg, old, condition="legionellosis")
     nxt = next_call(first)
-    assert nxt is not None and nxt[1].endswith(f"@release-{RUN}")
+    assert nxt is not None and f"@release-{RUN}~" in nxt[1]
     page2 = tools.get_series(reg, old, condition="legionellosis", page=2, pin=nxt[1])
     new = hub_engine(reg, tmp_path, f"release-{RUN2}")  # a restart picked up the newer release
     assert tools.get_series(reg, new, condition="legionellosis", page=2, pin=nxt[1]) == page2
@@ -437,7 +449,19 @@ def test_query_sql_rows_come_in_a_fixed_order() -> None:
     )
     assert guard_sql("SELECT a FROM t", allowed_tables=cols).sql == "SELECT a FROM t LIMIT 5000"
     own = guard_sql("SELECT a FROM t ORDER BY b DESC", allowed_tables=cols, ordered=True).sql
-    assert own == "SELECT a FROM t ORDER BY b DESC LIMIT 5000"
+    assert own == "SELECT a FROM t ORDER BY b DESC, 1 LIMIT 5000"  # its own order, then every output column
+    two = guard_sql("SELECT a, b FROM t ORDER BY b", allowed_tables=cols, ordered=True).sql
+    assert two == "SELECT a, b FROM t ORDER BY b, 1, 2 LIMIT 5000"
+    star = guard_sql("SELECT * FROM t ORDER BY b", allowed_tables=cols, ordered=True).sql
+    assert star == "SELECT * FROM t ORDER BY b, COLUMNS(*) LIMIT 5000"
+    total = guard_sql("SELECT a FROM t ORDER BY ALL", allowed_tables=cols, ordered=True).sql
+    assert total == "SELECT a FROM t ORDER BY ALL LIMIT 5000"
+    union = "SELECT * FROM t UNION ALL SELECT * FROM t ORDER BY a"
+    assert guard_sql(union, allowed_tables=cols, ordered=True).sql == union + " LIMIT 5000"
+    assert (
+        guard_sql("SELECT a FROM t ORDER BY b", allowed_tables=cols).sql
+        == "SELECT a FROM t ORDER BY b LIMIT 5000"
+    )
 
 
 def test_cut_and_call_text() -> None:
@@ -455,10 +479,11 @@ def test_cut_and_call_text() -> None:
     assert paging.header(2, 3, 1001, 2000, 2500) == (
         "Page 2 of 3: rows 1,001–2,000 of 2,500. The full answer has 2,500 rows."
     )
-    assert paging.parse_pin("a:s1@release-2026-11-24,b:s2") == {
-        "a": ("s1", "release-2026-11-24"),
-        "b": ("s2", None),
-    }
+    assert paging.parse_pin(signed("a:s1@release-2026-11-24,b:s2", 12, "ab" * 8)) == (
+        {"a": ("s1", "release-2026-11-24"), "b": ("s2", None)},
+        12,
+        "ab" * 8,
+    )
     assert paging.wire_size("abc") == 6 and paging.wire_size({"a": 1}) == 2 * len('{\n  "a": 1\n}')
 
 
@@ -521,11 +546,15 @@ def test_a_pin_for_other_sources_is_refused(
     e = hub_engine(
         reg, tmp_path, f"release-{RUN}", fetch_at_run_time=True, getter=lambda u: raw_fetch(u, rows)
     )
-    pin = paging.pin_token([(reg.get("toy_cases"), e.manifest("toy_cases"))])
+    first = tools.query_sql(e, "SELECT year FROM toy_cases", fmt="json")
+    pin = paging.pin_token([(reg.get("toy_cases"), e.manifest("toy_cases"))], first["rows"])
     out = tools.query_sql(e, "SELECT year FROM toy_listed", page=1, pin=pin, fmt="json")
     assert out["refused"] == "page_data_changed"
     ok = tools.query_sql(e, "SELECT year FROM toy_cases", page=1, pin=pin, fmt="json")
     assert ok["rows"]
+    # The same versions but other rows (a filter that keeps fewer): refused, never a page cut from a new row set.
+    fewer = tools.query_sql(e, "SELECT year FROM toy_cases WHERE year > 2022", page=1, pin=pin, fmt="json")
+    assert fewer["refused"] == "page_rows_changed" and "start from page 1" in fewer["message"]
 
 
 def test_one_page_answers_are_unchanged_by_page_one(registry: Registry, eng: Engine) -> None:
@@ -574,14 +603,30 @@ def test_data_changed_and_pin_words() -> None:
     with pytest.raises(QueryRefused) as bad:
         paging.parse_pin("")
     assert bad.value.code == "bad_pin" and str(bad.value) == (
-        "The pin given with this page isn't one this server wrote, so no rows are shown. Copy the Next line from "
-        "the previous page exactly, or ask again without page and pin to start from page 1."
+        "The pin with this page doesn't match the one the previous page's Next line gave (it may have been cut "
+        "short or changed, or the server has restarted since), so no rows are shown. Copy the Next line from the "
+        "previous page exactly, or ask again without page and pin to start from page 1."
     )
+    tail = len(signed("")) - 0  # "~0~<16>~<32>"
     parts = [f"d{i:03d}:" + "s" * 74 for i in range(24)]
-    exactly = ",".join([*parts, "d999:" + "s" * 75])
-    assert len(exactly) == 2000 and len(paging.parse_pin(exactly)) == 25
+    exactly = signed(",".join([*parts, "d999:" + "s" * (75 - tail)]))
+    assert len(exactly) == 2000 and len(paging.parse_pin(exactly).versions) == 25
     with pytest.raises(QueryRefused):
-        paging.parse_pin(exactly + "s")
+        paging.parse_pin(signed(",".join([*parts, "d999:" + "s" * (76 - tail)])))
+    good = signed("a:s1@release-2026-11-24", 5, "cd" * 8)
+    for forged in (
+        good.replace("release-2026-11-24", "release-2026-11-25"),  # another release, same signature
+        good.replace("~5~", "~6~"),  # another row count
+        good[:-1] + ("0" if good[-1] != "0" else "1"),  # a changed signature
+        good.rsplit("~", 1)[0],  # no signature
+        "a:s1@release-2026-11-24",  # the old, unsigned form
+        signed("a:s1", 1, "zz" * 8),  # a malformed hash
+        signed("a:s1", -1),
+        signed("a:s1,a:s2"),
+    ):
+        with pytest.raises(QueryRefused):
+            paging.parse_pin(forged)
+    assert paging.parse_pin(signed("a:s1", 0)).rows == 0
 
 
 def test_token_call_and_size_details() -> None:
@@ -599,7 +644,20 @@ def test_token_call_and_size_details() -> None:
             self.id = i
 
     used: Any = [(D("b"), man("s2", "release-2026-11-24")), (D("a"), man("s1", None))]
-    assert paging.pin_token(used) == "a:s1,b:s2@release-2026-11-24"
+    assert paging.versions_token(used) == "a:s1,b:s2@release-2026-11-24"
+    rows = [["Ohio", 2020, 1.5], ["Texas", 2021, None]]
+    token = paging.pin_token(used, rows)
+    assert token.startswith(f"a:s1,b:s2@release-2026-11-24~2~{paging.row_keys(rows)}~")
+    assert paging.parse_pin(token) == (
+        {"a": ("s1", None), "b": ("s2", "release-2026-11-24")},
+        2,
+        paging.row_keys(rows),
+    )
+    # Decimals don't count (their last digits can differ between runs); every other value does, in order.
+    assert paging.row_keys([["Ohio", 2020, 1.5000000001]]) == paging.row_keys([["Ohio", 2020, 1.5]])
+    assert paging.row_keys([["Ohio", 2021, 1.5]]) != paging.row_keys([["Ohio", 2020, 1.5]])
+    assert paging.row_keys(rows) != paging.row_keys(rows[::-1])
+    assert len(paging.row_keys([])) == 16
     assert paging.call_text("t", {"a": None, "b": 1}, 2, "p") == "t(b=1, page=2, pin='p')"
     assert paging.wire_size({"d": date(2026, 1, 2)}) == 2 * len('{\n  "d": "2026-01-02"\n}')
 
@@ -671,7 +729,6 @@ def test_a_two_page_answer_says_pages(registry: Registry, eng: Engine) -> None:
 def test_engines_on_pinned_lake_snapshots_are_kept_two_at_most(
     tmp_path: Path, registry: Registry, eng: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import duckdb
 
     monkeypatch.setenv("HDR_FETCH_AT_RUN_TIME", "1")  # an engine on old data never reads a publisher anyway
     sids = [eng.manifest("toy_cases").snapshot_id]
@@ -690,8 +747,7 @@ def test_engines_on_pinned_lake_snapshots_are_kept_two_at_most(
     assert list(now._pinned) == [(("toy_cases", (s, None)),) for s in sids[1:3]]
     assert now.at({"toy_cases": (sids[1], None)}) is alts[1]  # kept, not rebuilt
     assert list(now._pinned)[-1] == (("toy_cases", (sids[1], None)),)  # most recently used last
-    with pytest.raises(duckdb.ConnectionException):
-        alts[0].connect().execute("SELECT 1")  # the evicted engine's connection was closed
+    assert alts[0]._con is None  # the evicted engine's connection was closed
     assert now.at({"toy_cases": ("20991231T000000Z-000000000000", None)}) is None
     assert now.at({"no_such_source": (sids[0], None)}) is None
 
@@ -756,3 +812,96 @@ def test_an_answer_exactly_at_the_budget_is_one_page(registry: Registry, eng: En
     assert _respond(registry, eng, fmt, 1, None, size) == whole  # exactly the budget: sent whole, unpaged
     cut_short = _respond(registry, eng, fmt, 1, None, size - 1)
     assert cut_short != whole and paging.wire_size(cut_short) <= size - 1
+
+
+# ------------------------------------------------------------------------- fix round: pins and deadlines
+
+
+def test_a_pin_may_name_only_a_tagged_release(
+    tmp_path: Path, releases: tuple[Registry, dict[str, Path]], fake_hf: set[str]
+) -> None:
+    reg = releases[0]
+    old = hub_engine(reg, tmp_path, f"release-{RUN}")
+    sid = old.manifest("toy_cases").snapshot_id
+    new = hub_engine(reg, tmp_path, f"release-{RUN2}")
+    assert new.at({"toy_cases": (sid, f"release-{RUN}")}) is not None
+    assert new.at({"toy_cases": (sid, "a" * 40)}) is None  # a bare commit: never read, whatever it holds
+    out = tools.get_series(
+        reg, new, condition="legionellosis", page=2, pin=signed(f"toy_cases:{sid}@{'a' * 40}"), fmt="json"
+    )
+    assert out["refused"] == "page_data_changed"
+
+
+def test_checking_a_pin_that_cant_be_read_says_the_data_changed(
+    registry: Registry, eng: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from health_data_registry.deadline import DeadlineExceeded
+
+    def broken(dataset_id: str) -> Any:
+        raise OSError("a cache file was removed")
+
+    monkeypatch.setattr(eng, "manifest", broken)
+    assert eng.at({"toy_cases": ("s", None)}) is None
+    out = series(registry, eng, page=2, pin=signed("toy_cases:s"), fmt="json")
+    assert out["refused"] == "page_data_changed"
+
+    def late(dataset_id: str) -> Any:
+        raise DeadlineExceeded()
+
+    monkeypatch.setattr(eng, "manifest", late)
+    with pytest.raises(DeadlineExceeded):  # out of time is its own answer, never "the data changed"
+        eng.at({"toy_cases": ("s", None)})
+
+
+def test_out_of_time_is_never_a_partial_answer(
+    registry: Registry, eng: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from health_data_registry.deadline import DeadlineExceeded
+
+    def late(*a: Any, **kw: Any) -> Any:
+        raise DeadlineExceeded()
+
+    monkeypatch.setattr(tools, "series_rows", late)
+    with pytest.raises(DeadlineExceeded):
+        series(registry, eng)
+    with pytest.raises(DeadlineExceeded):
+        tools.get_aligned_with_gbd(registry, eng, condition="legionellosis")
+
+
+def test_a_later_page_of_another_row_set_is_refused(registry: Registry, eng: Engine) -> None:
+    first = _respond(registry, eng, "json", 1, None, 30_000)
+    pin = first["page"]["pin"]
+    parsed = paging.parse_pin(pin)
+    other = signed(pin.split("~")[0], parsed.rows - 1, parsed.keys)
+    fewer = _respond(registry, eng, "json", 2, other, 30_000)
+    assert fewer["refused"] == "page_rows_changed" and fewer["message"] == (
+        f"This page can't be shown: the answer no longer matches the first page (it had {parsed.rows - 1:,} rows "
+        f"and now has {parsed.rows:,}), so a page cut from it wouldn't fit with the pages you already have, and "
+        "no rows are shown. Ask the same question again without page and pin to start from page 1, and set aside "
+        "the pages you saved."
+    )
+    moved = _respond(registry, eng, "json", 2, signed(pin.split("~")[0], parsed.rows, "0" * 16), 30_000)
+    assert moved["refused"] == "page_rows_changed" and "its rows are no longer the same" in moved["message"]
+    assert _respond(registry, eng, "json", 2, pin, 30_000)["page"]["page"] == 2
+
+
+def test_an_answer_that_fits_has_no_page_two(registry: Registry, eng: Engine) -> None:
+    whole = _respond(registry, eng, "json", 1, None, 10_000_000)
+    assert "page" not in whole
+    two = _respond(registry, eng, "json", 2, None, 10_000_000)
+    assert two == {
+        "message": "This answer fits on one page, so there is no page 2. Leave page out, or ask for page=1.",
+        "refused": "no_such_page",
+    }
+
+
+def test_signing_keys_come_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("HDR_SIGNING_KEY", raising=False)
+    per_process = paging.sign("pin", "x")
+    assert paging.sign("pin", "x") == per_process and len(per_process) == 32
+    assert paging.sign("session", "x") != per_process  # one key per purpose
+    monkeypatch.setenv("HDR_SIGNING_KEY", "a shared secret")
+    shared = paging.sign("pin", "x")
+    assert shared != per_process
+    monkeypatch.setenv("HDR_SIGNING_KEY", "another secret")
+    assert paging.sign("pin", "x") != shared

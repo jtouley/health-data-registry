@@ -694,6 +694,8 @@ def get_series(
         try:
             got, unmatched, method = series_rows(engine, ds, s, locations, year_start, year_end)
             m = engine.manifest(ds.id)
+        except DeadlineExceeded:
+            raise  # out of time: no partial answer, whose pages could not be matched up later
         except Exception as e:  # noqa: BLE001 - one source failing must not hide the others' rows
             notes.append(f"{ds.id}: {plain(e)}")
             continue
@@ -772,6 +774,8 @@ def get_aligned_with_gbd(
         try:
             got, unmatched, method = series_rows(engine, ds, s, locations, year_start, year_end)
             m = engine.manifest(ds.id)
+        except DeadlineExceeded:
+            raise  # out of time: no partial answer, whose pages could not be matched up later
         except Exception as e:  # noqa: BLE001 - one source failing must not hide the others' rows
             notes.append(f"{ds.id}: {plain(e)}")
             continue

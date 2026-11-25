@@ -17,8 +17,8 @@ Don't put anything about a patient into a question.
 
 **Who else is involved:** Claude (run by Anthropic) decides when to call a tool and sends the request; Hugging
 Face runs this Space and passes each request to it. Hugging Face records some information about every visit,
-such as the IP address (see its [privacy policy](https://huggingface.co/privacy)); for requests from Claude that
-address is Anthropic's, not yours. This server receives only the tool requests Claude sends, not your
-conversation.
+such as the IP address (see its [privacy policy](https://huggingface.co/privacy)). When you add this connector in
+claude.ai or the Claude apps, the address Hugging Face sees is Anthropic's; when you add it to Claude Code, it is
+your computer's. This server receives only the tool requests Claude sends, not your conversation.
 
 Questions or concerns: open an issue at <https://github.com/jtouley/health-data-registry/issues>.

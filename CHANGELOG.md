@@ -17,6 +17,11 @@ All notable changes to this project are documented here. The format follows
   page, and a pin keeps every page on one version of the data. `query_sql` adds `ORDER BY ALL` when a query has
   no `ORDER BY`. The hosted server refuses to start with a limit of 0, a negative number, inf or nan, or with
   `HDR_PAGE_CHARS` above `HDR_MAX_RESULT_CHARS`.
+- Hosted server hardening from review: request bodies over 1 MiB are refused with 413; session ids and pins are
+  signed (`HDR_SIGNING_KEY`), calls without a signed session id share one rate-limit bucket, and a refused call
+  spends no token; pins carry the answer's row count and row-key hash and may name only release tags; hub
+  downloads end by the call deadline and a stuck call never holds the engine past it; `serve --http` binds to
+  127.0.0.1 by default with Host and Origin checks; `query_sql` adds tie-breakers to its own `ORDER BY`.
 - Repository scaffolding under the Apache License 2.0, with a NOTICE for material adapted from the author's
   earlier MIT-licensed work.
 - SECURITY.md (private reporting through GitHub advisories, 14-day first response), CONTRIBUTING.md,

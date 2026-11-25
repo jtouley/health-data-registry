@@ -206,7 +206,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     sv.add_argument(
         "--http", action="store_true", help="Streamable HTTP for the hosted connector (hub releases only)"
     )
-    sv.add_argument("--host", default="0.0.0.0", help="with --http: address to listen on")  # noqa: S104
+    sv.add_argument(
+        "--host", default="127.0.0.1", help="with --http: address to listen on (0.0.0.0 serves publicly)"
+    )
     sv.add_argument("--port", type=int, default=7860, help="with --http: port (a Space's app_port)")
     r = sub.add_parser("refresh", help="fetch datasets from their publishers into the local lake")
     r.add_argument("datasets", nargs="*")

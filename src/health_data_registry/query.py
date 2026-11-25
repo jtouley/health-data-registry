@@ -14,6 +14,7 @@ from typing import Any
 
 import duckdb
 
+from health_data_registry import deadline
 from health_data_registry.registry import Column, Dataset, Metric, Registry, label_key
 from health_data_registry.sql_guard import GuardedQuery, guard_sql, harden, run_guarded
 from health_data_registry.store import Manifest, latest_snapshot, snapshot_dir
@@ -431,6 +432,9 @@ class Engine:
     )
 
     def connect(self) -> duckdb.DuckDBPyConnection:
+        # Every read starts here: a call past its deadline (one the hosted guard gave up on) stops before it
+        # touches the connection, so it never uses the engine alongside the next call.
+        deadline.check()
         if self._con is not None:
             return self._con
         from health_data_registry.live import load_live
@@ -559,14 +563,16 @@ class Engine:
 
     def _hub_at(self, pins: Mapping[str, tuple[str, str | None]]) -> Any:
         """The hub read at the pinned release tag, when the pins name one and this hub can be read at another."""
-        from health_data_registry.hub import Hub, is_immutable_ref
+        from health_data_registry.hub import RELEASE_TAG, Hub
 
         refs = {r for _, r in pins.values() if r}
         if not refs or self.hub is None:
             return self.hub
         ref = refs.pop()
-        if refs or not self.hub.is_remote or not is_immutable_ref(ref):
-            return None  # one answer reads one release; a local hub copy has only its own
+        # One answer reads one release; a local hub copy has only its own; and a pin may only name a tagged
+        # release, never a bare commit (which could be any unreleased or pull-request commit of the hub).
+        if refs or not self.hub.is_remote or not RELEASE_TAG.fullmatch(ref):
+            return None
         if self.hub.revision() == ref:
             return self.hub
         return Hub(url=f"{self.hub.url.split('@')[0]}@{ref}", cache=self.cache, max_bytes=self.hub.max_bytes,
@@ -579,28 +585,43 @@ class Engine:
         an engine on the pinned hub release or lake snapshot (kept for the next page, at most two) serves them;
         restricted sources are never re-read for an old page, because their copies are never kept.
         """
-        if self._serves(pins):
-            return self
         key = tuple(sorted(pins.items()))
-        if key in self._pinned:
-            self._pinned.move_to_end(key)
-            return self._pinned[key]
         try:
+            if self._serves(pins):
+                return self
+            if key in self._pinned:
+                self._pinned.move_to_end(key)
+                return self._pinned[key]
             hub = self._hub_at(pins)
             if hub is None and any(r for _, r in pins.values()):
                 return None
             alt = Engine(registry=self.registry, lake=self.lake, hub=hub, cache=self.cache, fetch_at_run_time=False,
                          getter=self.getter, lake_pins={i: s for i, (s, r) in pins.items() if r is None})  # fmt: skip
             if not alt._serves(pins):
+                alt.close(release_hub=alt.hub is not self.hub)
                 return None
+        except deadline.DeadlineExceeded:
+            raise  # out of time is not "the data changed" (DeadlineExceeded is an OSError)
         except (QueryRefused, ValueError, OSError):  # an old release that can't be read is gone
             return None
         self._pinned[key] = alt
         while len(self._pinned) > MAX_PINNED:
             _, old = self._pinned.popitem(last=False)
-            if old._con is not None:
-                old._con.close()
+            old.close(release_hub=old.hub is not self.hub)
         return alt
+
+    def engines(self) -> list[Engine]:
+        """This engine and the pinned ones it keeps: every connection a call may be using."""
+        return [self, *self._pinned.values()]
+
+    def close(self, *, release_hub: bool = True) -> None:
+        """Close the connection and (unless another engine shares the hub) give back the hub files its views
+        read, so the cache may evict them."""
+        if self._con is not None:
+            self._con.close()
+            self._con = None
+        if release_hub and hasattr(self.hub, "release_files"):
+            self.hub.release_files()
 
     def provenance(self, dataset_id: str) -> dict[str, Any]:
         """Where a source's numbers come from, without downloading anything: origin, contract, product, release."""

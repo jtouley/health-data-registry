@@ -87,10 +87,13 @@ tools and `query_sql`) takes two more parameters:
 | `page` | no | Which page of a long answer, counting from 1 (default 1) |
 | `pin` | no | Copied from the previous page's Next line; keeps every page on the same version of the data |
 
-When an answer is longer than one page (about 120,000 characters, so it fits in one reply), page 1 starts with a
+When an answer is longer than one page (about 60,000 characters of text: Claude receives each answer twice, as
+text and as data, and the server counts both against a 120,000-character page), page 1 starts with a
 line like `# Page 1 of 4: rows 1–1,210 of 4,532. The full answer has 4,532 rows.` and ends with the exact call
 for the next page, for example
-`# Next: get_series(condition='legionellosis', page=2, pin='cdc_nndss_weekly:20261124T120000Z-…@release-2026-11-24')`.
+`# Next: get_series(condition='legionellosis', page=2, pin='cdc_nndss_weekly:20261124T120000Z-…@release-2026-11-24~4532~…')`.
+The pin also holds the size of the whole answer and a signature, so a later page is cut from exactly the same rows
+as page 1, or refused.
 
 - **What Claude should do.** Fetch every page, then save all the rows to one CSV file or artifact rather than
   pasting them into the chat, and work from that file. Tool descriptions and the helpers say so.
@@ -428,7 +431,9 @@ The common ones:
 | "That query can't run: …" | `query_sql` refused the query | Use `get_series` or `describe_dataset` instead |
 | "Page 1 of N: …" | Not a problem: the answer is long and comes in pages | Fetch every page with the Next line, then save the rows to one CSV file or artifact |
 | "This page can't be shown: the data the first page came from … is no longer available here" | A newer version of the data replaced the one the earlier pages came from | Ask again without `page` and `pin`, and set the older pages aside |
-| "The pin given with this page isn't one this server wrote" | The pin was changed or cut short | Copy the Next line exactly |
+| "This page can't be shown: the answer no longer matches the first page" | The rows behind the answer changed between pages (for example, a source couldn't be read for page 1) | Ask again without `page` and `pin`, and set the older pages aside |
+| "The pin with this page doesn't match the one the previous page's Next line gave" | The pin was cut short or changed, or the hosted server restarted between pages | Copy the Next line exactly, or start again from page 1 |
+| "One row of this answer is too long to send in a reply" | A single row is longer than a page (usually a long text column) | Ask for fewer columns or one measure; `describe_dataset` shows which columns hold long text |
 | "The data for this question couldn't be read, so no numbers are shown" | Anything unexpected | Try again; if it keeps happening, run the [Something's wrong](helpers.md#somethings-wrong) helper |
 
 ## Helpers

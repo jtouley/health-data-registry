@@ -11,7 +11,9 @@ ARG HDR_TAG=
 ARG HDR_COMMIT=
 
 # Stage 1: fetch exactly that release (git checks every object against its hash) and verify it.
-FROM python:3.12-slim AS source
+# Base images are pinned by digest (the tag in front is for people), so a re-pushed tag can't change the build;
+# Dependabot (docker ecosystem, /space) bumps the digests.
+FROM python:3.12-slim@sha256:191083cdf6c7bda8c76158983163ead5d5cf7b77cf3033e805bb0f5296f51b4b AS source
 ARG HDR_REPO
 ARG HDR_TAG
 ARG HDR_COMMIT
@@ -28,12 +30,12 @@ RUN case "$HDR_TAG" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "HDR_TAG must be a rele
     && test "$(git rev-parse HEAD)" = "$HDR_COMMIT"
 
 # Stage 2: the server, without git.
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:191083cdf6c7bda8c76158983163ead5d5cf7b77cf3033e805bb0f5296f51b4b
 ARG HDR_TAG
 ARG HDR_COMMIT
 
 # uv, pinned to the release the maintainers use.
-COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.11.32@sha256:df4cae8f3a96d175e2e5f992e597550000edbe78fdc2594d5cd8de1a217f504c /uv /usr/local/bin/uv
 
 # Spaces run the container as user id 1000.
 RUN useradd --create-home --uid 1000 user

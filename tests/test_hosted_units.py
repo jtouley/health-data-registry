@@ -57,6 +57,14 @@ class Inner:
         await send({"type": "http.response.body", "body": b"{}"})
 
 
+def issued(name: str) -> str:
+    """A session id this server would have issued (a 32-hex nonce and its signature), named for the test."""
+    import hashlib
+
+    nonce = hashlib.sha256(name.encode()).hexdigest()[:32]
+    return f"{nonce}.{hosted.sign('session', nonce)}"
+
+
 def scope(
     method: str = "POST", path: str = MCP_PATH, session: str | None = None, kind: str = "http"
 ) -> Scope:
@@ -136,9 +144,9 @@ def test_a_disconnect_mid_body_stops_reading() -> None:
 def test_tool_calls_are_rate_limited_with_429_retry_after_and_a_counter() -> None:
     inner = Inner()
     mw, metrics = mw_with(inner, per_session=2, overall=300)
-    ok = [call(mw, scope(session="abc"), tool_call()) for _ in range(2)]
+    ok = [call(mw, scope(session=issued("abc")), tool_call()) for _ in range(2)]
     assert all(s[0]["status"] == 200 for s in ok)
-    sent = call(mw, scope(session="abc"), tool_call("query_sql", "r-9"))
+    sent = call(mw, scope(session=issued("abc")), tool_call("query_sql", "r-9"))
     assert sent[0]["status"] == 429
     head = headers_of(sent)
     assert head[b"retry-after"] == b"30"  # 2 a minute: one token back in 30 s
@@ -146,10 +154,10 @@ def test_tool_calls_are_rate_limited_with_429_retry_after_and_a_counter() -> Non
     assert body == {"jsonrpc": "2.0", "id": "r-9", "error": {"code": -32000, "message": hosted.rate_limited_message("session", 30.0)}}  # fmt: skip
     assert len(inner.calls) == 2
     assert dict(metrics.counts) == {("query_sql", "rate_limited", "<1s"): 1}
-    other = call(mw, scope(session="xyz"), tool_call("not-a-tool", [1]))  # another conversation still runs
+    other = call(mw, scope(session=issued("xyz")), tool_call("not-a-tool", [1]))  # another conversation runs
     assert other[0]["status"] == 200
-    call(mw, scope(session="xyz"), tool_call("not-a-tool", [1]))
-    late = call(mw, scope(session="xyz"), tool_call({"x": 1}, {"bad": "id"}))
+    call(mw, scope(session=issued("xyz")), tool_call("not-a-tool", [1]))
+    late = call(mw, scope(session=issued("xyz")), tool_call({"x": 1}, {"bad": "id"}))
     assert late[0]["status"] == 429 and json.loads(late[1]["body"])["id"] is None
     assert metrics.counts[("other", "rate_limited", "<1s")] == 1
 
@@ -171,9 +179,12 @@ def test_initialize_without_a_session_gets_a_fresh_opaque_id() -> None:
     init = json.dumps({"method": "initialize", "id": 1}).encode()
     first = headers_of(call(mw, scope(), init))[SESSION_HEADER.encode()]
     second = headers_of(call(mw, scope(), init))[SESSION_HEADER.encode()]
-    assert len(first) == 32 and first != second and all(c in b"0123456789abcdef" for c in first)
+    nonce, _, sig = first.partition(b".")
+    assert len(nonce) == 32 and len(sig) == 32 and first != second
+    assert all(c in b"0123456789abcdef." for c in first)
+    assert hosted._session_id(scope(session=first.decode())) == nonce.decode()  # one this server recognises
     # A client that already has one keeps it; a failed initialize gets none; a header the app set is kept.
-    assert SESSION_HEADER.encode() not in headers_of(call(mw, scope(session="mine"), init))
+    assert SESSION_HEADER.encode() not in headers_of(call(mw, scope(session=issued("mine")), init))
     failing, _ = mw_with(Inner(status=400))
     assert SESSION_HEADER.encode() not in headers_of(call(failing, scope(), init))
     own, _ = mw_with(Inner(headers=[(b"Mcp-Session-Id", b"from-app")]))
@@ -183,10 +194,12 @@ def test_initialize_without_a_session_gets_a_fresh_opaque_id() -> None:
 
 @pytest.mark.parametrize(
     ("value", "expected"),
-    [("abc", "abc"), ("x" * 128, "x" * 128), ("x" * 129, None), ("", None), ("caf\xe9", None),
-     ("a\tb", None)],
+    [(issued("abc"), issued("abc")[:32]), ("abc", None), ("x" * 128, None), ("", None), ("caf\xe9", None),
+     ("a\tb", None), (issued("abc")[:-1] + ("1" if issued("abc").endswith("0") else "0"), None),
+     (issued("abc")[:32], None),
+     ("0" * 32 + "." + issued("abc")[33:], None), (issued("abc") + "0", None)],
 )  # fmt: skip
-def test_session_ids_are_short_printable_ascii(value: str, expected: str | None) -> None:
+def test_only_session_ids_this_server_signed_count(value: str, expected: str | None) -> None:
     assert hosted._session_id(scope(session=value)) == expected
     assert hosted._session_id({"type": "http"}) is None
     assert hosted._session_id(scope()) is None
@@ -207,7 +220,8 @@ def test_token_buckets_refill_at_the_rate_and_cap_at_the_burst() -> None:
     assert rl.check("s") is None
     now[0] = 10_000.0  # a long pause refills only up to the burst
     assert all(rl.check("s") is None for _ in range(6)) and rl.check("s") is not None
-    assert rl.check(None) is None  # no session: only the overall bucket applies
+    assert rl.check(None) is None  # no session: the one shared bucket, at the per-session rate
+    assert all(rl.check(None) is None for _ in range(5)) and (rl.check(None) or ("",))[0] == "session"
 
 
 def test_rate_limit_buckets_stay_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -226,9 +240,9 @@ def test_limit_words() -> None:
     assert "from everyone using the hosted server right now" in hosted.rate_limited_message("overall", 12.6)
     assert "Wait about 13 seconds" in hosted.rate_limited_message("overall", 12.6)
     assert hosted.too_large_message(150_000, 140_000) == (
-        "This answer is too long to send in one reply (about 150,000 characters; the limit is 140,000), even one "
-        "page at a time, so nothing was sent. Narrow your question: fewer places, a shorter span of years, one "
-        "condition or one measure, or ask for a summary first."
+        "One row of this answer is too long to send in a reply (about 150,000 characters; the limit is 140,000), "
+        "so nothing was sent. Ask again for fewer columns or one measure, or use describe_dataset to see which "
+        "columns hold long text."
     )
 
 
@@ -411,3 +425,168 @@ def test_build_hosted_reads_only_the_hub_and_never_a_lake(
     assert (state.limiter.per_session, state.limiter.overall) == (30, 300)
     assert isinstance(app, HostedMiddleware) and {"get_series", "query_sql", "list_sources"} <= app.tool_names
     hosted.build_hosted(c, reg)  # an existing cache directory is fine
+
+
+# --------------------------------------------------------------------------- fix round: bodies, limits, guard
+
+
+def test_a_body_over_the_cap_is_refused_with_413_before_it_is_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(hosted, "MAX_BODY_BYTES", 10)
+    inner = Inner()
+    mw, _ = mw_with(inner)
+    declared = scope()
+    declared["headers"].append((b"content-length", b"11"))
+    sent = call(mw, declared, b"x" * 11)
+    assert sent[0]["status"] == 413 and not inner.calls
+    body = json.loads(sent[1]["body"])
+    assert body == {
+        "jsonrpc": "2.0",
+        "id": None,
+        "error": {"code": -32600, "message": hosted.TOO_LARGE_REQUEST},
+    }
+    # No length given (chunked): reading stops at the first chunk past the cap; the rest is never received.
+    left: list[dict[str, Any]] = [
+        {"type": "http.request", "body": b"y" * 6, "more_body": True} for _ in range(5)
+    ]
+    out: list[dict[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        return left.pop(0)
+
+    async def send(m: dict[str, Any]) -> None:
+        out.append(m)
+
+    asyncio.run(mw(scope(), receive, send))
+    assert out[0]["status"] == 413 and len(left) == 3 and not inner.calls
+    # Exactly at the cap, or a length that isn't a number, is read as before.
+    at_cap = scope()
+    at_cap["headers"].append((b"content-length", b"junk"))
+    assert call(mw, at_cap, b"{}" * 5)[0]["status"] == 200
+    assert "1 MiB" in hosted.TOO_LARGE_REQUEST and "fewer words" in hosted.TOO_LARGE_REQUEST
+
+
+def test_a_refused_call_spends_no_token_and_writes_no_bucket() -> None:
+    now = [0.0]
+    rl = RateLimiter(per_session=2, overall=1, clock=lambda: now[0])
+    assert rl.check("a") is None
+    assert rl.check("a") == ("overall", pytest.approx(60.0))  # the session's second token is still there
+    assert rl._buckets["s:a"] == (1.0, 0.0)
+    assert rl.check("b") is not None and "s:b" not in rl._buckets  # refused: nothing stored for it
+    now[0] = 60.0
+    assert rl.check("a") is None and rl._buckets["s:a"] == (pytest.approx(1.0), 60.0)
+    assert rl.check("a") == ("overall", pytest.approx(60.0))
+
+
+def test_buckets_stay_bounded_while_everyone_is_limited(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(hosted, "_MAX_KEYS", 3)
+    rl = RateLimiter(per_session=5, overall=1, clock=lambda: 0.0)
+    assert rl.check("first") is None
+    for s in range(50):  # a flood of new ids while the overall limit is hit
+        assert rl.check(f"id{s}") is not None
+    assert len(rl._buckets) <= 3
+
+
+def test_calls_without_a_signed_session_share_one_bucket() -> None:
+    inner = Inner()
+    mw, _ = mw_with(inner, per_session=2, overall=100)
+    forged = [scope(), scope(session="made-up-1"), scope(session="0" * 32 + "." + "0" * 32)]
+    assert [call(mw, sc, tool_call())[0]["status"] for sc in forged] == [200, 200, 429]
+    assert (
+        call(mw, scope(session=issued("real")), tool_call())[0]["status"] == 200
+    )  # an issued id has its own
+
+
+def test_a_stuck_worker_never_keeps_the_engine_past_its_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    monkeypatch.setattr(hosted, "GRACE_S", 0.05)
+    release = threading.Event()
+    guard = CallGuard(cfg(tmp_path, tool_timeout_s=0.1), Metrics())
+    out = guard("q", lambda: release.wait(5) and "late", "csv")
+    assert out == hosted.tools.refusal(DeadlineExceeded(0.1), "csv")
+    assert not guard._lock.locked() and guard._owner is None  # taken back from the stuck worker
+    start = time.monotonic()
+    assert guard("q", lambda: "next", "csv") == "next"  # the next call runs at once, not BUSY
+    assert time.monotonic() - start < 0.1
+    release.set()  # the stuck worker finishes later and must not release a lock it no longer holds
+    time.sleep(0.05)
+    assert guard("q", lambda: "again", "csv") == "again" and not guard._lock.locked()
+
+
+def test_the_guard_interrupts_pinned_engines_too(tmp_path: Path) -> None:
+    hits: list[str] = []
+
+    class Con:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def interrupt(self) -> None:
+            hits.append(self.name)
+
+    class Eng:
+        def __init__(self, name: str | None) -> None:
+            self._con = Con(name) if name else None
+
+    class Main(Eng):
+        def engines(self) -> list[Eng]:
+            return [self, Eng("pinned-1"), Eng(None), Eng("pinned-2")]
+
+    CallGuard(cfg(tmp_path), Metrics(), Main("main"))._interrupt()
+    assert hits == ["main", "pinned-1", "pinned-2"]
+
+
+def test_only_a_few_calls_queue_for_the_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(hosted, "MAX_WAITING", 0)
+    guard = CallGuard(cfg(tmp_path, tool_timeout_s=5), Metrics())
+    start = time.monotonic()
+    assert guard("q", lambda: "x", "json") == {"message": BUSY, "refused": "busy"}
+    assert time.monotonic() - start < 1  # BUSY at once, not after the 5 s budget
+    assert guard._waiting == 0
+
+
+@pytest.mark.parametrize(
+    ("host", "on"),
+    [("0.0.0.0", False), ("::", False), ("127.0.0.1", None), ("localhost", None), ("::1", None),  # noqa: S104
+     ("192.168.1.5", True), ("fe80::1", True)],
+)  # fmt: skip
+def test_host_checks_are_on_unless_the_server_is_explicitly_public(host: str, on: bool | None) -> None:
+    got = hosted.transport_security(host)
+    if on is not True:
+        assert got is None  # public: off; localhost: the SDK's own localhost allowlist
+        return
+    assert got is not None and got.enable_dns_rebinding_protection
+    name = f"[{host}]" if ":" in host else host
+    assert got.allowed_hosts == [name, f"{name}:*"] and f"https://{name}:*" in got.allowed_origins
+
+
+def test_a_dns_rebinding_request_to_a_local_server_is_refused(tmp_path: Path) -> None:
+    from starlette.testclient import TestClient
+
+    from health_data_registry.registry import load_registry
+    from tests.test_publish import write_hub_registry
+
+    reg = load_registry(write_hub_registry(tmp_path / "reg"))
+    c = cfg(tmp_path, hub_url="hf://datasets/x/y@release-2026-11-24", cache=tmp_path / "c")
+    local, _ = hosted.build_hosted(c, reg)  # 127.0.0.1 by default
+    public, _ = hosted.build_hosted(c, reg, host="0.0.0.0")  # noqa: S104
+    body = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+    head = {"Accept": "application/json, text/event-stream", "Host": "evil.example"}
+    with TestClient(local) as client:
+        assert client.post("/mcp", json=body, headers=head).status_code == 421
+        page = client.get("/", headers={"Host": "127.0.0.1:7860"}).text
+        assert "add a custom connector with this address: http://127.0.0.1:7860/mcp\n" in page
+        behind = client.get("/", headers={"Host": "x.hf.space", "X-Forwarded-Proto": "https"}).text
+        assert "https://x.hf.space/mcp" in behind and "<this address>" not in behind
+    with TestClient(public) as client:
+        assert client.post("/mcp", json=body, headers=head).status_code != 421
+
+
+@pytest.mark.parametrize("raw", ["0.5", "1999", "abc", "-3"])
+def test_a_result_cap_below_one_page_stops_the_server(raw: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HDR_MAX_RESULT_CHARS", raw)
+    with pytest.raises(ValueError, match=r"^HDR_MAX_RESULT_CHARS must be a whole number of at least 2,000"):
+        HostedConfig()
+    monkeypatch.setenv("HDR_MAX_RESULT_CHARS", "2000")
+    assert HostedConfig().max_result_chars == 2000
