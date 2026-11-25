@@ -635,6 +635,7 @@ browser = [
 [package.dev-dependencies]
 dev = [
     { name = "actionlint-py" },
+    { name = "anthropic" },
     { name = "hypothesis" },
     { name = "mutmut" },
     { name = "mypy" },
@@ -669,6 +670,7 @@ provides-extras = ["browser"]
 [package.metadata.requires-dev]
 dev = [
     { name = "actionlint-py", specifier = "==1.7.9.24" },
+    { name = "anthropic", specifier = ">=1,<2" },
     { name = "hypothesis", specifier = ">=6.100" },
     { name = "mutmut", specifier = ">=3.3" },
     { name = "mypy", specifier = ">=1.13" },

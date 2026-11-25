@@ -141,7 +141,9 @@ It needs three environment variables:
 | `EVAL_MODEL` | The model id that answers. There is no default: the driver stops with a message when it's unset |
 | `HDR_LAKE` | The lake the server reads, as for `make serve` |
 
-`--server-dir` must be a git checkout that has been `uv sync`'d. On DEV, from the repo root:
+`--server-dir` must be a git checkout that has been `uv sync`'d. The Claude API client lives in the `eval`
+dependency group: a plain `uv sync` installs it through `dev`, and a `--no-dev` environment needs
+`uv sync --locked --no-dev --group eval`, as the sealed workflow runs. On DEV, from the repo root:
 
 ```sh
 export EVAL_MODEL=<model id> HDR_LAKE=$PWD/lake

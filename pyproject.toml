@@ -49,9 +49,12 @@ dev = [
     "ruff>=0.6",
     "shellcheck-py>=0.10",
     "types-PyYAML>=6",
+    # The driver's tests need the SDK; dev includes the eval group so `uv sync` installs it for development.
+    { include-group = "eval" },
 ]
 # The behaviour eval's question driver (eval/drive.py): the Claude API client that asks each question through the
-# server. Not a server dependency. A default group so the sealed workflow's `uv sync --locked --no-dev` has it.
+# server. Not a server dependency and not a default group: deploy and refresh syncs with --no-dev never install
+# it. The sealed workflow installs it with `uv sync --locked --no-dev --group eval`.
 eval = [
     "anthropic>=1,<2",
 ]
@@ -63,7 +66,7 @@ transform = [
 ]
 
 [tool.uv]
-default-groups = ["dev", "eval", "transform"]
+default-groups = ["dev", "transform"]
 
 [build-system]
 requires = ["hatchling"]
