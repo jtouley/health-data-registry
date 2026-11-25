@@ -85,6 +85,8 @@ The scheduled refresh, crawls, sitemap snapshots, publishing and Space deploy ru
 [automation.md](automation.md) lists each workflow, its schedule and limits, and the secrets and variables it
 needs. Finished and inactive branches are archived (tagged, then deleted) by `branch-hygiene.yml`;
 [branch-hygiene.md](branch-hygiene.md) explains it and how to restore a branch. Every Hugging Face repository is named by one convention, built in `naming.py`: see [naming.md](naming.md).
+[crawler-audit.md](crawler-audit.md) lists every ingestion path and what each hard-codes for one source;
+[ADR 0016](../adr/0016-crawler-factory.md) proposes how to move that into config.
 
 To run the server in Claude Code from a checkout:
 
