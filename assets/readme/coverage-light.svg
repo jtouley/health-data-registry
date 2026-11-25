@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 812" width="660" height="812" role="img" aria-labelledby="t d" font-family="-apple-system, BlinkMacSystemFont, &apos;Segoe UI&apos;, &apos;Noto Sans&apos;, Helvetica, Arial, sans-serif">
+<title id="t">What it covers</title>
+<desc id="d">Covered now, from CDC: notifiable infections by US state, from C. auris to syphilis; antibiotic resistance in hospital infections, by state; COVID-19, flu and RSV hospitalization rates at CDC surveillance sites; C. difficile infections, national, from CDC surveillance sites. From WHO: tuberculosis by country. Coming next: measles cases by Michigan county; Detroit Health Department figures. Not covered yet: HIV.</desc>
+<text x="0" y="36.0" font-size="32" font-weight="600" fill="#1f2328">Covered now</text>
+<text x="0" y="76.0" font-size="28" fill="#59636e">From CDC, except where marked</text>
+<circle cx="14" cy="122.0" r="13" fill="#0b6b69"/><path d="M8 122.0l4 4 8-8.5" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="44" y="132.0" font-size="28" fill="#1f2328">Notifiable infections by US state,</text>
+<text x="44" y="168.0" font-size="28" fill="#1f2328">from <tspan font-style="italic">C. auris</tspan> to syphilis</text>
+<circle cx="14" cy="206.0" r="13" fill="#0b6b69"/><path d="M8 206.0l4 4 8-8.5" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="44" y="216.0" font-size="28" fill="#1f2328">Antibiotic resistance in hospital</text>
+<text x="44" y="252.0" font-size="28" fill="#1f2328">infections, by state</text>
+<circle cx="14" cy="290.0" r="13" fill="#0b6b69"/><path d="M8 290.0l4 4 8-8.5" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="44" y="300.0" font-size="28" fill="#1f2328">COVID-19, flu and RSV hospitalization</text>
+<text x="44" y="336.0" font-size="28" fill="#1f2328">rates at CDC surveillance sites</text>
+<circle cx="14" cy="374.0" r="13" fill="#0b6b69"/><path d="M8 374.0l4 4 8-8.5" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="44" y="384.0" font-size="28" fill="#1f2328"><tspan font-style="italic">C. difficile</tspan> infections, national,</text>
+<text x="44" y="420.0" font-size="28" fill="#1f2328">from CDC surveillance sites</text>
+<circle cx="14" cy="458.0" r="13" fill="#0b6b69"/><path d="M8 458.0l4 4 8-8.5" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="44" y="468.0" font-size="28" fill="#1f2328">Tuberculosis by country (WHO)</text>
+<path d="M0 500.0H660" stroke="#d1d9e0" stroke-width="1"/>
+<text x="0" y="552.0" font-size="32" font-weight="600" fill="#1f2328">Coming next</text>
+<circle cx="14" cy="598.0" r="12" fill="none" stroke="#0b6b69" stroke-width="3" stroke-dasharray="5 4"/>
+<text x="44" y="608.0" font-size="28" fill="#1f2328">Measles cases by Michigan county</text>
+<circle cx="14" cy="646.0" r="12" fill="none" stroke="#0b6b69" stroke-width="3" stroke-dasharray="5 4"/>
+<text x="44" y="656.0" font-size="28" fill="#1f2328">Detroit Health Department figures</text>
+<path d="M0 688.0H660" stroke="#d1d9e0" stroke-width="1"/>
+<text x="0" y="740.0" font-size="32" font-weight="600" fill="#1f2328">Not covered yet</text>
+<path d="M4 786.0h20" stroke="#59636e" stroke-width="3" stroke-linecap="round"/>
+<text x="44" y="796.0" font-size="28" fill="#1f2328">HIV</text>
+</svg>

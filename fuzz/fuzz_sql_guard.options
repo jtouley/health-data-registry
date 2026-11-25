@@ -1,0 +1,5 @@
+# Bounded time and memory per input: a slower or larger run is a finding (timeout or OOM crash).
+[libfuzzer]
+timeout = 10
+rss_limit_mb = 2048
+max_len = 4096

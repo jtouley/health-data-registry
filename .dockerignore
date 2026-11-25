@@ -1,0 +1,15 @@
+# The ClusterFuzzLite build (.clusterfuzzlite/Dockerfile) copies the repository into the image. Keep data, secrets
+# and local build output out of it, also when it is built from a working copy rather than a fresh checkout.
+.git/
+lake/
+mutants/
+sitemaps/
+dist/
+.venv/
+.env
+.env.*
+*.parquet
+*.duckdb
+*.xml.gz
+**/__pycache__/
+.claude/
