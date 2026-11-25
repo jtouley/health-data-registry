@@ -1378,13 +1378,38 @@ def load_expected(path: Path, split: Split, sha256: str | None = None) -> list[E
     return records
 
 
+# The key of the header record eval/drive.py writes first in each of its files (model, prompt sha256, server
+# commit); the readers below skip it.
+DRIVE_HEADER_KEY = "drive_header"
+
+
 def transcript_by_question(
     records: Sequence[Mapping[str, Any]],
 ) -> dict[str, tuple[list[ToolCall], list[str]]]:
-    """Group a drive.py transcript (one JSON object per call: id, tool, args, result) by question id."""
+    """Group a drive.py transcript (one JSON object per call: id, tool, args, result) by question id. The
+    driver's header record is skipped."""
     out: dict[str, tuple[list[ToolCall], list[str]]] = {}
     for rec in records:
+        if DRIVE_HEADER_KEY in rec:
+            continue
         calls, responses = out.setdefault(str(rec["id"]), ([], []))
         calls.append(ToolCall(str(rec["tool"]), dict(rec.get("args") or {})))
         responses.append(str(rec["result"]))
+    return out
+
+
+def answers_by_question(records: Sequence[Mapping[str, Any]]) -> dict[str, str]:
+    """The final answer for each question id from drive.py's answers file (id, answer), skipping its header
+    record. A question answered twice means two runs were mixed, so it raises."""
+    out: dict[str, str] = {}
+    for rec in records:
+        if DRIVE_HEADER_KEY in rec:
+            continue
+        qid = str(rec["id"])
+        if qid in out:
+            raise ScorerError(
+                "The answers file answers a question more than once: two runs were mixed. "
+                "Score each run's --out on its own."
+            )
+        out[qid] = str(rec.get("answer") or "")
     return out
