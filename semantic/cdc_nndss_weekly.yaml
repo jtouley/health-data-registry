@@ -26,28 +26,27 @@ metrics:
     measure: cases_this_week
     aggregation: sum
     exclude_total_rows: true
-    single_value_of: [condition]
     filters: []
   - name: year_to_date_cases
     description: "Cases so far this year as of one MMWR week (the compiler refuses it unless mmwr_week is filtered to one week, normally the latest; added across places only)."
     measure: cases_year_to_date
     aggregation: sum
     exclude_total_rows: true
-    single_value_of: [mmwr_week, condition]
+    single_value_of: [mmwr_week]
     filters: []
   - name: prior_year_to_date_cases
     description: "Cases in the previous year up to the same week, as revised in the current week's table (read at one mmwr_week, which the compiler requires)."
     measure: cases_prior_year_to_date
     aggregation: sum
     exclude_total_rows: true
-    single_value_of: [mmwr_week, condition]
+    single_value_of: [mmwr_week]
     filters: []
   - name: us_resident_year_to_date_cases
     description: "National year-to-date cases among US residents, read from the published US RESIDENTS row (excludes territories and non-US residents)."
     measure: cases_year_to_date
     aggregation: sum
     exclude_total_rows: false
-    single_value_of: [mmwr_week, condition]
+    single_value_of: [mmwr_week]
     filters: ["upper(states) IN ('US RESIDENTS', 'U.S. RESIDENTS')"]
   - name: annual_cases
     description: "Cases in an MMWR year, as two separate observations: year_end_ytd, the year's own year-to-date count at the last week of the year that has a number (provisional, labelled with that week); and subsequent_year_restatement, next year's prior-year year-to-date for the same year (unverified_restatement, not a final disease count). Neither is final until a domain reviewer approves that they count the same thing. Weekly counts are not added up because late reports are added to the running total, not to the week."
@@ -56,7 +55,6 @@ metrics:
     order_by: mmwr_week
     restated_by: {measure: cases_prior_year_to_date, resolution_policy: require_domain_review}
     exclude_total_rows: true
-    single_value_of: [condition]
     filters: []
   - name: us_resident_annual_cases
     description: "Annual cases among US residents from the published US RESIDENTS row, read the same way as annual_cases."
@@ -65,14 +63,12 @@ metrics:
     order_by: mmwr_week
     restated_by: {measure: cases_prior_year_to_date, resolution_policy: require_domain_review}
     exclude_total_rows: false
-    single_value_of: [condition]
     filters: ["upper(states) IN ('US RESIDENTS', 'U.S. RESIDENTS')"]
   - name: us_resident_weekly_cases
     description: "Cases among US residents reported in a given week, read from the published US RESIDENTS row and added across weeks."
     measure: cases_this_week
     aggregation: sum
     exclude_total_rows: false
-    single_value_of: [condition]
     filters: ["upper(states) IN ('US RESIDENTS', 'U.S. RESIDENTS')"]
   - name: max_weekly_cases_prior_52_weeks
     description: "Highest weekly case count in the previous 52 weeks for one place and condition, as published; never added up."
