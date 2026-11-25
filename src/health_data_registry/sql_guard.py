@@ -35,7 +35,6 @@ are ported. ``polars``/``structlog`` are replaced by plain tuples and stdlib ``l
 
 from __future__ import annotations
 
-import functools
 import logging
 import re
 import threading
@@ -321,68 +320,71 @@ _STATEMENT_WORDS = frozenset(
      "update", "delete", "create", "alter"}
 )  # fmt: skip
 
-# Function names never used as a bare alias or WITH name (FROM deaths read_csv('x') parses as a table alias named
-# read_csv with a column alias x): refused so the query that runs never even reads like a file read, a table
-# function or a setting. The known ones by name, whole families by prefix or suffix, and every table function the
-# installed DuckDB lists (_table_functions), so a new reader is refused too. A quoted name ("glob") is an ordinary
-# name: it is regenerated quoted, so it can't read as a call.
+# Function names never used as a bare alias, window or WITH name (FROM deaths read_csv('x') parses as a table alias
+# named read_csv with a column alias x): refused so the query that runs never even reads like a file read, a table
+# function or a setting. It is a reviewed, fixed list, so a DuckDB upgrade never changes what query_sql accepts on its
+# own. It holds every table function DuckDB 2.0.1 lists (a test fails when an installed DuckDB lists one that is
+# neither here nor reviewed as an ordinary word), the readers of the extensions named below, and scalar functions
+# that read settings, variables or the environment. Readers of other extensions are not listed: such a name still
+# passes as an alias, which reads nothing, and harden() stops extensions from loading at all. Ordinary words that are
+# also table functions (range, repeat, summary, checkpoint), and table macros and pragmas (version, show, histogram),
+# stay usable names. A quoted name ("glob") is an ordinary name: it is regenerated quoted, so it can't read as a call.
 _FUNCTION_NAMES: Final = frozenset(
-    {"read_csv", "read_csv_auto", "read_parquet", "read_json", "read_json_auto", "read_json_objects",
-     "read_ndjson", "read_text", "read_blob", "read_xlsx", "glob", "query", "query_table", "sqlite_scan",
-     "sqlite_attach", "postgres_scan", "postgres_attach", "mysql_scan", "parquet_scan", "parquet_metadata",
-     "parquet_schema", "delta_scan", "iceberg_scan", "getenv", "getvariable", "set_variable", "current_setting",
-     "duckdb_settings", "duckdb_tables", "duckdb_secrets", "pragma_version", "load_extension", "range",
-     "generate_series", "st_read", "http_get", "http_post", "unnest", "which_secret", "sniff_csv", "summary"}
+    {  # DuckDB 2.0.1 table functions (duckdb_* and pragma_* come under _FUNCTION_PREFIXES)
+     "add_grammar_extension", "arrow_scan", "arrow_scan_dumb", "create_external_resource",
+     "deregister_external_resource", "destroy_external_resource", "disable_logging", "disable_profiling",
+     "enable_logging", "enable_profiling", "force_checkpoint", "generate_series", "glob", "icu_calendar_names",
+     "json_each", "json_execute_serialized_sql", "json_tree", "pandas_scan", "parquet_bloom_probe",
+     "parquet_file_metadata", "parquet_full_metadata", "parquet_kv_metadata", "parquet_metadata",
+     "parquet_page_index", "parquet_scan", "parquet_schema", "pg_timezone_names", "python_arrow_scan",
+     "python_map_function", "query", "query_table", "read_blob", "read_csv", "read_csv_auto", "read_duckdb",
+     "read_json", "read_json_auto", "read_json_objects", "read_json_objects_auto", "read_ndjson", "read_ndjson_auto",
+     "read_ndjson_objects", "read_parquet", "read_single_csv_file", "read_single_json_file",
+     "read_single_parquet_file", "read_text", "register_external_resource", "register_external_resource_type",
+     "remove_grammar_extension", "repeat_row", "seq_scan", "sniff_csv", "test_all_types", "test_vector_types",
+     "truncate_duckdb_logs", "unnest", "which_secret",
+     # readers of the excel, spatial, sqlite, postgres, mysql, delta, iceberg and http extensions
+     "read_xlsx", "st_read", "st_readosm", "st_read_meta", "st_readshp", "sqlite_scan", "sqlite_attach",
+     "sqlite_query", "postgres_scan", "postgres_attach", "postgres_query", "postgres_execute", "mysql_scan",
+     "mysql_attach", "mysql_query", "mysql_execute", "delta_scan", "iceberg_scan", "iceberg_metadata",
+     "iceberg_snapshots", "http_get", "http_post", "http_head",
+     # scalar functions that read settings, variables or the environment, or load code
+     "getenv", "getvariable", "set_variable", "current_setting", "load_extension"}
 )  # fmt: skip
-_FUNCTION_PREFIXES: Final = (
-    "read_", "duckdb_", "pragma_", "parquet_", "sqlite_", "postgres_", "mysql_", "iceberg_", "delta_", "http_",
-)  # fmt: skip
-_FUNCTION_SUFFIXES: Final = ("_scan", "_attach", "_secret", "_secrets", "_setting", "_settings")
-
-
-@functools.cache
-def _table_functions() -> frozenset[str]:
-    """Every table and pragma function the installed DuckDB knows, lower-cased."""
-    with duckdb.connect(":memory:") as con:
-        rows = con.execute(
-            "SELECT DISTINCT function_name FROM duckdb_functions() "
-            "WHERE function_type IN ('table', 'table_macro', 'pragma')"
-        ).fetchall()
-    return frozenset(str(name).casefold() for (name,) in rows)
+# Families whose names are never ordinary words: DuckDB's catalogue and settings, pragmas, and ducklake.
+_FUNCTION_PREFIXES: Final = ("duckdb_", "pragma_", "ducklake_")
+_NAME_SHOWN: Final = 40  # a refusal repeats at most this many characters of a name
 
 
 def _looks_like_function(name: str) -> bool:
     key = name.casefold()
-    return (
-        key in _FUNCTION_NAMES
-        or key.startswith(_FUNCTION_PREFIXES)
-        or key.endswith(_FUNCTION_SUFFIXES)
-        or key in _table_functions()
-    )
+    return key in _FUNCTION_NAMES or key.startswith(_FUNCTION_PREFIXES)
 
 
 def _is_definition(node: exp.Identifier) -> bool:
-    """The identifier names something the query defines: a column alias, a table alias (or its column list), a
-    WITH name, or a named window (WINDOW w AS (...), OVER w). An Identifier sits directly under an Alias or a
-    Window only as that name: the aliased expression and the window's columns are Column nodes."""
+    """The identifier is a name the query gives, not a column reference: a column alias, a table alias (or its column
+    list), a WITH name, or a named window, both where it is defined (WINDOW w AS (...)) and where it is used (OVER w,
+    OVER (w)). An Identifier sits directly under an Alias or a Window only as such a name: the aliased expression and
+    the window's columns are Column nodes."""
     return isinstance(node.parent, exp.TableAlias | exp.Alias | exp.Window)
 
 
 def _check_name(node: exp.Identifier) -> None:
-    """A bare name may not read like a statement or, where the query defines it, like a function."""
+    """A bare name may not read like a statement or, where the query gives it as a name, like a function."""
     if node.args.get("quoted"):
         return  # a quoted name stays quoted in the SQL that runs
     name = str(node.name)
-    if name.casefold() in _STATEMENT_WORDS:
+    if name.casefold() in _STATEMENT_WORDS:  # one of a few short words, so the message stays short
         raise SqlRefused(
             "forbidden_construct",
             f"{name} can't be used as a name here: choose another name for the column or table.",
         )
     if _is_definition(node) and _looks_like_function(name):
+        shown = name[:_NAME_SHOWN]
         raise SqlRefused(
             "forbidden_construct",
-            f"{name} looks like the name of a function, so it can't name a column, table, window or WITH part: choose "
-            f'another name, or put it in double quotes ("{name}").',
+            f"{shown} looks like the name of a function, so it can't name a column, table, window or WITH part: "
+            f'choose another name, or put it in double quotes ("{shown}").',
         )
 
 

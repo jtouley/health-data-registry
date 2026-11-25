@@ -8,11 +8,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
-- `query_sql` refuses a bare name that looks like a function (`read_csv`, `glob`, `getenv`, any `read_*` or
-  `*_scan`, and every table function DuckDB lists) when the query uses it as a column alias, table alias or WITH
-  name, and says to choose another name or put it in double quotes. Before, `FROM deaths read_csv('x')` passed as
-  a harmless alias; it read no file, but the SQL that ran looked like a file read, and the guard's token-soup
-  property test failed whenever it generated that case.
+- `query_sql` refuses a bare name that is the name of a function that reads files, settings or the catalogue
+  (`read_csv`, `glob`, `getenv`, `query`, `unnest`, any `duckdb_*` or `pragma_*`, and the other names on a reviewed,
+  fixed list) when the query uses it as a column alias, table alias, window or WITH name, and says to choose another
+  name or put it in double quotes. Before, `FROM deaths read_csv('x')` passed as a harmless alias; it read no file,
+  but the SQL that ran looked like a file read, and the guard's token-soup property test failed whenever it
+  generated that case. Everyday names such as `range`, `summary`, `version`, `ct_scan` and `care_setting` still work.
 
 - A summed count never adds up labels that overlap or count different things (hard rule 2). Semantic-model
   dimensions say `non_additive: true` or `false`, and each `true` says why in plain words
