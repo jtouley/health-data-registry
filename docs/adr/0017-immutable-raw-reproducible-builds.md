@@ -7,8 +7,8 @@
   [ADR 0005](0005-raw-fetches-hash-addressed.md) (raw fetches kept, hash-addressed),
   [ADR 0007](0007-odcs-contracts-and-semantic-models.md) (contracts and the contract facts rule),
   [ADR 0009](0009-licences-decide-mirroring.md) (licences decide mirroring),
-  [ADR 0015](0015-elt-raw-data-stored-as-sent.md) (ELT: raw data stored as sent), ADR 0016 (crawler factory;
-  proposed on PR #118, not yet merged), stage b and stage c of the transform (named in the audit's ref table),
+  [ADR 0015](0015-elt-raw-data-stored-as-sent.md) (ELT: raw data stored as sent), [ADR 0016](0016-crawler-factory.md)
+  (crawler factory), stage b and stage c of the transform (named in the audit's ref table),
   the audit in [docs/dev/reproducibility-audit.md](../dev/reproducibility-audit.md)
 
 "Hard rule N" below means rule N in [CLAUDE.md, Hard rules](../../CLAUDE.md#hard-rules).
@@ -229,12 +229,12 @@ and change nothing.
 - **ELT.** [ADR 0015](0015-elt-raw-data-stored-as-sent.md) says what raw holds: the publisher's values as sent,
   metadata added only as declared. This ADR says how raw is kept: written once, by one writer, checked by hash,
   never rewritten. A change to what raw holds is a contract version bump and a new snapshot under both.
-- **Crawler factory.** Under ADR 0016 (PR #118) a source's adapter type, its config block and its extensions decide
+- **Crawler factory.** Under [ADR 0016](0016-crawler-factory.md) a source's adapter type, its config block and its extensions decide
   how bytes become records. They are part of the snapshot's identity: the snapshot id's digest covers the raw
   sha256s, the contract and semantic versions, `partial`, the adapter type and version, and the sha256 of the
   source's canonical config (extensions and their arguments included). A config change gives a new snapshot, never
-  a rewritten one. The build manifest records the same digest per input. PR #118's text does not say this yet; its
-  fix round should add it, or this ADR's acceptance carries it.
+  a rewritten one. The build manifest records the same digest per input. ADR 0016 already adds the config and
+  extension digest to the snapshot inputs; this ADR adds the adapter type and version.
 - **Extensions.** ADR 0016's extensions are pure (no clock, network, file system or environment), which is what
   section 4 needs; a `staging` extension compiles into dbt and falls under the same determinism lint.
 
