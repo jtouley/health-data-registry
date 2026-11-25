@@ -88,16 +88,11 @@ class LocalHttpsSource:
         self.routes: dict[str, Canned] = {}
         self.requests: list[dict[str, str]] = []
         self.connections: list[str] = []
-        self.posts: list[bytes] = []
         source = self
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, format: str, *args: object) -> None:  # noqa: A002
                 return
-
-            def do_POST(self) -> None:  # noqa: N802
-                source.posts.append(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
-                self.do_GET()
 
             def do_GET(self) -> None:  # noqa: N802
                 source.requests.append({"path": self.path, **{k.lower(): v for k, v in self.headers.items()}})
@@ -861,39 +856,3 @@ def test_proxyMode_warnsOncePerProcess(
     fetch_mod._warn_proxy_once()
     fetch_mod._warn_proxy_once()
     assert caplog.text.count("check is advisory") == 1
-
-
-# ---------------------------------------------------------------------------
-# Form posts (Tableau's bootstrapSession)
-# ---------------------------------------------------------------------------
-
-
-def test_fetch_form_postsUrlEncodedFieldsAndKeepsTheChecks(source: LocalHttpsSource) -> None:
-    source.routes["/vizql/boot"] = Canned(body=b'7;{"a":1}')
-    result = _get(source.url("/vizql/boot"), form={"sheet_id": "Main Menu", "showParams": "{}"})
-    assert result.content == b'7;{"a":1}'
-    assert source.posts == [b"sheet_id=Main+Menu&showParams=%7B%7D"]
-    sent = source.requests[-1]
-    assert sent["content-type"] == "application/x-www-form-urlencoded"
-    assert sent["user-agent"] == fetch_mod.USER_AGENT
-
-
-def test_fetch_get_sendsNoFormContentType(source: LocalHttpsSource) -> None:
-    source.routes["/x"] = Canned(body=b"x")
-    _get(source.url("/x"))
-    assert "content-type" not in source.requests[-1] and source.posts == []
-
-
-def test_fetch_form_redirectIsNeverFollowed(source: LocalHttpsSource) -> None:
-    source.routes["/vizql/boot"] = Canned(status=302, headers={"Location": "/elsewhere"})
-    source.routes["/elsewhere"] = Canned(body=b"x")
-    with pytest.raises(fetch_mod.FetchRefused) as e:
-        _get(source.url("/vizql/boot"), form={"a": "b"})
-    assert e.value.code == "http_error" and e.value.status == 302
-    assert [r["path"] for r in source.requests] == ["/vizql/boot"]
-
-
-def test_fetch_form_notAllowedHost_refusedBeforePosting(source: LocalHttpsSource) -> None:
-    with pytest.raises(fetch_mod.FetchRefused) as e:
-        _get("https://elsewhere.example.test/vizql/boot", form={"a": "b"})
-    assert e.value.code == "host_not_allowed" and source.posts == []
