@@ -57,6 +57,9 @@ def test_catalog_gbd_causes_become_proposals_only_for_exactly_spelled_labels() -
         and len(rec["record_id"]) == 18
     )
     assert set(rec) == set(cw.FIELDS)
+    assert rec["note"].startswith(
+        "Proposed by exact spelling from the catalog's gbd.causes; a maintainer checks"
+    )
 
 
 def test_dev_synonyms_become_proposals_and_test_or_sealed_never(tmp_path: Path) -> None:
@@ -72,6 +75,9 @@ def test_dev_synonyms_become_proposals_and_test_or_sealed_never(tmp_path: Path) 
     assert (p.dataset, p.label, p.synonym, p.proposed_by) == ("toy_cases", "Legionellosis", "LEGIONELLOSIS",
                                                               "dev_eval_synonym")  # fmt: skip
     assert p.record()["state"] == "proposed"
+    assert p.note.startswith(
+        "Proposed from a DEV eval question's wording (spelling match only); a maintainer"
+    )
     with pytest.raises(cw.NotAllowed, match="line 2 is not a DEV question"):
         cw.from_dev_set(dev_file(tmp_path / "t", question("a", []), question("b", [], split="test")), reg)
     sealed = tmp_path / "eval" / "sealed" / "dev" / "dev.jsonl"
@@ -140,3 +146,20 @@ def test_main_proposes_from_the_catalog_and_dev_then_writes_nothing_new(
     assert cw.main(["--root", str(root), "--to", str(out), "--dev", str(dev)]) == 0
     assert capsys.readouterr().out == "No new proposals; nothing written.\n"
     assert len(list((out / "condition_crosswalk").glob("*.ndjson"))) == 1
+
+
+def test_main_writes_to_the_control_plane_directory_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("HDR_CONTROL_PLANE", str(tmp_path / "plane"))
+    assert cw.main(["--root", str(toy_root(tmp_path / "reg"))]) == 0
+    assert capsys.readouterr().out.startswith("Wrote 2 new proposed records to ")
+    assert {r["proposed_by"] for r in cw.latest_export(tmp_path / "plane")} == {"string_match"}
+    out = tmp_path / "one"
+    cw.write_export(
+        out, [cw.Proposal("d", "L", "string_match").record()], now=datetime(2026, 1, 1, tzinfo=UTC)
+    )
+    monkeypatch.setenv("HDR_CONTROL_PLANE", str(out))
+    assert cw.main(["--root", str(toy_root(tmp_path / "reg2"))]) == 0
+    assert capsys.readouterr().out.startswith("Wrote 2 new proposed records")
+    assert len(cw.latest_export(out)) == 3

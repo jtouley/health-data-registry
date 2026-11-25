@@ -173,13 +173,15 @@ def write_export(directory: Path, records: Sequence[dict[str, Any]], *, now: dat
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Write proposed crosswalk records (never accepted ones).")
     ap.add_argument(
-        "--dev", type=Path, help="the DEV eval file (eval/dev/dev.jsonl) to propose synonyms from"
+        "--dev",
+        type=Path,
+        help="the DEV eval file (eval/dev/dev.jsonl) to propose synonyms from",  # pragma: no mutate
     )
     ap.add_argument(
         "--to",
         type=Path,
         default=Path(os.environ.get("HDR_CONTROL_PLANE", "lake/control_plane")),
-        help="the control-plane export directory (default $HDR_CONTROL_PLANE or lake/control_plane)",
+        help="the control-plane export directory (default $HDR_CONTROL_PLANE or lake/control_plane)",  # pragma: no mutate
     )
     ap.add_argument("--root", type=Path, default=None)
     args = ap.parse_args(argv)

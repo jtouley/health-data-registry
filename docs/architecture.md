@@ -87,6 +87,20 @@ flowchart LR
    maintainers. The weekly refresh publishes a hub release only when the release gate (`release_gate.py`)
    finds no failed model, no check that couldn't run and no failed error-severity check; otherwise the
    release already served stays.
+   Each contract also declares its conformed dimensions (`conformedDimensions`, parsed in `conformed.py`):
+   how a row finds its condition, place and time keys, and what one count is (`countedUnit`). Every
+   intermediate row carries the same keys (`transform_marts.py`): the condition label with case status and
+   subtype kept apart; a place key from the Census state and county code files (`census_fips_state`,
+   `census_fips_county`), a declared key, or a partial-area key under its parent; and the MMWR year and week
+   or the year, with the contract's `dateBasis`. A label the contract doesn't resolve stays `unresolved`.
+   The marts are one fact per source (`fct_<id>`, never a union, so counted units never mix), `dim_condition`
+   (concept ids only from accepted records of the control plane's crosswalk export, read through
+   `optional_source`; with no export every label is unresolved), `dim_place` (the gazetteer: Detroit,
+   Out-Wayne and Wayne County are never added to each other), `dim_time` and `dim_dataset_coverage`.
+   `crosswalk.py` may only write proposed crosswalk records, from exact catalog spellings and the DEV eval
+   set. UN M49 is catalogued but its terms forbid a stored copy, so it is read live and country codes in
+   `dim_place` are declared one at a time. A contract counts as reviewed only when none of its structured
+   `openQuestions` that could change a number is open; `list_caveats` says which are.
 5. **DuckDB read-only views.** `store.py` builds views over the snapshot from the contract. Connections are
    read-only.
 6. **Tools.** `get_series`, `get_aligned_with_gbd` and the other tools compile semantic-model metrics to SQL over

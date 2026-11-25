@@ -110,13 +110,23 @@ def test_transform_has_no_seeds_no_data_and_every_input_has_an_odcs_contract() -
     sql = {p.stem: p.read_text() for p in MODELS.rglob("*.sql")}
     assert set(sql) == set(models), "every model has a contract-backed schema, and every schema a model"
     for name, text in sql.items():
-        for kind, ref in re.findall(r"\b(source|ref)\(([^)]*)\)", text):
+        found = re.findall(r"\b(source|optional_source|ref)\(([^)]*)\)", text)
+        for kind, ref in found:
             parts = [x.strip(" '\"") for x in ref.split(",")]
-            key = ".".join(parts) if kind == "source" else parts[-1]
-            assert key in (sources if kind == "source" else models), (
-                f"{name}: {kind}({ref}) has no ODCS contract"
-            )
+            is_source = kind in ("source", "optional_source")
+            key = ".".join(parts) if is_source else parts[-1]
+            assert key in (sources if is_source else models), f"{name}: {kind}({ref}) has no ODCS contract"
+        assert found or name in ("mmwr_calendar",), f"{name} reads no contract-backed input"
     assert sources and models
+    # The control plane's export is a contract-backed source too, read only through optional_source.
+    assert (
+        sources["control_plane.condition_crosswalk"]
+        == "contracts/control_plane/condition_crosswalk.odcs.yaml"
+    )
+    assert (
+        "optional_source('control_plane', 'condition_crosswalk')"
+        in sql["stg_control_plane__condition_crosswalk"]
+    )
 
 
 def _mmwr(first: int, last: int) -> list[tuple[int, int, date, date]]:
