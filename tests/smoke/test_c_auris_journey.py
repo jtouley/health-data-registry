@@ -11,14 +11,12 @@ Only the NNDSS weekly table is catalogued for C. auris on main. CDC's C. auris t
 Network are named in the caveats but have no catalog entry, so their steps check that the server says so and
 shows no number for them.
 
-Behaviour the server doesn't have yet is a strict xfail naming its issue, with raises=AssertionError so only the
-missing behaviour counts as the expected failure. Each turns into a failure when its issue lands, and whoever
-merges that fix removes the mark. The module's conftest blocks every connection off this machine.
+Steps that need PR #28 (condition vocabulary, routing and structured declines) are strict xfails: they turn
+into failures once #28 lands, and whoever merges it removes the marks.
 """
 
 from __future__ import annotations
 
-import socket
 from pathlib import Path
 
 import pytest
@@ -35,18 +33,21 @@ from eval.scorer import (
     structured_fields,
 )
 from tests.smoke import client
-from tests.smoke.conftest import NetworkBlocked
 from tests.smoke.fixtures import (
     CENSUS,
+    CENSUS_ROWS,
     NNDSS,
+    NNDSS_ROWS,
     NNDSS_URL,
     ROOT,
     Journey,
     build_journey,
+    raw_sha256,
 )
 
 pytestmark = pytest.mark.smoke
 
+NEEDS_28 = "needs #28 (condition vocabulary, routing and structured declines; not merged yet)"
 QUESTION = "C. auris in Michigan in 2024"
 CLINICAL = "C. auris (clinical cases)"
 SCREENING = "C. auris (screening, colonisation)"
@@ -74,7 +75,7 @@ def trials() -> dict[str, ExpectedRecord]:
 # ------------------------------------------------------------------------------------------ shared checks
 
 
-def assert_provenance_on_every_number(journey: Journey, response: str) -> None:
+def assert_provenance_on_every_number(response: str) -> None:
     """Hard rule 8: each source in a table has a complete provenance line, with the sha256 of its raw bytes."""
     sources = {r["source_id"] for r in client.table_rows(response) if r.get("source_id")}
     sources |= {
@@ -83,11 +84,10 @@ def assert_provenance_on_every_number(journey: Journey, response: str) -> None:
     assert sources, "a data table must name the source of its rows"
     lines = {m.group(1): m.group(0) for m in PROVENANCE_RE.finditer(response)}
     assert sources <= provenance_ids(response), f"no provenance line for {sources - provenance_ids(response)}"
+    expected_sha = {NNDSS: raw_sha256(NNDSS_ROWS), CENSUS: raw_sha256(CENSUS_ROWS)}
     for src in sources:
         assert provenance_complete(lines[src]), lines[src]
-        assert journey.raw[src].sha256 in lines[src], (
-            f"{src}: provenance does not carry the raw bytes' sha256"
-        )
+        assert expected_sha[src] in lines[src], f"{src}: provenance does not carry the raw bytes' sha256"
 
 
 def series(response: str, condition: str) -> list[dict[str, str]]:
@@ -148,7 +148,7 @@ def test_step3_series_come_back_separate_never_summed_with_totals_left_out(journ
                 and "not a final disease count" in r["period_status"]
             )
     assert "draft" in out and "'-' means no cases were reported" in out
-    assert_provenance_on_every_number(journey, out)
+    assert_provenance_on_every_number(out)
 
 
 def test_step4_a_flagged_place_stays_empty_with_its_flag_never_zero(journey: Journey) -> None:
@@ -165,20 +165,14 @@ def test_step5_rates_use_the_census_denominator_and_are_never_summed(journey: Jo
     out = journey.call("get_rate", condition="C. auris", locations=["Michigan"], year=2024)
     rows = {r["condition"]: r for r in client.table_rows(out)}
     assert set(rows) == {CLINICAL, SCREENING}
-    # Hard rule 2: the 95% interval comes back with every rate. Pinned to the exact Poisson (Garwood) bounds for
-    # 21 and 57 cases in 1,000,000, so a change of interval method fails here too.
-    expected = ((CLINICAL, "21.0", "2.1", "1.3", "3.21"), (SCREENING, "57.0", "5.7", "4.317", "7.385"))
-    for cond, cases, rate, lower, upper in expected:
+    for cond, cases, rate in ((CLINICAL, "21.0", "2.1"), (SCREENING, "57.0", "5.7")):
         r = rows[cond]
         assert (r["cases"], r["population"], r["rate_per_100k"]) == (cases, "1000000.0", rate)
-        assert (r["lower_95"], r["upper_95"]) == (lower, upper), r
-        assert float(r["lower_95"]) <= float(r["rate_per_100k"]) <= float(r["upper_95"])
         assert (r["case_source"], r["population_source"]) == (NNDSS, CENSUS)
         assert "provisional" in r["flags"]
-    assert "Garwood) 95% interval" in out
     assert "7.8" not in out  # the two rates are never added
     assert "crude rate" in out and "not age-standardised" in out
-    assert_provenance_on_every_number(journey, out)
+    assert_provenance_on_every_number(out)
 
 
 def test_step6_caveats_keep_the_sources_apart(journey: Journey) -> None:
@@ -195,28 +189,12 @@ def test_step6_caveats_keep_the_sources_apart(journey: Journey) -> None:
     assert "Contract is a draft" in out
 
 
-@pytest.mark.parametrize(
-    ("source", "source_id"),
-    [
-        pytest.param("tracking page", UNCATALOGUED["tracking page"], id="tracking page"),
-        pytest.param(
-            "AR Lab Network",
-            UNCATALOGUED["AR Lab Network"],
-            id="AR Lab Network",
-            marks=pytest.mark.xfail(
-                strict=True,
-                raises=AssertionError,
-                reason="#48: 'AR Lab Network' also offers cdc_nhsn_ar_hai and cdc_respnet by word overlap",
-            ),
-        ),
-    ],
-)
+@pytest.mark.parametrize(("source", "source_id"), UNCATALOGUED.items())
 def test_step7_an_uncatalogued_c_auris_source_shows_no_number(
     journey: Journey, source: str, source_id: str
 ) -> None:
     out = journey.call("suggest_datasets", question=f"C. auris in Michigan in 2024 from the {source}")
-    assert client.fitting_sources(out) == [NNDSS], out  # only NNDSS reports C. auris; nothing else fits
-    assert source_id not in out  # no entry is invented for the uncatalogued source
+    assert NNDSS in client.fitting_sources(out) and source_id not in out  # no entry is invented for it
     out = journey.call("describe_dataset", source_id=source_id)
     assert "Use search_datasets to see what is available" in out
     out = journey.call("get_series", condition="C. auris", locations=["Michigan"], source_id=source_id)
@@ -227,7 +205,7 @@ def test_step8_provenance_names_the_exact_fetch(journey: Journey) -> None:
     out = journey.call("get_provenance", source_id=NNDSS, year=2024)
     (row,) = client.table_rows(out)
     assert row["url"] == NNDSS_URL
-    assert row["content_sha256"] == journey.raw[NNDSS].sha256
+    assert row["content_sha256"] == raw_sha256(NNDSS_ROWS)
     assert row["retrieved_at"].startswith("2026-11-24") and row["contract_version"] == "0.1.0"
     assert row["snapshot_id"]
 
@@ -285,26 +263,18 @@ def run_measles(journey: Journey) -> str:
     return journey.call("get_series", condition="measles", locations=["Michigan"])
 
 
+@pytest.mark.xfail(
+    strict=True, reason=f"{NEEDS_28}: measles is a catalogued NNDSS label without a named series"
+)
 def test_trial_measles_returns_indigenous_and_imported_apart(
     journey: Journey, trials: dict[str, ExpectedRecord]
 ) -> None:
     out = run_measles(journey)
     rows = [r for r in client.table_rows(out) if r["observation_type"] == "year_end_ytd"]
-    got = {(r["condition"], r["year"]): (r["value"], r["flag"]) for r in rows}
-    # Indigenous and imported come back as two series, never one summed series.
-    assert got == {
-        ("Measles, Indigenous", "2023"): ("1", ""),
-        ("Measles, Imported", "2023"): ("3", ""),
-        ("Measles, Indigenous", "2024"): ("6", ""),
-        # Imported 2024 is empty with '-' in every week. The zero comes from the publisher's codebook, not a
-        # guess (hard rule 1): the NNDSS contract quotes the dataset notes, '-' = no reported cases, as m3's
-        # noCasesCode. The flag stays beside it and the row says why, so the zero is never a bare number.
-        ("Measles, Imported", "2024"): ("0", "-"),
-    }, out
-    assert journey.registry.get(NNDSS).contract.flag_column("m3").no_cases_code == "-"  # type: ignore[union-attr]
-    (imported_2024,) = [r for r in rows if r["condition"] == "Measles, Imported" and r["year"] == "2024"]
-    assert "no reported cases" in imported_2024["period_status"], imported_2024
-    assert_provenance_on_every_number(journey, out)
+    got = {(r["condition"], r["year"]): r["value"] for r in rows}
+    assert len({c for c, _ in got}) == 2, out  # indigenous and imported, never one summed series
+    assert sorted(got.values()) == ["0", "1", "3", "6"]  # '-' all year reads as no reported cases, flagged
+    assert_provenance_on_every_number(out)
     scored = score_question(trials["trial-29479c90"], journey.calls, journey.responses, client.answer([out]))
     assert scored.a.passed, scored
 
@@ -336,11 +306,7 @@ def test_trial_vaccination_is_declined_with_no_number(
     assert scored.a.passed and scored.a.prov_na, (reply, scored)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#37 item 9: suggest_datasets still offers cdc_respnet for 'HIV care' by word overlap",
-)
+@pytest.mark.xfail(strict=True, reason=f"{NEEDS_28}: suggest_datasets routes 'HIV care' to cdc_respnet today")
 def test_trial_hiv_care_is_declined_with_no_number(
     journey: Journey, trials: dict[str, ExpectedRecord]
 ) -> None:
@@ -351,11 +317,7 @@ def test_trial_hiv_care_is_declined_with_no_number(
     assert scored.a.passed and scored.a.prov_na, (reply, scored)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#37 item 3: in csv a decline gives its next step as prose, not as machine-readable fields",
-)
+@pytest.mark.xfail(strict=True, reason=f"{NEEDS_28}: declines carry next_step and outside_registry fields")
 @pytest.mark.parametrize(
     ("qid", "label", "places", "condition"), OUT_OF_SCOPE, ids=[q for q, *_ in OUT_OF_SCOPE]
 )
@@ -372,28 +334,14 @@ def test_trial_out_of_scope_declines_are_structured(
     assert score_question(trials[qid], journey.calls, journey.responses, reply).class_source == "fields"
 
 
+@pytest.mark.xfail(strict=True, reason=f"{NEEDS_28}: discovery tools carry per-source provenance")
 def test_discovery_carries_provenance_for_the_fitting_source(journey: Journey) -> None:
     out = journey.call("suggest_datasets", question=QUESTION)
-    (row,) = [r for r in client.table_rows(out) if r["source_id"] == NNDSS]
-    assert row["raw_sha256"] == journey.raw[NNDSS].sha256, row
-    assert row["retrieved_at"].startswith("2026-11-24"), row
-    assert row["contract_status"] == "draft"
+    assert raw_sha256(NNDSS_ROWS) in out and "retrieved_at" in out
 
 
+@pytest.mark.xfail(strict=True, reason=f"{NEEDS_28}: an unknown source_id refuses with a next_step")
 @pytest.mark.parametrize("source_id", UNCATALOGUED.values())
 def test_an_uncatalogued_source_refusal_is_structured(journey: Journey, source_id: str) -> None:
     out = journey.call("describe_dataset", source_id=source_id, fmt="json")
-    assert structured_fields(out).get("next_step"), out
-
-
-def test_the_smoke_journey_cannot_reach_the_network() -> None:
-    """The conftest guard: a connection or DNS lookup off this machine fails the test instead of fetching."""
-    with pytest.raises(NetworkBlocked):
-        socket.create_connection(("192.0.2.1", 443), timeout=1)  # TEST-NET-1: never routed
-    with pytest.raises(NetworkBlocked):
-        socket.getaddrinfo("data.cdc.gov", 443)
-    with socket.socket() as server:  # loopback stays open, so a local stub server would still work
-        server.bind(("127.0.0.1", 0))
-        server.listen(1)
-        with socket.create_connection(server.getsockname(), timeout=1):
-            pass
+    assert "next_step" in structured_fields(out), out

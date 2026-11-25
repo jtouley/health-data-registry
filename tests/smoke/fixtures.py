@@ -2,11 +2,8 @@
 
 The rows follow the publisher's layout (NNDSS weekly on data.cdc.gov, Census county and state estimates) so the
 real catalog, contracts and semantic models read them as they would read a refresh. Every number here is made
-up and deliberately unlike the published one, so any number in an answer can be traced to these rows.
-
-The scorer can't catch every real count quoted from memory. Michigan's real 2024 C. auris counts (174, 184, 643,
-689) are in the NNDSS contract's open questions, which list_caveats returns, so an answer that repeats one of
-them is matched to the transcript and not flagged. The negative control uses a number no tool returns.
+up and deliberately unlike the published one: Michigan's real 2024 C. auris counts are in the NNDSS contract's
+open questions, and a smoke answer that repeats one of them must fail as a number from memory.
 
 The lake is built in a temporary directory at test time and deleted with it; nothing is written to the repo.
 """
@@ -14,6 +11,8 @@ The lake is built in a temporary directory at test time and deleted with it; not
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -22,7 +21,7 @@ from eval.scorer import ToolCall
 from health_data_registry.query import Engine
 from health_data_registry.registry import Registry, load_registry
 from health_data_registry.server import build_server
-from health_data_registry.store import RawFetch, build_snapshot, write_ndjson
+from health_data_registry.store import build_snapshot, write_ndjson
 from tests.conftest import raw_fetch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -49,26 +48,11 @@ def nndss(
     flag: str | None = None,
     summary: bool = False,
 ) -> dict[str, Any]:
-    """One NNDSS weekly row in the publisher's field names; `flag` explains each count left empty.
-
-    The layout changes with the year, as the NNDSS contract's m1_flag description records from the dataset
-    notes. Through 2024 the current-year flags (m1_flag, m3_flag) carry '-' even beside a count, and counts are
-    whole numbers. From 2025 a flag is empty whenever its count is present, and counts are text such as '23.0'.
-    """
-    from_2025 = year >= 2025
-
-    def count(v: str | None) -> str | None:
-        return f"{v}.0" if from_2025 and v is not None else v
-
-    def flag_for(v: str | None, beside_a_count_through_2024: str | None) -> str | None:
-        if v is None:
-            return flag
-        return None if from_2025 else beside_a_count_through_2024
-
+    """One NNDSS weekly row in the publisher's field names; `flag` explains each count left empty."""
     return {
         "states": area, "year": str(year), "week": str(week), "label": label,
-        "m1": count(m1), "m1_flag": flag_for(m1, "-"), "m2": None, "m2_flag": None,
-        "m3": count(m3), "m3_flag": flag_for(m3, "-"), "m4": count(m4), "m4_flag": flag_for(m4, None),
+        "m1": m1, "m1_flag": "-" if m1 is not None else flag, "m2": None, "m2_flag": None,
+        "m3": m3, "m3_flag": "-" if m3 is not None else flag, "m4": m4, "m4_flag": None if m4 is not None else flag,
         "location1": None if summary else area, "location2": area if summary else None, "sort_order": None,
     }  # fmt: skip
 
@@ -81,7 +65,7 @@ NNDSS_ROWS: list[dict[str, Any]] = [
     nndss("MICHIGAN", CLINICAL, 2024, 52, m1="2", m3="21"),
     nndss("MICHIGAN", SCREENING, 2024, 51, m1="3", m3="54"),
     nndss("MICHIGAN", SCREENING, 2024, 52, m3="57", flag="-"),  # no screening cases reported in week 52
-    nndss("Michigan", CLINICAL, 2025, 1, m4="23", flag="-"),  # no clinical cases yet in 2025 week 1
+    nndss("Michigan", CLINICAL, 2025, 1, m4="23", flag="-"),
     nndss("Michigan", SCREENING, 2025, 1, m1="1", m3="1", m4="60"),
     # A neighbour the jurisdiction could not report for: the value stays empty with flag U, never a zero.
     nndss("OHIO", CLINICAL, 2024, 52, flag="U"),
@@ -106,15 +90,17 @@ CENSUS_ROWS: list[dict[str, Any]] = [
 ]  # fmt: skip
 
 
+def raw_sha256(rows: list[dict[str, Any]]) -> str:
+    """The sha256 of the raw bytes `raw_fetch` stores for these rows: what every provenance line must carry."""
+    return hashlib.sha256(json.dumps(rows).encode()).hexdigest()
+
+
 @dataclass
 class Journey:
     """The MCP server over the synthetic lake, and every call a scripted client made with what it returned."""
 
     registry: Registry
     engine: Engine
-    raw: dict[
-        str, RawFetch
-    ]  # the fetch each dataset's snapshot was built from: provenance must carry its sha256
     calls: list[ToolCall] = field(default_factory=list)
     responses: list[str] = field(default_factory=list)
 
@@ -135,10 +121,8 @@ def build_journey(tmp_path: Path) -> Journey:
     reg = load_registry(ROOT)
     lake = tmp_path / "lake"
     lake.mkdir()
-    raw: dict[str, RawFetch] = {}
     for ds_id, url, rows in ((NNDSS, NNDSS_URL, NNDSS_ROWS), (CENSUS, CENSUS_URL, CENSUS_ROWS)):
         records = tmp_path / f"{ds_id}.ndjson"
         write_ndjson(records, rows)
-        raw[ds_id] = raw_fetch(url, rows)
-        build_snapshot(lake, reg.get(ds_id), [raw[ds_id]], [records])
-    return Journey(reg, Engine(registry=reg, lake=lake, hub=None, fetch_at_run_time=False), raw)
+        build_snapshot(lake, reg.get(ds_id), [raw_fetch(url, rows)], [records])
+    return Journey(reg, Engine(registry=reg, lake=lake, hub=None, fetch_at_run_time=False))

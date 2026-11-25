@@ -22,53 +22,15 @@ READ_ONLY = types.ToolAnnotations(read_only_hint=True, destructive_hint=False, o
 Fmt = Literal["csv", "json"]
 Out = str | dict[str, Any]
 
-INSTRUCTIONS = """\
-Observed infectious disease data from CDC, WHO and other public publishers, for clinician-researchers; modelled \
-burden (deaths, DALYs, YLLs, modelled incidence) is the IHME GBD connector's job. This server never calls GBD and \
-never says whether GBD or local data is right.
-
-━━━ TOOL ROUTING ━━━
-Intent → tool. Each tool's own description carries its arguments and caveats.
-  which sources could answer a question in plain words: suggest_datasets(question=...)
-  find sources on a topic, place level or years: search_datasets(topic=..., geography=..., year_start=...)
-  what one source holds, its condition labels and allowed filter values: describe_dataset(source_id) \
-(read condition_labels and dimension_values before filtering)
-  what is loaded and how fresh: list_sources(condition=..., geography_level=...)
-  counts or published values by place and year: get_series(condition=<a label from describe_dataset>, \
-locations=[...], year_start=..., year_end=..., source_id=...)
-  how common per 100,000 here: get_rate(condition=..., year=..., locations=[...])
-  higher here than there, or now than then: compare_rates(condition=..., location=..., year=..., \
-other_location=... | other_year=...)
-  is it rising, annual percent change: get_trend(condition=..., location=..., year_start=..., year_end=...)
-  does age explain a difference: age_adjust(condition=..., location=..., year=...)
-  is this week unusual: check_signal(condition=..., location=..., year=..., week=...)
-  observed rows keyed to GBD names, with the GBD connector call to run next: get_aligned_with_gbd(condition=..., \
-locations=[...])
-  where a number came from (URL, retrieved_at, sha256, version, citation): get_provenance(source_id)
-  what the data can't tell you: list_caveats(source_id=..., condition=...)
-  published papers and abstracts: find_prior_work(condition=...)
-  last resort, only when no tool above fits: query_sql(sql=<one read-only SELECT>)
-
-━━━ WORDS THAT CHANGE THE NUMBER ━━━
-  "so far this year", "year to date": a running total read at ONE week (the latest); never add weeks or running \
-totals together.
-  "this year" for a running total is provisional; say so.
-  clinical vs screening, confirmed vs probable, or any two condition labels: different series; never add them.
-  rates, percents and estimates are never added up, across places or years.
-  a county or city: pass it as a location; the place resolver matches it to the source's own place labels, and a \
-source that stops at the state declines with nearest_served (for example "Travis County, Texas" → Texas).
-  a GBD cause or a modelled measure (DALYs, YLLs, modelled deaths): use the IHME GBD connector; this server \
-names the GBD cause in outside_registry only.
-
-━━━ WHEN A TOOL DECLINES ━━━
-  Follow its next_step. did_you_mean lists close spellings of what was asked: check one means what was meant \
-before using it. nearest_served is the closest thing served here, not the same thing: say so. served_elsewhere \
-is the publisher's own page; filter_matched_nothing lists the values that do exist.
-
-The user is a doctor: plain words, one step at a time. Never ask for or accept patient information.
-Every number comes from a tool response, with its source and caveats. If no tool returned a number, there is no \
-number.
-"""
+INSTRUCTIONS = (
+    "Observed and local infectious disease data (CDC, WHO and other public health publishers) for "
+    "clinician-researchers, with reviewed per-dataset contracts. Use the IHME GBD connector for modelled burden; "
+    "this server returns observed data keyed to GBD cause and location names and never calls GBD. Start with "
+    "suggest_datasets or search_datasets, read describe_dataset before relying on a source, and use get_series "
+    "for numbers. Cite every number with the source and retrieved_at it comes with, repeat the notes that follow "
+    "a table, and never fill a number from memory. The user is a doctor: explain in plain words, one step at a "
+    "time. Never ask for or accept patient information."
+)
 
 
 def _safe(fn: Callable[[], Out], fmt: Fmt) -> Out:
@@ -111,7 +73,7 @@ def build_server(registry: Registry | None = None, engine: Engine | None = None)
         return _safe(
             lambda: tools.search_datasets(
                 reg, topic=topic, id_area=id_area, geography=geography, year_start=year_start, year_end=year_end,
-                engine=eng, fmt=fmt,
+                fmt=fmt,
             ),
             fmt,
         )  # fmt: skip
@@ -125,7 +87,7 @@ def build_server(registry: Registry | None = None, engine: Engine | None = None)
     @mcp.tool(annotations=READ_ONLY)
     def suggest_datasets(question: str, fmt: Fmt = "csv") -> Out:
         """For a research question in plain words: which sources can answer it, which can't and why."""
-        return _safe(lambda: tools.suggest_datasets(reg, question, engine=eng, fmt=fmt), fmt)
+        return _safe(lambda: tools.suggest_datasets(reg, question, fmt=fmt), fmt)
 
     @mcp.tool(annotations=READ_ONLY)
     def get_series(

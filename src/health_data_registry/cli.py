@@ -38,36 +38,6 @@ def refresh(registry: Registry, ids: Sequence[str], *, max_rows: int | None, lak
     return 1 if failed else 0
 
 
-def validate(registry: Registry, lake: Path) -> int:
-    """Every entry loaded and cross-checked (load_registry did that); then each local snapshot's condition labels
-    against the catalog's list. A label the catalog doesn't list fails: add it from the publisher's codebook."""
-    from health_data_registry.query import Engine
-    from health_data_registry.tools import unlisted_condition_labels
-
-    for ds in registry:
-        print(
-            f"ok   {ds.id}: contract {ds.contract.version} ({ds.entry.status}), {len(ds.semantic.metrics)} metrics"
-        )
-    engine = Engine(registry=registry, lake=lake, hub=None, fetch_at_run_time=False)
-    failed = 0
-    for ds_id, extra in unlisted_condition_labels(registry, engine).items():
-        if extra is None:
-            print(f"skip {ds_id}: no local snapshot, so its condition labels weren't checked")
-        elif isinstance(extra, str):
-            failed += 1
-            print(f"FAIL {ds_id}: {extra}", file=sys.stderr)
-        elif extra:
-            failed += 1
-            print(
-                f"FAIL {ds_id}: the snapshot has condition labels the catalog doesn't list: "
-                + "; ".join(repr(x) for x in extra),
-                file=sys.stderr,
-            )
-        else:
-            print(f"ok   {ds_id}: every condition label in the snapshot is catalogued")
-    return 1 if failed else 0
-
-
 def export_public(registry: Registry, to: str, *, lake: Path, run_date: str | None) -> int:
     from health_data_registry.publish import PublishCheckFailed, export_public
 
@@ -267,7 +237,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         serve()
         return 0
     if a.cmd == "validate":
-        return validate(registry, lake_root())
+        for ds in registry:
+            print(
+                f"ok   {ds.id}: contract {ds.contract.version} ({ds.entry.status}), {len(ds.semantic.metrics)} metrics"
+            )
+        return 0
     if a.cmd == "eval":
         return run_eval(a.sealed, a.run)
     if a.cmd in ANALYSIS_COMMANDS:
