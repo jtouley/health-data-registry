@@ -370,8 +370,9 @@ class CatalogEntry(_Strict):
     contract: str
     semantic_model: str
     status: Literal["draft", "reviewed"]
-    # Unset: public when the licence allows redistribution, else live. Set "private" to keep a restricted
-    # source in its own private store (store.private) instead of reading it live.
+    # Only `hosting: public` is published or planned by the weekly refresh (a maintainer's reviewed catalog
+    # change). Unset: read from the hub when the licence allows redistribution, else live. Set "private" to
+    # keep a restricted source in its own private store (private.py) instead of reading it live.
     hosting: Hosting | None = None
 
     @property
@@ -382,8 +383,6 @@ class CatalogEntry(_Strict):
 
     @model_validator(mode="after")
     def _hosting_matches_licence(self) -> CatalogEntry:
-        if self.hosting == "public" and not self.licence.redistribution:
-            raise ValueError("hosting: public needs licence.redistribution: true")
         if self.hosting in ("live", "private") and self.licence.redistribution:
             raise ValueError(f"hosting: {self.hosting} is for sources whose licence forbids redistribution")
         return self
@@ -394,6 +393,19 @@ class CatalogEntry(_Strict):
         if not _ID.fullmatch(v):
             raise ValueError("id must be snake_case, 2-63 chars")
         return v
+
+    @model_validator(mode="after")
+    def _public_needs_redistribution(self) -> CatalogEntry:
+        if self.hosting == "public" and not self.licence.redistribution:
+            raise ValueError(
+                f"hosting: public needs a licence that allows redistribution; {self.licence.id} does not"
+            )
+        return self
+
+    @property
+    def hosted(self) -> bool:
+        """True only for `hosting: public` (which also needs a licence that allows redistribution)."""
+        return self.hosting == "public"
 
 
 # --------------------------------------------------------------------------------------------- contract

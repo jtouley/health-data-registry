@@ -39,3 +39,4 @@ gbd:
 contract: contracts/cdc_respnet.odcs.yaml
 semantic_model: semantic/cdc_respnet.yaml
 status: draft
+hosting: public

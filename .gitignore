@@ -16,4 +16,7 @@ lake/
 *.duckdb
 .env
 mutants/
+# Sitemap snapshots live in a private Hugging Face dataset, never in git
+sitemaps/
+*.xml.gz
 .claude/worktrees/

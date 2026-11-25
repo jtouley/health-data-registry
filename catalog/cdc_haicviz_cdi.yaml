@@ -37,3 +37,4 @@ gbd:
 contract: contracts/cdc_haicviz_cdi.odcs.yaml
 semantic_model: semantic/cdc_haicviz_cdi.yaml
 status: draft
+hosting: public

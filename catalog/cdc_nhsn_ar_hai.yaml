@@ -42,3 +42,4 @@ gbd:
 contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
 semantic_model: semantic/cdc_nhsn_ar_hai.yaml
 status: draft
+hosting: public
