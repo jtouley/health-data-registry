@@ -268,6 +268,7 @@ def _total_order(tree: exp.Query) -> None:
 
 
 def _parse(sql: str) -> exp.Query:
+    # ci probe
     if not sql.strip():
         raise SqlRefused("empty", "The query is empty.")
     if len(sql) > MAX_SQL_CHARS:
