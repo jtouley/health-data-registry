@@ -6,14 +6,40 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The README is rewritten for clinicians: five setup steps that each say what you'll see (the Start here
+  helper is the check step), a C. auris in Michigan example checked against CDC with every year provisional and
+  CDC's later count beside each, a short GBD and PubMed section, and light and dark images from
+  `tools/readme_svg/gen.py`. The setup guide no longer says the hosted preview can't answer CDC questions (the hub
+  has published releases since `release-2026-11-24`).
+- The Something's wrong helper, the setup guide and `docs/tools.md` now tell "the hub could not be reached" (try
+  again) apart from "the hub has no published release yet" (retrying won't help).
+- `tools/` is linted and type-checked with the rest of the code, and a test fails if the committed README images
+  differ from what the generator draws.
+
 ### Added
 
-- Two more ODPS data products, both draft stubs until their sources are catalogued: ID conference abstracts (a
-  public index of titles, authors, links and DOIs, and abstract text in a private tier that is never published) and
-  Michigan HIV data (MDHHS, Detroit Ryan White and EHE as programme data, AHEAD Wayne, AIDSVu private; grouped,
-  never merged). Each port has its own ODCS contract, tier, release tag, SLA and a contract-finding issue form.
+- Two more ODPS data products, both draft stubs until their sources are catalogued: ID conference abstracts (an
+  index of titles, authors, links and DOIs, private until its licence question is answered, and abstract text in
+  a private tier that is never published) and Michigan HIV data (MDHHS, Detroit Ryan White and EHE as programme
+  data, AHEAD Wayne, AIDSVu; all private tier until their terms are read; grouped, never merged). Each port has its own ODCS contract, tier, release tag, SLA and a contract-finding issue form.
 - `validate` checks every data product and contract against Bitol's official ODPS v1.1.0 and ODCS v3.2.0 JSON
   schemas, vendored with their source URL and sha256.
+- `serve --http`: the hosted, read-only connector over stateless Streamable HTTP (hub releases and live reads
+  only), with one deadline per tool call, a result-size cap, rate limits per MCP session and overall, and no
+  request content in any log; `space/` for a Hugging Face Docker Space and `docs/dev/hosting.md`.
+- Long answers come in pages instead of being refused: every row-returning tool (and the matching CLI commands,
+  `get-series`, `get-aligned-with-gbd`, `get-provenance`, `query-sql` and the analysis tools) takes `page` and
+  `pin`; each page carries real rows, the same provenance line as every answer, and the exact call for the next
+  page, and a pin keeps every page on one version of the data. `query_sql` adds `ORDER BY ALL` when a query has
+  no `ORDER BY`. The hosted server refuses to start with a limit of 0, a negative number, inf or nan, or with
+  `HDR_PAGE_CHARS` above `HDR_MAX_RESULT_CHARS`.
+- Hosted server hardening from review: request bodies over 1 MiB are refused with 413; session ids and pins are
+  signed (`HDR_SIGNING_KEY`), calls without a signed session id share one rate-limit bucket, and a refused call
+  spends no token; pins carry the answer's row count and row-key hash and may name only release tags; hub
+  downloads end by the call deadline and a stuck call never holds the engine past it; `serve --http` binds to
+  127.0.0.1 by default with Host and Origin checks; `query_sql` adds tie-breakers to its own `ORDER BY`.
 - Condition vocabulary: each catalog entry lists the publisher's own condition labels (`conditions:`, with
   where they come from), and `get_series`, `get_rate` and `get_trend` accept any of them through the semantic
   model's `generic_series`, with the same aggregation rules as the named series. `validate` fails when a local
