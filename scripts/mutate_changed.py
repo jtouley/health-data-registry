@@ -58,13 +58,15 @@ PKG = ROOT / "src" / "health_data_registry"
 # Mutated packages: the server, and the eval scorer that decides release gates. Keep in step with
 # [tool.mutmut] source_paths in pyproject.toml.
 PACKAGES = (PKG, ROOT / "eval")
-PACKAGE_DIRS = ("src/health_data_registry", "eval")
+# Scripts that decide something on their own (which branches get deleted) are mutated too, one file each.
+MUTATED_SCRIPTS = ("scripts/branch_hygiene.py",)
+PACKAGE_DIRS = ("src/health_data_registry", "eval", *MUTATED_SCRIPTS)
 # mutmut statuses (mutmut/stats.py). Killed ones raise the score; every other status lowers it.
 KILLED_STATUSES = frozenset({"killed", "caught by type check"})
 # A run that leaves any of these did not finish checking its mutants: the shard fails, whatever its score.
 INCOMPLETE_STATUSES = frozenset({"not checked", "check was interrupted by user", "segfault"})
 # Module names reach CI job names, artifact names and the mutmut command line: allow nothing else.
-MODULE_NAME = re.compile(r"^(?:health_data_registry|eval)(\.[a-z_][a-z0-9_]*)+$")
+MODULE_NAME = re.compile(r"^(?:(?:health_data_registry|eval)(\.[a-z_][a-z0-9_]*)+|scripts\.branch_hygiene)$")
 # A shard id: a module name, alone (the whole module) or with `#<k>of<n>@<split>` (shard k of n of the split whose
 # hash is <split>, split_hash). `#` and `@` are valid in a GitHub job name, an artifact name and a file name; the
 # workflow and precheck quote the id wherever it reaches a shell.
@@ -1190,6 +1192,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         mods = select_modules(
             [_module(str(p.relative_to(ROOT))) for pkg in PACKAGES for p in pkg.rglob("*.py")]
+            + [_module(s) for s in MUTATED_SCRIPTS]
             if a.all
             else changed_modules(base)
         )
