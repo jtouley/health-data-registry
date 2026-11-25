@@ -4,7 +4,8 @@ release as served only after its upload is confirmed with the exact tag export-p
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -23,10 +24,12 @@ def target(
     *,
     invocation: str = "inv-1",
     declared: tuple[str, ...] = (),
+    manifest_invocation: str | None = None,
 ) -> Path:
     """A dbt target directory: (unique_id, status, severity or None) per result, as dbt writes them. `declared`
-    adds manifest nodes the run has no result for."""
-    t = tmp_path / f"target-{invocation}"
+    adds manifest nodes the run has no result for; the manifest is from `manifest_invocation` (default: the same
+    run)."""
+    t = tmp_path / f"target-{invocation}-{manifest_invocation}"
     t.mkdir()
     run = {
         "metadata": {
@@ -55,7 +58,9 @@ def target(
     for uid in declared:
         nodes[uid] = {"name": uid.split(".")[2], "resource_type": uid.split(".")[0]}
     (t / "run_results.json").write_text(json.dumps(run))
-    (t / "manifest.json").write_text(json.dumps({"nodes": nodes, "unit_tests": unit}))
+    meta = {"invocation_id": manifest_invocation or invocation}
+    (t / "manifest.json").write_text(json.dumps({"metadata": meta, "nodes": nodes, "unit_tests": unit}))
+
     return t
 
 
@@ -65,6 +70,119 @@ GOOD = [
     ("test.p.fill_a.2", "warn", "warn"),
     ("unit_test.p.queue_a.u", "pass", None),
 ]
+# What the toy contracts expect of a build: GOOD's model and its two contract tests (one warn-severity).
+TOY = rg.Expected(frozenset({"stg_a"}), {"codes_a": "error", "fill_a": "warn"})
+
+
+def test_an_empty_run_with_an_empty_manifest_is_not_servable(tmp_path: Path) -> None:
+    """Outside review #8: zero failures in a run that ran nothing must never be servable."""
+    t = tmp_path / "empty"
+    t.mkdir()
+    (t / "run_results.json").write_text(json.dumps({"results": []}))
+    (t / "manifest.json").write_text(json.dumps({}))
+    build = rg.read_build(t)
+    assert not build.servable
+    assert "dbt's run record lists nothing built or tested" in build.reason()
+    assert not rg.read_build(t, expected=TOY).servable
+
+
+def test_every_test_the_contracts_expect_must_run(tmp_path: Path) -> None:
+    assert rg.read_build(target(tmp_path, GOOD), expected=TOY).servable
+    missing = rg.read_build(target(tmp_path, GOOD[:2] + GOOD[3:], invocation="no-fill"), expected=TOY)
+    assert not missing.servable and missing.rule_errors == [
+        {"test": "fill_a", "type": "test", "error": "expected by the contracts, did not run"}
+    ]
+    no_model = rg.read_build(target(tmp_path, GOOD[1:], invocation="no-model"), expected=TOY)
+    assert no_model.model_errors == [
+        {"model": "stg_a", "type": "model", "error": "expected by the contracts, not built"}
+    ]
+    # An error-severity rule that came back as a warning (its test's severity was changed) is a failure.
+    downgraded = rg.read_build(
+        target(tmp_path, [GOOD[0], ("test.p.codes_a.1", "warn", "warn"), *GOOD[2:]], invocation="down"),
+        expected=TOY,
+    )
+    assert [f["test"] for f in downgraded.data_failures] == ["codes_a"] and not downgraded.servable
+
+
+def test_results_are_matched_by_name_never_by_position(tmp_path: Path) -> None:
+    """dbt may list results in any order; the verdict and the build are the same whatever the order."""
+    inputs = {"commit": "c1"}
+    forward = rg.read_build(target(tmp_path, GOOD, invocation="fw"), expected=TOY, inputs=inputs)
+    backward = rg.read_build(target(tmp_path, GOOD[::-1], invocation="bw"), expected=TOY, inputs=inputs)
+    assert forward.servable and backward.servable and forward.build_id == backward.build_id
+    held = [GOOD[0], ("test.p.codes_a.1", "fail", "error"), *GOOD[2:]]
+    a = rg.read_build(target(tmp_path, held, invocation="h1"), expected=TOY)
+    b = rg.read_build(target(tmp_path, held[::-1], invocation="h2"), expected=TOY)
+    assert a.reason() == b.reason() == "1 error-severity check(s) failed (codes_a)"
+
+
+def test_the_run_record_and_manifest_must_be_from_one_run(tmp_path: Path) -> None:
+
+    mixed = rg.read_build(target(tmp_path, GOOD, manifest_invocation="inv-other"))
+    assert not mixed.servable
+    assert "dbt's run record and its manifest come from different runs" in mixed.reason()
+
+
+def test_confirm_promotes_only_the_judged_run_and_its_release(tmp_path: Path) -> None:
+    ops = tmp_path / "ops"
+    inputs = {"commit": "c1", "datasets": {"a": {"snapshot_id": "s1"}}}
+    build = rg.read_build(target(tmp_path, GOOD), inputs=inputs)
+    rg.decide(ops, build, now=T0, run_date="2026-11-25")
+    with pytest.raises(ValueError, match="is not a release of run date 2026-11-25"):
+        rg.confirm(ops, build, "release-2026-11-24")
+    rerun = rg.read_build(target(tmp_path, GOOD, invocation="inv-9"), inputs=inputs)
+    assert rerun.build_id == build.build_id  # same inputs, same id; but a different dbt run
+    with pytest.raises(ValueError, match="only the run that was judged can be served"):
+        rg.confirm(ops, rerun, "release-2026-11-25")
+    assert rg.confirm(ops, build, "release-2026-11-25.2", now=T1)["release_ref"] == "release-2026-11-25.2"
+
+
+def test_the_build_id_is_a_content_hash_of_its_inputs(tmp_path: Path) -> None:
+    """Two builds from the same inputs get the same id, whatever dbt's run id or the clock; any input changes it."""
+    from health_data_registry.registry import load_registry
+    from health_data_registry.store import build_snapshot, write_ndjson
+    from tests.conftest import RECORDS, raw_fetch, write_registry
+
+    reg = load_registry(write_registry(tmp_path / "reg"))
+    page = tmp_path / "p.ndjson"
+    write_ndjson(page, RECORDS)
+    lake = tmp_path / "lake"
+    lake.mkdir()
+    fetch = raw_fetch("https://data.cdc.gov/resource/a.json", RECORDS)
+    first_snapshot = build_snapshot(lake, reg.get("toy_cases"), [fetch], [page]).snapshot_id
+    first = rg.build_inputs(reg, lake, "c1")
+    assert first == rg.build_inputs(reg, lake, "c1")
+    (ds,) = first["datasets"].values()
+    assert ds["raw_sha256"] and ds["contract_version"] == "0.1.0" and len(ds["contract_sha256"]) == 64
+    assert "snapshot_id" not in ds and first["dbt_vars"] == {}  # the toy registry has no dbt project
+    # The same bytes fetched again a day later: a new snapshot id (it carries the retrieval time), the same id.
+    later = replace(fetch, retrieved_at=fetch.retrieved_at + timedelta(days=1))
+    assert build_snapshot(lake, reg.get("toy_cases"), [later], [page]).snapshot_id != first_snapshot
+    assert rg.build_inputs(reg, lake, "c1") == first
+
+    one = rg.read_build(target(tmp_path, GOOD, invocation="run-a"), inputs=first)
+    two = rg.read_build(target(tmp_path, GOOD, invocation="run-b"), inputs=rg.build_inputs(reg, lake, "c1"))
+    assert one.build_id == two.build_id == rg.build_id_of(first)
+    assert rg.build_id_of(rg.build_inputs(reg, lake, "c2")) != one.build_id  # another commit
+    assert rg.build_id_of(rg.build_inputs(reg, tmp_path / "empty-lake", "c1")) != one.build_id  # no snapshot
+    (reg.root / reg.get("toy_cases").entry.contract).write_text(
+        (reg.root / reg.get("toy_cases").entry.contract).read_text() + "# edited\n"
+    )
+    assert rg.build_id_of(rg.build_inputs(reg, lake, "c1")) != one.build_id  # the contract's bytes changed
+
+
+def test_the_expected_set_comes_from_the_real_contracts() -> None:
+    from health_data_registry.registry import load_registry
+
+    expected = rg.expected_from(load_registry(Path(__file__).resolve().parents[1]))
+    assert {
+        "stg_cdc_nndss_weekly",
+        "int_cdc_nndss_weekly",
+        "flag_all_dash_areas",
+        "mmwr_calendar",
+    } <= expected.models
+    assert expected.tests["cdc_nndss_weekly_has_rows"] == "error"
+    assert expected.tests["cdc_nndss_weekly_cauris_labels_present"] == "warn"
 
 
 def test_a_clean_build_passes_and_is_served_only_once_confirmed(tmp_path: Path) -> None:
@@ -78,7 +196,7 @@ def test_a_clean_build_passes_and_is_served_only_once_confirmed(tmp_path: Path) 
     assert build.build_id.startswith("build-") and len(build.build_id) == 18
     row = rg.decide(ops, build, now=T0)
     assert row == {"at": "2026-11-25T12:00:00+00:00", "action": "pass", "build_id": build.build_id,
-                   "serving": None, "warnings": 1}  # fmt: skip
+                   "serving": None, "warnings": 1, "invocation_id": "inv-1", "run_date": None}  # fmt: skip
     assert rg.serving(ops) is None  # a pass is not served: nothing has been uploaded yet
     served = rg.confirm(ops, build, "release-2026-11-25.2", now=T1)
     assert served == {"at": "2026-11-25T13:00:00+00:00", "action": "serve", "release_ref": "release-2026-11-25.2",
@@ -205,8 +323,12 @@ def test_unreadable_ops_state_holds_in_plain_words(tmp_path: Path) -> None:
 
 
 def test_missing_run_record_holds_and_the_cli_checks_then_confirms(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The CLI takes the expected set from the contracts and the build id from the lake; here, the toy run's.
+    monkeypatch.setattr(rg, "expected_from", lambda registry: TOY)
+    monkeypatch.setattr(rg, "build_inputs", lambda registry, lake, commit: {"commit": commit})
+    monkeypatch.setenv("GITHUB_SHA", "abc123")
     ops = tmp_path / "ops"
     passed, message = rg.run(tmp_path / "no-target", ops)
     assert not passed and "dbt's run record could not be read" in message and "the release is held" in message
@@ -218,8 +340,9 @@ def test_missing_run_record_holds_and_the_cli_checks_then_confirms(
     with pytest.raises(rg.GateInputMissing, match="not a dbt run record"):
         rg.read_build(bad)
     good = target(tmp_path, GOOD)
-    build_id = rg.read_build(good).build_id
-    assert cli.main(["gate", "--target", str(good), "--ops", str(ops)]) == 0
+    build_id = rg.build_id_of({"commit": "abc123"})
+    assert cli.main(["gate", "--target", str(good), "--ops", str(ops), "--run-date", "2026-11-25"]) == 0
+
     assert (
         f"Build {build_id} passed the gate, with 1 warning(s); it is served once" in capsys.readouterr().out
     )

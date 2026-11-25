@@ -69,6 +69,35 @@ def validate(registry: Registry, lake: Path) -> int:
     return 1 if failed else 0
 
 
+def gate(a: Any) -> int:
+    """The release gate: the expected models and tests come from the contracts, and the build id from its inputs
+    (the lake's LATEST snapshots, the contracts and the commit). Anything unreadable holds the release."""
+    import os
+
+    from health_data_registry.release_gate import (
+        GateInputMissing,
+        build_inputs,
+        expected_from,
+        run,
+        run_confirm,
+    )
+
+    ops = a.ops or lake_root() / "ops"
+    try:
+        registry = load_registry()
+        expected = expected_from(registry)
+        inputs = build_inputs(registry, lake_root(), a.commit or os.environ.get("GITHUB_SHA") or "unknown")
+    except (RegistryError, GateInputMissing, ValueError) as e:
+        print(f"The release is held: the contracts or the lake could not be read ({e}).", file=sys.stderr)
+        return 1
+    if a.confirm:
+        ok, message = run_confirm(a.target, ops, a.confirm, expected=expected, inputs=inputs)
+    else:
+        ok, message = run(a.target, ops, expected=expected, inputs=inputs, run_date=a.run_date)
+    print(message, file=sys.stdout if ok else sys.stderr)
+    return 0 if ok else 1
+
+
 def export_public(
     registry: Registry, to: str, *, lake: Path, run_date: str | None, tag_file: Path | None = None
 ) -> int:
@@ -344,16 +373,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=None,
         help="after the upload: record the tag export-public created as served (only a build that passed)",
     )
+    g.add_argument(
+        "--run-date",
+        default=None,
+        help="YYYY-MM-DD: the run date the release must carry; recorded with a pass, checked on --confirm",
+    )
+    g.add_argument(
+        "--commit",
+        default=None,
+        help="the code commit the build ran from (default: $GITHUB_SHA); part of the build's content hash",
+    )
     a = p.parse_args(argv)
     if a.cmd == "publication-outlook":  # reads only the packaged base rates, not the registry
         return publication_outlook(a)
-    if a.cmd == "gate":  # reads only dbt's run record and the ops log, not the registry
-        from health_data_registry.release_gate import run, run_confirm
+    if a.cmd == "gate":
+        return gate(a)
 
-        ops = a.ops or lake_root() / "ops"
-        ok, message = run_confirm(a.target, ops, a.confirm) if a.confirm else run(a.target, ops)
-        print(message, file=sys.stdout if ok else sys.stderr)
-        return 0 if ok else 1
     if a.cmd == "sitemaps":  # reads only the seed list, not the registry
         return sitemaps.snapshot(a, error=snap.error)
     try:
