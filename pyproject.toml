@@ -52,7 +52,8 @@ dev = [
 # dbt on DuckDB for the transform/ project (raw -> staging -> intermediate -> marts). Not a server dependency:
 # the MCP server only reads what the build produces.
 transform = [
-    "dbt-duckdb>=1.9,<2",
+    # 1.10 or later: the generated tests put their values under `arguments:`, which dbt-core 1.9 can't read.
+    "dbt-duckdb>=1.10,<2",
 ]
 
 [tool.uv]

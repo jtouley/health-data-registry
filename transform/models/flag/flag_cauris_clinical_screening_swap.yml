@@ -63,6 +63,11 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    data_tests:
+    - not_all_empty:
+        name: flag_cauris_clinical_screening_swap_clinical_ytd_filled
+        config:
+          severity: warn
   - name: screening_ytd
     data_type: bigint
     description: Year-to-date count for 'Candida auris, screening' at that week, as published (empty when the publisher
@@ -74,6 +79,11 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    data_tests:
+    - not_all_empty:
+        name: flag_cauris_clinical_screening_swap_screening_ytd_filled
+        config:
+          severity: warn
   - name: reason
     data_type: varchar
     description: Why the row is in the queue, in plain words.

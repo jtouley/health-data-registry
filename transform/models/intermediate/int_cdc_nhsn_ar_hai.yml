@@ -96,20 +96,6 @@ models:
           checks: 'No row has a value for percent of tested isolates that were resistant: resistant / tested x 100;
             calculated only when at least 20 isolates were tested (column description).'
   - odcs_check:
-      name: cdc_nhsn_ar_hai_fill_rate_display_tested
-      arguments:
-        measure_sql: SELECT CASE WHEN count(*) = 0 THEN 0.0 ELSE count(*) FILTER (WHERE ("display_tested" IS NULL
-          OR trim(CAST("display_tested" AS VARCHAR)) = '')) / count(*) END FROM {object}
-        condition: measured < 1.0
-      config:
-        severity: warn
-        meta:
-          dimension: completeness
-          rule: fill_rate_display_tested
-          contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
-          checks: No row has a value for publisher's indicator of whether data are sufficient to display; empty
-            in every row observed.
-  - odcs_check:
       name: cdc_nhsn_ar_hai_fill_rate_lower_confidence_interval
       arguments:
         measure_sql: SELECT CASE WHEN count(*) = 0 THEN 0.0 ELSE count(*) FILTER (WHERE ("lower_confidence_interval"
@@ -343,6 +329,14 @@ models:
       unit: '%'
       codes: []
       missing_codes: []
+  - name: _snapshot_id
+    data_type: varchar
+    description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the source
+      address, retrieval time and dataset version that go with every answer built on this row.
+  - name: _raw_sha256
+    data_type: varchar
+    description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+      the exact bytes the publisher sent.'
   - name: is_total_row
     data_type: boolean
     description: True on the publisher's total and summary rows (the contract's totalRows), which are never added

@@ -215,9 +215,9 @@ def build_snapshot(
     out = snapshot_dir(lake, ds.id, snapshot_id)
 
     def keep() -> None:
-        if not partial:
+        if not partial and ds.entry.licence.redistribution:
             meta = load_metadata(ds, snapshot_id, fetches, robots_overrides=robots_overrides)
-            keep_raw_records(lake, ds.id, snapshot_id, records_files, meta)
+            keep_raw_records(lake, ds, snapshot_id, records_files, meta)
 
     if (out / "manifest.json").is_file():  # the same inputs were snapshotted already: never overwrite
         keep()  # a load kept before its metadata was recorded gets it now
@@ -231,7 +231,11 @@ def build_snapshot(
         con = duckdb.connect(str(tmp / "data.duckdb"))
         try:
             raw = f"read_json({files}, format='newline_delimited', columns={cols})"
-            report = stage(con, ds.contract, raw, table=ds.id)
+            # A full load must carry every declared field: read_json fills a missing one with NULL, so a renamed
+            # publisher field would otherwise load as an all-empty column. A partial sample is not checked.
+            report = stage(
+                con, ds.contract, raw, table=ds.id, present=None if partial else fields_in(con, files)
+            )
             write_parquet(con, ds.contract, ds.id, str(tmp / "data.parquet"))
         finally:
             con.close()
@@ -291,28 +295,45 @@ def load_metadata(
     }
 
 
+def fields_in(con: duckdb.DuckDBPyConnection, files: str) -> set[str] | None:
+    """Every field name in a load's records (`files` is a SQL list of paths), or None when it has no records."""
+    rows = con.execute(
+        f"SELECT DISTINCT unnest(json_keys(json)) FROM read_ndjson_objects({files})"  # noqa: S608 - quoted paths
+    ).fetchall()
+    return {str(r[0]) for r in rows} or None
+
+
 def keep_raw_records(
     lake: Path,
-    dataset_id: str,
+    ds: Dataset,
     snapshot_id: str,
     records_files: Sequence[Path],
     metadata: Mapping[str, Any] | None = None,
 ) -> Path:
-    """Keep one load's parsed records where the dbt staging models read them, with its metadata beside them.
+    """Keep one full load's parsed records where the dbt staging models read them, with its metadata beside them.
 
     Raw is append-only: a load is written once under its snapshot id and never rewritten or deleted. The records
     are written first and the metadata last, so metadata exists only for a complete load; a load kept before it
     had metadata gets it on the next run with the same snapshot id (the metadata itself is never rewritten).
+    Refuses a source whose licence forbids keeping a copy (ADR 0009), whatever the caller checked. A failed copy
+    leaves no temporary file behind.
     """
-    target = lake / "raw_records" / dataset_id / f"{snapshot_id}.ndjson"
+    if not ds.entry.licence.redistribution:
+        raise ValueError(
+            f"{ds.id}: its licence forbids keeping a copy, so its records are never kept on disk"
+        )
+    target = lake / "raw_records" / ds.id / f"{snapshot_id}.ndjson"
     target.parent.mkdir(parents=True, exist_ok=True)
     if not target.is_file():
         tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-        with tmp.open("wb") as out:
-            for p in records_files:
-                with p.open("rb") as fh:
-                    shutil.copyfileobj(fh, out)
-        os.replace(tmp, target)
+        try:
+            with tmp.open("wb") as out:
+                for p in records_files:
+                    with p.open("rb") as fh:
+                        shutil.copyfileobj(fh, out)
+            os.replace(tmp, target)
+        finally:
+            tmp.unlink(missing_ok=True)
     meta = target.with_name(f"{snapshot_id}.meta.json")
     if metadata is not None and not meta.is_file():
         tmp_meta = meta.with_name(f".{meta.name}.{os.getpid()}.tmp")

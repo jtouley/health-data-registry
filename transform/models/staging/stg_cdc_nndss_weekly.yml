@@ -33,7 +33,7 @@ models:
     - type: not_null
   - name: year
     data_type: bigint
-    description: MMWR (epidemiological) year of the report. Published as text; cast to integer.
+    description: MMWR (epidemiological) year of the report.
     meta:
       logical_type: integer
       physical_type: BIGINT
@@ -71,8 +71,7 @@ models:
   - name: m1
     data_type: bigint
     description: Cases reported for this condition and area in this MMWR week (publisher column 'Current week').
-      Empty when the flag column m1_flag holds a code; '-' means no reported cases. Published as text such as '31.0'
-      from 2025; cast to integer.
+      Empty when the flag column m1_flag holds a code; '-' means no reported cases.
     meta:
       logical_type: integer
       physical_type: BIGINT
@@ -80,13 +79,20 @@ models:
       unit: '1'
       codes: []
       missing_codes: []
+    data_tests:
+    - not_all_empty:
+        name: stg_cdc_nndss_weekly_m1_filled
+        config:
+          severity: warn
   - name: m1_flag
     data_type: varchar
     description: 'Why the current-week count is empty. Codes from the dataset notes: ''-'' no reported cases; U
       unavailable; N not reportable in the jurisdiction; NN not nationally notifiable; NP nationally notifiable
       but not published; NC not calculated. From 2025 the flag is empty when a count is present; through 2024 rows
       with a count also carry ''-'', so a flag explains only an empty count. Kept as published, never turned into
-      an empty value.'
+      an empty value. Codes (publisher''s codebook): - = no reported cases; U = unavailable; N = not reportable
+      in this jurisdiction; NN = not nationally notifiable; NP = nationally notifiable but not published; NC = not
+      calculated.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -101,6 +107,10 @@ models:
       - NC
       missing_codes: []
     data_tests:
+    - not_all_empty:
+        name: stg_cdc_nndss_weekly_m1_flag_filled
+        config:
+          severity: warn
     - accepted_values:
         name: stg_cdc_nndss_weekly_m1_flag_codes
         arguments:
@@ -125,9 +135,16 @@ models:
       unit: '1'
       codes: []
       missing_codes: []
+    data_tests:
+    - not_all_empty:
+        name: stg_cdc_nndss_weekly_m2_filled
+        config:
+          severity: warn
   - name: m2_flag
     data_type: varchar
-    description: Flag for the previous 52-week maximum; same codes as m1_flag.
+    description: 'Why the previous 52-week maximum (m2) is empty: the publisher''s flag code. Codes (publisher''s
+      codebook): - = no reported cases; U = unavailable; N = not reportable in this jurisdiction; NN = not nationally
+      notifiable; NP = nationally notifiable but not published; NC = not calculated.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -142,6 +159,10 @@ models:
       - NC
       missing_codes: []
     data_tests:
+    - not_all_empty:
+        name: stg_cdc_nndss_weekly_m2_flag_filled
+        config:
+          severity: warn
     - accepted_values:
         name: stg_cdc_nndss_weekly_m2_flag_codes
         arguments:
@@ -167,9 +188,16 @@ models:
       unit: '1'
       codes: []
       missing_codes: []
+    data_tests:
+    - not_all_empty:
+        name: stg_cdc_nndss_weekly_m3_filled
+        config:
+          severity: warn
   - name: m3_flag
     data_type: varchar
-    description: Flag for the current-year year-to-date count; same codes as m1_flag.
+    description: 'Why the current-year year-to-date count (m3) is empty: the publisher''s flag code. Codes (publisher''s
+      codebook): - = no reported cases; U = unavailable; N = not reportable in this jurisdiction; NN = not nationally
+      notifiable; NP = nationally notifiable but not published; NC = not calculated.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -184,6 +212,10 @@ models:
       - NC
       missing_codes: []
     data_tests:
+    - not_all_empty:
+        name: stg_cdc_nndss_weekly_m3_flag_filled
+        config:
+          severity: warn
     - accepted_values:
         name: stg_cdc_nndss_weekly_m3_flag_codes
         arguments:
@@ -209,9 +241,16 @@ models:
       unit: '1'
       codes: []
       missing_codes: []
+    data_tests:
+    - not_all_empty:
+        name: stg_cdc_nndss_weekly_m4_filled
+        config:
+          severity: warn
   - name: m4_flag
     data_type: varchar
-    description: Flag for the previous-year year-to-date count; same codes as m1_flag.
+    description: 'Why the previous-year year-to-date count (m4) is empty: the publisher''s flag code. Codes (publisher''s
+      codebook): - = no reported cases; U = unavailable; N = not reportable in this jurisdiction; NN = not nationally
+      notifiable; NP = nationally notifiable but not published; NC = not calculated.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -226,6 +265,10 @@ models:
       - NC
       missing_codes: []
     data_tests:
+    - not_all_empty:
+        name: stg_cdc_nndss_weekly_m4_flag_filled
+        config:
+          severity: warn
     - accepted_values:
         name: stg_cdc_nndss_weekly_m4_flag_codes
         arguments:
@@ -249,6 +292,11 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    data_tests:
+    - not_all_empty:
+        name: stg_cdc_nndss_weekly_location1_filled
+        config:
+          severity: warn
   - name: location2
     data_type: varchar
     description: Name of a summary area (TOTAL, US RESIDENTS, US TERRITORIES, NON-US RESIDENTS or a census division);
@@ -260,6 +308,11 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    data_tests:
+    - not_all_empty:
+        name: stg_cdc_nndss_weekly_location2_filled
+        config:
+          severity: warn
   - name: sort_order
     data_type: varchar
     description: Publisher's row order key (year, week and area position); used only to keep the published table
@@ -271,3 +324,20 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    data_tests:
+    - not_all_empty:
+        name: stg_cdc_nndss_weekly_sort_order_filled
+        config:
+          severity: warn
+  - name: _snapshot_id
+    data_type: varchar
+    description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the source
+      address, retrieval time and dataset version that go with every answer built on this row.
+    constraints:
+    - type: not_null
+  - name: _raw_sha256
+    data_type: varchar
+    description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+      the exact bytes the publisher sent.'
+    constraints:
+    - type: not_null

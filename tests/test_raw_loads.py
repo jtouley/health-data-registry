@@ -84,7 +84,7 @@ def test_each_full_load_keeps_its_fetch_metadata_once(tmp_path: Path) -> None:
     }  # fmt: skip
     # Append-only: the same snapshot id never rewrites its records or metadata.
     before = sorted(p.read_bytes() for p in (lake / "raw_records" / "toy_cases").iterdir())
-    keep_raw_records(lake, "toy_cases", m.snapshot_id, [page], {"changed": True})
+    keep_raw_records(lake, ds, m.snapshot_id, [page], {"changed": True})
     assert sorted(p.read_bytes() for p in (lake / "raw_records" / "toy_cases").iterdir()) == before
     assert not list((lake / "raw_records" / "toy_cases").glob(".*.tmp"))
 
@@ -104,7 +104,7 @@ def test_metadata_is_written_after_its_records_and_filled_in_for_an_older_load(t
     assert again.snapshot_id == m.snapshot_id and json.loads(meta.read_text())["snapshot_id"] == m.snapshot_id
     # A records file that can't be read leaves no metadata behind.
     with pytest.raises(OSError):
-        keep_raw_records(lake, "toy_cases", "other", [tmp_path / "missing.ndjson"], {"x": 1})
+        keep_raw_records(lake, ds, "other", [tmp_path / "missing.ndjson"], {"x": 1})
     assert not (records / "other.meta.json").exists() and not (records / "other.ndjson").exists()
 
 

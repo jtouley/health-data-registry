@@ -156,10 +156,15 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    data_tests:
+    - not_all_empty:
+        name: stg_cdc_respnet_rate_type_filled
+        config:
+          severity: warn
   - name: estimate
     data_type: double
     description: 'Point estimate: hospitalizations per 100,000 site catchment population (rates) or percent of hospitalized
-      patients (clinical rows); unit given by estimate_type. Published as text; cast to number.'
+      patients (clinical rows); unit given by estimate_type.'
     meta:
       logical_type: number
       physical_type: DOUBLE
@@ -167,3 +172,20 @@ models:
       unit: 'see estimate_type: /100000 or %'
       codes: []
       missing_codes: []
+    data_tests:
+    - not_all_empty:
+        name: stg_cdc_respnet_estimate_filled
+        config:
+          severity: warn
+  - name: _snapshot_id
+    data_type: varchar
+    description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the source
+      address, retrieval time and dataset version that go with every answer built on this row.
+    constraints:
+    - type: not_null
+  - name: _raw_sha256
+    data_type: varchar
+    description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+      the exact bytes the publisher sent.'
+    constraints:
+    - type: not_null

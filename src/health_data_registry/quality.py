@@ -16,7 +16,7 @@ Beside the contract's own rules, two kinds of check are generated. The table mus
 error): an empty table passes every count and value check, and "the table has rows" is an exact structural fact.
 And every column that is not required gets a fill-rate check (severity warn): an all-empty column passes every
 value check, so "is anything there at all" is asked separately. A flag column (flagFor) is empty wherever its
-count is published, and a column the contract marks expectedEmpty may be empty by design, so neither gets one.
+count is published, and a column the contract marks mayBeEmpty may be empty by design, so neither gets one.
 
 Contract SQL is untrusted text (hard rule 3 lets a model draft a contract). A sql rule must pass the same guard as
 query_sql (sql_guard.guard_sql: one SELECT, allowlisted functions, the contract's own columns) when the contract
@@ -199,7 +199,7 @@ def has_rows_rule() -> Rule:
 
 def fill_rate_rules(columns: Sequence[Any]) -> tuple[Rule, ...]:
     """One fill-rate check per contract column (registry.Column) that is not required, not a flag column
-    (flagFor: empty wherever its count is published) and not marked expectedEmpty, in contract order."""
+    (flagFor: empty wherever its count is published) and not marked mayBeEmpty, in contract order."""
     return tuple(
         Rule(
             id=f"{FILL_RATE_PREFIX}{c.name}",
@@ -213,7 +213,7 @@ def fill_rate_rules(columns: Sequence[Any]) -> tuple[Rule, ...]:
             metric=EMPTY_SHARE,
         )
         for c in columns
-        if not c.required and c.flag_for is None and not c.expected_empty
+        if not c.required and c.flag_for is None and not c.may_be_empty
     )
 
 

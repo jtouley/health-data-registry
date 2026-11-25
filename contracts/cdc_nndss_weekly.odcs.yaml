@@ -64,7 +64,7 @@ schema:
         physicalType: BIGINT
         logicalType: integer
         required: true
-        description: "MMWR (epidemiological) year of the report. Published as text; cast to integer."
+        description: "MMWR (epidemiological) year of the report."
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: year}
@@ -98,7 +98,7 @@ schema:
         physicalType: BIGINT
         logicalType: integer
         required: false
-        description: "Cases reported for this condition and area in this MMWR week (publisher column 'Current week'). Empty when the flag column m1_flag holds a code; '-' means no reported cases. Published as text such as '31.0' from 2025; cast to integer."
+        description: "Cases reported for this condition and area in this MMWR week (publisher column 'Current week'). Empty when the flag column m1_flag holds a code; '-' means no reported cases."
         customProperties:
           - {property: role, value: measure}
           - {property: sourceField, value: m1}
@@ -136,7 +136,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: false
-        description: "Flag for the previous 52-week maximum; same codes as m1_flag."
+        description: "Why the previous 52-week maximum (m2) is empty: the publisher's flag code."
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: m2_flag}
@@ -155,7 +155,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: false
-        description: "Flag for the current-year year-to-date count; same codes as m1_flag."
+        description: "Why the current-year year-to-date count (m3) is empty: the publisher's flag code."
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: m3_flag}
@@ -175,7 +175,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: false
-        description: "Flag for the previous-year year-to-date count; same codes as m1_flag."
+        description: "Why the previous-year year-to-date count (m4) is empty: the publisher's flag code."
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: m4_flag}

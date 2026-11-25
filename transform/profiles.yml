@@ -1,4 +1,6 @@
 # One local DuckDB file; nothing here is a secret. HDR_TRANSFORM_DB moves it (default: target/transform.duckdb).
+# HDR_LAKE is the lake the raw sources are read from (default ../lake, relative to transform/; an absolute path is
+# safest). The dbt_raw plugin resolves each raw source to the full load the dataset's LATEST pointer names.
 health_data_registry:
   target: local
   outputs:
@@ -6,3 +8,8 @@ health_data_registry:
       type: duckdb
       path: "{{ env_var('HDR_TRANSFORM_DB', 'target/transform.duckdb') }}"
       threads: 4
+      plugins:
+        - module: health_data_registry.dbt_raw
+          alias: hdr_raw
+          config:
+            lake: "{{ env_var('HDR_LAKE', '../lake') }}"

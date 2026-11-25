@@ -216,7 +216,7 @@ jobs:
       # empty record holds the release.
       - name: dbt build (models, tests and unit tests)
         env:
-          HDR_RAW_RECORDS: ${{ github.workspace }}/lake/raw_records
+          HDR_LAKE: ${{ github.workspace }}/lake
           HDR_TRANSFORM_DB: ${{ runner.temp }}/transform.duckdb
           DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
         run: |

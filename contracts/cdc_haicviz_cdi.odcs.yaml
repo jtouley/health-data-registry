@@ -89,7 +89,7 @@ schema:
         physicalType: DOUBLE
         logicalType: number
         required: false
-        description: "The published number: a case count when topic is number of cases, cases per 100,000 population when topic is case rates, unconfirmed for strain type. Published as text; cast to number."
+        description: "The published number: a case count when topic is number of cases, cases per 100,000 population when topic is case rates, unconfirmed for strain type."
         customProperties:
           - {property: role, value: measure}
           - {property: sourceField, value: value}

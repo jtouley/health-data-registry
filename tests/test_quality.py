@@ -253,9 +253,9 @@ def test_comparators(comparator: str, bound: Any, value: Any, ok: bool) -> None:
 
 
 def col(name: str, description: str, *, required: bool = False, flag_for: str | None = None,
-        expected_empty: bool = False) -> Column:  # fmt: skip
+        may_be_empty: bool = False) -> Column:  # fmt: skip
     return Column(name, "VARCHAR", "string", description, required, "attribute", name,  # type: ignore[arg-type]
-                  flag_for=flag_for, expected_empty=expected_empty)  # fmt: skip
+                  flag_for=flag_for, may_be_empty=may_be_empty)  # fmt: skip
 
 
 def test_fill_rate_flags_only_an_entirely_empty_optional_column() -> None:
@@ -263,7 +263,7 @@ def test_fill_rate_flags_only_an_entirely_empty_optional_column() -> None:
         col("flag", "Whether the count was suppressed. Codes from the codebook."),
         col("n", "Cases.", required=True),
         col("n_flag", "Why the count is empty.", flag_for="n"),
-        col("note", "A note the publisher adds to a few rows.", expected_empty=True),
+        col("note", "A note the publisher adds to a few rows.", may_be_empty=True),
     ]
     rules = q.fill_rate_rules(columns)
     assert [(r.id, r.column, r.severity, r.dimension) for r in rules] == [

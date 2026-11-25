@@ -2,206 +2,443 @@
 version: 2
 sources:
 - name: raw
-  description: Parsed publisher records in the lake (raw_records/<id>/<snapshot id>.ndjson).
+  description: Parsed publisher records in the lake (raw_records/<id>/<snapshot id>.ndjson), resolved to the dataset's
+    LATEST full load by the dbt_raw plugin (profiles.yml).
+  schema: raw
   tables:
   - name: cdc_haicviz_cdi
-    description: Raw records of HAICViz - CDI, every value as the publisher sent it (text). One file per load, named
-      by its snapshot id, so the newest file sorts last.
+    description: 'Raw records of HAICViz - CDI as the adapter hands them on, every value as text: the publisher''s
+      own fields, or for a wide table the adapter''s structural reshaping of them (see the staging model). Only
+      the full load the dataset''s LATEST pointer names is read.'
     meta:
       raw_contract_version: 0.1.0
       contract: contracts/cdc_haicviz_cdi.odcs.yaml
       load: snapshot
       load_key: []
       updated_field: null
-      external_location: 'read_json(''{{ env_var(''HDR_RAW_RECORDS'', ''../lake/raw_records'') }}/cdc_haicviz_cdi/*.ndjson'',
-        format=''newline_delimited'', filename=true, columns={{ ''{{'' }}''grouping'': ''VARCHAR'', ''series'':
-        ''VARCHAR'', ''topic'': ''VARCHAR'', ''value'': ''VARCHAR'', ''viewby'': ''VARCHAR'', ''yearname'': ''VARCHAR''{{
-        ''}}'' }})'
+      plugin: hdr_raw
+      source_fields:
+      - grouping
+      - series
+      - topic
+      - value
+      - viewby
+      - yearname
     columns:
     - name: grouping
       data_type: varchar
+      description: Publisher field grouping, as text; read into grouping (All cases, or split by epidemiologic class
+        into healthcare-associated (HA) and community-associated (CA) cases. Spelling varies ('Epi Class' / 'Epi
+        class').)
     - name: series
       data_type: varchar
+      description: 'Publisher field series, as text; read into series (The specific stratum, prefixed by epi class
+        where split: e.g. Total, Healthcare-associated, Community-associated, ''All cases - 65+ years'', ''HA -
+        Female'', ''CA - 027'' (ribotype).)'
     - name: topic
       data_type: varchar
+      description: 'Publisher field topic, as text; read into topic (What the value measures: number of CDI cases,
+        case rate per 100,000 population, or strain type (ribotype). Spelling varies by year (''Number of Cases''
+        to 2021, ''Number of cases'' in 2022).)'
     - name: value
       data_type: varchar
+      description: 'Publisher field value, as text; read into value (The published number: a case count when topic
+        is number of cases, cases per 100,000 population when topic is case rates, unconfirmed for strain type.)'
     - name: viewby
       data_type: varchar
+      description: 'Publisher field viewby, as text; read into viewby (Which breakdown the row belongs to: Total,
+        Age, Sex, Race or Ribotype. Each view covers the same cases.)'
     - name: yearname
       data_type: varchar
+      description: Publisher field yearname, as text; read into yearname (Surveillance year (2011-2022 in the data
+        on 2026-11-24).)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
   - name: cdc_nhsn_ar_hai
-    description: Raw records of National Healthcare Safety Network - Antimicrobial Resistance (2011-2025), every
-      value as the publisher sent it (text). One file per load, named by its snapshot id, so the newest file sorts
-      last.
+    description: 'Raw records of National Healthcare Safety Network - Antimicrobial Resistance (2011-2025) as the
+      adapter hands them on, every value as text: the publisher''s own fields, or for a wide table the adapter''s
+      structural reshaping of them (see the staging model). Only the full load the dataset''s LATEST pointer names
+      is read.'
     meta:
       raw_contract_version: 0.1.0
       contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
       load: snapshot
       load_key: []
       updated_field: null
-      external_location: 'read_json(''{{ env_var(''HDR_RAW_RECORDS'', ''../lake/raw_records'') }}/cdc_nhsn_ar_hai/*.ndjson'',
-        format=''newline_delimited'', filename=true, columns={{ ''{{'' }}''age_category'': ''VARCHAR'', ''display_tested'':
-        ''VARCHAR'', ''event_type'': ''VARCHAR'', ''facility'': ''VARCHAR'', ''geography'': ''VARCHAR'', ''hospital_size'':
-        ''VARCHAR'', ''isolates_tested'': ''VARCHAR'', ''location'': ''VARCHAR'', ''lower_confidence_interval'':
-        ''VARCHAR'', ''percent_resistant'': ''VARCHAR'', ''phenotype'': ''VARCHAR'', ''procedure'': ''VARCHAR'',
-        ''resistant_isolates'': ''VARCHAR'', ''sex'': ''VARCHAR'', ''source'': ''VARCHAR'', ''suppressed'': ''VARCHAR'',
-        ''teaching_hospital'': ''VARCHAR'', ''upper_confidence_interval'': ''VARCHAR'', ''year'': ''VARCHAR''{{
-        ''}}'' }})'
+      plugin: hdr_raw
+      source_fields:
+      - age_category
+      - display_tested
+      - event_type
+      - facility
+      - geography
+      - hospital_size
+      - isolates_tested
+      - location
+      - lower_confidence_interval
+      - percent_resistant
+      - phenotype
+      - procedure
+      - resistant_isolates
+      - sex
+      - source
+      - suppressed
+      - teaching_hospital
+      - upper_confidence_interval
+      - year
     columns:
     - name: age_category
       data_type: varchar
+      description: Publisher field age_category, as text; read into age_category (Adults (18 and over) or pediatrics
+        (under 18), by age at the infection date (CLABSI, CAUTI) or the procedure date (SSI); or all ages.)
     - name: display_tested
       data_type: varchar
+      description: Publisher field display_tested, as text; read into display_tested (Publisher's indicator of whether
+        data are sufficient to display; empty in every row observed.)
     - name: event_type
       data_type: varchar
+      description: 'Publisher field event_type, as text; read into event_type (Type of healthcare-associated infection
+        the isolate came from: central line-associated bloodstream infection (CLABSI), catheter-associated urinary
+        tract infection (CAUTI), surgical site infection (SSI), or all three combined.)'
     - name: facility
       data_type: varchar
+      description: 'Publisher field facility, as text; read into facility (Facility type: acute care hospital, inpatient
+        rehabilitation facility or long-term acute care hospital; or all.)'
     - name: geography
       data_type: varchar
+      description: Publisher field geography, as text; read into geography (United States, one of the nine census
+        divisions, or a state (50 states, DC and Puerto Rico). Small territories are not shown as states but are
+        in national figures; Puerto Rico is excluded from regions (column description).)
     - name: hospital_size
       data_type: varchar
+      description: Publisher field hospital_size, as text; read into hospital_size (Large (200 or more beds) or
+        small (under 200 beds) facility; only for general acute care hospitals; or all.)
     - name: isolates_tested
       data_type: varchar
+      description: Publisher field isolates_tested, as text; read into isolates_tested (Number of isolates tested
+        for susceptibility to the antimicrobial, as reported to NHSN (column description).)
     - name: location
       data_type: varchar
+      description: 'Publisher field location, as text; read into location (Hospital unit type: ICU, neonatal ICU,
+        oncology unit or other unit (ward, step-down, mixed acuity); or all units.)'
     - name: lower_confidence_interval
       data_type: varchar
+      description: Publisher field lower_confidence_interval, as text; read into lower_confidence_interval (Lower
+        bound of the 95% mid-P exact confidence interval around percent resistant; only when percent resistant is
+        calculated (column descriptions for geography and this field).)
     - name: percent_resistant
       data_type: varchar
+      description: 'Publisher field percent_resistant, as text; read into percent_resistant (Percent of tested isolates
+        that were resistant: resistant / tested x 100; calculated only when at least 20 isolates were tested (column
+        description).)'
     - name: phenotype
       data_type: varchar
+      description: 'Publisher field phenotype, as text; read into phenotype (Organism and resistance pattern, e.g.
+        methicillin-resistant Staphylococcus aureus or carbapenem-resistant Enterobacterales. Definitions: https://arpsp.cdc.gov/resources/AR_PhenotypeDefinitions_NOV2026.pdf.)'
     - name: procedure
       data_type: varchar
+      description: Publisher field procedure, as text; read into procedure (NHSN inpatient surgical procedure type
+        (SSI only), or all procedures.)
     - name: resistant_isolates
       data_type: varchar
+      description: Publisher field resistant_isolates, as text; read into resistant_isolates (Number of tested isolates
+        that were resistant (for some phenotypes, non-susceptible); shown only when at least 20 isolates were tested
+        (column description).)
     - name: sex
       data_type: varchar
+      description: Publisher field sex, as text; read into sex (Patient sex (male or female) or both sexes combined.)
     - name: source
       data_type: varchar
+      description: 'Publisher field source, as text; read into source (Geographic level of the row: national, region
+        (census division) or state.)'
     - name: suppressed
       data_type: varchar
+      description: Publisher field suppressed, as text; read into suppressed (Publisher's suppression indicator
+        ('If data should be suppressed or not'). Observed values are false or empty; rows where it is empty carry
+        no counts.)
     - name: teaching_hospital
       data_type: varchar
+      description: Publisher field teaching_hospital, as text; read into teaching_hospital (Whether the hospital
+        trains medical students and residents; only available for general acute care hospitals; or all.)
     - name: upper_confidence_interval
       data_type: varchar
+      description: Publisher field upper_confidence_interval, as text; read into upper_confidence_interval (Upper
+        bound of the 95% mid-P exact confidence interval around percent resistant.)
     - name: year
       data_type: varchar
+      description: Publisher field year, as text; read into year (Calendar year for which number resistant, number
+        tested and pooled percent resistant are calculated (column description, https://data.cdc.gov/api/views/7wz3-n6um.json).)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
   - name: cdc_nndss_weekly
-    description: Raw records of NNDSS Weekly Data, every value as the publisher sent it (text). One file per load,
-      named by its snapshot id, so the newest file sorts last.
+    description: 'Raw records of NNDSS Weekly Data as the adapter hands them on, every value as text: the publisher''s
+      own fields, or for a wide table the adapter''s structural reshaping of them (see the staging model). Only
+      the full load the dataset''s LATEST pointer names is read.'
     meta:
       raw_contract_version: 0.1.0
       contract: contracts/cdc_nndss_weekly.odcs.yaml
       load: snapshot
       load_key: []
       updated_field: null
-      external_location: 'read_json(''{{ env_var(''HDR_RAW_RECORDS'', ''../lake/raw_records'') }}/cdc_nndss_weekly/*.ndjson'',
-        format=''newline_delimited'', filename=true, columns={{ ''{{'' }}''label'': ''VARCHAR'', ''location1'':
-        ''VARCHAR'', ''location2'': ''VARCHAR'', ''m1'': ''VARCHAR'', ''m1_flag'': ''VARCHAR'', ''m2'': ''VARCHAR'',
-        ''m2_flag'': ''VARCHAR'', ''m3'': ''VARCHAR'', ''m3_flag'': ''VARCHAR'', ''m4'': ''VARCHAR'', ''m4_flag'':
-        ''VARCHAR'', ''sort_order'': ''VARCHAR'', ''states'': ''VARCHAR'', ''week'': ''VARCHAR'', ''year'': ''VARCHAR''{{
-        ''}}'' }})'
+      plugin: hdr_raw
+      source_fields:
+      - label
+      - location1
+      - location2
+      - m1
+      - m1_flag
+      - m2
+      - m2_flag
+      - m3
+      - m3_flag
+      - m4
+      - m4_flag
+      - sort_order
+      - states
+      - week
+      - year
     columns:
     - name: label
       data_type: varchar
+      description: 'Publisher field label, as text; read into label (Notifiable condition as named in the NNDSS
+        tables (for example Legionellosis, Candida auris, clinical; Syphilis, Primary and secondary). Case definitions:
+        https://ndc.services.cdc.gov/.)'
     - name: location1
       data_type: varchar
+      description: Publisher field location1, as text; read into location1 (Name of a single jurisdiction (state,
+        DC, New York City or territory); empty on summary rows.)
     - name: location2
       data_type: varchar
+      description: Publisher field location2, as text; read into location2 (Name of a summary area (TOTAL, US RESIDENTS,
+        US TERRITORIES, NON-US RESIDENTS or a census division); empty on single-jurisdiction rows.)
     - name: m1
       data_type: varchar
+      description: Publisher field m1, as text; read into m1 (Cases reported for this condition and area in this
+        MMWR week (publisher column 'Current week'). Empty when the flag column m1_flag holds a code; '-' means
+        no reported cases.)
     - name: m1_flag
       data_type: varchar
+      description: 'Publisher field m1_flag, as text; read into m1_flag (Why the current-week count is empty. Codes
+        from the dataset notes: ''-'' no reported cases; U unavailable; N not reportable in the jurisdiction; NN
+        not nationally notifiable; NP nationally notifiable but not published; NC not calculated. From 2025 the
+        flag is empty when a count is present; through 2024 rows with a count also carry ''-'', so a flag explains
+        only an empty count. Kept as published, never turned into an empty value.)'
     - name: m2
       data_type: varchar
+      description: 'Publisher field m2, as text; read into m2 (Highest weekly count in the previous 52 weeks for
+        this condition and area, counting only weeks when the condition was reportable there (publisher footnote).
+        A maximum: never add it up.)'
     - name: m2_flag
       data_type: varchar
+      description: 'Publisher field m2_flag, as text; read into m2_flag (Why the previous 52-week maximum (m2) is
+        empty: the publisher''s flag code.)'
     - name: m3
       data_type: varchar
+      description: 'Publisher field m3, as text; read into m3 (Cumulative cases so far in this MMWR year up to and
+        including this week (year to date). Cumulative: take the latest week, never sum across weeks. Can be incomplete
+        if the condition was reportable for only part of the year (publisher footnote).)'
     - name: m3_flag
       data_type: varchar
+      description: 'Publisher field m3_flag, as text; read into m3_flag (Why the current-year year-to-date count
+        (m3) is empty: the publisher''s flag code.)'
     - name: m4
       data_type: varchar
+      description: Publisher field m4, as text; read into m4 (Cumulative cases in the previous MMWR year up to the
+        same week, as published in this week's table. The codebook doesn't say whether it counts the same thing
+        as that year's own year-to-date (m3); for some conditions the two differ widely (see openQuestions), so
+        it is shown beside m3, never in its place.)
     - name: m4_flag
       data_type: varchar
+      description: 'Publisher field m4_flag, as text; read into m4_flag (Why the previous-year year-to-date count
+        (m4) is empty: the publisher''s flag code.)'
     - name: sort_order
       data_type: varchar
+      description: Publisher field sort_order, as text; read into sort_order (Publisher's row order key (year, week
+        and area position); used only to keep the published table order.)
     - name: states
       data_type: varchar
+      description: 'Publisher field states, as text; read into states (Reporting area: the US total, a census division,
+        a state, New York City, a territory, US territories combined, or non-US residents. Cases are counted where
+        the patient usually lives. New York excludes New York City (structural check against US RESIDENTS, 2024).
+        Upper case through 2024, title case from 2025 (source: live data, https://data.cdc.gov/resource/x9gk-5huc.json).)'
     - name: week
       data_type: varchar
+      description: Publisher field week, as text; read into week (MMWR week of the report (1-52, or 53 in 53-week
+        years such as 2025).)
     - name: year
       data_type: varchar
+      description: Publisher field year, as text; read into year (MMWR (epidemiological) year of the report.)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
   - name: cdc_respnet
-    description: Raw records of RESP-NET Rates and Clinical Data, every value as the publisher sent it (text). One
-      file per load, named by its snapshot id, so the newest file sorts last.
+    description: 'Raw records of RESP-NET Rates and Clinical Data as the adapter hands them on, every value as text:
+      the publisher''s own fields, or for a wide table the adapter''s structural reshaping of them (see the staging
+      model). Only the full load the dataset''s LATEST pointer names is read.'
     meta:
       raw_contract_version: 0.1.0
       contract: contracts/cdc_respnet.odcs.yaml
       load: snapshot
       load_key: []
       updated_field: null
-      external_location: 'read_json(''{{ env_var(''HDR_RAW_RECORDS'', ''../lake/raw_records'') }}/cdc_respnet/*.ndjson'',
-        format=''newline_delimited'', filename=true, columns={{ ''{{'' }}''age_category'': ''VARCHAR'', ''data_type'':
-        ''VARCHAR'', ''date'': ''VARCHAR'', ''date_type'': ''VARCHAR'', ''estimate'': ''VARCHAR'', ''estimate_type'':
-        ''VARCHAR'', ''race'': ''VARCHAR'', ''rate_type'': ''VARCHAR'', ''season'': ''VARCHAR'', ''sex'': ''VARCHAR'',
-        ''state'': ''VARCHAR'', ''surveillance_network'': ''VARCHAR''{{ ''}}'' }})'
+      plugin: hdr_raw
+      source_fields:
+      - age_category
+      - data_type
+      - date
+      - date_type
+      - estimate
+      - estimate_type
+      - race
+      - rate_type
+      - season
+      - sex
+      - state
+      - surveillance_network
     columns:
     - name: age_category
       data_type: varchar
+      description: Publisher field age_category, as text; read into age_category (Age group of hospitalized patients;
+        Overall (rates) or All (clinical rows) for all ages. Labels differ between rate rows (e.g. '65+ yr') and
+        clinical rows (e.g. '≥65 years').)
     - name: data_type
       data_type: varchar
+      description: 'Publisher field data_type, as text; read into data_type (What the estimate is: Weekly Rate or
+        Cumulative Rate of hospitalization, or the percent of hospitalized patients admitted to ICU, given invasive
+        mechanical ventilation, dying in hospital, or having at least one underlying condition.)'
     - name: date
       data_type: varchar
+      description: Publisher field date, as text; read into date (Week-ending date as YYYY-MM-DD for weekly rows,
+        or the season (e.g. 2025-26) for season rows. Kept as text because it mixes the two.)
     - name: date_type
       data_type: varchar
+      description: Publisher field date_type, as text; read into date_type (Whether the row is for one week (Week
+        Ending Date) or a whole season (Season). The column label also names Year and Month, not observed in the
+        data on 2026-11-24.)
     - name: estimate
       data_type: varchar
+      description: 'Publisher field estimate, as text; read into estimate (Point estimate: hospitalizations per
+        100,000 site catchment population (rates) or percent of hospitalized patients (clinical rows); unit given
+        by estimate_type.)'
     - name: estimate_type
       data_type: varchar
+      description: 'Publisher field estimate_type, as text; read into estimate_type (Unit of the estimate: Rate
+        per 100,000 or Percent.)'
     - name: race
       data_type: varchar
+      description: Publisher field race, as text; read into race (Race and ethnicity group, or All. Labels differ
+        between rate rows (e.g. 'Black, NH') and clinical rows (e.g. 'Non-Hispanic Black').)
     - name: rate_type
       data_type: varchar
+      description: 'Publisher field rate_type, as text; read into rate_type (For rates: Observed (crude), Age-Adjusted,
+        or Estimated; empty for percent rows (column label: ''Observed, estimated, or age-adjusted'').)'
     - name: season
       data_type: varchar
+      description: Publisher field season, as text; read into season (Respiratory surveillance season, written like
+        2025-26.)
     - name: sex
       data_type: varchar
+      description: 'Publisher field sex, as text; read into sex (Sex of patients: Female, Male or All.)'
     - name: state
       data_type: varchar
+      description: Publisher field state, as text; read into state (RESP-NET surveillance site, named by state (the
+        site's catchment area, not necessarily the whole state), or Overall / a network name for all sites combined.)
     - name: surveillance_network
       data_type: varchar
+      description: 'Publisher field surveillance_network, as text; read into surveillance_network (Which virus surveillance
+        network the estimate comes from: COVID-NET (COVID-19), FluSurv-NET (influenza), RSV-NET (RSV), or Combined
+        (the three together).)'
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
   - name: census_county_pop
-    description: Raw records of County and state resident population estimates, July 1, 2020-2025 (Census Vintage
-      2025, CO-EST2025-ALLDATA), every value as the publisher sent it (text). One file per load, named by its snapshot
-      id, so the newest file sorts last.
+    description: 'Raw records of County and state resident population estimates, July 1, 2020-2025 (Census Vintage
+      2025, CO-EST2025-ALLDATA) as the adapter hands them on, every value as text: the publisher''s own fields,
+      or for a wide table the adapter''s structural reshaping of them (see the staging model). Only the full load
+      the dataset''s LATEST pointer names is read.'
     meta:
       raw_contract_version: 0.1.0
       contract: contracts/census_county_pop.odcs.yaml
       load: snapshot
       load_key: []
       updated_field: null
-      external_location: 'read_json(''{{ env_var(''HDR_RAW_RECORDS'', ''../lake/raw_records'') }}/census_county_pop/*.ndjson'',
-        format=''newline_delimited'', filename=true, columns={{ ''{{'' }}''COUNTY'': ''VARCHAR'', ''CTYNAME'': ''VARCHAR'',
-        ''DIVISION'': ''VARCHAR'', ''POPESTIMATE'': ''VARCHAR'', ''REGION'': ''VARCHAR'', ''STATE'': ''VARCHAR'',
-        ''STNAME'': ''VARCHAR'', ''SUMLEV'': ''VARCHAR'', ''YEAR'': ''VARCHAR''{{ ''}}'' }})'
+      plugin: hdr_raw
+      source_fields:
+      - COUNTY
+      - CTYNAME
+      - DIVISION
+      - POPESTIMATE
+      - REGION
+      - STATE
+      - STNAME
+      - SUMLEV
+      - YEAR
     columns:
     - name: COUNTY
       data_type: varchar
+      description: Publisher field COUNTY, as text; read into county_fips (Three-digit county FIPS code within the
+        state, as text; 000 on state rows.)
     - name: CTYNAME
       data_type: varchar
+      description: Publisher field CTYNAME, as text; read into county_name (County name with its type (for example
+        Wayne County, Orleans Parish, Capitol Planning Region); on state rows it repeats the state name. County
+        names repeat across states, so use it only together with the state.)
     - name: DIVISION
       data_type: varchar
+      description: Publisher field DIVISION, as text; read into division (Census division code, 1 New England to
+        9 Pacific (publisher key).)
     - name: POPESTIMATE
       data_type: varchar
+      description: 'Publisher field POPESTIMATE, as text; read into population (Estimated resident population on
+        July 1 of the year (publisher column POPESTIMATE<year>), in persons. A count: add counties within a state
+        or states within the nation, but never a state row to its own counties.)'
     - name: REGION
       data_type: varchar
+      description: 'Publisher field REGION, as text; read into region (Census region code: 1 Northeast, 2 Midwest,
+        3 South, 4 West (publisher key).)'
     - name: STATE
       data_type: varchar
+      description: Publisher field STATE, as text; read into state_fips (Two-digit state FIPS code, as text (for
+        example 26 for Michigan).)
     - name: STNAME
       data_type: varchar
+      description: Publisher field STNAME, as text; read into state_name (State name as the Census Bureau writes
+        it (for example Michigan, District of Columbia).)
     - name: SUMLEV
       data_type: varchar
+      description: 'Publisher field SUMLEV, as text; read into sumlev (Geographic level of the row: 040 a state
+        (or DC), 050 a county or county equivalent (publisher''s SUMLEV key). Kept as text so the leading zero stays.)'
     - name: YEAR
       data_type: varchar
+      description: Publisher field YEAR, as text; read into year (Reference year of the estimate (population on
+        July 1 of this year). Taken from the column name POPESTIMATE<year> by the structural pivot; 2020 to 2025.)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'

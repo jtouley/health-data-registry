@@ -312,5 +312,7 @@ def test_flag_and_intermediate_models_are_contract_backed_and_generated_where_pe
     assert flags == {k for k, v in contracts.items() if v == "flag"} == {
         "flag_cauris_clinical_screening_swap", "flag_all_dash_areas", "flag_near_zero_running_totals",
         "flag_unmapped_labels"}  # fmt: skip
-    with pytest.raises(ValueError, match="declares its layer once: reference or flag"):
+    with pytest.raises(
+        ValueError, match="declares its layer once, as one of reference, intermediate, flag, marts"
+    ):
         tg.model_layer(reg.get("cdc_nndss_weekly").contract)

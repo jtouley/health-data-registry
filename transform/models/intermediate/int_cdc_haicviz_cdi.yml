@@ -99,7 +99,7 @@ models:
   - name: value
     data_type: double
     description: 'The published number: a case count when topic is number of cases, cases per 100,000 population
-      when topic is case rates, unconfirmed for strain type. Published as text; cast to number.'
+      when topic is case rates, unconfirmed for strain type.'
     meta:
       logical_type: number
       physical_type: DOUBLE
@@ -107,6 +107,14 @@ models:
       unit: 'see topic: 1 (cases) or /100000'
       codes: []
       missing_codes: []
+  - name: _snapshot_id
+    data_type: varchar
+    description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the source
+      address, retrieval time and dataset version that go with every answer built on this row.
+  - name: _raw_sha256
+    data_type: varchar
+    description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+      the exact bytes the publisher sent.'
   - name: is_total_row
     data_type: boolean
     description: True on the publisher's total and summary rows (the contract's totalRows), which are never added

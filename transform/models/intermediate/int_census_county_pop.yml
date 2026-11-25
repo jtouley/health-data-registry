@@ -149,6 +149,14 @@ models:
       unit: persons
       codes: []
       missing_codes: []
+  - name: _snapshot_id
+    data_type: varchar
+    description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the source
+      address, retrieval time and dataset version that go with every answer built on this row.
+  - name: _raw_sha256
+    data_type: varchar
+    description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+      the exact bytes the publisher sent.'
   - name: is_total_row
     data_type: boolean
     description: True on the publisher's total and summary rows (the contract's totalRows), which are never added

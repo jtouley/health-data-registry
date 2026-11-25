@@ -76,6 +76,11 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    data_tests:
+    - not_all_empty:
+        name: flag_near_zero_running_totals_ytd_filled
+        config:
+          severity: warn
   - name: ytd_flag
     data_type: varchar
     description: The publisher's flag on that year-to-date count, as published.
@@ -86,6 +91,11 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    data_tests:
+    - not_all_empty:
+        name: flag_near_zero_running_totals_ytd_flag_filled
+        config:
+          severity: warn
   - name: prior_year_ytd
     data_type: bigint
     description: The year before's year-to-date count at the same MMWR week (or its last published week before it),
