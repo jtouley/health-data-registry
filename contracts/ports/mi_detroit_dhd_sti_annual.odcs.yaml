@@ -12,8 +12,8 @@ description:
   purpose: "The Detroit Health Department Epidemiology Dashboard's yearly figures for chlamydia and syphilis (catalogued on PR #19 as detroit_dhd_epi_annual), kept as their own series."
   usage: One series of the Michigan HIV product, read on its own with its own counted unit; never added to or merged
     with another port's figures.
-  limitations: 'Draft stub. Data kind: unresolved until the HIV charts are read. Measures and their counted unit are declared only from the
-    publisher''s own codebook once the source is catalogued.'
+  limitations: 'Draft stub. Data kind: unresolved until the HIV charts are read. Its source is catalogued; its
+    measures and their counted unit are declared only from that source''s contract and the publisher''s own notes.'
 schema:
 - name: mi_detroit_dhd_sti_annual
   physicalName: mi_detroit_dhd_sti_annual
@@ -225,7 +225,7 @@ customProperties:
     description: 'Not read yet for this port. Its source detroit_dhd_epi_annual states no rule for the chlamydia and syphilis yearly charts it read, but the HIV and gonorrhea charts were not read, and other charts on the dashboard show <6 for small counts. Never read as no suppression.'
 - property: fingerprints
   value:
-  - {version: 0.1.0, interface: 5a6a02db897d4495a72bd25995c9d0f969f28b0a99b2564ae8018c4112a2ea59, docs: 2f6187fcf573e2cda912d375de85a3f5eed0e57c10d3a4535410d7a9514e206c}
+  - {version: 0.1.0, interface: 5a6a02db897d4495a72bd25995c9d0f969f28b0a99b2564ae8018c4112a2ea59, docs: 2b336dcc86c56efe866fafcb578ea52dc2cfe5032f8c62e53fc85940008cb81c}
 - property: openQuestions
   value:
   - 'Reads detroit_dhd_epi_annual, catalogued in PR #19 (merged). Its HIV and gonorrhea yearly charts were not read on 2026-11-24; HIV figures there may include Ryan White programme data and must then be labelled as programme data.'
