@@ -17,7 +17,7 @@ make check              # what CI runs
 make hooks              # once: uv run pre-commit install (pre-commit and pre-push hooks)
 ```
 
-Every commit, by people, subagents and the lead, goes through these hooks; `--no-verify` is never used. Unfinished
+Every commit, by people, agents and the lead, goes through these hooks; `--no-verify` is never used. Unfinished
 work is not committed to the PR branch: it stays uncommitted or goes on a separate WIP branch until it passes the hooks.
 
 ## Commands
@@ -35,10 +35,10 @@ The README's images (`assets/readme/*.svg`, light and dark) come from one token 
 | `make ratchet` | The Trusted gate's ratchet on `HEAD` against `BASE` (default `origin/main`), as the PR check will run it, without the required-check rule ([below](#the-trusted-gate)) |
 | `make lint` / `make fmt` | Ruff lint and format check / fix |
 | `make typecheck` | mypy, strict |
-| `make test` | Offline tests with coverage; fails under 85% (`COV_FLOOR`) |
+| `make test` | Offline tests with coverage, one worker per core (pytest-xdist); fails under 85% (`COV_FLOOR`) |
 | `make test-network` | Live publisher tests in `tests/integration` (marker `network`) |
 | `make smoke` | The C. auris in Michigan reference journey on a synthetic lake (marker `smoke`; see [Smoke journey](#smoke-journey)) |
-| `make mutate` | Mutation tests on modules changed since `BASE` (default `origin/main`); fails under 70% killed (`MUTATION_FLOOR`) |
+| `make mutate` | Mutation tests on the functions changed since `BASE` (default `origin/main`); fails under 70% killed (`MUTATION_FLOOR`) |
 | `make docs` | Regenerate `docs/helpers.md` from `src/health_data_registry/helpers.py` |
 | `make refresh` | `health-data-registry refresh --all` into the local lake |
 | `make serve` | Run the MCP server on stdio |
@@ -103,7 +103,7 @@ A pull request's CI should pass the first time. So a commit is checked twice bef
 1. **`make precheck`** runs the CI checks locally plus a docs-drift check, and stops at the first failure: all
    pre-commit hooks (actionlint with shellcheck included), lint, typecheck, tests with the coverage floor, the
    smoke journey, the Projects kit build, the docs drift check (`make docs`, then nothing may change), and
-   mutation tests on the modules changed since `BASE` (default `origin/main`), one step per shard as CI shards
+   mutation tests on the functions changed since `BASE` (default `origin/main`), one step per shard as CI shards
    them, then the 70% floor on the total. Each step prints a PASS or FAIL line, and a summary follows. It checks
    the working tree, so commit first: CI checks the commit you push. It runs on macOS's bash 3.2 as well.
 2. **Push to `pre-pr/<branch>`** (`git push origin HEAD:pre-pr/<branch>`). CI and CodeQL run on every push to
@@ -164,9 +164,10 @@ it as text (`git cat-file`, `git diff`), parsing Python with `ast`, workflows wi
 `tomllib`: nothing from the pull request is imported, installed or run. The token is `contents: read`, no secret is
 used, the uv cache is off, and only SHAs from the event payload reach a shell.
 
-The preferred enforcement is a ruleset "required workflows" rule that pins `trusted-gate.yml` and `ci.yml` to
+The preferred enforcement is a ruleset "required workflows" rule that pins `trusted-gate.yml` to
 `refs/heads/main`: GitHub then runs main's copy on every pull request, whatever the pull request changes, and no
-other job can stand in for it. GitHub offers that rule only in organisation rulesets, so it needs the repository to
+other job can stand in for it. `ci.yml` is not pinned, so a pull request that changes CI is tested with its own CI;
+the ratchet is what stops that change from weakening the checks. GitHub offers that rule only in organisation rulesets, so it needs the repository to
 belong to an organisation; until then the gate runs on `pull_request_target` and is a required status check. A
 status check is matched by name only, so the gate also fails a pull request that adds a second job reporting a
 required check's name.
@@ -183,6 +184,8 @@ when the change:
 | sealed sets | touches `eval/sealed/` | no |
 | hooks | adds the no-verify flag, the short commit flag or a hooks-path override (prose in Markdown may be allowlisted) | docs only |
 | allowlist, gate files | changes the allowlist with anything else; changes the gate's own files with anything but docs | no |
+| budgets | loosens `ci/budgets.yml`: raises a time budget, adds a key (a new budget is a new allowance), removes one, or deletes the file | no |
+| mutation | weakens a job that runs, gathers or checks mutation tests, in any workflow (the PR shards, the nightly run, the release gate's mutation check): removes it, makes it or a step conditional, adds continue-on-error, drops a mutation command from its steps, takes a schedule away from its workflow, or stops a job that waited for it (a release job, an aggregate) waiting for it | yes, except continue-on-error |
 
 Each failure names the file and line, says what weakened, and for an allowlistable one prints the exact entry.
 The required checks come from the ruleset itself (`GET /repos/{owner}/{repo}/rules/branches/main`); if that call
@@ -197,6 +200,9 @@ merged. Add the entry first, then the change that needs it.
 merges, the next pull request is judged by the changed gate; the gate only makes such a change stand alone. It reads
 text, so it doesn't see a check weakened by logic (a test that asserts nothing, a step whose command is changed to
 `true`, a comparison flipped inside a script), and an allowlist entry needs no person, only its own pull request.
+A job counts as a mutation job when its id, name, steps, env or reusable workflow mention mutation (`mutmut`,
+`mutate`, `mutation`); a release gate that checks mutation inside a script under another name is protected only by
+the threshold rule on that script's floor.
 
 ## Architecture
 
@@ -231,19 +237,29 @@ Everything a clinician reads (tool descriptions, helpers, refusals) follows the 
 - **Network tests.** `tests/integration/test_live_<dataset>.py` fetch a small slice from the publisher at test time,
   write nothing to disk and are marked `network`. `make test` and CI's test job leave them out; run
   `make test-network` when you change an adapter, a contract or the fetcher.
-- **Mutation tests.** `scripts/mutate_changed.py` runs mutmut on the modules changed since the merge base and
-  prints each mutant it did not kill. A survivor means the tests would not notice that change: add or sharpen a
-  test, or say in the PR why the mutant is equivalent. Every status but `killed` (and `caught by type check`)
-  lowers the score, `no tests` and `skipped` included. `make mutate` is part of `make check`. CI runs the same
-  check on every PR in shards: `--list` names the shards of the changed modules, one job per shard runs mutmut,
-  and the aggregate job applies the 70% floor to the summed counts and lists every mutant not killed. A module
-  is one shard, or, when its estimated mutants exceed a shard's size (`SHARD_TARGET`, smaller for
-  `registry.py`), several named `<module>#<k>of<n>@<split>`: split by function, and a big function by the last
-  digit of its mutant numbers, so each shard takes about 10 to 20 minutes (the job's limit is 40). The split
-  comes from the module's source alone, read with the same Python 3.12 in `--list` and in every shard; `<split>`
-  is a hash of it, and a shard refuses an id whose hash differs from its own split, so an edit made after
-  `--list` (in CI or during precheck) fails the shard instead of running the wrong mutants. Each shard also
-  checks that every mutant of its module falls in exactly one shard. Functions mutmut never mutates (under
+- **Mutation tests.** `scripts/mutate_changed.py` runs mutmut on the functions changed since the merge base and
+  prints each mutant it did not kill. A function is changed when it holds an added, edited or deleted line, or
+  reads a module-level name that a changed line defines (an allowlist entry, a limit, an import), directly or
+  through names built from it; every method of a class whose attributes changed counts too, and so does every
+  function of a new file. mutmut mutates function bodies only, so a change to a docstring or a comment makes no
+  mutant, and the list names any changed module left with nothing to test. A survivor means the tests would not
+  notice that change: add or sharpen a test, or say in the PR why the mutant is equivalent. Every status but
+  `killed` (and `caught by type check`) lowers the score, `no tests` and `skipped` included. `make mutate` is part
+  of `make check`. CI runs the same check on every PR in shards: `--list` names the shards of the changed
+  functions, one job per shard runs mutmut (at most 6 at once per run), and the aggregate job applies the 70%
+  floor to the summed counts and lists every mutant not killed. The list job resolves the merge base once and
+  hands it to every shard, so they scope to the same functions. Each shard generates mutants for its own module
+  only, and mutmut's stats run covers only the test files that reach that module: by import, directly or through
+  other modules, scripts/ and tools/ included, or by loading a file by path (a test left out can only lower the
+  score). Shards are named `<module>#<k>of<n>@<split>`: the changed functions, split by function, and a big
+  function by the last digit of its mutant numbers, to about 3 minutes of mutants each (`SHARD_TARGET`, smaller
+  for `registry.py`; the job's limit is 12 minutes). The split comes from the module's source and the changed
+  functions alone, read with the same Python 3.12 in `--list` and in every shard; `<split>` is a hash of it, and a
+  shard refuses an id whose hash differs from its own split, so an edit made after `--list` (in CI or during
+  precheck) fails the shard instead of running the wrong mutants. Each shard also checks that every mutant of its
+  module falls in exactly one shard. While a shard runs, `pyproject.toml` carries its `only_mutate` and test
+  selection; a run stopped with Ctrl-C or SIGTERM restores it, and if a killed run leaves it edited, the next run
+  refuses to start until you restore the file. Functions mutmut never mutates (under
   `# pragma: no mutate`, for instance) carry no weight, and `@overload` stubs count with their function. It
   fails if any shard failed its baseline, left mutants not checked, interrupted or crashed, found a mutant in no
   shard, or left no report, or if only some shards of a module were expected. A module with no mutable

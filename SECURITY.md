@@ -49,8 +49,9 @@ What stands in for a human reviewer:
   ruleset "required workflows" rule pinned to `refs/heads/main` where the plan allows it, and otherwise on
   `pull_request_target` with a read-only token, reading the pull request only as data. It fails a change that
   lowers a coverage or mutation floor, adds a skip, pragma, type-ignore, noqa or lint relaxation that isn't in the
-  allowlist, drops tests, removes or loosens a required check, touches the sealed evaluation sets or bypasses the git
-  hooks. [docs/dev/README.md](docs/dev/README.md#the-trusted-gate) lists the rules and what they can't catch.
+  allowlist, drops tests, removes or loosens a required check, loosens the CI time budgets, weakens a job that runs
+  mutation tests (on pull requests, nightly or in the release gate), touches the sealed evaluation sets or bypasses
+  the git hooks. [docs/dev/README.md](docs/dev/README.md#the-trusted-gate) lists the rules and what they can't catch.
 - **A recorded review round on every pull request.** An independent `/code-review` (a fresh agent with no context
   beyond the pull request number) posts its findings on the pull request, and so does each matching review skill,
   then one fix round addresses or files every finding before merge. Unresolved review threads block the merge.

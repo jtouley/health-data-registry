@@ -112,6 +112,38 @@ def test_a_short_sha_is_refused(gate: ModuleType) -> None:
         gate.green_pre_pr_run(api(), REPO, "abc")
 
 
+def test_runs_are_read_page_by_page_until_a_short_page(gate: ModuleType) -> None:
+    pages: list[str] = []
+
+    def get(path: str) -> Any:
+        pages.append(path)
+        if path.endswith("&page=1"):
+            return {"workflow_runs": [run_record(id=i, conclusion="failure") for i in range(gate.PER_PAGE)]}
+        return {"workflow_runs": [run_record(id=500)]}
+
+    assert gate.green_pre_pr_run(get, REPO, SHA)["id"] == 500
+    assert len(pages) == 2
+    assert all("event=push" in p and f"per_page={gate.PER_PAGE}" in p for p in pages)
+
+
+def test_paging_stops_at_the_page_limit(gate: ModuleType) -> None:
+    calls: list[str] = []
+
+    def get(path: str) -> Any:
+        calls.append(path)
+        return {"workflow_runs": [run_record(conclusion="failure")] * gate.PER_PAGE}
+
+    assert gate.green_pre_pr_run(get, REPO, SHA) is None
+    assert len(calls) == gate.MAX_PAGES
+    assert gate.push_runs(lambda _: {}, REPO, SHA) == []
+
+
+def test_a_run_of_another_repository_does_not_count(gate: ModuleType) -> None:
+    assert gate.is_pre_pr_run(run_record(repository={"full_name": "x/y"}), REPO, SHA) is False
+    assert gate.is_pre_pr_run(run_record(head_branch=None), REPO, SHA) is False
+    assert gate.is_pre_pr_run(run_record(repository=None, head_repository=None), REPO, SHA) is False
+
+
 def test_a_pr_push_of_a_green_commit_passes(gate: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:
     code = gate.main(
         ["--branch", "refs/heads/ci/x", "--sha", SHA, "--repo", REPO], get_json=api(run_record())

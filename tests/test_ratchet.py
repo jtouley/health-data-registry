@@ -1419,3 +1419,315 @@ def test_main_checks_required_checks_through_git(repo: Path, tmp_path: Path) -> 
 def test_check_sealed_message() -> None:
     f = one(check({"eval/sealed/a": "1"}, {"eval/sealed/a": "2"}))
     assert f.message == "changes the sealed blind sets in eval/sealed/; no pull request changes them"
+
+
+# Rule 8: CI time budgets -------------------------------------------------------------------------------------
+
+BUDGETS_YML = """# CI time budgets
+{
+  "pr": {
+    "run": 180,
+    "jobs": {
+      "Checks": 120,
+      "Mutation tests (*)": 150
+    }
+  },
+  "full": {"run": 1500}
+}
+"""
+
+
+def budget_findings(new: str | None, old: str | None = BUDGETS_YML) -> list[Finding]:
+    base = {} if old is None else {r.BUDGETS: old}
+    head = {} if new is None else {r.BUDGETS: new}
+    return [f for f in check(base, head) if f.rule == "budgets"]
+
+
+def test_tightening_or_keeping_the_budgets_passes() -> None:
+    assert budget_findings(BUDGETS_YML) == []
+    assert budget_findings(BUDGETS_YML.replace('"Checks": 120', '"Checks": 90')) == []
+    assert budget_findings(BUDGETS_YML.replace("180", "180.0")) == []
+
+
+def test_raising_a_budget_fails_and_cannot_be_allowlisted() -> None:
+    f = one(budget_findings(BUDGETS_YML.replace('"Checks": 120', '"Checks": 121')))
+    assert (f.path, f.line, f.allowlistable) == (r.BUDGETS, 6, False)
+    assert f.message == "loosens the budget pr > jobs > Checks from 120 to 121"
+
+
+def test_turning_a_budget_into_something_else_fails() -> None:
+    f = one(budget_findings(BUDGETS_YML.replace('"run": 1500', '"run": null')))
+    assert f.message == "loosens the budget full > run from 1500 to None"
+    f = one(budget_findings(BUDGETS_YML.replace('"run": 1500', '"run": true')))
+    assert "from 1500 to True" in f.message
+
+
+def test_adding_a_budget_fails_even_a_tight_one() -> None:
+    new = BUDGETS_YML.replace('"Checks": 120,', '"Checks": 120,\n      "Docs": 10,')
+    f = one(budget_findings(new))
+    assert f.line == 7
+    assert (
+        f.message == "adds the budget pr > jobs > Docs (10); a new budget is a new allowance, so it loosens"
+    )
+
+
+def test_removing_a_budget_or_the_file_fails() -> None:
+    f = one(budget_findings(BUDGETS_YML.replace('"Checks": 120,\n', "")))
+    assert f.message == "removes the budget pr > jobs > Checks (was 120)"
+    f = one(budget_findings(None))
+    assert (f.line, f.message) == (0, "deletes or moves the CI time budgets; they only tighten")
+    moved = check(
+        {r.BUDGETS: BUDGETS_YML}, {"ci/b.yml": BUDGETS_YML}, changes=[Change(r.BUDGETS, "ci/b.yml")]
+    )
+    assert [f.rule for f in moved] == ["budgets"]
+
+
+def test_emptying_a_table_removes_its_budgets() -> None:
+    found = budget_findings(BUDGETS_YML.replace('{"run": 1500}', "{}"))
+    assert [f.message for f in found] == [
+        "removes the budget full > run (was 1500)",
+        "adds the budget full ({}); a new budget is a new allowance, so it loosens",
+    ]
+
+
+def test_a_non_numeric_budget_may_not_change() -> None:
+    old = '{"pr": {"jobs": ["a"]}}'
+    assert budget_findings(old, old=old) == []
+    f = one(budget_findings('{"pr": {"jobs": ["b"]}}', old=old))
+    assert f.message == "changes the budget pr > jobs from ['a'] to ['b']"
+
+
+def test_new_budgets_and_other_files_are_not_compared() -> None:
+    assert budget_findings(BUDGETS_YML, old=None) == []
+    assert check({"ci/other.yml": "a: 1"}, {"ci/other.yml": "a: 2"}) == []
+
+
+def test_unreadable_budgets_fail_but_an_unreadable_merge_base_is_not_held_against_the_change() -> None:
+    f = one(budget_findings("{ not: [yaml"))
+    assert f.message.startswith("could not read the CI time budgets to check them: not valid YAML (")
+    assert budget_findings(BUDGETS_YML, old="{ not: [yaml") == []
+
+
+def test_huge_budgets_are_not_parsed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(r, "MAX_PARSE_BYTES", len(BUDGETS_YML))
+    assert budget_findings(BUDGETS_YML.replace("120", "90")) == []
+    f = one(budget_findings(BUDGETS_YML + "\n"))
+    assert f.message.endswith("missing or too large to check")
+
+
+def test_budget_leaves_and_numbers() -> None:
+    assert r._budget_leaves({"a": {"b": 1, "c": {}}, "d": [2]}) == {
+        ("a", "b"): 1,
+        ("a", "c"): {},
+        ("d",): [2],
+    }
+    assert r._budget_leaves(5) == {(): 5}
+    assert r._budget_leaves({1: 2}) == {("1",): 2}
+    assert [r._number(v) for v in (3, 2.5, True, "4", None)] == [3.0, 2.5, None, None, None]
+
+
+def test_a_whole_file_budget_is_named() -> None:
+    f = one(budget_findings("200", old="100"))
+    assert f.message == "loosens the budget (the whole file) from 100 to 200"
+
+
+# Rule 9: mutation jobs ---------------------------------------------------------------------------------------
+
+NIGHTLY = ".github/workflows/mutation-nightly.yml"
+NIGHTLY_YML = """name: Nightly mutation
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+jobs:
+  shards:
+    name: Mutation (${{ matrix.shard }})
+    strategy:
+      matrix:
+        shard: [1, 2]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: |
+          uv sync
+          uv run python scripts/mutate_changed.py --all --shard ${{ matrix.shard }}
+  verdict:
+    needs: shards
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ok
+"""
+RELEASE = ".github/workflows/release.yml"
+RELEASE_YML = """on:
+  push:
+    tags: ["v*"]
+jobs:
+  mutation-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - run: python scripts/release_gate.py --require nightly-mutation-green
+  build:
+    needs: mutation-gate
+    runs-on: ubuntu-latest
+    steps:
+      - run: uv build
+  pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo publish
+"""
+
+
+def mutation_findings(head: dict[str, str], allow: str = "") -> list[Finding]:
+    base = {NIGHTLY: NIGHTLY_YML, RELEASE: RELEASE_YML}
+    return [f for f in check(base, {**base, **head}, allow=allow) if f.rule == "mutation"]
+
+
+@pytest.mark.parametrize(
+    ("job_id", "job", "runs"),
+    [
+        ("shards", {"steps": [{"run": "make test"}]}, True),
+        ("x", {"steps": [{"run": "uv run mutmut run"}]}, True),
+        ("x", {"name": "Mutation tests (*)"}, True),
+        ("x", {"env": {"MUTATION_FLOOR": 70}}, True),
+        ("x", {"uses": "./.github/workflows/mutate.yml"}, True),
+        ("lint", {"name": "Lint", "steps": [{"run": "make lint"}]}, False),
+        ("x", {"steps": [{"run": "echo mutable"}]}, False),
+    ],
+)
+def test_is_mutation_job(job_id: str, job: dict[str, object], runs: bool) -> None:
+    if job_id == "shards":
+        job_id = "mutation-shards"
+    assert r.is_mutation_job(job_id, job) is runs
+
+
+def test_an_unchanged_or_harmless_change_to_the_mutation_workflows_passes() -> None:
+    assert mutation_findings({}) == []
+    assert mutation_findings({NIGHTLY: NIGHTLY_YML.replace("uv sync", "uv sync --locked")}) == []
+    assert mutation_findings({NIGHTLY: NIGHTLY_YML.replace("shard: [1, 2]", "shard: [1, 2, 3]")}) == []
+    assert mutation_findings({RELEASE: RELEASE_YML.replace("echo publish", "echo upload")}) == []
+
+
+def test_deleting_the_nightly_workflow_fails_and_may_be_allowlisted() -> None:
+    found = [f for f in check({NIGHTLY: NIGHTLY_YML}, {}) if f.rule == "mutation"]
+    f = one(found)
+    assert (f.path, f.line, f.allowlistable, f.text) == (NIGHTLY, 0, True, "job shards")
+    assert f.message == "deletes or moves the workflow holding job 'shards', which runs mutation tests"
+    assert [
+        g for g in check({NIGHTLY: NIGHTLY_YML}, {}, allow=f"{NIGHTLY} :: job shards") if g.rule == "mutation"
+    ] == []
+
+
+def test_taking_the_schedule_away_fails() -> None:
+    f = one(mutation_findings({NIGHTLY: NIGHTLY_YML.replace('    - cron: "17 3 * * *"\n', "")}))
+    assert (f.path, f.text) == (NIGHTLY, "schedule 17 3 * * *")
+    assert f.message == "takes the schedule '17 3 * * *' away from a workflow that runs mutation tests"
+    weekly = NIGHTLY_YML.replace("17 3 * * *", "17 3 * * 0")
+    assert len(mutation_findings({NIGHTLY: weekly})) == 1
+    assert mutation_findings({NIGHTLY: weekly}, allow=f"{NIGHTLY} :: schedule 17 3 * * *") == []
+
+
+def test_removing_a_mutation_job_fails() -> None:
+    new = (
+        NIGHTLY_YML.split("  shards:")[0]
+        + "  verdict:\n    runs-on: ubuntu-latest\n    steps:\n      - run: x\n"
+    )
+    found = mutation_findings({NIGHTLY: new})
+    assert [(f.line, f.text, f.message) for f in found] == [
+        (0, "job shards", "removes job 'shards', which runs mutation tests"),
+        (
+            7,
+            "needs verdict -> shards",
+            "job 'verdict' no longer waits for job 'shards', which runs mutation tests",
+        ),
+    ]
+
+
+def test_making_a_mutation_job_conditional_fails_and_continue_on_error_cannot_be_allowlisted() -> None:
+    cond = NIGHTLY_YML.replace("  shards:\n", "  shards:\n    if: false\n")
+    f = one(mutation_findings({NIGHTLY: cond}))
+    assert (f.rule, f.line, f.allowlistable, f.text) == ("mutation", 8, True, "if: false")
+    assert f.message == (
+        "makes job 'shards', which runs mutation tests, conditional: if: was '(none)' at the merge base and is "
+        "'false' now"
+    )
+    assert mutation_findings({NIGHTLY: cond}, allow=f"{NIGHTLY} :: if: false") == []
+    coe = NIGHTLY_YML.replace("  shards:\n", "  shards:\n    continue-on-error: true\n")
+    f = one(mutation_findings({NIGHTLY: coe}, allow=f"{NIGHTLY} :: continue-on-error: true"))
+    assert (f.allowlistable, f.message) == (
+        False,
+        "adds continue-on-error to job 'shards', which runs mutation tests",
+    )
+    step = NIGHTLY_YML.replace("      - run: |\n", "      - continue-on-error: true\n        run: |\n")
+    assert "on a step of job 'shards'" in one(mutation_findings({NIGHTLY: step})).message
+
+
+def test_dropping_the_mutation_command_fails() -> None:
+    new = NIGHTLY_YML.replace(
+        "          uv run python scripts/mutate_changed.py --all --shard ${{ matrix.shard }}\n",
+        "          true\n",
+    )
+    f = one(mutation_findings({NIGHTLY: new}))
+    command = "uv run python scripts/mutate_changed.py --all --shard ${{ matrix.shard }}"
+    assert (f.line, f.text) == (7, f"shards: {command}")
+    assert f.message == f"job 'shards' no longer runs: {command}"
+    assert mutation_findings({NIGHTLY: new}, allow=f"{NIGHTLY} :: shards: {command}") == []
+
+
+def test_mutation_commands_read_run_lines_and_uses() -> None:
+    job = {
+        "uses": "./.github/workflows/mutate.yml",
+        "steps": ["junk", {"uses": "org/mutation-action@v1"}, {"run": "a\n  mutmut run  \n\nb"}, {"run": 3}],
+    }
+    assert r._mutation_commands(job) == {
+        "uses: ./.github/workflows/mutate.yml": 1,
+        "uses: org/mutation-action@v1": 1,
+        "mutmut run": 1,
+    }
+    assert r._mutation_commands({"uses": 1, "steps": "x"}) == {}
+
+
+def test_the_release_must_keep_waiting_for_its_mutation_gate() -> None:
+    new = RELEASE_YML.replace("    needs: mutation-gate\n", "")
+    found = mutation_findings({RELEASE: new})
+    assert [(f.text, f.message) for f in found] == [
+        (
+            "needs build -> mutation-gate",
+            "job 'build' no longer waits for job 'mutation-gate', which runs mutation tests",
+        ),
+        (
+            "needs pypi -> mutation-gate",
+            "job 'pypi' no longer waits for job 'mutation-gate', which runs mutation tests",
+        ),
+    ]
+    allow = f"{RELEASE} :: needs build -> mutation-gate\n{RELEASE} :: needs pypi -> mutation-gate"
+    assert mutation_findings({RELEASE: new}, allow=allow) == []
+
+
+def test_weakening_the_release_gates_check_fails() -> None:
+    new = RELEASE_YML.replace(" --require nightly-mutation-green", "")
+    f = one(mutation_findings({RELEASE: new}))
+    assert f.message == (
+        "job 'mutation-gate' no longer runs: python scripts/release_gate.py --require nightly-mutation-green"
+    )
+
+
+def test_a_removed_waiting_job_is_not_reported_as_waiting() -> None:
+    new = RELEASE_YML.split("  pypi:")[0]
+    assert mutation_findings({RELEASE: new}) == []
+
+
+def test_schedules() -> None:
+    assert r._schedules({"schedule": [{"cron": "1  2 * * *"}, {"x": 1}, "junk"]}) == ["1 2 * * *"]
+    assert r._schedules(["push"]) == []
+    assert r._schedules({"schedule": None}) == []
+
+
+def test_load_workflow_reads_the_on_key() -> None:
+    wf = r.load_workflow(NIGHTLY, NIGHTLY_YML)
+    assert wf is not None
+    assert r._schedules(wf.triggers) == ["17 3 * * *"]
+    quoted = r.load_workflow(NIGHTLY, NIGHTLY_YML.replace("\non:", '\n"on":'))
+    assert quoted is not None
+    assert r._schedules(quoted.triggers) == ["17 3 * * *"]

@@ -24,16 +24,20 @@ import os
 import re
 import subprocess
 import sys
+import urllib.parse
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
-
-import mutation_reuse
 
 ROOT = Path(__file__).resolve().parents[1]
 PR_PREFIXES = ("feat/", "fix/", "ci/", "docs/", "transform/")
 PRE_PR = "pre-pr/"
 ZERO_SHA = "0" * 40
+SHA = re.compile(r"^[0-9a-f]{40}$")
+CI_WORKFLOW = ".github/workflows/ci.yml"
+PER_PAGE = 100
+# A commit pushed to a handful of pre-pr branches has a handful of runs; stop paging long before anything absurd.
+MAX_PAGES = 5
 GetJson = Callable[[str], Any]
 Run = Callable[[Sequence[str]], int]
 
@@ -56,13 +60,38 @@ def repo_from_url(url: str) -> str:
     return f"{m[1]}/{m[2]}"
 
 
+def push_runs(get_json: GetJson, repo: str, sha: str) -> list[dict[str, Any]]:
+    """CI's push runs for sha, newest first (the API's order)."""
+    runs: list[dict[str, Any]] = []
+    for page in range(1, MAX_PAGES + 1):
+        query = urllib.parse.urlencode({"head_sha": sha, "event": "push", "per_page": PER_PAGE, "page": page})
+        body = get_json(f"/repos/{repo}/actions/workflows/{CI_WORKFLOW.rsplit('/', 1)[-1]}/runs?{query}")
+        batch = body.get("workflow_runs") or []
+        runs.extend(batch)
+        if len(batch) < PER_PAGE:
+            break
+    return runs
+
+
+def is_pre_pr_run(run: dict[str, Any], repo: str, sha: str) -> bool:
+    """A push run of this repository's CI workflow, on a pre-pr/** branch of this repository, for exactly sha."""
+    return (
+        run.get("event") == "push"
+        and run.get("head_sha") == sha
+        and str(run.get("head_branch") or "").startswith(PRE_PR)
+        and run.get("path") == CI_WORKFLOW
+        and (run.get("repository") or {}).get("full_name") == repo
+        and (run.get("head_repository") or {}).get("full_name") == repo
+    )
+
+
 def green_pre_pr_run(get_json: GetJson, repo: str, sha: str) -> dict[str, Any] | None:
     """The newest completed, successful CI run for exactly sha from a push to pre-pr/** of repo, or None."""
-    if not mutation_reuse.SHA.fullmatch(sha):
+    if not SHA.fullmatch(sha):
         raise ValueError(f"not a full lowercase commit SHA: {sha!r}")
-    for run in mutation_reuse._push_runs(get_json, repo, sha):
+    for run in push_runs(get_json, repo, sha):
         if (
-            mutation_reuse._is_pre_pr_run(run, repo, sha)
+            is_pre_pr_run(run, repo, sha)
             and run.get("status") == "completed"
             and run.get("conclusion") == "success"
         ):

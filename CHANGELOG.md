@@ -45,7 +45,9 @@ All notable changes to this project are documented here. The format follows
   ratchet`): a required check a pull request cannot edit, run from main's copy on `pull_request_target` with a
   read-only token, reading the pull request as data only. It fails a change that lowers a coverage, mutation or
   other floor, adds a skip, pragma, type-ignore, noqa or lint relaxation not in `.github/ratchet-allowlist.txt`,
-  drops tests, removes or loosens a required check, touches `eval/sealed/` or adds a way around the git hooks.
+  drops tests, removes or loosens a required check, touches `eval/sealed/`, adds a way around the git hooks,
+  loosens `ci/budgets.yml` (a new key included), or weakens a job that runs mutation tests (PR shards, the nightly
+  run, the release gate's mutation check).
 - `serve --http`: the hosted, read-only connector over stateless Streamable HTTP (hub releases and live reads
   only), with one deadline per tool call, a result-size cap, rate limits per MCP session and overall, and no
   request content in any log; `space/` for a Hugging Face Docker Space and `docs/dev/hosting.md`.

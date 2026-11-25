@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import importlib.util
 import json
 import os
+import signal
+import subprocess
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -35,6 +38,10 @@ def mc(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     mod = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, "mutate_changed", mod)
     spec.loader.exec_module(mod)
+    # The tests never touch the real pyproject.toml (test_mutmut_scope_is_set_for_the_run_and_taken_out covers it),
+    # nor parse the real tests for the import graph (test_tests_reaching_follows_imports_indirectly covers it).
+    monkeypatch.setattr(mod, "mutmut_scope", lambda paths, tests: contextlib.nullcontext())
+    monkeypatch.setattr(mod, "tests_reaching", lambda modules, root: [])
     return mod
 
 
@@ -238,7 +245,7 @@ def test_no_mutant_checked_anywhere_fails(mc: ModuleType) -> None:
 def test_no_changed_module_passes(mc: ModuleType) -> None:
     ok, lines = mc.aggregate([], 70.0, [])
     assert ok
-    assert lines == ["No changed modules to mutate."]
+    assert lines == ["No changed functions to mutate."]
 
 
 def test_expected_modules_with_no_reports_fail(mc: ModuleType) -> None:
@@ -300,6 +307,7 @@ def test_module_mode_fails_a_failed_baseline(
 def test_local_mode_applies_the_same_rule(mc: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     # A changed module with nothing to mutate passes locally, as its shard does in CI.
     monkeypatch.setattr(mc, "changed_modules", lambda base: ["health_data_registry.tools"])
+    monkeypatch.setattr(mc, "set_scope", lambda mods, base: None)  # unscoped: the module's one whole shard
     monkeypatch.setattr(mc, "run_mutmut", lambda mods: mc.ShardResult(modules=mods))
     assert mc.main([]) == 0
     monkeypatch.setattr(mc, "run_mutmut", lambda mods: mc.ShardResult(modules=mods, baseline_ok=False))
@@ -336,7 +344,10 @@ def test_an_unreadable_report_is_an_error_not_a_zero(mc: ModuleType, tmp_path: P
 @reads_real_sources
 def test_an_eval_module_is_listed_and_accepted(mc: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:
     ids = json.loads(mc.list_json(["eval.stats", "eval.__init__", "health_data_registry.geo"]))
-    assert ids == ["eval.stats", "health_data_registry.geo"]
+    assert list(dict.fromkeys(mc.parse_shard_id(i)[0] for i in ids)) == [
+        "eval.stats",
+        "health_data_registry.geo",
+    ]
     assert mc._module("eval/numbers.py") == "eval.numbers"
     assert mc._module("src/health_data_registry/tools.py") == "health_data_registry.tools"
     assert mc.main(["--list", "--all"]) == 0
@@ -767,3 +778,398 @@ def test_the_list_job_splits_with_the_shards_python() -> None:
     assert pin in list_job and pin in shard_job
     assert "python3 scripts/mutate_changed.py" not in list_job
     assert "uv run --no-project python scripts/mutate_changed.py --list" in list_job
+
+
+@reads_real_sources  # .github/ is not copied into mutants/
+def test_shards_scope_to_the_lists_merge_base_and_stay_small() -> None:
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    list_job = ci.split("  mutation-list:", 1)[1].split("\n  mutation:", 1)[0]
+    shard_job = ci.split("\n  mutation:", 1)[1].split("\n  mutation-aggregate:", 1)[0]
+    assert '--list --base "${merge_base}"' in list_job
+    assert "merge_base: ${{ steps.list.outputs.merge_base }}" in list_job
+    assert '--base "${MERGE_BASE}"' in shard_job and "fetch-depth: 0" in shard_job
+    assert "timeout-minutes: 12\n" in shard_job and "max-parallel: 6\n" in shard_job
+
+
+# Diff scope: only the functions a change touches -----------------------------------------------------------
+
+SCOPED_SRC = """import os
+
+LIMIT = 3
+
+
+def untouched():
+    return 1 + 2
+
+
+@decorator
+def decorated():
+    return 3 + 4
+
+
+def edited(x):
+    y = x + 1
+    return y * 2
+
+
+class C:
+    attr = 5
+
+    def m(self):
+        z = 1
+        return self.attr - z
+
+    def n(self):
+        return 7
+"""
+
+
+def test_only_functions_holding_a_changed_line_are_in_scope(mc: ModuleType) -> None:
+    spans = mc.function_spans(SCOPED_SRC)
+    m, n = f"x{mc.SEP}C{mc.SEP}m", f"x{mc.SEP}C{mc.SEP}n"
+    assert set(spans) == {"x_untouched", "x_decorated", "x_edited", m, n}
+    assert mc.changed_functions(SCOPED_SRC, {16}) == {"x_edited"}
+    assert mc.changed_functions(SCOPED_SRC, {10}) == {"x_decorated"}  # the decorator line is the function's
+    assert mc.changed_functions(SCOPED_SRC, {24}) == {m}
+    # An import or a constant no function reads makes no mutant and scopes nothing; a class attribute scopes the
+    # class's methods, which can read it through self.
+    assert mc.changed_functions(SCOPED_SRC, {1, 3}) == frozenset()
+    assert mc.changed_functions(SCOPED_SRC, {21}) == {m, n}
+    assert mc.changed_functions(SCOPED_SRC, set()) == frozenset()
+    assert mc.changed_functions(SCOPED_SRC, None) == frozenset(spans)  # a new file: every function
+
+
+MODULE_LEVEL_SRC = '''"""A module docstring."""
+
+import re
+
+_FUNCTIONS = frozenset({
+    "lower",
+    "upper",
+})
+_STRUCTURE = frozenset({"select"})
+_ALLOWED = _STRUCTURE | _FUNCTIONS  # built from _FUNCTIONS
+PATTERN = re.compile("x")
+
+
+def allowed(name):
+    return name in _ALLOWED
+
+
+def functions_only(name):
+    return name in _FUNCTIONS
+
+
+def structure_only(name):
+    return name in _STRUCTURE
+
+
+def unrelated():
+    return 1
+
+
+class Guard:
+    words = _ALLOWED
+
+    def check(self, w):
+        return w in self.words
+
+
+def uses_pattern(s):
+    return PATTERN.match(s)
+
+
+register(allowed)
+'''
+
+
+def test_a_change_to_a_module_level_value_scopes_the_functions_that_read_it(mc: ModuleType) -> None:
+    """sql_guard's allowlists and fetch's limits are module-level values: a change there must be mutation-tested
+    through the functions that read them, never pass with no mutant."""
+    lines = MODULE_LEVEL_SRC.splitlines()
+    at = {text.strip(): i + 1 for i, text in enumerate(lines)}
+    check = f"x{mc.SEP}Guard{mc.SEP}check"
+    # An entry inside the allowlist: its readers, through _ALLOWED and the class built from it too.
+    assert mc.changed_functions(MODULE_LEVEL_SRC, {at['"upper",']}) == {
+        "x_allowed", "x_functions_only", check
+    }  # fmt: skip
+    assert mc.changed_functions(MODULE_LEVEL_SRC, {at['_STRUCTURE = frozenset({"select"})']}) == {
+        "x_allowed", "x_structure_only", check
+    }  # fmt: skip
+    # An import reaches the functions through the names built from it.
+    assert mc.changed_functions(MODULE_LEVEL_SRC, {at["import re"]}) == {"x_uses_pattern"}
+    # A docstring, a comment-only or blank line: nothing to mutate.
+    assert mc.changed_functions(MODULE_LEVEL_SRC, {1, 2}) == frozenset()
+    # A top-level statement that defines nothing (a registration call) may change anything: every function.
+    every = mc.changed_functions(MODULE_LEVEL_SRC, None)
+    assert mc.changed_functions(MODULE_LEVEL_SRC, {at["register(allowed)"]}) == every
+    # A changed line inside a function still scopes only that function.
+    assert mc.changed_functions(MODULE_LEVEL_SRC, {at["return 1"]}) == {"x_unrelated"}
+
+
+def test_a_changed_module_with_no_function_to_mutate_is_named(
+    mc: ModuleType, repo: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base = _git(repo, "rev-parse", "HEAD").strip()
+    (repo / "m.py").write_text(SCOPED_SRC.replace("LIMIT = 3", "LIMIT = 4"), encoding="utf-8")
+    monkeypatch.setattr(mc, "module_path", lambda module: repo / "m.py")
+    mc.set_scope([A], base)
+    assert mc.SCOPE[A] == frozenset()
+    err = capsys.readouterr().err
+    assert f"{A} changed, but no function holds or reads the change" in err
+
+
+def test_no_merge_base_is_an_error_not_the_tip_of_the_base(
+    mc: ModuleType, repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    head = _git(repo, "rev-parse", "HEAD").strip()
+    assert mc.merge_base(head) == head
+    _git(repo, "checkout", "-q", "--orphan", "other")
+    _git(repo, "commit", "-q", "-m", "unrelated")
+    with pytest.raises(ValueError, match="No merge base of main and HEAD"):
+        mc.merge_base("main")
+    assert mc.main(["--list", "--base", "main"]) == 1
+    assert "No merge base of main and HEAD" in capsys.readouterr().err
+
+
+def test_a_scoped_split_holds_only_the_changed_functions(mc: ModuleType) -> None:
+    src = _source(6, 40)
+    bins = mc.split_module(src, 100, frozenset({"x_f1", "x_f4"}))
+    assert sorted(u.key for b in bins for u in b) == ["x_f1", "x_f4"]
+    assert mc.split_module(src, 100, frozenset()) == []
+    assert mc.split_module(src, 100, frozenset({"x_gone"})) == []
+
+
+def _scoped_shards(mc: ModuleType, monkeypatch: pytest.MonkeyPatch, src: str) -> None:
+    monkeypatch.setattr(mc, "module_shards", lambda module: mc.split_module(src, 100, mc.SCOPE.get(module)))
+
+
+def test_a_scoped_module_always_carries_its_split_hash(
+    mc: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _scoped_shards(mc, monkeypatch, _source(4, 10))
+    assert mc.list_shards([A]) == [A]  # a whole module (--all) that fits one shard: no hash
+    mc.SCOPE[A] = frozenset({"x_f2"})
+    ids = mc.list_shards([A])
+    assert len(ids) == 1 and ids[0].startswith(f"{A}#1of1@")
+    assert mc.parse_shard_id(ids[0]) == (A, 1, 1)
+    assert mc.shard_globs(ids[0]) == [f"{A}.x_f2__mutmut_*"]
+    with pytest.raises(ValueError, match="diff-scoped"):
+        mc.shard_globs(A)  # a bare id would mutate the whole module
+    # Another scope (the branch changed again, or main moved) is another hash: the shard is refused.
+    mc.SCOPE[A] = frozenset({"x_f3"})
+    with pytest.raises(ValueError, match="splits differently"):
+        mc.shard_globs(ids[0])
+    mc.SCOPE[A] = frozenset()
+    assert mc.list_shards([A]) == []  # nothing changed inside a function: nothing to mutate
+
+
+def test_one_of_one_needs_a_split_hash(mc: ModuleType) -> None:
+    with pytest.raises(ValueError, match="not a shard id"):
+        mc.parse_shard_id(f"{A}#1of1")
+
+
+def test_a_scoped_shard_counts_only_the_changed_functions_mutants(
+    mc: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = _source(4, 40)
+    _scoped_shards(mc, monkeypatch, src)
+    mc.SCOPE[A] = frozenset({"x_f1"})
+    (shard,) = mc.list_shards([A])
+    # mutmut generates every function's mutants; the ones outside the scope are `not checked` and never counted.
+    out = "\n".join(
+        f"    {x}: {'killed' if '.x_f1__' in x else 'not checked'}" for x in _names(A, src, mc, 12)
+    )
+
+    def fake_run(cmd: list[str], **kwargs: Any) -> Any:
+        return SimpleNamespace(returncode=0, stdout=out if cmd[1] == "results" else "", stderr="")
+
+    monkeypatch.setattr(mc.subprocess, "run", fake_run)
+    r = mc.run_mutmut([shard])
+    assert (r.killed, r.survived, r.incomplete, r.unassigned) == (12, 0, 0, [])
+    assert mc.mutant_key(f"{A}.x_f1__mutmut_3", A) == "x_f1"
+    assert mc.mutant_key(f"{B}.x_f1__mutmut_3", A) == ""
+
+
+def _git(cwd: Path, *args: str) -> str:
+    # Fixed git arguments in a test repository under tmp_path.
+    return subprocess.run(  # noqa: S603
+        ["git", "-c", "commit.gpgsign=false", *args],  # noqa: S607
+        cwd=cwd, capture_output=True, text=True, check=True,
+    ).stdout  # fmt: skip
+
+
+@pytest.fixture
+def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mc: ModuleType) -> Path:
+    """A git repository the script treats as its root, isolated from the caller's git config."""
+    for k in [k for k in os.environ if k.startswith("GIT_")]:
+        monkeypatch.delenv(k)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    for k, v in {"NAME": "t", "EMAIL": "t@example.invalid"}.items():
+        monkeypatch.setenv(f"GIT_AUTHOR_{k}", v)
+        monkeypatch.setenv(f"GIT_COMMITTER_{k}", v)
+    monkeypatch.setattr(mc, "ROOT", tmp_path)
+    _git(tmp_path, "init", "-q", "-b", "main")
+    (tmp_path / "m.py").write_text(SCOPED_SRC, encoding="utf-8")
+    _git(tmp_path, "add", "m.py")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    return tmp_path
+
+
+def test_changed_lines_come_from_the_diff_with_the_merge_base(mc: ModuleType, repo: Path) -> None:
+    base = _git(repo, "rev-parse", "HEAD").strip()
+    assert mc.changed_lines("m.py", base) == set()  # unchanged
+    lines = SCOPED_SRC.splitlines()
+    lines[15] = "    y = x + 10"  # line 16, in edited()
+    del lines[23]  # line 24, `z = 1`: a pure deletion inside C.m
+    (repo / "m.py").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    changed = mc.changed_lines("m.py", base)
+    assert changed is not None and 16 in changed and {23, 24} <= changed
+    src = (repo / "m.py").read_text(encoding="utf-8")
+    assert mc.changed_functions(src, changed) == {"x_edited", f"x{mc.SEP}C{mc.SEP}m"}
+    (repo / "new.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    assert mc.changed_lines("new.py", base) is None  # untracked: all of it is new
+    _git(repo, "add", "new.py")
+    _git(repo, "commit", "-q", "-m", "add")
+    assert mc.changed_lines("new.py", base) is None  # added since the base: all of it is new
+
+
+def _fresh(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    spec = importlib.util.spec_from_file_location("mutate_changed", ROOT / "scripts" / "mutate_changed.py")
+    assert spec and spec.loader
+    mc = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, "mutate_changed", mc)
+    spec.loader.exec_module(mc)
+    return mc
+
+
+def test_mutmut_scope_is_set_for_the_run_and_taken_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mc = _fresh(monkeypatch)
+    monkeypatch.setattr(mc, "ROOT", tmp_path)
+    text = (
+        '[project]\nname = "x"\n\n[tool.mutmut]\nsource_paths = ["src/"]\n'
+        'pytest_add_cli_args_test_selection = ["tests/"]\n'
+    )
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(text, encoding="utf-8")
+    with pytest.raises(RuntimeError), mc.mutmut_scope(["src/a.py"], ["tests/test_a.py"]):
+        inside = pyproject.read_text(encoding="utf-8")
+        raise RuntimeError
+    assert '[tool.mutmut]\nonly_mutate = ["src/a.py"]\nsource_paths' in inside
+    assert 'pytest_add_cli_args_test_selection = ["tests/test_a.py"]\n' in inside
+    assert pyproject.read_text(encoding="utf-8") == text  # restored, even on an error
+    with mc.mutmut_scope(["src/a.py"], []):  # no test reaches it: the configured selection stays
+        assert 'pytest_add_cli_args_test_selection = ["tests/"]' in pyproject.read_text(encoding="utf-8")
+    pyproject.write_text(text + 'only_mutate = ["b"]\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="already sets only_mutate"), mc.mutmut_scope(["src/a.py"], []):
+        pass
+
+
+def test_mutmut_scope_restores_the_file_when_the_run_is_terminated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mc = _fresh(monkeypatch)
+    monkeypatch.setattr(mc, "ROOT", tmp_path)
+    text = '[tool.mutmut]\npytest_add_cli_args_test_selection = ["tests/"]\n'
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(text, encoding="utf-8")
+    before = signal.getsignal(signal.SIGTERM)
+    with pytest.raises(SystemExit) as stop, mc.mutmut_scope(["src/a.py"], ["tests/test_a.py"]):
+        assert "only_mutate" in pyproject.read_text(encoding="utf-8")
+        # The handler a SIGTERM would run, called directly: a real signal could end a test worker instead.
+        handler = signal.getsignal(signal.SIGTERM)
+        assert handler is mc._exit_on_signal
+        handler(signal.SIGTERM, None)
+    assert stop.value.code == 128 + signal.SIGTERM
+    assert pyproject.read_text(encoding="utf-8") == text
+    assert signal.getsignal(signal.SIGTERM) == before
+    pyproject.write_text(text.replace("\n", '\nonly_mutate = ["b"]\n', 1), encoding="utf-8")
+    with pytest.raises(ValueError, match="interrupted run") as refused, mc.mutmut_scope(["src/a.py"], []):
+        pass
+    assert "git checkout -- pyproject.toml" in str(refused.value)
+
+
+# Under mutmut, mutmut_scope has written only_mutate and the narrowed selection into the pyproject.toml copied to
+# mutants/, so this reads the real file only outside mutmut.
+@reads_real_sources
+def test_the_real_pyproject_has_what_mutmut_scope_edits() -> None:
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert text.count("[tool.mutmut]\n") == 1 and "\nonly_mutate" not in text
+    assert text.count("\npytest_add_cli_args_test_selection = ") == 1
+
+
+@reads_real_sources  # see test_the_real_pyproject_has_what_mutmut_scope_edits
+def test_the_skipped_tests_match_the_ignores_mutmut_scope_replaces(mc: ModuleType) -> None:
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    line = mc.TEST_SELECTION_LINE.search(text)
+    assert line is not None
+    selection = json.loads(line.group(0).partition(" = ")[2])
+    ignores = [a.removeprefix("--ignore=") for a in selection if a.startswith("--ignore=")]
+    assert sorted(i + "/" if (ROOT / i).is_dir() else i for i in ignores) == sorted(mc.MUTMUT_SKIPPED_TESTS)
+
+
+@reads_real_sources
+def test_the_scope_and_the_split_name_every_function_alike(mc: ModuleType) -> None:
+    """The diff scope (function_spans) and the split (mutated_functions) must agree on every key, or a changed
+    function would drop out of the split unnoticed."""
+    for pkg in mc.PACKAGES:
+        for path in sorted(pkg.rglob("*.py")):
+            if "sealed" in path.parts:
+                continue
+            src = path.read_text(encoding="utf-8")
+            assert set(mc.function_spans(src)) == {k for k, _ in mc.mutated_functions(src)}, path
+
+
+def test_tests_reaching_follows_imports_indirectly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    mc = _fresh(monkeypatch)
+    files = {
+        "src/health_data_registry/__init__.py": "",
+        "src/health_data_registry/leaf.py": "X = 1\n",
+        "src/health_data_registry/mid.py": "from health_data_registry import leaf\n",
+        "src/health_data_registry/lazy.py": "def f():\n    from .leaf import X\n    return X\n",
+        "src/health_data_registry/other.py": "Y = 2\n",
+        "eval/__init__.py": "",
+        "tools/__init__.py": "",
+        "tests/__init__.py": "",
+        "tests/conftest.py": "",
+        "tests/test_mid.py": "import health_data_registry.mid\n",
+        "tests/test_lazy.py": "from health_data_registry.lazy import f\n",
+        "tests/test_string.py": 'TARGET = "health_data_registry.leaf.X"\n',
+        "tests/test_other.py": "from health_data_registry import other\n",
+        "tests/sub/__init__.py": "",
+        "tests/sub/conftest.py": "from health_data_registry.mid import leaf\n",
+        "tests/sub/test_any.py": "def test_x():\n    pass\n",
+        "tests/test_metamorphic.py": "import health_data_registry.leaf\n",
+    }
+    for rel, src in files.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(src, encoding="utf-8")
+    got = mc.tests_reaching(["health_data_registry.leaf"], tmp_path)
+    # test_other reaches nothing of leaf; test_metamorphic is one mutmut never runs.
+    assert got == ["tests/sub/test_any.py", "tests/test_lazy.py", "tests/test_mid.py", "tests/test_string.py"]
+    assert mc.tests_reaching(["health_data_registry.other"], tmp_path) == ["tests/test_other.py"]
+
+
+def test_tests_reaching_follows_files_loaded_by_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    mc = _fresh(monkeypatch)
+    files = {
+        "src/health_data_registry/__init__.py": "",
+        "src/health_data_registry/naming.py": "X = 1\n",
+        "src/health_data_registry/other.py": "Y = 2\n",
+        "scripts/crawl.py": "from health_data_registry import naming\n",
+        "tools/gen/gen.py": "import health_data_registry.naming\n",
+        "tests/__init__.py": "",
+        "tests/test_script.py": 'import importlib.util\nSCRIPT = ROOT / "scripts" / "crawl.py"\n',
+        "tests/test_gen.py": 'P = "tools/gen/gen.py"\n',
+        "tests/test_init.py": 'P = "src/health_data_registry/__init__.py"\n',
+    }
+    for rel, src in files.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(src, encoding="utf-8")
+    got = mc.tests_reaching(["health_data_registry.naming"], tmp_path)
+    assert got == ["tests/test_gen.py", "tests/test_script.py"]
+    assert mc.tests_reaching(["health_data_registry.other"], tmp_path) == []

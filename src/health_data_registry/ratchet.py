@@ -21,7 +21,13 @@ request's head with its merge base (git merge-base BASE HEAD) and fails when the
 5. sealed sets: touches eval/sealed/;
 6. hooks: adds a way around the git hooks (no-verify, the n flag of commit, or a hooks-path override);
 7. allowlist and gate: changes the allowlist together with anything else, or changes the gate's own files
-   together with anything but docs.
+   together with anything but docs;
+8. CI budgets: loosens ci/budgets.yml: raises a time budget, adds a key (a new budget is a new allowance), removes
+   one, or deletes the file;
+9. mutation: weakens a job that runs mutation tests, in any workflow (the PR mutation shards, the nightly run, the
+   release gate's mutation check): removes it, makes it conditional, adds continue-on-error, drops a mutation
+   command from its steps, takes a schedule away from its workflow, or stops a job that waited for it (a release
+   job, an aggregate) waiting for it. Each may be allowlisted except continue-on-error.
 
 It prints one line per failure, naming the file and line, and exits 1; 0 when nothing weakens; 2 when it could not
 check (a git error), so the gate fails closed.
@@ -753,6 +759,7 @@ class Workflow:
     path: str
     text: str
     jobs: dict[str, dict[str, Any]]
+    triggers: Any = None
 
 
 def load_workflow(path: str, text: str | None) -> Workflow | None:
@@ -765,7 +772,9 @@ def load_workflow(path: str, text: str | None) -> Workflow | None:
     jobs = data.get("jobs") if isinstance(data, dict) else None
     if not isinstance(jobs, dict):
         return None
-    return Workflow(path, text, {str(k): v for k, v in jobs.items() if isinstance(v, dict)})
+    # YAML 1.1 reads a bare `on:` key as True.
+    triggers = data.get("on", data.get(True))
+    return Workflow(path, text, {str(k): v for k, v in jobs.items() if isinstance(v, dict)}, triggers)
 
 
 def workflows(snapshot: Snapshot) -> list[Workflow]:
@@ -911,6 +920,8 @@ def _compare_job(
     wf: Workflow,
     job_id: str,
     allow: frozenset[tuple[str, str]],
+    rule: str = "required check",
+    why: str = "which a required check runs or waits for",
 ) -> list[Finding]:
     """Conditions and continue-on-error a job gained. A new or changed `if:` may be allowlisted as `if: <cond>`
     (the condition with its whitespace collapsed); continue-on-error may not."""
@@ -920,8 +931,8 @@ def _compare_job(
     if now != was and (wf.path, allow_text) not in allow:
         out.append(
             Finding(
-                "required check", wf.path, _job_line(wf.text, job_id, "if"),
-                f"makes job '{job_id}', which a required check runs or waits for, conditional: if: was "
+                rule, wf.path, _job_line(wf.text, job_id, "if"),
+                f"makes job '{job_id}', {why}, conditional: if: was "
                 f"'{was or '(none)'}' at the merge base and is '{now or '(none)'}' now",
                 allow_text, True,
             )
@@ -929,8 +940,8 @@ def _compare_job(
     if _truthy(head_job.get("continue-on-error")) and not _truthy(base_job.get("continue-on-error")):
         out.append(
             Finding(
-                "required check", wf.path, _job_line(wf.text, job_id, "continue-on-error"),
-                f"adds continue-on-error to job '{job_id}', which a required check runs or waits for",
+                rule, wf.path, _job_line(wf.text, job_id, "continue-on-error"),
+                f"adds continue-on-error to job '{job_id}', {why}",
             )
         )  # fmt: skip
     for key in ("if", "continue-on-error"):
@@ -944,8 +955,8 @@ def _compare_job(
                 continue
             out.append(
                 Finding(
-                    "required check", wf.path, _job_line(wf.text, job_id, key, value, step=True),
-                    f"adds {key} on a step of job '{job_id}', which a required check runs or waits for: {text}",
+                    rule, wf.path, _job_line(wf.text, job_id, key, value, step=True),
+                    f"adds {key} on a step of job '{job_id}', {why}: {text}",
                     text, key == "if",
                 )
             )  # fmt: skip
@@ -996,6 +1007,184 @@ def check_required(
     return out
 
 
+# Rule 8: CI time budgets only tighten ------------------------------------------------------------------------
+
+BUDGETS = "ci/budgets.yml"
+
+
+def _budget_leaves(data: Any, prefix: tuple[str, ...] = ()) -> dict[tuple[str, ...], Any]:
+    """Every value in the budgets file by its key path; an empty table counts as a value of its own."""
+    if isinstance(data, dict) and data:
+        out: dict[tuple[str, ...], Any] = {}
+        for key, value in data.items():
+            out.update(_budget_leaves(value, (*prefix, _scalar(key))))
+        return out
+    return {prefix: data}
+
+
+def _number(value: Any) -> float | None:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _parse_budgets(text: str | None) -> Any:
+    """The parsed budgets, or a ValueError saying why they could not be read."""
+    if text is None or len(text) > MAX_PARSE_BYTES:
+        raise ValueError("missing or too large to check")
+    try:
+        return yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"not valid YAML ({str(exc).splitlines()[0]})") from exc
+
+
+def check_budgets(changes: list[Change], base: Snapshot, head: Snapshot) -> list[Finding]:
+    """A budget is a ceiling: every value at the merge base stays, numbers may only go down, nothing is added."""
+    out: list[Finding] = []
+    for change in changes:
+        if change.old != BUDGETS:
+            continue  # another file, or the budgets are new: there was nothing to loosen
+        if change.new != BUDGETS:
+            out.append(
+                Finding("budgets", BUDGETS, 0, "deletes or moves the CI time budgets; they only tighten")
+            )
+            continue
+        try:
+            before = _budget_leaves(_parse_budgets(base.read(BUDGETS)))
+        except ValueError:
+            continue  # main's own file does not parse; a pull request can only repair it
+        head_text = head.read(BUDGETS)
+        try:
+            after = _budget_leaves(_parse_budgets(head_text))
+        except ValueError as exc:
+            out.append(
+                Finding("budgets", BUDGETS, 0, f"could not read the CI time budgets to check them: {exc}")
+            )
+            continue
+        for key, was in before.items():
+            name = " > ".join(key) or "(the whole file)"
+            if key not in after:
+                out.append(Finding("budgets", BUDGETS, 0, f"removes the budget {name} (was {was!r})"))
+                continue
+            now = after[key]
+            old_n, new_n = _number(was), _number(now)
+            if old_n is not None and (new_n is None or new_n > old_n):
+                number, _ = _locate(head_text, f"{json.dumps(key[-1]) if key else ''}\0{now}")
+                out.append(
+                    Finding("budgets", BUDGETS, number, f"loosens the budget {name} from {was!r} to {now!r}")
+                )
+            elif old_n is None and now != was:
+                out.append(
+                    Finding("budgets", BUDGETS, 0, f"changes the budget {name} from {was!r} to {now!r}")
+                )
+        for key in after:
+            if key not in before:
+                name = " > ".join(key)
+                number, _ = _locate(head_text, json.dumps(key[-1]) if key else "")
+                out.append(
+                    Finding(
+                        "budgets", BUDGETS, number,
+                        f"adds the budget {name} ({after[key]!r}); a new budget is a new allowance, so it loosens",
+                    )
+                )  # fmt: skip
+    return out
+
+
+# Rule 9: mutation jobs, wherever they run ---------------------------------------------------------------------
+
+MUTATION = re.compile(r"mutmut|mutat(?:e|ion)", re.IGNORECASE)
+
+
+def is_mutation_job(job_id: str, job: Mapping[str, Any]) -> bool:
+    """A job that runs, gathers or checks mutation tests: its id, name, steps, env or reusable workflow say so."""
+    return bool(MUTATION.search(job_id) or MUTATION.search(json.dumps(job, sort_keys=True, default=str)))
+
+
+def _mutation_commands(job: Mapping[str, Any]) -> Counter[str]:
+    """The lines of the job's steps (run and uses) and its own uses that mention mutation."""
+    lines: list[str] = []
+    if isinstance(job.get("uses"), str):
+        lines.append(f"uses: {job['uses'].strip()}")
+    for step in _list(job.get("steps")):
+        if not isinstance(step, dict):
+            continue
+        if isinstance(step.get("uses"), str):
+            lines.append(f"uses: {step['uses'].strip()}")
+        if isinstance(step.get("run"), str):
+            lines += [line.strip() for line in step["run"].splitlines()]
+    return Counter(line for line in lines if line and MUTATION.search(line))
+
+
+def _schedules(triggers: Any) -> list[str]:
+    schedule = triggers.get("schedule") if isinstance(triggers, dict) else None
+    return [
+        _cond(s.get("cron")) for s in _list(schedule) if isinstance(s, dict) and s.get("cron") is not None
+    ]
+
+
+def _allowed_or(
+    out: list[Finding], allow: frozenset[tuple[str, str]], path: str, line: int, message: str, text: str
+) -> None:
+    if (path, text) not in allow:
+        out.append(Finding("mutation", path, line, message, text, True))
+
+
+def check_mutation(base: Snapshot, head: Snapshot, allow: frozenset[tuple[str, str]]) -> list[Finding]:
+    out: list[Finding] = []
+    after = {wf.path: wf for wf in workflows(head)}
+    for wf_b in workflows(base):
+        mutation_jobs = [j for j, job in wf_b.jobs.items() if is_mutation_job(j, job)]
+        if not mutation_jobs:
+            continue
+        wf_h = after.get(wf_b.path)
+        if wf_h is None:
+            for job_id in mutation_jobs:
+                _allowed_or(
+                    out, allow, wf_b.path, 0,
+                    f"deletes or moves the workflow holding job '{job_id}', which runs mutation tests",
+                    f"job {job_id}",
+                )  # fmt: skip
+            continue
+        for cron in _schedules(wf_b.triggers):
+            if cron not in _schedules(wf_h.triggers):
+                _allowed_or(
+                    out, allow, wf_h.path, 0,
+                    f"takes the schedule '{cron}' away from a workflow that runs mutation tests",
+                    f"schedule {cron}",
+                )  # fmt: skip
+        for job_id in mutation_jobs:
+            head_job = wf_h.jobs.get(job_id)
+            if head_job is None:
+                _allowed_or(
+                    out,
+                    allow,
+                    wf_h.path,
+                    0,
+                    f"removes job '{job_id}', which runs mutation tests",
+                    f"job {job_id}",
+                )
+                continue
+            out += _compare_job(
+                wf_b.jobs[job_id], head_job, wf_h, job_id, allow, "mutation", "which runs mutation tests"
+            )
+            lost = _mutation_commands(wf_b.jobs[job_id]) - _mutation_commands(head_job)
+            for command in sorted(lost):
+                _allowed_or(
+                    out, allow, wf_h.path, _job_line(wf_h.text, job_id),
+                    f"job '{job_id}' no longer runs: {command}", f"{job_id}: {command}",
+                )  # fmt: skip
+        for waiter in wf_b.jobs:
+            if waiter not in wf_h.jobs:
+                continue
+            still = closure(wf_h, waiter)
+            for job_id in closure(wf_b, waiter)[1:]:
+                if job_id in mutation_jobs and job_id not in still:
+                    _allowed_or(
+                        out, allow, wf_h.path, _job_line(wf_h.text, waiter, "needs"),
+                        f"job '{waiter}' no longer waits for job '{job_id}', which runs mutation tests",
+                        f"needs {waiter} -> {job_id}",
+                    )  # fmt: skip
+    return out
+
+
 # Running every rule ------------------------------------------------------------------------------------------
 
 
@@ -1012,6 +1201,8 @@ def check(
         + check_toml(changes, base, head, allow)
         + check_tests(changes, base, head, allow)
         + (check_required(base, head, required, allow) if required is not None else [])
+        + check_budgets(changes, base, head)
+        + check_mutation(base, head, allow)
     )
     unique: dict[tuple[str, str, int, str], Finding] = {}
     for f in found:
