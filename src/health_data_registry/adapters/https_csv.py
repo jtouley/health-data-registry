@@ -1,5 +1,7 @@
 """One CSV file over HTTPS (e.g. the Census Bureau's keyless population estimate files on www2.census.gov).
 
+The delimiter is the catalog's `delimiter` (default a comma; the Census code files use |).
+
 No paging: the file is fetched once and its raw bytes are kept. Records are keyed by the file's own column
 names, with every value kept as the published text. When the catalog entry declares `reshape.wide_to_long`,
 a wide file (POPESTIMATE2020 ... POPESTIMATE2025) becomes one record per row and key (year): a structural
@@ -21,7 +23,7 @@ from health_data_registry.registry import CatalogEntry, WideToLong
 def read_rows(entry: CatalogEntry, content: bytes) -> tuple[list[str], list[dict[str, str]]]:
     """The header and the rows of the file, decoded with the encoding the catalog names."""
     text = content.decode(entry.source.encoding)
-    reader = csv.DictReader(io.StringIO(text, newline=""))
+    reader = csv.DictReader(io.StringIO(text, newline=""), delimiter=entry.source.delimiter)
     header = list(reader.fieldnames or [])
     if not header:
         raise ValueError(f"{entry.id}: the file has no header row")

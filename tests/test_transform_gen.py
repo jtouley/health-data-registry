@@ -262,7 +262,7 @@ def test_write_replaces_hand_written_staging_files_and_check_reports_them(tmp_pa
     stray = root / tg.STAGING_DIR / "stg_hand.sql"
     stray.write_text("select 1")
     schema = root / tg.MODELS_DIR / "marts" / "hand.yml"
-    schema.parent.mkdir()
+    schema.parent.mkdir(exist_ok=True)
     schema.write_text("version: 2\n")
     model = root / tg.MODELS_DIR / "marts" / "hand.sql"
     model.write_text("select 1")

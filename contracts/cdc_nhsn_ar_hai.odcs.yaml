@@ -42,6 +42,17 @@ schema:
           period: year
           provisionalFlag: null
         description: "Condition is the HAI type (CLABSI, CAUTI, SSI). Organism and resistance are combined in the phenotype label (e.g. Methicillin-resistant Staphylococcus aureus); no separate antibiotic or mechanism column. NHSN HAI surveillance definitions are not in the data (see openQuestions). No case-status or provisional column. Period is calendar year."
+      - property: conformedDimensions
+        value:
+          countedUnit: "bacterial isolates from healthcare-associated infections reported to NHSN: isolates tested, isolates resistant and percent resistant"
+          condition: {column: phenotype}
+          place:
+            match: state_name
+            column: geography
+            places:
+              United States: {key: USA, level: nation}
+          time: {year: year, dateBasis: "the calendar year of the reported isolates (semantic model: calendar year of the reported HAI isolates)"}
+        description: "The condition key is the phenotype (organism and resistance), the catalog's condition dimension; the HAI type stays its own column. Census divisions stay unresolved."
     properties:
       - name: source
         physicalType: VARCHAR

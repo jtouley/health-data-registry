@@ -62,7 +62,7 @@ contracts: ## Regenerate transform/ raw sources, staging models and model schema
 
 transform: ## dbt build (models and tests) on the synthetic fixtures in tests/fixtures/transform, as CI runs it
 	$(UV) run python -m health_data_registry.transform_gen --check
-	HDR_RAW_RECORDS=../tests/fixtures/transform/raw_records HDR_TRANSFORM_DB=target/ci.duckdb DBT_SEND_ANONYMOUS_USAGE_STATS=false \
+	HDR_RAW_RECORDS=../tests/fixtures/transform/raw_records HDR_CONTROL_PLANE=../tests/fixtures/transform/control_plane HDR_TRANSFORM_DB=target/ci.duckdb DBT_SEND_ANONYMOUS_USAGE_STATS=false \
 		$(UV) run --directory transform dbt build --profiles-dir . --project-dir .
 
 check-contracts: ## Check every source against its ODCS contract

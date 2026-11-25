@@ -1,0 +1,38 @@
+id: census_fips_county
+title: "County and county-equivalent FIPS codes, 2020 Census (national_county2020)"
+agency: US Census Bureau
+publisher: US Census Bureau, Geography Division (ANSI and FIPS codes)
+level: federal
+country: US
+research_areas: [reference]
+years: {start: 2020, end: 2020}
+geography: [county]
+shape: registry
+grain: "One row is one county or county equivalent (parish, borough, census area, independent city, municipio, island) with its state and county FIPS codes, its name and its FIPS class and functional status codes. Used as the gazetteer that gives every US county its key; it holds no counts."
+refresh: irregular
+licence:
+  id: public-domain-us-federal
+  redistribution: true
+  terms_url: https://www.census.gov/data/developers/about/terms-of-service.html
+citation: "U.S. Census Bureau. 2020 Census codes for Counties and County Equivalent Entities (national_county2020.txt). https://www2.census.gov/geo/docs/reference/codes2020/national_county2020.txt (accessed <retrieved_at>)."
+source:
+  portal: https_csv
+  host: www2.census.gov
+  dataset: national_county2020
+  landing_url: https://www.census.gov/library/reference/code-lists/ansi.html
+  api_url: https://www2.census.gov/geo/docs/reference/codes2020/national_county2020.txt
+  # File layout (codebook_url, read 2026-11-25): pipe-delimited, one header row, UTF-8 (Doña Ana County).
+  delimiter: "|"
+codebook_url: https://www.census.gov/library/reference/code-lists/ansi.html
+caveats:
+  - "A code list, not data about people: it gives each county its FIPS code and name; it is never an answer on its own."
+  - "The 2020 Census codes: Connecticut is listed by its eight former counties, not the nine planning regions that the Census Bureau's population estimates use from 2022, so a planning-region code (09110 to 09190) is not in this file and stays unresolved."
+conditions:
+  dimension: null
+  source: "A code list; it has no conditions."
+  labels: []
+  aliases: []
+contract: contracts/census_fips_county.odcs.yaml
+semantic_model: semantic/census_fips_county.yaml
+status: draft
+hosting: public

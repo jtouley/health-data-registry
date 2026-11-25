@@ -1,0 +1,109 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: un_m49
+name: Standard country or area codes for statistical use (UN M49)
+version: 0.1.0
+status: draft
+domain: reference
+description:
+  purpose: "UNSD's M49 code list: each country or area's M49 code, its ISO 3166-1 alpha-2 and alpha-3 codes, and the M49 region, sub-region and intermediate region it belongs to. It is the reference for every country key (ISO3 and M49) in the marts' place dimension."
+  usage: "Look up a country's ISO3 or M49 code, live. The United Nations' terms of use allow personal, non-commercial use only, without redistributing the table or compiling works from it, so it is never stored, mirrored or built into dim_place; a country key in dim_place is declared one at a time in contracts/models/dim_place.odcs.yaml, citing this list."
+  limitations: "Read live only (terms). M49 regions are UN statistical regions, not WHO or GBD regions. Antarctica has no region."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://unstats.un.org/unsd/methodology/m49/overview/", description: "The overview page (fetched 2026-11-25): the English table downloadTableEN has 248 rows, one per country or area"}
+    - {type: businessDefinition, url: "https://unstats.un.org/unsd/methodology/m49/", description: "What M49 is and how the codes are assigned"}
+    - {type: termsOfUse, url: "https://www.un.org/en/about-us/terms-of-use", description: "Read 2026-11-25: personal, non-commercial use, without any right to resell or redistribute or to compile or create derivative works"}
+servers:
+  - id: unstats_un_org
+    server: unstats.un.org
+    type: https
+    location: https://unstats.un.org/unsd/methodology/m49/overview/
+    description: "One HTML page; the html_table adapter reads only the table with id downloadTableEN, one record per body row keyed by its header cells, every value the cell's text. Read live per question, in memory only; the bytes are never stored."
+schema:
+  - name: un_m49
+    physicalName: un_m49
+    physicalType: table
+    logicalType: object
+    description: "One row per country or area with its M49 and ISO codes and its M49 regions."
+    dataGranularityDescription: "country or area"
+    customProperties:
+      - {property: totalRows, value: none}
+      - {property: tableShape, value: registry}
+      - property: idDimensions
+        value: {condition: null, caseDefinition: null, caseStatus: null, organismResistance: null, period: null, provisionalFlag: null}
+        description: "A code list: no condition, case definition, case status, organism or period."
+      - property: conformedDimensions
+        value:
+          countedUnit: "none: a code list, with no counts"
+          place: {match: iso3, column: iso3}
+          time: {dateBasis: "not applicable: the current M49 list"}
+        description: "Every row is the country its ISO3 code names."
+    properties:
+      - name: region_code
+        physicalType: VARCHAR
+        logicalType: string
+        description: "M49 code of the region (for example 019 Americas); empty for Antarctica."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: Region Code}
+      - name: region_name
+        physicalType: VARCHAR
+        logicalType: string
+        description: "M49 region name (Africa, Americas, Asia, Europe, Oceania)."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: Region Name}
+      - name: sub_region_name
+        physicalType: VARCHAR
+        logicalType: string
+        description: "M49 sub-region name (for example Northern America)."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: Sub-region Name}
+      - name: country_name
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Country or area name as UNSD writes it (for example United States of America)."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: Country or Area}
+      - name: m49_code
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Three-digit M49 code of the country or area, as text so the leading zeros stay (for example 840 for the United States of America, 012 for Algeria)."
+        examples: ["840", "012"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: M49 Code}
+      - name: iso2
+        physicalType: VARCHAR
+        logicalType: string
+        description: "ISO 3166-1 alpha-2 code (for example US)."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: ISO-alpha2 Code}
+      - name: iso3
+        physicalType: VARCHAR
+        logicalType: string
+        description: "ISO 3166-1 alpha-3 code (for example USA), the key countries are joined on."
+        examples: ["USA", "DZA"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: ISO-alpha3 Code}
+customProperties:
+  - {property: licence, value: UN-website-terms-of-use}
+  - {property: citation, value: "United Nations Statistics Division. Standard country or area codes for statistical use (M49)."}
+  - {property: refresh, value: irregular}
+  - {property: unreliableRule, value: {kind: none, description: "None: a code list, with no values to suppress."}}
+  - property: openQuestions
+    value:
+      - id: q1
+        status: open
+        changesNumbers: false
+        question: "Terms: the United Nations' terms of use (read 2026-11-25) allow personal, non-commercial use only, with no right to redistribute or to compile or create derivative works, so M49 is read live and never stored or built into dim_place. Ask UNSD whether the code list may be stored and joined as a gazetteer, or confirm that ISO3 keys are declared one country at a time."
+      - id: q2
+        status: open
+        changesNumbers: false
+        question: "Kosovo and other areas without an M49 row: how should a publisher's label for them be keyed?"

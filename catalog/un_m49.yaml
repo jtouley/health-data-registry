@@ -1,0 +1,42 @@
+id: un_m49
+title: "Standard country or area codes for statistical use (UN M49), with ISO 3166 alpha-2 and alpha-3 codes"
+agency: United Nations Statistics Division
+publisher: United Nations Statistics Division (UNSD), Methodology
+level: international
+country: null
+research_areas: [reference]
+years: {start: 1999, end: null}
+geography: [country, region]
+shape: registry
+grain: "One row is one country or area with its M49 code, its ISO 3166-1 alpha-2 and alpha-3 codes and the M49 region, sub-region and intermediate region it belongs to. A code list; it holds no counts."
+refresh: irregular
+licence:
+  # Read 2026-11-25 from the page's own Terms of Use link (https://www.un.org/en/about-us/terms-of-use): the UN
+  # grants permission to download and copy materials "for the User's personal, non-commercial use, without any
+  # right to resell or redistribute them or to compile or create derivative works therefrom". So the table is
+  # never stored, mirrored or compiled into a gazetteer here: it is read live per question only (ADR 0009).
+  id: UN-website-terms-of-use
+  redistribution: false
+  terms_url: https://www.un.org/en/about-us/terms-of-use
+citation: "United Nations Statistics Division. Standard country or area codes for statistical use (M49). https://unstats.un.org/unsd/methodology/m49/overview/ (accessed <retrieved_at>)."
+source:
+  portal: html_table
+  host: unstats.un.org
+  dataset: m49-overview
+  landing_url: https://unstats.un.org/unsd/methodology/m49/
+  api_url: https://unstats.un.org/unsd/methodology/m49/overview/
+  # The English table of the overview page; the page has no CSV file (its download buttons export this table).
+  table_id: downloadTableEN
+codebook_url: https://unstats.un.org/unsd/methodology/m49/
+caveats:
+  - "A code list, not data about people; it is never an answer on its own."
+  - "The United Nations' terms of use allow personal, non-commercial use only, without redistributing the table or compiling works from it (https://www.un.org/en/about-us/terms-of-use, read 2026-11-25). It is read from UNSD when needed and never stored or published here, and these terms show with every result."
+  - "M49 regions are UN statistical regions; they are not WHO regions or GBD regions."
+conditions:
+  dimension: null
+  source: "A code list; it has no conditions."
+  labels: []
+  aliases: []
+contract: contracts/un_m49.odcs.yaml
+semantic_model: semantic/un_m49.yaml
+status: draft

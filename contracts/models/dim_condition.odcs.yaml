@@ -1,0 +1,123 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: dim_condition
+name: Condition dimension
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "One row per condition label a stored source publishes, with its case status and subtype kept apart, and its concept (MeSH descriptor, NCBI Taxonomy id, GBD cause name) when, and only when, an accepted record of the control plane's crosswalk gives it."
+  usage: "Join a fact's condition_key to condition_key. A label whose mapping_state is unresolved has no concept here: answer with the publisher's own label, never a guessed concept."
+  limitations: "Until the control plane (task 83) exports its crosswalk, every label is unresolved. Proposed records are counted (open_proposals) and change nothing."
+schema:
+  - name: dim_condition
+    physicalName: dim_condition
+    physicalType: table
+    logicalType: object
+    description: "One row per stored source and published condition label."
+    customProperties:
+      - {property: layer, value: marts}
+      - {property: totalRows, value: none}
+      - {property: tableShape, value: registry}
+    quality:
+      - id: mapped_or_unresolved
+        dimension: completeness
+        severity: error
+        type: sql
+        description: "Every label maps to a concept from an accepted record or says unresolved; an accepted label names a concept."
+        query: "SELECT COUNT(*) FROM {object} WHERE mapping_state NOT IN ('accepted', 'unresolved') OR (mapping_state = 'accepted' AND mesh_id IS NULL AND ncbi_taxon_id IS NULL AND gbd_cause IS NULL) OR (mapping_state = 'unresolved' AND (mesh_id IS NOT NULL OR ncbi_taxon_id IS NOT NULL OR gbd_cause IS NOT NULL))"
+        mustBe: 0
+      - id: accepted_names_its_review
+        dimension: completeness
+        severity: error
+        type: sql
+        description: "An accepted mapping carries its reviewer, date and source (hard rule 1)."
+        query: "SELECT COUNT(*) FROM {object} WHERE mapping_state = 'accepted' AND (mapping_reviewed_by IS NULL OR mapping_reviewed_at IS NULL OR mapping_source IS NULL)"
+        mustBe: 0
+    properties:
+      - name: condition_key
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "The source id and the label as published, which every fact's condition_key joins to."
+        customProperties: [{property: role, value: dimension}]
+      - name: dataset_id
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The source that publishes the label."
+        customProperties: [{property: role, value: dimension}]
+      - name: condition_label
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The publisher's condition label, exactly as published."
+        customProperties: [{property: role, value: dimension}]
+      - name: case_status
+        physicalType: VARCHAR
+        logicalType: string
+        description: "Case status from the source's contract (for example confirmed and probable), kept apart from the condition."
+        customProperties: [{property: role, value: attribute}]
+      - name: case_subtype
+        physicalType: VARCHAR
+        logicalType: string
+        description: "Case subtype declared for the label in the contract (for example clinical or screening for C. auris); two subtypes are never added together."
+        customProperties: [{property: role, value: attribute}]
+      - name: is_listed
+        physicalType: BOOLEAN
+        logicalType: boolean
+        required: true
+        description: "True when the label is in the catalog's reviewed label list; a false row is also in flag_unmapped_labels."
+        customProperties: [{property: role, value: attribute}]
+      - name: mesh_id
+        physicalType: VARCHAR
+        logicalType: string
+        description: "MeSH descriptor id from the accepted crosswalk record; empty when unresolved."
+        customProperties: [{property: role, value: attribute}]
+      - name: ncbi_taxon_id
+        physicalType: VARCHAR
+        logicalType: string
+        description: "NCBI Taxonomy id from the accepted crosswalk record; empty when unresolved or when the label names no single organism."
+        customProperties: [{property: role, value: attribute}]
+      - name: gbd_cause
+        physicalType: VARCHAR
+        logicalType: string
+        description: "GBD cause name from the accepted crosswalk record; empty when unresolved."
+        customProperties: [{property: role, value: attribute}]
+      - name: mapping_state
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "accepted (a maintainer checked the mapping) or unresolved (no accepted record)."
+        customProperties: [{property: role, value: attribute}]
+      - name: mapping_source
+        physicalType: VARCHAR
+        logicalType: string
+        description: "What the accepted mapping was checked against."
+        customProperties: [{property: role, value: attribute}]
+      - name: mapping_reviewed_by
+        physicalType: VARCHAR
+        logicalType: string
+        description: "The maintainer who accepted the mapping."
+        customProperties: [{property: role, value: attribute}]
+      - name: mapping_reviewed_at
+        physicalType: DATE
+        logicalType: date
+        description: "The date the mapping was accepted."
+        customProperties: [{property: role, value: attribute}]
+      - name: open_proposals
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "How many proposed crosswalk records wait for review for this label; they change nothing."
+        customProperties: [{property: role, value: attribute}]
+      - name: row_count
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "How many rows of the source's fact carry the label."
+        customProperties: [{property: role, value: attribute}]
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None: a dimension, not published numbers."}}

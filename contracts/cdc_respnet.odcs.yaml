@@ -41,6 +41,22 @@ schema:
           period: [season, date]
           provisionalFlag: null
         description: "Condition is the virus network (COVID-NET, FluSurv-NET, RSV-NET, Combined). The dataset description says all counted hospitalizations are laboratory-confirmed, so there is one case status and no status column. No organism subtype or resistance field. Period is season plus week-ending date. No provisional column."
+      - property: conformedDimensions
+        value:
+          countedUnit: "laboratory-confirmed hospitalizations, as rates per 100,000 catchment population or as percents of hospitalized patients (estimate_type says which)"
+          condition:
+            column: surveillance_network
+            caseStatus: "laboratory-confirmed (the dataset description says every counted hospitalization is laboratory-confirmed)"
+          place:
+            match: state_name
+            column: state
+            places:
+              Overall: {parent: USA, note: "all RESP-NET sites of the network combined, not the whole United States"}
+              COVID-NET: {parent: USA, note: "all COVID-NET sites combined, not the whole United States"}
+              FluSurv-NET: {parent: USA, note: "all FluSurv-NET sites combined, not the whole United States"}
+              RSV-NET: {parent: USA, note: "all RSV-NET sites combined, not the whole United States"}
+          time: {mmwrDate: date, dateBasis: "the week-ending date of the admission week; season rows (date_type Season) have no week"}
+        description: "Each site is a catchment area inside the state it is named after (partialPlaces on state), so every site is a partial area of its state; all-sites rows are partial areas of the nation."
     properties:
       - name: surveillance_network
         physicalType: VARCHAR

@@ -122,6 +122,27 @@ outputPorts:
     contractId: census_county_pop
     customProperties:
       - {property: hosted, value: true}
+  - name: census_fips_state
+    description: Census Bureau 2020 state FIPS code list, the gazetteer for every US state key (reference, no counts).
+    type: tables
+    version: 0.1.0
+    contractId: census_fips_state
+    customProperties:
+      - {property: hosted, value: true}
+  - name: census_fips_county
+    description: Census Bureau 2020 county FIPS code list, the gazetteer for every US county key (reference, no counts).
+    type: tables
+    version: 0.1.0
+    contractId: census_fips_county
+    customProperties:
+      - {property: hosted, value: true}
+  - name: un_m49
+    description: UNSD M49 country codes with ISO 3166 codes. Listed, not hosted (UN terms of use forbid redistribution); read live.
+    type: tables
+    version: 0.1.0
+    contractId: un_m49
+    customProperties:
+      - {property: hosted, value: false}
   - name: who_gho_tb_incidence
     description: WHO estimated tuberculosis incidence. Listed, not hosted (non-commercial terms).
     type: tables

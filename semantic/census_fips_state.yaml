@@ -1,0 +1,9 @@
+dataset: census_fips_state
+version: 0.1.0
+# A code list: dimensions to filter on, no measures, metrics or series.
+dimensions:
+  - {name: state, column: state_name, type: categorical, description: "State, DC or island area, as the Census Bureau names it."}
+  - {name: state_fips, column: state_fips, type: categorical, description: "Two-digit state FIPS code."}
+  - {name: postal, column: postal, type: categorical, description: "Two-letter postal abbreviation."}
+measures: []
+metrics: []

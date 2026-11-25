@@ -42,6 +42,12 @@ schema:
           period: year
           provisionalFlag: null
         description: "A population denominator: no condition, case definition, case status or organism. Period is the July 1 reference year. The file has no provisional flag; every year is revised by the next vintage."
+      - property: conformedDimensions
+        value:
+          countedUnit: "persons (Census Bureau estimate of the resident population on July 1)"
+          place: {match: fips, stateColumn: state_fips, countyColumn: county_fips}
+          time: {year: year, dateBasis: "July 1 of the year (the estimate's reference date)"}
+        description: "Places are keyed by the Census state and county FIPS codes; a code not in the 2020 code files (Connecticut planning regions) stays unresolved."
     properties:
       - name: sumlev
         physicalType: VARCHAR

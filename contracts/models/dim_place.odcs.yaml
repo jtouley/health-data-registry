@@ -1,0 +1,161 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: dim_place
+name: Place dimension (the gazetteer)
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "One row per place a fact can name: the nation, every state, DC and island area and every county in the Census Bureau's 2020 code files, the places declared below, and every partial area a fact uses (a publisher label that covers only part of a place). This is the task 84.3 gazetteer: each place has its key, its FIPS code for US places, its ISO3 and M49 codes for a country, its GBD location name where GBD has one, its parent, and whether it is only part of its parent."
+  usage: "Join a fact's place_key to place_key. Never add a partial area to its parent, and never add the places in never_add_with to each other: Detroit, Out-Wayne and Wayne County are three views of one county."
+  limitations: "Country keys (ISO3 and M49) are declared here one country at a time, each citing UN M49, because the UN's terms of use forbid storing or compiling the M49 table (contracts/un_m49.odcs.yaml). GBD location names are geo.py's: the 50 states, DC and Puerto Rico, and the nation; counties and other island areas have none. Connecticut planning regions are not in the 2020 county code file."
+  authoritativeDefinitions:
+    - {type: businessDefinition, url: "https://www.census.gov/library/reference/code-lists/ansi.html", description: "Census Bureau ANSI and FIPS codes (state and county code files)"}
+    - {type: businessDefinition, url: "https://unstats.un.org/unsd/methodology/m49/overview/", description: "UN M49: United States of America, M49 840, ISO3 USA (read 2026-11-25)"}
+schema:
+  - name: dim_place
+    physicalName: dim_place
+    physicalType: table
+    logicalType: object
+    description: "One row per place, keyed USA (the nation; a country by its ISO3 code), US-<state FIPS>, US-<state FIPS><county FIPS>, or <parent key>/<source or name> for a part of a place."
+    customProperties:
+      - {property: layer, value: marts}
+      - {property: totalRows, value: none}
+      - {property: tableShape, value: registry}
+      - property: declaredPlaces
+        description: "Places no code file gives, each a maintainer's declaration citing its source (hard rule 1). Wayne County itself comes from the county code file; its row here only adds never_add_with."
+        value:
+          - key: USA
+            name: United States
+            level: nation
+            iso3: USA
+            m49: "840"
+            gbdLocationName: United States
+            source: "UN M49 (https://unstats.un.org/unsd/methodology/m49/overview/, read 2026-11-25): United States of America, M49 840, ISO-alpha3 USA. GBD location name as geo.py gives it (the name the IHME GBD connector accepts)."
+          - key: US-26163
+            name: Wayne County
+            level: county
+            parent: US-26
+            neverAddWith: [US-26163/detroit, US-26163/out-wayne]
+            source: "Census county code file (26 163 Wayne County); never_add_with from the maintainer's geography rule (tools.GEOGRAPHY_TRAPS): Out-Wayne County reports exclude the City of Detroit, which has its own health department."
+          - key: US-26163/detroit
+            name: City of Detroit
+            level: city
+            parent: US-26163
+            note: "The City of Detroit only, reported by the Detroit Health Department; part of Wayne County."
+            neverAddWith: [US-26163, US-26163/out-wayne]
+            source: "Maintainer's geography rule (tools.GEOGRAPHY_TRAPS): the City of Detroit has its own health department."
+          - key: US-26163/out-wayne
+            name: Out-Wayne County
+            level: partial_area
+            parent: US-26163
+            note: "Wayne County excluding the City of Detroit, as MDHHS and Wayne County report it."
+            neverAddWith: [US-26163, US-26163/detroit]
+            source: "Maintainer's geography rule (tools.GEOGRAPHY_TRAPS): Out-Wayne County reports exclude the City of Detroit."
+    quality:
+      - id: place_key_unique
+        dimension: uniqueness
+        severity: error
+        type: sql
+        description: "One row per place key (structural)."
+        query: "SELECT COUNT(*) - COUNT(DISTINCT place_key) FROM {object}"
+        mustBe: 0
+      - id: parent_is_a_place
+        dimension: consistency
+        severity: error
+        type: sql
+        description: "Every parent is itself a place here, so a part can always be read with the place it is part of."
+        query: "SELECT COUNT(*) FROM {object} WHERE parent_key IS NOT NULL AND parent_key NOT IN (SELECT place_key FROM {object})"
+        mustBe: 0
+      - id: partial_areas_have_a_parent_and_note
+        dimension: completeness
+        severity: error
+        type: sql
+        description: "A partial area names the place it is part of and says which part."
+        query: "SELECT COUNT(*) FROM {object} WHERE is_partial_area AND (parent_key IS NULL OR place_note IS NULL)"
+        mustBe: 0
+    properties:
+      - name: place_key
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "The place's key, which every fact's place_key joins to."
+        customProperties: [{property: role, value: dimension}]
+      - name: place_name
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The place's name as its source writes it (the Census code files, the declaration, or the publisher's label for a partial area)."
+        customProperties: [{property: role, value: dimension}]
+      - name: place_level
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "nation, state, county, city or partial_area."
+        customProperties: [{property: role, value: attribute}]
+      - name: parent_key
+        physicalType: VARCHAR
+        logicalType: string
+        description: "The key of the place this one sits in (a state's is USA, a county's its state); empty for the nation."
+        customProperties: [{property: role, value: attribute}]
+      - name: is_partial_area
+        physicalType: BOOLEAN
+        logicalType: boolean
+        required: true
+        description: "True when the place is only part of its parent and must never be added to it (for example NNDSS New York excluding New York City, Out-Wayne County, the City of Detroit)."
+        customProperties: [{property: role, value: attribute}]
+      - name: place_note
+        physicalType: VARCHAR
+        logicalType: string
+        description: "Which part of its parent a partial area covers, in plain words."
+        customProperties: [{property: role, value: attribute}]
+      - name: fips
+        physicalType: VARCHAR
+        logicalType: string
+        description: "The FIPS code of a state (two digits) or county (five digits); empty for other places."
+        customProperties: [{property: role, value: attribute}]
+      - name: postal
+        physicalType: VARCHAR
+        logicalType: string
+        description: "Two-letter postal abbreviation of a state or of a county's state."
+        customProperties: [{property: role, value: attribute}]
+      - name: iso3
+        physicalType: VARCHAR
+        logicalType: string
+        description: "ISO 3166-1 alpha-3 code of a country, as UN M49 lists it."
+        customProperties: [{property: role, value: attribute}]
+      - name: m49
+        physicalType: VARCHAR
+        logicalType: string
+        description: "UN M49 code of a country."
+        customProperties: [{property: role, value: attribute}]
+      - name: gbd_location_name
+        physicalType: VARCHAR
+        logicalType: string
+        description: "The location name the IHME GBD connector accepts for this place, where GBD models it; empty for partial areas, which GBD never models."
+        customProperties: [{property: role, value: attribute}]
+      - name: never_add_with
+        physicalType: VARCHAR
+        logicalType: string
+        description: "Keys of places this one must never be added to, comma separated (Detroit, Out-Wayne and Wayne County overlap)."
+        customProperties: [{property: role, value: attribute}]
+      - name: key_source
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Where the row comes from: census_fips_state, census_fips_county, the source whose label is a partial area, or the citation of a declared place."
+        customProperties: [{property: role, value: attribute}]
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None: a dimension, not published numbers."}}
+  - property: openQuestions
+    value:
+      - id: q1
+        status: open
+        changesNumbers: true
+        question: "Detroit, Out-Wayne and Wayne County are declared from the maintainer's geography rule, not from a publisher's codebook. Maintainer to confirm each note against MDHHS's and the Detroit Health Department's own definitions."
+      - id: q2
+        status: open
+        changesNumbers: false
+        question: "Which GBD location names apply to the island areas other than Puerto Rico (Guam, American Samoa, Northern Mariana Islands, US Virgin Islands)? geo.py lists none, so they have none here."

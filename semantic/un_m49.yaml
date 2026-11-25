@@ -1,0 +1,9 @@
+dataset: un_m49
+version: 0.1.0
+# A code list, read live only: dimensions to filter on, no measures, metrics or series.
+dimensions:
+  - {name: country, column: country_name, type: categorical, description: "Country or area, as UNSD names it."}
+  - {name: iso3, column: iso3, type: categorical, description: "ISO 3166-1 alpha-3 code."}
+  - {name: m49, column: m49_code, type: categorical, description: "Three-digit M49 code."}
+measures: []
+metrics: []

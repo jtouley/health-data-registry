@@ -37,6 +37,7 @@ from typing import Any
 
 import yaml
 
+from health_data_registry import transform_marts as tm
 from health_data_registry.quality import condition_sql, measure_sql, rules_for
 from health_data_registry.registry import (
     Contract,
@@ -51,7 +52,7 @@ from health_data_registry.staging import silver_schema, typed_select
 MODELS_DIR = Path("transform/models")
 STAGING_DIR = MODELS_DIR / "staging"
 INTERMEDIATE_DIR = MODELS_DIR / "intermediate"
-LAYERS = ("reference", "flag")
+LAYERS = ("reference", "flag", "marts")
 TOTAL_ROW = "is_total_row"
 SOURCES_FILE = STAGING_DIR / "_raw_sources.yml"
 MODEL_CONTRACTS = Path("contracts/models")
@@ -122,17 +123,17 @@ def raw_sources(registry: Registry) -> str:
                 "columns": [{"name": f, "data_type": "varchar"} for f in fields],
             }
         )
-    doc = {
-        "version": 2,
-        "sources": [
-            {
-                "name": "raw",
-                "description": "Parsed publisher records in the lake (raw_records/<id>/<snapshot id>.ndjson).",
-                "tables": tables,
-            }
-        ],
-    }
-    return _dump(HEADER.format(src="contracts/"), doc)
+    sources: list[dict[str, Any]] = [
+        {
+            "name": "raw",
+            "description": "Parsed publisher records in the lake (raw_records/<id>/<snapshot id>.ndjson).",
+            "tables": tables,
+        }
+    ]
+    control = tm.control_plane_contracts(registry.root)
+    if control:
+        sources.append(tm.control_plane_source(control))
+    return _dump(HEADER.format(src="contracts/"), {"version": 2, "sources": sources})
 
 
 def staging_sql(ds: Dataset) -> str:
@@ -190,7 +191,9 @@ def _columns(contract: Contract, model: str) -> list[dict[str, Any]]:
     return columns
 
 
-def _model_yml(contract: Contract, model: str, contract_path: str, tags: list[str]) -> str:
+def _model_yml(
+    contract: Contract, model: str, contract_path: str, tags: list[str], *, rules: bool = False
+) -> str:
     schema = (contract.raw.get("schema") or [{}])[0]
     pk = primary_key(contract)
     entry: dict[str, Any] = {
@@ -207,6 +210,8 @@ def _model_yml(contract: Contract, model: str, contract_path: str, tags: list[st
     }
     if pk:
         entry["constraints"] = [{"type": "primary_key", "columns": pk}]
+    if rules and contract.quality:
+        entry["data_tests"] = quality_tests(contract, model, contract_path, contract.quality)
     entry["columns"] = _columns(contract, model)
     return _dump(HEADER.format(src=contract_path), {"version": 2, "models": [entry]})
 
@@ -307,21 +312,26 @@ def derived_columns(contract: Contract) -> list[tuple[str, str, str, str]]:
 
 
 def intermediate_sql(ds: Dataset) -> str:
-    derived = ",\n  ".join(f"{sql} AS {_q(name)}" for name, _t, sql, _d in derived_columns(ds.contract))
+    cols = derived_columns(ds.contract)
+    derived = ",\n      ".join(f"{sql} AS {_q(name)}" for name, _t, sql, _d in cols)
     return (
-        f"-- {HEADER.format(src=ds.entry.contract)}\n"  # noqa: S608 - generated from quoted contract identifiers
-        "-- Business rules from the contract only: total rows, renamed labels, partial places, flag meanings.\n"
-        "-- Nothing is removed or changed: each rule adds a column beside the published values.\n"
-        f"select\n  stg.*,\n  {derived}\nfrom {{{{ ref('stg_{ds.id}') }}}} as stg\n"
+        f"-- {HEADER.format(src=ds.entry.contract)}\n"
+        "-- Business rules from the contract only: total rows, renamed labels, partial places, flag meanings,\n"
+        "-- then the conformed condition, place and time keys (conformedDimensions). Nothing is removed or\n"
+        "-- changed: each rule adds a column beside the published values.\n"
+        + tm.intermediate_body(ds, derived, [name for name, *_ in cols])
     )
 
 
-def quality_tests(ds: Dataset) -> list[dict[str, Any]]:
-    """Every contract quality rule and fill-rate check, as a named dbt test running the read path's own SQL."""
+def quality_tests(
+    contract: Contract, prefix: str, contract_path: str, rules: Any = None
+) -> list[dict[str, Any]]:
+    """Every contract quality rule (and, by default, fill-rate check) as a named dbt test running the read path's
+    own SQL."""
     return [
         {
             "odcs_check": {
-                "name": f"{ds.id}_{r.id}",
+                "name": f"{prefix}_{r.id}",
                 "arguments": {
                     "measure_sql": measure_sql(r, "{object}"),
                     "condition": condition_sql(r, "measured"),
@@ -331,13 +341,13 @@ def quality_tests(ds: Dataset) -> list[dict[str, Any]]:
                     "meta": {
                         "dimension": r.dimension,
                         "rule": r.id,
-                        "contract": ds.entry.contract,
+                        "contract": contract_path,
                         "checks": r.description,
                     },
                 },
             }
         }
-        for r in rules_for(ds.contract)
+        for r in (rules_for(contract) if rules is None else rules)
     ]
 
 
@@ -374,8 +384,8 @@ def unmapped_labels_sql(registry: Registry) -> str:
     )
 
 
-def intermediate_yml(ds: Dataset) -> str:
-    schema = (ds.contract.raw.get("schema") or [{}])[0]
+def intermediate_columns(ds: Dataset) -> list[dict[str, Any]]:
+    """The intermediate model's columns: the contract's, those its rules derive, then the conformed keys."""
     columns = [
         {k: v for k, v in c.items() if k != "data_tests"} for c in _columns(ds.contract, f"int_{ds.id}")
     ]
@@ -383,6 +393,12 @@ def intermediate_yml(ds: Dataset) -> str:
         {"name": name, "data_type": typ, "description": desc, "meta": {"derived_from_contract": True}}
         for name, typ, _sql, desc in derived_columns(ds.contract)
     ]
+    return columns + tm.conformed_yml_columns()
+
+
+def intermediate_yml(ds: Dataset) -> str:
+    schema = (ds.contract.raw.get("schema") or [{}])[0]
+    columns = intermediate_columns(ds)
     entry = {
         "name": f"int_{ds.id}",
         "description": str(schema.get("description") or ds.entry.title).strip(),
@@ -393,7 +409,7 @@ def intermediate_yml(ds: Dataset) -> str:
             "contract_version": ds.contract.version,
             "contract_status": ds.contract.status,
         },
-        "data_tests": quality_tests(ds),
+        "data_tests": quality_tests(ds.contract, ds.id, ds.entry.contract),
         "columns": columns,
     }
     return _dump(HEADER.format(src=ds.entry.contract), {"version": 2, "models": [entry]})
@@ -407,10 +423,28 @@ def generate(registry: Registry) -> dict[Path, str]:
         out[STAGING_DIR / f"stg_{ds.id}.yml"] = staging_yml(ds)
         out[INTERMEDIATE_DIR / f"int_{ds.id}.sql"] = intermediate_sql(ds)
         out[INTERMEDIATE_DIR / f"int_{ds.id}.yml"] = intermediate_yml(ds)
+    for ds in tm.facts(registry):
+        header = HEADER.format(src=ds.entry.contract)
+        out[tm.MARTS_DIR / f"fct_{ds.id}.sql"] = tm.fact_sql(ds, header)
+        out[tm.MARTS_DIR / f"fct_{ds.id}.yml"] = tm.fact_yml(ds, intermediate_columns(ds), header)
+    for path, contract in tm.control_plane_contracts(registry.root):
+        model = f"stg_control_plane__{contract.id}"
+        out[STAGING_DIR / f"{model}.sql"] = tm.control_plane_staging_sql(contract, HEADER.format(src=path))
+        out[STAGING_DIR / f"{model}.yml"] = _model_yml(
+            contract, model, str(path), ["staging", "control_plane"], rules=True
+        )
     out[UNMAPPED_LABELS] = unmapped_labels_sql(registry)
+    marts = HEADER.format(src="contracts/ (conformedDimensions) and contracts/models/{}.odcs.yaml")
+    out[tm.MARTS_DIR / "dim_condition.sql"] = tm.dim_condition_sql(registry, marts.format("dim_condition"))
+    out[tm.MARTS_DIR / "dim_place.sql"] = tm.dim_place_sql(registry, marts.format("dim_place"))
+    out[tm.MARTS_DIR / "dim_dataset_coverage.sql"] = tm.dim_dataset_coverage_sql(
+        registry, marts.format("dim_dataset_coverage")
+    )
     for path, contract in model_contracts(registry.root):
         layer = model_layer(contract)
-        out[MODELS_DIR / layer / f"{contract.id}.yml"] = _model_yml(contract, contract.id, str(path), [layer])
+        out[MODELS_DIR / layer / f"{contract.id}.yml"] = _model_yml(
+            contract, contract.id, str(path), [layer], rules=True
+        )
     return out
 
 

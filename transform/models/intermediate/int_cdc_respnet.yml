@@ -205,3 +205,81 @@ models:
       empty for a whole place.
     meta:
       derived_from_contract: true
+  - name: condition_key
+    data_type: varchar
+    description: 'The condition''s key in dim_condition: the source id and the label as published.'
+    meta:
+      conformed: true
+  - name: condition_label
+    data_type: varchar
+    description: The publisher's condition label, exactly as published.
+    meta:
+      conformed: true
+  - name: condition_case_status
+    data_type: varchar
+    description: 'Case status (for example confirmed, probable), kept apart from the condition: from the contract.'
+    meta:
+      conformed: true
+  - name: condition_case_subtype
+    data_type: varchar
+    description: 'Case subtype (for example clinical or screening for C. auris), kept apart from the condition:
+      declared per label in the contract; never added to another subtype.'
+    meta:
+      conformed: true
+  - name: place_key
+    data_type: varchar
+    description: The place's key in dim_place; empty when the contract does not resolve the label.
+    meta:
+      conformed: true
+  - name: place_label
+    data_type: varchar
+    description: The place as the publisher names it (a renamed area shows its earlier name).
+    meta:
+      conformed: true
+  - name: place_parent_key
+    data_type: varchar
+    description: For a label that covers only part of a place, the key of the place it is part of; never add the
+      part to its parent.
+    meta:
+      conformed: true
+  - name: place_is_partial
+    data_type: boolean
+    description: True when the publisher's place covers only part of the place it is named after or sits in (for
+      example NNDSS New York, which excludes New York City).
+    meta:
+      conformed: true
+  - name: place_note
+    data_type: varchar
+    description: Which part a partial area covers, or why the place is unresolved, in plain words.
+    meta:
+      conformed: true
+  - name: place_status
+    data_type: varchar
+    description: resolved, partial_area or unresolved.
+    meta:
+      conformed: true
+  - name: mmwr_year
+    data_type: bigint
+    description: MMWR year, when the publisher counts by MMWR week.
+    meta:
+      conformed: true
+  - name: mmwr_week
+    data_type: bigint
+    description: MMWR week (1 to 53), when the publisher counts by MMWR week.
+    meta:
+      conformed: true
+  - name: time_key
+    data_type: varchar
+    description: 'The period''s key in dim_time: <year>-W<week> for an MMWR week, Y<year> for a year.'
+    meta:
+      conformed: true
+  - name: time_grain
+    data_type: varchar
+    description: mmwr_week, year or none.
+    meta:
+      conformed: true
+  - name: date_basis
+    data_type: varchar
+    description: Which date the publisher counts a case by, from the contract (dateBasis).
+    meta:
+      conformed: true

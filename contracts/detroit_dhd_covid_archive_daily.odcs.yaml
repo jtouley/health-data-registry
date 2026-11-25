@@ -39,6 +39,15 @@ schema:
           period: disease_date
           provisionalFlag: null
         description: "Every row is COVID-19, as the dashboard's title says. The bars carry the Case Status label 'Confirmed'; the field behind them is named 'Confirmed & Probable Case Count', so whether probable cases are included is an open question."
+      - property: conformedDimensions
+        value:
+          countedUnit: "confirmed and probable COVID-19 cases per day, as the dashboard labels them"
+          condition: {label: COVID-19, caseStatusColumn: case_status}
+          place:
+            match: fixed
+            fixed: {name: City of Detroit, key: US-26163/detroit, level: city}
+          time: {mmwrDate: disease_date, dateBasis: "the dashboard's disease date (field 'Confirmed & Probably Disease Date'); which event it is (onset, test or report) is not stated"}
+        description: "Every row is the City of Detroit; case status is its own column."
     properties:
       - name: view
         physicalType: VARCHAR

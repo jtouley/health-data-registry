@@ -42,6 +42,16 @@ schema:
           period: time_dim
           provisionalFlag: null
         description: "Measure kind (estimate with bounds) is declared in the semantic model. Case definition, case status, organism/resistance and a provisional flag are not published in this indicator."
+      - property: conformedDimensions
+        value:
+          countedUnit: "WHO modelled estimate of tuberculosis incidence per 100,000 population per year, with low and high bounds"
+          condition: {label: "Incidence of tuberculosis (per 100 000 population per year)"}
+          place:
+            match: none
+            column: spatial_dim
+            unresolved: "unresolved: countries are ISO3 codes, checked live against UN M49 only (its terms forbid a stored copy); WHO regions and income groups are not places here"
+          time: {year: time_dim, dateBasis: "the calendar year WHO's estimate is for"}
+        description: "Read live only (never stored), so no dbt model reads these keys."
     properties:
       - name: id
         physicalType: BIGINT

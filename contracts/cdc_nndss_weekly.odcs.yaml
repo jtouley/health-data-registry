@@ -44,6 +44,23 @@ schema:
           period: [year, week]
           provisionalFlag: null
         description: "Condition is the publisher label (no NNDSS event code or ICD-10 code is published in this dataset). Case definitions are not in the data (see openQuestions; https://ndc.services.cdc.gov/). Case status is not a column: counts are published per condition without a confirmed/probable split. Organism is part of the label for Candida auris only; no resistance field. Period is MMWR year and week. Provisional status is by reporting year per the dataset footnote, not a column."
+      - property: conformedDimensions
+        value:
+          countedUnit: "cases reported to NNDSS by the jurisdictions, each condition by its own case definition (weekly and year-to-date counts)"
+          condition:
+            column: label
+            caseStatus: "unresolved: the weekly tables do not say whether a label counts confirmed, probable or both kinds of case"
+            caseSubtypes: {"Candida auris, clinical": clinical, "Candida auris, screening": screening}
+          place:
+            match: state_name
+            column: states
+            places:
+              US RESIDENTS: {key: USA, level: nation}
+              Northern Mariana Islands: {key: US-69}
+              U.S. Virgin Islands: {key: US-78}
+              New York City: {parent: US-36, level: city, note: "New York City only, which NNDSS reports as its own area; part of New York State"}
+          time: {mmwrYear: year, mmwrWeek: week, dateBasis: "the MMWR year and week the reporting jurisdiction assigns; which date it assigns by (onset, diagnosis, laboratory result or report) is not stated in the weekly tables"}
+        description: "Each row's condition is its label; caseSubtypes are read from the labels' own words. Places are matched to the Census state code file by name; the labels the file writes differently, or that are not states, are declared. Regions, TOTAL and non-US residents stay unresolved."
     properties:
       - name: states
         physicalType: VARCHAR

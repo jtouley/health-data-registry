@@ -1,0 +1,65 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: dim_time
+name: Time dimension
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "One row per period a fact can name: every MMWR week of the MMWR calendar, with the Sunday it starts and the Saturday it ends, and every year."
+  usage: "Join a fact's time_key to time_key. Which date a case is counted by (onset, report, specimen) is the fact's date_basis, from its contract, not a property of the period."
+  limitations: "A year row is the year as the publisher labels it (an MMWR year, a calendar year or the year of a July 1 estimate, by the source's dateBasis), so it carries no dates."
+schema:
+  - name: dim_time
+    physicalName: dim_time
+    physicalType: table
+    logicalType: object
+    description: "One row per MMWR week (time_key <year>-W<week>) and per year (time_key Y<year>)."
+    customProperties:
+      - {property: layer, value: marts}
+      - {property: totalRows, value: none}
+      - {property: tableShape, value: registry}
+    properties:
+      - name: time_key
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "The period's key, which every fact's time_key joins to."
+        customProperties: [{property: role, value: dimension}]
+      - name: time_grain
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "mmwr_week or year."
+        customProperties: [{property: role, value: attribute}]
+      - name: year
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "The MMWR year of a week, or the year of a year row."
+        customProperties: [{property: role, value: dimension}]
+      - name: mmwr_week
+        physicalType: BIGINT
+        logicalType: integer
+        description: "MMWR week, 1 to 53; empty on a year row."
+        customProperties: [{property: role, value: dimension}]
+      - name: period_start
+        physicalType: DATE
+        logicalType: date
+        description: "The Sunday the MMWR week starts; empty on a year row."
+        customProperties: [{property: role, value: attribute}]
+      - name: period_end
+        physicalType: DATE
+        logicalType: date
+        description: "The Saturday the MMWR week ends; empty on a year row."
+        customProperties: [{property: role, value: attribute}]
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None: a calendar, not published numbers."}}
+  - property: openQuestions
+    value:
+      - id: q1
+        status: open
+        changesNumbers: false
+        question: "Which years should the year rows cover? They run from the dbt variable time_first_year to mmwr_last_year."

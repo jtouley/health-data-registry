@@ -39,6 +39,18 @@ schema:
           period: year
           provisionalFlag: null
         description: "The worksheet names the condition (TByear, ChlamydiaYear ...). Case definition, case status and provisional status are not published in the data."
+      - property: conformedDimensions
+        value:
+          countedUnit: "reported cases per year, and a rate as the dashboard publishes it (denominator unconfirmed)"
+          condition: {column: worksheet}
+          place:
+            match: state_name
+            column: location_label
+            places:
+              Detroit Case Rate: {key: US-26163/detroit, level: city}
+              Michigan Case Rate: {key: US-26, level: state}
+          time: {year: year, dateBasis: "the year as the chart labels it; which date places a case in a year is not stated"}
+        description: "The chart legend names the place: the City of Detroit, or the whole state of Michigan (Detroit included); never add the two."
     properties:
       - name: view
         physicalType: VARCHAR

@@ -208,7 +208,7 @@ class ConformedPlace:
     unresolved: str | None = None
 
 
-TIME_GRAINS = ("mmwr_week", "week_ending", "year", "none")
+TIME_GRAINS = ("mmwr_week", "mmwr_date", "year", "none")
 
 
 @dataclass(frozen=True)
@@ -250,7 +250,7 @@ _TOP_KEYS = frozenset({"countedUnit", "condition", "place", "time"})
 _CONDITION_KEYS = frozenset({"column", "label", "caseStatus", "caseStatusColumn", "caseSubtypes"})
 _PLACE_KEYS = frozenset({"match", "column", "stateColumn", "countyColumn", "places", "fixed", "unresolved"})
 _PLACE_DECL_KEYS = frozenset({"key", "parent", "level", "note", "name"})
-_TIME_KEYS = frozenset({"mmwrYear", "mmwrWeek", "weekEndingDate", "year", "dateBasis"})
+_TIME_KEYS = frozenset({"mmwrYear", "mmwrWeek", "mmwrDate", "year", "dateBasis"})
 
 
 def _mapping(value: Any, where: str, keys: frozenset[str]) -> Mapping[str, Any]:
@@ -313,7 +313,11 @@ def parse_conformed(value: Any, where: str, columns: frozenset[str]) -> Conforme
         case_subtypes=tuple((str(k), str(v)) for k, v in subtypes.items()),
     )
 
-    p = _mapping(top.get("place") or {"match": "none"}, f"{where}: conformedDimensions.place", _PLACE_KEYS)
+    p = _mapping(
+        top.get("place") or {"match": "none", "unresolved": "unresolved: the contract declares no place"},
+        f"{where}: conformedDimensions.place",
+        _PLACE_KEYS,
+    )
     match = str(p.get("match") or "")
     if match not in PLACE_MATCHES:
         raise ConformedInvalid(f"{where}: place.match must be one of {', '.join(PLACE_MATCHES)}")
@@ -359,14 +363,14 @@ def parse_conformed(value: Any, where: str, columns: frozenset[str]) -> Conforme
     year, week, ending = (
         _opt_text(t.get("mmwrYear")),
         _opt_text(t.get("mmwrWeek")),
-        _opt_text(t.get("weekEndingDate")),
+        _opt_text(t.get("mmwrDate")),
     )
     plain_year = _opt_text(t.get("year"))
     if (year is None) != (week is None):
         raise ConformedInvalid(f"{where}: time.mmwrYear and time.mmwrWeek go together")
-    chosen = [g for g, on in (("mmwr_week", year), ("week_ending", ending), ("year", plain_year)) if on]
+    chosen = [g for g, on in (("mmwr_week", year), ("mmwr_date", ending), ("year", plain_year)) if on]
     if len(chosen) > 1:
-        raise ConformedInvalid(f"{where}: time declares one grain: mmwrYear+mmwrWeek, weekEndingDate or year")
+        raise ConformedInvalid(f"{where}: time declares one grain: mmwrYear+mmwrWeek, mmwrDate or year")
     time = ConformedTime(
         grain=chosen[0] if chosen else "none",
         year_column=year or plain_year,

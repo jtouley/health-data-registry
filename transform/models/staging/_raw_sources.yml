@@ -205,3 +205,96 @@ sources:
       data_type: varchar
     - name: YEAR
       data_type: varchar
+  - name: census_fips_county
+    description: Raw records of County and county-equivalent FIPS codes, 2020 Census (national_county2020), every
+      value as the publisher sent it (text). One file per load, named by its snapshot id, so the newest file sorts
+      last.
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/census_fips_county.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      external_location: 'read_json(''{{ env_var(''HDR_RAW_RECORDS'', ''../lake/raw_records'') }}/census_fips_county/*.ndjson'',
+        format=''newline_delimited'', filename=true, columns={{ ''{{'' }}''CLASSFP'': ''VARCHAR'', ''COUNTYFP'':
+        ''VARCHAR'', ''COUNTYNAME'': ''VARCHAR'', ''COUNTYNS'': ''VARCHAR'', ''FUNCSTAT'': ''VARCHAR'', ''STATE'':
+        ''VARCHAR'', ''STATEFP'': ''VARCHAR''{{ ''}}'' }})'
+    columns:
+    - name: CLASSFP
+      data_type: varchar
+    - name: COUNTYFP
+      data_type: varchar
+    - name: COUNTYNAME
+      data_type: varchar
+    - name: COUNTYNS
+      data_type: varchar
+    - name: FUNCSTAT
+      data_type: varchar
+    - name: STATE
+      data_type: varchar
+    - name: STATEFP
+      data_type: varchar
+  - name: census_fips_state
+    description: Raw records of State and state-equivalent FIPS codes, 2020 Census (national_state2020), every value
+      as the publisher sent it (text). One file per load, named by its snapshot id, so the newest file sorts last.
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/census_fips_state.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      external_location: 'read_json(''{{ env_var(''HDR_RAW_RECORDS'', ''../lake/raw_records'') }}/census_fips_state/*.ndjson'',
+        format=''newline_delimited'', filename=true, columns={{ ''{{'' }}''STATE'': ''VARCHAR'', ''STATEFP'': ''VARCHAR'',
+        ''STATENS'': ''VARCHAR'', ''STATE_NAME'': ''VARCHAR''{{ ''}}'' }})'
+    columns:
+    - name: STATE
+      data_type: varchar
+    - name: STATEFP
+      data_type: varchar
+    - name: STATENS
+      data_type: varchar
+    - name: STATE_NAME
+      data_type: varchar
+- name: control_plane
+  description: Exports of the control plane (task 83), each with an ODCS contract in contracts/control_plane/.
+  tables:
+  - name: condition_crosswalk
+    description: 'The control plane''s latest export of condition_crosswalk: every value as text. Absent until the
+      control plane exports one; then the staging model is empty.'
+    meta:
+      contract: contracts/control_plane/condition_crosswalk.odcs.yaml
+      raw_contract_version: 0.1.0
+      optional: true
+      glob: '{{ env_var(''HDR_CONTROL_PLANE'', ''../lake/control_plane'') }}/condition_crosswalk/*.ndjson'
+      external_location: 'read_json(''{{ env_var(''HDR_CONTROL_PLANE'', ''../lake/control_plane'') }}/condition_crosswalk/*.ndjson'',
+        format=''newline_delimited'', filename=true, columns={{ ''{{'' }}''dataset'': ''VARCHAR'', ''gbd_cause'':
+        ''VARCHAR'', ''label'': ''VARCHAR'', ''mesh_id'': ''VARCHAR'', ''ncbi_taxon_id'': ''VARCHAR'', ''note'':
+        ''VARCHAR'', ''proposed_by'': ''VARCHAR'', ''record_id'': ''VARCHAR'', ''reviewed_at'': ''VARCHAR'', ''reviewer'':
+        ''VARCHAR'', ''source'': ''VARCHAR'', ''state'': ''VARCHAR'', ''synonym'': ''VARCHAR''{{ ''}}'' }})'
+    columns:
+    - name: dataset
+      data_type: varchar
+    - name: gbd_cause
+      data_type: varchar
+    - name: label
+      data_type: varchar
+    - name: mesh_id
+      data_type: varchar
+    - name: ncbi_taxon_id
+      data_type: varchar
+    - name: note
+      data_type: varchar
+    - name: proposed_by
+      data_type: varchar
+    - name: record_id
+      data_type: varchar
+    - name: reviewed_at
+      data_type: varchar
+    - name: reviewer
+      data_type: varchar
+    - name: source
+      data_type: varchar
+    - name: state
+      data_type: varchar
+    - name: synonym
+      data_type: varchar

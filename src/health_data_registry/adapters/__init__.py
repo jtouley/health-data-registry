@@ -60,13 +60,17 @@ def _pages(
         from health_data_registry.adapters import tableau
 
         yield from tableau.pages(entry, fetcher, max_rows=max_rows, fields=fields)
+    elif entry.source.portal == "html_table":
+        from health_data_registry.adapters import html_table
+
+        yield from html_table.pages(entry, fetcher, max_rows=max_rows, fields=fields)
     else:  # pragma: no cover - the catalog model forbids other portals
         raise ValueError(f"no adapter for portal {entry.source.portal}")
 
 
 def publisher_fields(entry: CatalogEntry, fetcher: Fetcher) -> set[str]:
     """The field names the publisher serves today, for the contract drift check (any portal)."""
-    from health_data_registry.adapters import https_csv, socrata, tableau, who_gho
+    from health_data_registry.adapters import html_table, https_csv, socrata, tableau, who_gho
 
     if entry.source.portal == "tableau":
         return tableau.publisher_fields(entry, fetcher)
@@ -74,4 +78,6 @@ def publisher_fields(entry: CatalogEntry, fetcher: Fetcher) -> set[str]:
         return socrata.publisher_fields(entry, fetcher)
     if entry.source.portal == "who_gho":
         return who_gho.publisher_fields(entry, fetcher)
+    if entry.source.portal == "html_table":
+        return html_table.publisher_fields(entry, fetcher)
     return https_csv.publisher_fields(entry, fetcher)

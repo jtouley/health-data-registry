@@ -1,0 +1,108 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: census_fips_state
+name: State and state-equivalent FIPS codes (2020 Census)
+version: 0.1.0
+status: draft
+domain: reference
+description:
+  purpose: "The Census Bureau's 2020 code list for the states, the District of Columbia and the US island areas: each one's two-digit FIPS code, postal abbreviation and name. It is the source of every US state key in the marts' place dimension (dim_place)."
+  usage: "Join a publisher's state name or FIPS code to its key. A code list, never an answer on its own."
+  limitations: "2020 Census codes; names are the Census Bureau's own (for example 'United States Virgin Islands', 'Commonwealth of the Northern Mariana Islands'), so a publisher that writes a name differently needs a declared place in its contract."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://www2.census.gov/geo/docs/reference/codes2020/national_state2020.txt", description: "The file (fetched 2026-11-25: 57 rows, pipe-delimited)"}
+    - {type: businessDefinition, url: "https://www.census.gov/library/reference/code-lists/ansi.html", description: "Publisher's field list: STATE postal abbreviation, STATEFP state FIPS code, STATENS state NS code, STATE_NAME state name"}
+servers:
+  - id: www2_census_gov
+    server: www2.census.gov
+    type: https
+    location: https://www2.census.gov/geo/docs/reference/codes2020/national_state2020.txt
+    description: "One pipe-delimited text file, one header row, no paging, no key. The raw bytes are kept unchanged."
+schema:
+  - name: census_fips_state
+    physicalName: census_fips_state
+    physicalType: table
+    logicalType: object
+    description: "One row per state, DC or island area, with its FIPS code and name as the Census Bureau writes them."
+    dataGranularityDescription: "state or state equivalent"
+    customProperties:
+      - {property: totalRows, value: none}
+      - {property: tableShape, value: registry}
+      - property: idDimensions
+        value: {condition: null, caseDefinition: null, caseStatus: null, organismResistance: null, period: null, provisionalFlag: null}
+        description: "A code list: no condition, case definition, case status, organism or period."
+      - property: conformedDimensions
+        value:
+          countedUnit: "none: a code list, with no counts"
+          place: {match: fips, stateColumn: state_fips}
+          time: {dateBasis: "not applicable: the 2020 Census code list"}
+        description: "Every row is the state its own FIPS code names."
+    properties:
+      - name: postal
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Two-letter postal abbreviation of the state or area (for example MI for Michigan, PR for Puerto Rico)."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: STATE}
+      - name: state_fips
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "Two-digit state FIPS code, kept as text so the leading zero stays (for example 01 Alabama, 26 Michigan)."
+        examples: ["01", "26", "72"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: STATEFP}
+        quality:
+          - id: state_fips_unique
+            dimension: uniqueness
+            severity: error
+            type: sql
+            description: "The file layout lists one row per state code (structural: the code is the row's identity)."
+            query: "SELECT COUNT(*) - COUNT(DISTINCT state_fips) FROM {object}"
+            mustBe: 0
+          - id: state_fips_two_digits
+            dimension: conformity
+            severity: error
+            type: sql
+            description: "The layout's example is 48 for Texas: a state FIPS code is two digits."
+            query: "SELECT COUNT(*) FROM {object} WHERE NOT regexp_full_match(state_fips, '[0-9]{2}')"
+            mustBe: 0
+      - name: state_ns
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The state's National Standards (GNIS) code, eight digits as text."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: STATENS}
+      - name: state_name
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Name of the state or area as the Census Bureau writes it (for example Michigan, District of Columbia, United States Virgin Islands)."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: STATE_NAME}
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: citation, value: "U.S. Census Bureau. 2020 Census codes for States and State Equivalent Entities (national_state2020.txt)."}
+  - {property: refresh, value: irregular}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "Each refresh stores the complete file as a dated, append-only load."
+  - {property: unreliableRule, value: {kind: none, description: "None: a code list, with no values to suppress."}}
+  - property: openQuestions
+    value:
+      - id: q1
+        status: open
+        changesNumbers: false
+        question: "Licence: the file states no licence; public-domain-us-federal is assumed from its being a Census Bureau work (17 U.S.C. 105). Maintainer to confirm."
+      - id: q2
+        status: open
+        changesNumbers: false
+        question: "Should a newer code list replace the 2020 file when the Census Bureau publishes one at a stable address? None was found under www2.census.gov/geo/docs/reference/ on 2026-11-25."

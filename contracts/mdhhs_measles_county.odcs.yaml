@@ -39,6 +39,16 @@ schema:
           period: null
           provisionalFlag: null
         description: "The worksheet carries no condition, case definition, case status or period field: every row is measles, as the dashboard's title says. The period is an open question."
+      - property: conformedDimensions
+        value:
+          countedUnit: "measles cases reported to MDHHS (total, and outbreak-associated)"
+          condition: {label: Measles}
+          place:
+            match: none
+            column: county
+            unresolved: "unresolved: Michigan county names are not matched to FIPS codes yet, and how MDHHS places Detroit's cases (in Wayne County or apart) is an open question"
+          time: {dateBasis: "unresolved: the worksheet has no date or year (see openQuestions)"}
+        description: "No place or period key until the open questions on county names and the period are answered."
     properties:
       - name: view
         physicalType: VARCHAR

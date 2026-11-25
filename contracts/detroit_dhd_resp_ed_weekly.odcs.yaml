@@ -38,6 +38,15 @@ schema:
           period: week_ending
           provisionalFlag: null
         description: "The Diagnosis1 field names the condition. How a visit is classed as COVID-19, influenza or RSV (diagnosis codes, chief complaint, a laboratory result) is not in the data."
+      - property: conformedDimensions
+        value:
+          countedUnit: "the share of all emergency department visits that carry the diagnosis (a fraction, not a count)"
+          condition: {column: diagnosis}
+          place:
+            match: fixed
+            fixed: {name: City of Detroit, key: US-26163/detroit, level: city}
+          time: {mmwrDate: week_ending, dateBasis: "the week-ending date of the visits' week"}
+        description: "Every row is the City of Detroit (geographyBasis unresolved: residence or hospital location)."
     properties:
       - name: view
         physicalType: VARCHAR

@@ -42,6 +42,15 @@ schema:
           period: yearname
           provisionalFlag: null
         description: "The whole dataset is one condition (Clostridioides difficile infection), so there is no condition column. Strain (ribotype) appears in series for topic 'Strain type' only; no resistance field. Healthcare- vs community-associated is an epidemiologic class (grouping/series), not a case status. Period is calendar year. No case definition, case status or provisional column."
+      - property: conformedDimensions
+        value:
+          countedUnit: "Clostridioides difficile infection cases in the Emerging Infections Program catchment areas, as counts or rates per 100,000 (topic says which)"
+          condition: {label: "Clostridioides difficile infection"}
+          place:
+            match: fixed
+            fixed: {name: "Emerging Infections Program catchment areas combined", parent: USA, level: catchment, note: "the EIP catchment areas combined, not the whole United States (geographyBasis)"}
+          time: {year: yearname, dateBasis: "the surveillance year as published (yearname); which date places a case in a year is not stated on data.cdc.gov"}
+        description: "One condition and one place (the EIP catchment areas combined) for every row."
     properties:
       - name: yearname
         physicalType: BIGINT

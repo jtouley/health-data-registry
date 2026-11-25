@@ -1,0 +1,154 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: census_fips_county
+name: County and county-equivalent FIPS codes (2020 Census)
+version: 0.1.0
+status: draft
+domain: reference
+description:
+  purpose: "The Census Bureau's 2020 code list for counties and county equivalents: each one's state and county FIPS codes, name, FIPS class code and functional status. It is the source of every US county key in the marts' place dimension (dim_place)."
+  usage: "Join a publisher's state and county FIPS codes to a county key. A code list, never an answer on its own."
+  limitations: "2020 Census codes: Connecticut appears as its eight former counties, not the nine planning regions used by Census population estimates from 2022, so planning-region codes stay unresolved until a newer code list is catalogued."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://www2.census.gov/geo/docs/reference/codes2020/national_county2020.txt", description: "The file (fetched 2026-11-25: 3,235 rows, pipe-delimited, UTF-8, Last-Modified 2023-02-13)"}
+    - {type: businessDefinition, url: "https://www.census.gov/library/reference/code-lists/ansi.html", description: "Publisher's field list (STATE, STATEFP, COUNTYFP, COUNTYNS, COUNTYNAME, CLASSFP, FUNCSTAT) and the meaning of every FIPS class and functional status code"}
+servers:
+  - id: www2_census_gov
+    server: www2.census.gov
+    type: https
+    location: https://www2.census.gov/geo/docs/reference/codes2020/national_county2020.txt
+    description: "One pipe-delimited UTF-8 text file, one header row, no paging, no key. The raw bytes are kept unchanged."
+schema:
+  - name: census_fips_county
+    physicalName: census_fips_county
+    physicalType: table
+    logicalType: object
+    description: "One row per county or county equivalent, with its FIPS codes and name as the Census Bureau writes them."
+    dataGranularityDescription: "county or county equivalent"
+    customProperties:
+      - {property: totalRows, value: none}
+      - {property: tableShape, value: registry}
+      - property: idDimensions
+        value: {condition: null, caseDefinition: null, caseStatus: null, organismResistance: null, period: null, provisionalFlag: null}
+        description: "A code list: no condition, case definition, case status, organism or period."
+      - property: conformedDimensions
+        value:
+          countedUnit: "none: a code list, with no counts"
+          place: {match: fips, stateColumn: state_fips, countyColumn: county_fips}
+          time: {dateBasis: "not applicable: the 2020 Census code list"}
+        description: "Every row is the county its own state and county FIPS codes name."
+    properties:
+      - name: postal
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Two-letter postal abbreviation of the county's state or area."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: STATE}
+      - name: state_fips
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "Two-digit FIPS code of the county's state, as text."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: STATEFP}
+      - name: county_fips
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "Three-digit county FIPS code within the state, as text (for example 163 for Wayne County, Michigan)."
+        examples: ["001", "163"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: COUNTYFP}
+        quality:
+          - id: county_key_unique
+            dimension: uniqueness
+            severity: error
+            type: sql
+            description: "The file layout lists one row per county, sorted by STATEFP then COUNTYFP (structural)."
+            query: "SELECT COUNT(*) - COUNT(DISTINCT state_fips || county_fips) FROM {object}"
+            mustBe: 0
+          - id: county_fips_three_digits
+            dimension: conformity
+            severity: error
+            type: sql
+            description: "The layout's example is 041 for Brazos County: a county FIPS code is three digits."
+            query: "SELECT COUNT(*) FROM {object} WHERE NOT regexp_full_match(county_fips, '[0-9]{3}')"
+            mustBe: 0
+      - name: county_ns
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The county's National Standards (GNIS) code, eight digits as text."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: COUNTYNS}
+      - name: county_name
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "County name with its legal or statistical description (for example Wayne County, Orleans Parish, Anchorage Municipality); names repeat across states, so read it with the state."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: COUNTYNAME}
+      - name: class_code
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "FIPS class code, quoted from the code list: H1 an active county or statistically equivalent entity; H4 a legally defined inactive or nonfunctioning county or equivalent; H5 a census area in Alaska; H6 a county or equivalent coextensive or consolidated with an incorporated place; C7 an incorporated place independent of any county."
+        examples: ["H1", "H6", "C7"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: CLASSFP}
+        quality:
+          - id: class_codes
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: [H1, H4, H5, H6, C7]}
+            mustBe: 0
+            description: "The code list defines only these FIPS class codes for counties."
+      - name: functional_status
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Functional status of the county's government, quoted from the code list: A active government; B active, partially consolidated with another government; C active, consolidated with another government; F a fictitious entity filling the Census hierarchy; G active, subordinate to another government; N nonfunctioning legal entity; S a statistical entity."
+        examples: ["A", "N", "S"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: FUNCSTAT}
+        quality:
+          - id: functional_status_codes
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: [A, B, C, F, G, N, S]}
+            mustBe: 0
+            description: "The code list defines only these functional status codes."
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: citation, value: "U.S. Census Bureau. 2020 Census codes for Counties and County Equivalent Entities (national_county2020.txt)."}
+  - {property: refresh, value: irregular}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "Each refresh stores the complete file as a dated, append-only load."
+  - {property: unreliableRule, value: {kind: none, description: "None: a code list, with no values to suppress."}}
+  - property: openQuestions
+    value:
+      - id: q1
+        status: open
+        changesNumbers: false
+        question: "Licence: the file states no licence; public-domain-us-federal is assumed from its being a Census Bureau work (17 U.S.C. 105). Maintainer to confirm."
+      - id: q2
+        status: open
+        changesNumbers: true
+        question: "Connecticut planning regions (09110 to 09190), used by the Vintage 2025 population estimates, are not in the 2020 code file, so those rows of census_county_pop have no place key. Which Census code list should supply them?"

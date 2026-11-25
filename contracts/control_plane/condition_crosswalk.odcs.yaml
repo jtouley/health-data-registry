@@ -1,0 +1,149 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: condition_crosswalk
+name: Control-plane export - condition label to concept crosswalk
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "The control plane's crosswalk (task 83), exported as records: each maps one publisher condition label of one catalogued source to a concept (a MeSH descriptor, an NCBI Taxonomy id and the GBD cause name), with its review state. dbt reads the latest export as a source; only accepted records reach dim_condition."
+  usage: "Exported by the control plane to $HDR_CONTROL_PLANE/condition_crosswalk/<export id>.ndjson, one complete export per file, the newest file last by name. While no export exists every label is unresolved. A record is proposed until a maintainer accepts or rejects it, naming themselves, the date and the source they checked. String matching (crosswalk.py) and the DEV eval set's synonyms may only write proposed records; nothing from the TEST split, and no model output, is ever written (hard rules 1, 9 and 14)."
+  limitations: "A proposed record changes nothing in an answer. A label with no accepted record has no concept ids and says unresolved."
+  authoritativeDefinitions:
+    - {type: businessDefinition, url: "https://www.nlm.nih.gov/mesh/meshhome.html", description: "MeSH descriptors (unique ids D followed by six or nine digits)"}
+    - {type: businessDefinition, url: "https://www.ncbi.nlm.nih.gov/taxonomy", description: "NCBI Taxonomy (numeric taxon ids)"}
+schema:
+  - name: condition_crosswalk
+    physicalName: condition_crosswalk
+    physicalType: table
+    logicalType: object
+    description: "One row per crosswalk record: one publisher label, the concept it is mapped to, and the record's review state."
+    customProperties:
+      - {property: totalRows, value: none}
+      - {property: tableShape, value: registry}
+    properties:
+      - name: record_id
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "The control plane's id for this record."
+        customProperties: [{property: role, value: dimension}]
+      - name: dataset
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The catalogued source whose label this is (a catalog id, for example cdc_nndss_weekly)."
+        customProperties: [{property: role, value: dimension}]
+      - name: label
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The publisher's condition label, exactly as published."
+        customProperties: [{property: role, value: dimension}]
+      - name: state
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Review state: proposed (nobody has checked it; changes nothing), accepted (a maintainer checked it against the named source) or rejected (a maintainer checked it and it is wrong)."
+        examples: [proposed, accepted, rejected]
+        customProperties: [{property: role, value: attribute}]
+        quality:
+          - id: state_values
+            dimension: conformity
+            severity: error
+            type: library
+            metric: invalidValues
+            arguments: {validValues: [proposed, accepted, rejected]}
+            mustBe: 0
+            description: "A record is proposed, accepted or rejected; nothing else."
+      - name: mesh_id
+        physicalType: VARCHAR
+        logicalType: string
+        description: "MeSH descriptor unique id of the concept (for example D007877 for Legionellosis)."
+        customProperties: [{property: role, value: attribute}]
+      - name: ncbi_taxon_id
+        physicalType: VARCHAR
+        logicalType: string
+        description: "NCBI Taxonomy id of the organism, for a label that names one (for example 445 for Legionella)."
+        customProperties: [{property: role, value: attribute}]
+      - name: gbd_cause
+        physicalType: VARCHAR
+        logicalType: string
+        description: "The GBD cause name the label is counted under, as the IHME GBD connector names it (for example Lower respiratory infections)."
+        customProperties: [{property: role, value: attribute}]
+      - name: synonym
+        physicalType: VARCHAR
+        logicalType: string
+        description: "A clinician's wording proposed as another way to ask for the label (from the DEV eval set only); empty for a concept mapping."
+        customProperties: [{property: role, value: attribute}]
+      - name: proposed_by
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "What wrote the record: string_match (crosswalk.py, exact spelling), dev_eval_synonym (crosswalk.py, the DEV eval set) or maintainer (written by a person)."
+        examples: [string_match, dev_eval_synonym, maintainer]
+        customProperties: [{property: role, value: attribute}]
+        quality:
+          - id: proposed_by_values
+            dimension: conformity
+            severity: error
+            type: library
+            metric: invalidValues
+            arguments: {validValues: [string_match, dev_eval_synonym, maintainer]}
+            mustBe: 0
+            description: "Only these writers exist; no model output is ever a record (hard rule 9)."
+      - name: source
+        physicalType: VARCHAR
+        logicalType: string
+        description: "What the mapping was checked against: the publisher's codebook, the MeSH or NCBI record, or the GBD cause list, with its address."
+        customProperties: [{property: role, value: attribute}]
+      - name: reviewer
+        physicalType: VARCHAR
+        logicalType: string
+        description: "The maintainer who accepted or rejected the record; empty while it is proposed."
+        customProperties: [{property: role, value: attribute}]
+      - name: reviewed_at
+        physicalType: DATE
+        logicalType: date
+        description: "The date the maintainer accepted or rejected the record; empty while it is proposed."
+        customProperties: [{property: role, value: attribute}]
+      - name: note
+        physicalType: VARCHAR
+        logicalType: string
+        description: "The reviewer's or proposer's note in plain words."
+        customProperties: [{property: role, value: attribute}]
+    quality:
+      - id: reviewed_records_name_their_review
+        dimension: completeness
+        severity: error
+        type: sql
+        description: "An accepted or rejected record names its reviewer, its date and its source (hard rule 1)."
+        query: "SELECT COUNT(*) FROM {object} WHERE state IN ('accepted', 'rejected') AND (reviewer IS NULL OR reviewed_at IS NULL OR source IS NULL)"
+        mustBe: 0
+      - id: proposed_records_have_no_reviewer
+        dimension: consistency
+        severity: error
+        type: sql
+        description: "A proposed record has not been reviewed, so it names no reviewer and no review date."
+        query: "SELECT COUNT(*) FROM {object} WHERE state = 'proposed' AND (reviewer IS NOT NULL OR reviewed_at IS NOT NULL)"
+        mustBe: 0
+      - id: accepted_records_name_a_concept
+        dimension: completeness
+        severity: error
+        type: sql
+        description: "An accepted mapping gives at least one concept id or the GBD cause; a synonym record is a way of asking, not a concept."
+        query: "SELECT COUNT(*) FROM {object} WHERE state = 'accepted' AND synonym IS NULL AND mesh_id IS NULL AND ncbi_taxon_id IS NULL AND gbd_cause IS NULL"
+        mustBe: 0
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None: review records, not published numbers."}}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "Each export is complete; the newest file is read."
+  - property: openQuestions
+    value:
+      - id: q1
+        status: open
+        changesNumbers: false
+        question: "Task 83: the control plane is not built yet, so no export exists and every label is unresolved. Confirm the export path ($HDR_CONTROL_PLANE/condition_crosswalk/) and record layout when it is."

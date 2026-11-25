@@ -1,0 +1,9 @@
+dataset: census_fips_county
+version: 0.1.0
+# A code list: dimensions to filter on, no measures, metrics or series.
+dimensions:
+  - {name: state_fips, column: state_fips, type: categorical, description: "Two-digit FIPS code of the county's state."}
+  - {name: county_fips, column: county_fips, type: categorical, description: "Three-digit county FIPS code within the state."}
+  - {name: county, column: county_name, type: categorical, description: "County name; repeats across states, so pair it with the state."}
+measures: []
+metrics: []

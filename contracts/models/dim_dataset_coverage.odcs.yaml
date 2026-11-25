@@ -1,0 +1,119 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: dim_dataset_coverage
+name: Dataset coverage
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "One row per fact: what one count in it is, which date its cases are counted by, its first and last period, how many places and conditions it covers, its review state, and how many of its rows have a place or a condition that is not resolved yet."
+  usage: "Read before choosing a source for a question. Facts are separate series: two rows here with different counted units are never added or compared as one count."
+  limitations: "Counts rows as published, including the publisher's total rows."
+schema:
+  - name: dim_dataset_coverage
+    physicalName: dim_dataset_coverage
+    physicalType: table
+    logicalType: object
+    description: "One row per fact (stored source with measures)."
+    customProperties:
+      - {property: layer, value: marts}
+      - {property: totalRows, value: none}
+      - {property: tableShape, value: registry}
+    properties:
+      - name: dataset_id
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "The catalogued source."
+        customProperties: [{property: role, value: dimension}]
+      - name: title
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The source's title from its catalog entry."
+        customProperties: [{property: role, value: attribute}]
+      - name: counted_unit
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "What one count in the source is, from its contract (countedUnit)."
+        customProperties: [{property: role, value: attribute}]
+      - name: date_basis
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Which date the publisher counts a case by, from its contract (dateBasis)."
+        customProperties: [{property: role, value: attribute}]
+      - name: geography_basis
+        physicalType: VARCHAR
+        logicalType: string
+        description: "What a place means in the source (for example patient residence), from its contract."
+        customProperties: [{property: role, value: attribute}]
+      - name: contract_version
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The contract version the fact was built with."
+        customProperties: [{property: role, value: attribute}]
+      - name: review_state
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "reviewed, or why the contract is still a draft (for example open questions that could change a number)."
+        customProperties: [{property: role, value: attribute}]
+      - name: licence
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The source's licence id from its catalog entry."
+        customProperties: [{property: role, value: attribute}]
+      - name: row_count
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "Rows in the fact."
+        customProperties: [{property: role, value: attribute}]
+      - name: first_time_key
+        physicalType: VARCHAR
+        logicalType: string
+        description: "The earliest period key in the fact."
+        customProperties: [{property: role, value: attribute}]
+      - name: last_time_key
+        physicalType: VARCHAR
+        logicalType: string
+        description: "The latest period key in the fact."
+        customProperties: [{property: role, value: attribute}]
+      - name: conditions
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "How many condition labels the fact carries."
+        customProperties: [{property: role, value: attribute}]
+      - name: places
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "How many resolved place keys the fact carries."
+        customProperties: [{property: role, value: attribute}]
+      - name: unresolved_place_rows
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "Rows whose place the contract does not resolve yet."
+        customProperties: [{property: role, value: attribute}]
+      - name: partial_area_rows
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "Rows for a place that covers only part of the place it is named after."
+        customProperties: [{property: role, value: attribute}]
+      - name: unresolved_condition_rows
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "Rows whose condition label has no accepted concept yet."
+        customProperties: [{property: role, value: attribute}]
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None: a summary of the facts, not published numbers."}}

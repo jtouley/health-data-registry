@@ -19,6 +19,8 @@ vars:
   # The MMWR years the calendar covers (contracts/models/mmwr_calendar.odcs.yaml).
   mmwr_first_year: 2015
   mmwr_last_year: 2030
+  # The years dim_time has a year row for (contracts/models/dim_time.odcs.yaml), up to mmwr_last_year.
+  time_first_year: 2000
   # What the near-zero review queue looks at (contracts/models/flag_near_zero_running_totals.odcs.yaml): never a
   # number in an answer.
   near_zero_ytd_max: 1
@@ -41,3 +43,7 @@ models:
     flag:
       +materialized: table
       +schema: flag
+    # Conformed dimensions and one fact per source (transform_marts.py); facts are never unioned.
+    marts:
+      +materialized: table
+      +schema: marts
