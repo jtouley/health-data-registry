@@ -390,8 +390,8 @@ def test_loading_a_private_store_takes_the_same_statements_for_ten_rows_or_a_tho
         got = private.read_rows(lake, ds)
         assert got is not None
         records = [{k: (None if v is None else str(v)) for k, v in r.items()} for r in got.rows]
-        con = _Counting(duckdb.connect(":memory:"))
-        staged = load_live(con, ds, records)  # type: ignore[arg-type]
+        con: Any = _Counting(duckdb.connect(":memory:"))
+        staged = load_live(con, ds, records)
         assert staged.staging.row_count == n
         assert con.execute(f"SELECT count(DISTINCT doi), count(*) FROM {ds.id}").fetchone() == (n, n)
         counts.append(con.statements)

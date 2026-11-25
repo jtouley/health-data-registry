@@ -154,7 +154,7 @@ def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[st
             # are text or NULL, as both callers give them, so the VARCHAR lists keep them exactly as sent.
             cols = ", ".join(f"unnest(${i}::VARCHAR[])" for i in range(1, len(fields) + 1))
             con.execute(
-                f"INSERT INTO {q(raw)} SELECT {cols}",  # noqa: S608 - quoted contract identifiers, bound values
+                f"INSERT INTO {q(raw)} SELECT {cols}",  # quoted contract identifiers, bound values
                 [[r.get(f) for r in records] for f in fields],
             )
         present = {k for r in records for k in r} or None
