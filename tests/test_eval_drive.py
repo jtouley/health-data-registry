@@ -1074,7 +1074,7 @@ def test_scorer_readers_skip_the_drive_header() -> None:
 
 
 def test_answers_by_question_refuses_a_question_answered_twice() -> None:
-    with pytest.raises(ScorerError, match="more than once"):
+    with pytest.raises(ScorerError, match="^an answers file answers a question more than once$"):
         answers_by_question([{"id": "syn-1", "answer": "a"}, {"id": "syn-1", "answer": "b"}])
 
 
