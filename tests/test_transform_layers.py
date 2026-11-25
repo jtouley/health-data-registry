@@ -147,7 +147,13 @@ def _macro_sql(arguments: dict[str, Any], relation: str) -> str:
     body = MACRO.read_text().split("{% test odcs_check(")[1].split("%}", 1)[1]
     body = body.split("{% endtest %}")[0]
     return (
-        jinja2.Environment(autoescape=False)  # noqa: S701 - SQL from a test fixture, never HTML
+        # The template renders SQL for DuckDB, never HTML: escaping would turn the SQL's quotes into entities.
+        # An explicit policy that escapes nothing, for files or strings.
+        jinja2.Environment(
+            autoescape=jinja2.select_autoescape(
+                enabled_extensions=(), default_for_string=False, default=False
+            )
+        )
         .from_string(body)
         .render(model=relation, **{"nothing_to_judge": False, **arguments})
         .strip()
