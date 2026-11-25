@@ -34,7 +34,18 @@ source:
     sheets: ["State totals", "Jurisdiction totals"]
     header_row: 2
     sheet_field: sheet
+  # A US federal host (HHS), read under the owner's government-host access policy (ADR 0013, issue #36): honest
+  # user agent, at least 10 s between requests, any robots.txt override recorded in the fetch log. On 2026-11-25
+  # robots.txt was 404 (no rules) on ahead-files.hiv.gov and "Allow: /" on ahead.hiv.gov, so nothing is overridden.
+  government_host: true
 codebook_url: https://ahead.hiv.gov/about/methods
+conditions:
+  dimension: null
+  # Provenance: the contract's idDimensions (one condition throughout; indicator names the EHE measure).
+  source: "This source covers one condition only: HIV (the six Ending the HIV Epidemic indicators)."
+  labels:
+    - "HIV"
+  aliases: []
 caveats:
   - "Notes cited below are AHEAD's technical notes, printed under the data on each sheet of the workbook."
   - "Years 2025 and 2026 are preliminary (note I, '2025 and 2026 data', a). 2026 is a part year: diagnoses run through June 2026 and linkage to care through March 2026 (same note), so a 2026 count is not comparable with a full year's."

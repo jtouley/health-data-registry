@@ -13,6 +13,17 @@ All notable changes to this project are documented here. The format follows
   Michigan, read from AHEAD's "Download All Data" workbook. Draft contract; 95% intervals kept, empty cells never
   read as zero. A new `https_xlsx` adapter reads named sheets of a published workbook with the standard library,
   and a catalog entry may declare a larger byte cap (`max_bytes`) for a whole-file download.
+- Condition vocabulary: each catalog entry lists the publisher's own condition labels (`conditions:`, with
+  where they come from), and `get_series`, `get_rate` and `get_trend` accept any of them through the semantic
+  model's `generic_series`, with the same aggregation rules as the named series. `validate` fails when a local
+  snapshot holds a label the catalog doesn't list.
+- `describe_dataset` returns `dimension_values` (the values each filter takes) and `presentation_rules`;
+  discovery results (`list_sources`, `search_datasets`, `suggest_datasets`, `describe_dataset`) carry each
+  source's provenance (source URL, retrieved_at, raw sha256, version, licence, citation, contract status).
+- Structured declines: every refusal carries `next_step`, and where they apply `did_you_mean`,
+  `nearest_served` (e.g. the state for a county), `served_elsewhere` (the publisher's page),
+  `outside_registry` (a GBD cause by name only) or, for `filter_matched_nothing`, the values that exist.
+- The server's instructions are an intent-to-tool routing block.
 - Repository scaffolding under the Apache License 2.0, with a NOTICE for material adapted from the author's
   earlier MIT-licensed work.
 - SECURITY.md (private reporting through GitHub advisories, 14-day first response), CONTRIBUTING.md,
