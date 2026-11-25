@@ -91,7 +91,7 @@ SEP = "ǁ"
 # its mutants runs most of the suite). 150 is under 3 minutes at the slowest ordinary rate, and 40 is about that
 # for registry.py. Setup comes on top (3.5 to 6.5 minutes then); mutmut_scope cuts it to generating one module's
 # mutants (2.9 s for sql_guard on 25 Nov 2026, CI run 45637460459) and a stats run over the tests that import it
-# (about 3 minutes there). The shard job's timeout-minutes (15) is the hard stop. Add a module here when its
+# (about 3 minutes there). The shard job's timeout-minutes (8) is the hard stop. Add a module here when its
 # shards run long.
 SHARD_TARGET = 150
 SHARD_TARGET_BY_MODULE = {"health_data_registry.registry": 40}

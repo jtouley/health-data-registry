@@ -266,12 +266,13 @@ jobs:
     runs-on: ubuntu-latest
     # Shards are sized from the mutant estimate to about 3 minutes of mutants each (SHARD_TARGET in
     # scripts/mutate_changed.py, with the measurements behind it); setup (checkout, install, generating the module's
-    # mutants, the stats run) adds about 3 to 4 minutes, and the estimate can be 1.3 times low. 15 minutes is about
-    # twice that worst case: it stops a hung baseline or stats run (mutmut gives those no timeout of its own) without
-    # cutting off a slow honest shard. A shard that hits it leaves no report, so the aggregate below fails with
-    # "no shard report (the shard was cancelled, timed out or never ran)" and the shard's own job shows the timeout;
-    # lower its module's target in scripts/mutate_changed.py rather than raising this.
-    timeout-minutes: 15
+    # mutants, the stats run) comes on top; the fix round's probe measured it (PR #114). 8 minutes stops a hung
+    # baseline or stats run (mutmut gives those no timeout of its own) before it holds a runner for long; the
+    # maintainer's budget is tighter still (#115), so this is not raised. A shard that hits it leaves no report, so
+    # the aggregate below fails with "no shard report (the shard was cancelled, timed out or never ran)" and the
+    # shard's own job shows the timeout: lower its module's target in scripts/mutate_changed.py rather than
+    # raising this.
+    timeout-minutes: 8
     strategy:
       fail-fast: false
       # At most 6 shards of this run at a time, so one run takes at most 6 of the account's runners (about 20). The

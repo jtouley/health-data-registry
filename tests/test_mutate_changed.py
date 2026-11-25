@@ -788,7 +788,7 @@ def test_shards_scope_to_the_lists_merge_base_and_stay_small() -> None:
     assert '--list --base "${merge_base}"' in list_job
     assert "merge_base: ${{ steps.list.outputs.merge_base }}" in list_job
     assert '--base "${MERGE_BASE}"' in shard_job and "fetch-depth: 0" in shard_job
-    assert "timeout-minutes: 15\n" in shard_job and "max-parallel: 6\n" in shard_job
+    assert "timeout-minutes: 8\n" in shard_job and "max-parallel: 6\n" in shard_job
 
 
 # Diff scope: only the functions a change touches -----------------------------------------------------------
