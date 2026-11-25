@@ -213,11 +213,9 @@ def lake_root() -> Path:
 
 
 def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
+    # hashlib.file_digest reads in chunks itself; a hand-written read loop gave mutmut a mutant that never ends.
     with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+        return hashlib.file_digest(f, "sha256").hexdigest()
 
 
 def _q(ident: str) -> str:
