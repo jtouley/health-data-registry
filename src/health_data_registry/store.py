@@ -48,6 +48,8 @@ from health_data_registry.registry import Dataset
 from health_data_registry.staging import Staged, check_snapshot, stage, write_parquet
 
 _SNAPSHOT_ID = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{12}$")
+# Manifest fields the read path fills from a hub release; a snapshot's own manifest.json never carries them.
+READ_PATH_ONLY = frozenset({"build_id", "build_manifest_sha256"})
 
 
 @dataclass(frozen=True)
@@ -268,7 +270,8 @@ def build_snapshot(
             quality=staged.quality.as_dict(),
             silver=staged.staging.as_dict(),
         )
-        (tmp / "manifest.json").write_text(json.dumps(asdict(manifest), indent=2) + "\n", encoding="utf-8")
+        stored = {k: v for k, v in asdict(manifest).items() if k not in READ_PATH_ONLY}
+        (tmp / "manifest.json").write_text(json.dumps(stored, indent=2) + "\n", encoding="utf-8")
         out.parent.mkdir(parents=True, exist_ok=True)
         tmp.replace(out)
     finally:
