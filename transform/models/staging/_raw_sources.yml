@@ -261,9 +261,11 @@ sources:
     - name: states
       data_type: varchar
       description: 'Publisher field states, as text; read into states (Reporting area: the US total, a census division,
-        a state, New York City, a territory, US territories combined, or non-US residents. Cases are counted where
-        the patient usually lives. New York excludes New York City (structural check against US RESIDENTS, 2024).
-        Upper case through 2024, title case from 2025 (source: live data, https://data.cdc.gov/resource/x9gk-5huc.json).)'
+        a state, New York City, a territory, US territories combined, or non-US residents. A case is counted in
+        the jurisdiction that submits it, by the country of usual residence (COUR) algorithm; cases whose country
+        of usual residence is outside the US and territories go to Non-U.S. Residents (Readers'' Guide rev. 12/10/2024,
+        pp. 8 and 10; Notice to Data Users, 2020 annual data). New York excludes New York City (structural check
+        against US RESIDENTS, 2024). Upper case through 2024, title case from 2025 (source: live data, https://data.cdc.gov/resource/x9gk-5huc.json).)'
     - name: week
       data_type: varchar
       description: Publisher field week, as text; read into week (MMWR week of the report (1-52, or 53 in 53-week
