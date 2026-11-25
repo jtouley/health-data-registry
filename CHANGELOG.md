@@ -27,6 +27,10 @@ All notable changes to this project are documented here. The format follows
 - Semantic-model versions: CDI, NNDSS and RESP-NET 0.2.0; Detroit annual and ED-visit models 0.1.1.
 - NHSN contract: two quality rules check that the confidence interval is filled wherever the percent resistant
   is, and only there, as the publisher's column descriptions state.
+- The Trusted gate's allowlist can take entries again. A test required it to stay empty, and the gate forbids
+  changing that test in the pull request that adds an entry, so no allowlist pull request could pass. The test
+  now checks that every entry is well-formed instead: it parses, names a file in this repository and has a
+  comment above it saying why.
 ### Changed
 
 - The README is rewritten for clinicians: five setup steps that each say what you'll see (the Start here
