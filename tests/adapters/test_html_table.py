@@ -10,6 +10,9 @@ from pydantic import ValidationError
 
 from health_data_registry.adapters import DOCUMENT_FIELDS, LayoutError, pages, publisher_fields
 from health_data_registry.adapters.html import SelectorError, parse_html, parse_selector, select
+
+# Imported by name, not only reached through adapters.TYPES' lazy loader, so mutation testing maps these tests to it.
+from health_data_registry.adapters.html_table import read_table
 from health_data_registry.adapters.row_guard import RowLevelRefused
 from tests.adapters.helpers import HOST, Site, entry, published
 
@@ -195,3 +198,12 @@ def test_select_semantics() -> None:
 def test_config_refusals(block: dict[str, Any], match: str) -> None:
     with pytest.raises(ValidationError, match=match):
         entry("html_table", block)
+
+
+def test_read_table_alone_gives_the_labels_and_records() -> None:
+    e = entry(
+        "html_table",
+        {"shape": "table", "table_selector": "table#cases", "caption": "Reported cases by county"},
+    )
+    labels, records = read_table(e, e.source.config(), SIMPLE)  # type: ignore[arg-type]
+    assert labels == list(records[0]) and records == published(list(pages(e, Site({URL: SIMPLE})))[0])
