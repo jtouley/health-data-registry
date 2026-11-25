@@ -39,7 +39,7 @@ from types import MappingProxyType
 from typing import Literal
 
 from . import scorer
-from .scorer import TEST_SHA256, load_expected, score_question, transcript_by_question
+from .scorer import TEST_SHA256, answers_by_question, load_expected, score_question, transcript_by_question
 
 # Runs of a label set before the workflow kept a use log, by plaintext sha256 (TEST v1 was run once).
 PRIOR_USES: Mapping[str, int] = MappingProxyType({TEST_SHA256: 1})
@@ -176,10 +176,10 @@ def score_run(labels: Path, transcript: Path, answers: Path, results: Path, *, e
     expected = load_expected(labels, "test", sha256=expect_sha)
     ids = {e.id for e in expected}
     calls = transcript_by_question(_jsonl(transcript))
-    answer_rows = _jsonl(answers)
-    given = {str(r["id"]): str(r.get("answer") or "") for r in answer_rows}
-    if len(given) != len(answer_rows):
-        raise SealedRunError(f"{answers.name} answers a question more than once.")
+    try:
+        given = answers_by_question(_jsonl(answers))
+    except scorer.ScorerError as exc:
+        raise SealedRunError(f"{answers.name} answers a question more than once.") from exc
     strays = (calls.keys() | given.keys()) - ids
     if strays:
         raise SealedRunError(
