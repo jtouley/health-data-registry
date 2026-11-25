@@ -46,6 +46,10 @@ NEXT_STEPS: dict[str, str] = {
     "needs_single_value": "Ask for the year's total, or for one week.",
     "not_a_human_count": "Use get_series to read these counts as published; they are not cases in people, so "
     "there is no rate per 100,000 people.",
+    "lake_unverified": "Run the Something's wrong helper. A maintainer can rebuild the local copy with refresh, or "
+    "unset HDR_LAKE so the published release is read instead.",
+    "too_large": "Ask for fewer values joined together, or return them as separate rows or columns.",
+    "too_slow": "Compare the values with =, LIKE or ILIKE instead.",
 }
 
 
@@ -460,18 +464,26 @@ class Engine:
     cache: Path = field(default_factory=_default_cache)
     fetch_at_run_time: bool = field(default_factory=_live_enabled)
     getter: Any = None  # a crawl.Getter for live fetches; None builds the guarded HTTPS fetcher
+    # Pairs of sources query_sql may combine (join, subquery or set operation). None is declared yet, so every
+    # query_sql reads one source (ADR 0008); a pair is added only after a maintainer reviews the join.
+    declared_joins: frozenset[frozenset[str]] = frozenset()
     _con: duckdb.DuckDBPyConnection | None = None
     _hub_files: dict[str, tuple[Path, Manifest]] = field(default_factory=dict)
     _live: dict[str, Any] = field(default_factory=dict)  # dataset id -> live.LiveTable (memory only)
     _live_failed: set[str] = field(default_factory=set)  # live tables that could not be loaded (refused once)
+    _lake_refused: dict[str, QueryRefused] = field(
+        default_factory=dict
+    )  # lake snapshots that failed their checks
 
     def connect(self) -> duckdb.DuckDBPyConnection:
         if self._con is not None:
             return self._con
+        from health_data_registry.hub import HubError, verify_lake_snapshot
         from health_data_registry.live import load_live
 
         con = duckdb.connect(":memory:")
         parquet: list[str] = []
+        self._lake_refused.clear()
         for ds in self.registry:
             if not ds.entry.licence.redistribution:
                 table = self._live.get(ds.id)
@@ -484,14 +496,21 @@ class Engine:
                     self._live_failed.add(ds.id)
                     continue
                 manifest = table.manifest
-            elif (found := latest_snapshot(self.lake, ds.id)) is not None:
+            elif (found := self._lake_snapshot(ds)) is not None:
                 path, manifest = found
+                try:
+                    verify_lake_snapshot(ds, path, manifest)
+                except HubError as e:
+                    self._lake_refused[ds.id] = QueryRefused(e.code, str(e))
+                    continue
                 alias = f"snap_{ds.id}"
                 db = str(path / "data.duckdb").replace("'", "''")
                 con.execute(f"ATTACH '{db}' AS {_q(alias)} (READ_ONLY)")
                 con.execute(f"CREATE VIEW {_q(ds.id)} AS SELECT * FROM {_q(alias)}.{_q(ds.id)}")  # noqa: S608 - quoted contract identifiers, bound values
-            elif ds.id in self._hub_files and not self._hub_files[ds.id][0].is_file():
-                del self._hub_files[ds.id]  # removed from the cache: downloaded again on next use
+            elif ds.id in self._hub_files and not self._hub_intact(self._hub_files[ds.id][0]):
+                del self._hub_files[
+                    ds.id
+                ]  # removed or changed in the cache: downloaded and checked again on next use
                 continue
             elif ds.id in self._hub_files:
                 file, manifest = self._hub_files[ds.id]
@@ -504,6 +523,25 @@ class Engine:
         harden(con, allowed_paths=parquet)
         self._con = con
         return con
+
+    def _lake_snapshot(self, ds: Dataset) -> tuple[Path, Manifest] | None:
+        """The lake's latest snapshot of a source; a damaged pointer or manifest is a refusal, not a crash."""
+        from health_data_registry.hub import LAKE_UNVERIFIED
+
+        try:
+            return latest_snapshot(self.lake, ds.id)
+        except (OSError, ValueError, TypeError):
+            self._lake_refused[ds.id] = QueryRefused(
+                LAKE_UNVERIFIED,
+                f"The local copy of {ds.entry.title} was not used, because its LATEST pointer or manifest is "
+                "damaged. No numbers were read from it.",
+            )
+            return None
+
+    def _hub_intact(self, file: Path) -> bool:
+        """Re-check a cached hub file's sha256 on every reconnect (a hub without that check: the file exists)."""
+        check = getattr(self.hub, "still_intact", None)
+        return bool(check(file)) if check is not None else file.is_file()
 
     def _reconnect(self) -> None:
         if self._con is not None:
@@ -549,6 +587,8 @@ class Engine:
             del self._live[dataset_id]  # past the in-memory limit: read the publisher again
             self._reconnect()
         m = self.manifests.get(dataset_id)
+        if m is None and dataset_id in self._lake_refused:
+            raise self._lake_refused[dataset_id]  # never fall back quietly from a copy that failed its checks
         if m is None and ds is not None and self._obtain(ds):
             self._reconnect()
             m = self.manifests.get(dataset_id)
@@ -689,7 +729,9 @@ class Engine:
     def query_sql(self, sql: str) -> dict[str, Any]:
         self.connect()
         available = {ds.id: ds.contract.column_names for ds in self.registry}
-        q: GuardedQuery = guard_sql(sql, allowed_tables=available, max_rows=MAX_ROWS)
+        q: GuardedQuery = guard_sql(
+            sql, allowed_tables=available, declared_joins=self.declared_joins, max_rows=MAX_ROWS
+        )
         for t in sorted(q.tables):
             if t in self.registry.datasets:
                 self.manifest(t)  # brings a hub or run-time source onto this computer on first use

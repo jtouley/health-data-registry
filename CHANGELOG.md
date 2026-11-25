@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- `query_sql` refuses queries that could build values too large to answer safely (#74): `lpad`/`rpad` lengths
+  over 1,000, `string_agg`/`list`/`array_agg`, `levenshtein`, recursive `WITH`, non-literal `replace`
+  replacements, and chains of `||`, `concat`, `replace`, lists or structs that could grow a value more than
+  256-fold. Each refusal says what to ask instead.
+- `query_sql` refuses any query that reaches two sources with no declared join in any part of it, including each
+  branch of a `UNION`, `INTERSECT` or `EXCEPT`, every subquery and every CTE (#74).
+- The lake is never read from the working folder: it is `$HDR_LAKE` (a full path) or a per-user data folder.
+  Before a lake snapshot is read, its dataset id, snapshot id, contract version, review status and the sha256 of
+  `data.duckdb` and `data.parquet` are checked against its manifest; a mismatch is refused in plain words.
+  Cached hub files are re-hashed each time the server reconnects (#74). Snapshots built before this change have
+  no file fingerprints and must be rebuilt with `refresh`.
+
 ### Added
 
 - Condition vocabulary: each catalog entry lists the publisher's own condition labels (`conditions:`, with

@@ -1278,8 +1278,9 @@ def unlisted_condition_labels(registry: Registry, engine: Engine) -> dict[str, l
             continue
         try:
             values = engine.distinct_values(ds.id, ds.semantic.dimension(dim).column)
-        except QueryRefused:
-            out[ds.id] = None
+        except QueryRefused as e:
+            # A local copy that failed its checks is reported (validate must not pass over it); no copy is None.
+            out[ds.id] = f"its local snapshot could not be read: {e}" if e.code == "lake_unverified" else None
             continue
         except (duckdb.Error, OSError) as e:
             out[ds.id] = (

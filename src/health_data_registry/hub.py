@@ -2,13 +2,17 @@
 
 Where the server reads each source from (query.Engine decides, in this order):
 
-1. The local lake ($HDR_LAKE), when it holds a snapshot: maintainers and CI, after `refresh`.
+1. The local lake (store.lake_root: $HDR_LAKE, else a per-user data folder, never the working folder), when it
+   holds a snapshot: maintainers and CI, after `refresh`. A lake snapshot gets the same checks as a hub file
+   (verify_lake_snapshot): dataset id, snapshot id, contract version, review status, and the sha256 of data.duckdb
+   and data.parquet against its manifest. One that fails is refused in plain words, never read.
 2. A redistributable source: the published release on the open data hub ($HDR_HUB, hf://datasets/<org>/<name>,
    read at an immutable release: pinned with @release-<run date>, or else the newest release tag; a branch such
    as main is refused; a local directory stands in for the Hub in tests). Only the Parquet file a question needs
    is downloaded, into a bounded local cache ($HDR_CACHE_MAX_GB, default 5, least recently used evicted), and it
-   is checked against the release manifest's sha256 before use. A release built with another contract version
-   than the installed contract is refused (fail closed). No token is needed for a public dataset.
+   is checked against the release manifest's sha256 before use, and again each time the server reconnects. A
+   release built with another contract version than the installed contract is refused (fail closed). No token is
+   needed for a public dataset.
 3. A restricted source (licence.redistribution false, e.g. WHO GHO): served live by live.py, fetched from the
    publisher per request, held in memory only for a few minutes, and never written to disk.
 
@@ -33,9 +37,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from health_data_registry.publish import HF_PREFIX, data_path, hf_repo_id, sha256_file
+from health_data_registry.publish import HF_PREFIX, data_path, hf_repo_id
 from health_data_registry.registry import Dataset
-from health_data_registry.store import Manifest
+from health_data_registry.store import SNAPSHOT_FILES, Manifest, sha256_file
 
 # The project's public hub. Until its first release-<run date> tag exists, reading from it is refused plainly.
 DEFAULT_HUB: str | None = "hf://datasets/jtouley/health-data-registry"
@@ -121,6 +125,41 @@ def contract_compatible(dataset_id: str, release_version: str, installed_version
     return installed_version in COMPATIBLE_CONTRACTS.get(dataset_id, {}).get(release_version, set())
 
 
+LAKE_UNVERIFIED = "lake_unverified"
+
+
+def verify_lake_snapshot(ds: Dataset, path: Path, manifest: Manifest) -> None:
+    """Check a local lake snapshot as a hub file is checked, before any number is read from it (issue #74).
+
+    The manifest must name this dataset and this snapshot, be built with a contract version the installed one
+    can read, claim no review the catalogue doesn't record, and list the sha256 of data.duckdb and data.parquet;
+    each file must match. Raises HubError (code LAKE_UNVERIFIED) with the reason in plain words.
+    """
+
+    def refuse(why: str) -> HubError:
+        return HubError(
+            LAKE_UNVERIFIED,
+            f"The local copy of {ds.entry.title} was not used, because {why}. No numbers were read from it.",
+        )
+
+    if manifest.dataset != ds.id or manifest.snapshot_id != path.name:
+        raise refuse("its manifest describes a different dataset or snapshot")
+    if not contract_compatible(ds.id, manifest.contract_version, ds.contract.version):
+        raise refuse(
+            f"it was built with version {manifest.contract_version} of the {ds.id} contract, but this server "
+            f"reads version {ds.contract.version}, so the columns may not mean the same thing"
+        )
+    if manifest.catalog_status == "reviewed" and ds.entry.status != "reviewed":
+        raise refuse("it claims a maintainer review that the catalogue does not record")
+    for name in SNAPSHOT_FILES:
+        expected = manifest.files.get(name)
+        if not expected:
+            raise refuse(f"its manifest has no fingerprint (sha256) for {name}; it predates these checks")
+        file = path / name
+        if not file.is_file() or sha256_file(file) != expected:
+            raise refuse(f"its {name} does not match the fingerprint (sha256) in its manifest")
+
+
 def _split(url: str) -> tuple[str, str | None]:
     """hf://datasets/<org>/<name>[@rev] -> (<org>/<name>, rev)."""
     repo = hf_repo_id(url)
@@ -164,6 +203,23 @@ class Hub:
     _rev: str | None = field(default=None, repr=False)
     # Files handed to a reader (a DuckDB view reads them by path): never evicted while this hub is in use.
     _in_use: set[Path] = field(default_factory=set, repr=False)
+    # The sha256 each file handed out was checked against, so a reconnect can check it again (still_intact).
+    _verified: dict[Path, str] = field(default_factory=dict, repr=False)
+
+    def still_intact(self, local: Path) -> bool:
+        """A cached file handed out by snapshot() is still there and still has the sha256 it was checked against.
+
+        The cache is an ordinary folder another program can change after the first check, so the server checks
+        again whenever it reconnects. A file that fails is removed, and downloaded and checked afresh on next use.
+        """
+        key = local.resolve()
+        expected = self._verified.get(key)
+        if expected is not None and local.is_file() and sha256_file(local) == expected:
+            return True
+        self._verified.pop(key, None)
+        self._in_use.discard(key)
+        local.unlink(missing_ok=True)
+        return False
 
     @property
     def is_remote(self) -> bool:
@@ -304,6 +360,7 @@ class Hub:
                 "report it if it keeps happening.",
             )
         self._in_use.add(local.resolve())  # the server's views read this file from now on
+        self._verified[local.resolve()] = str(meta["sha256"])
         allowed = set(Manifest.__dataclass_fields__)
         snap = {k: v for k, v in dict(sm["snapshot"]).items() if k in allowed}
         files = {f"{ds.id}/{k}": str(v["sha256"]) for k, v in (sm.get("files") or {}).items()}

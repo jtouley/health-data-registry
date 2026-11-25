@@ -11,8 +11,9 @@ model or a person. Two layers stand between that text and anything but a read of
    ``read_*``, a ``*_scan``, ``getenv``) is refused rather than passed through. It accepts exactly
    one ``SELECT`` (``WITH``, ``UNION``/``INTERSECT``/``EXCEPT``, subqueries, joins and window
    functions included), reads only catalogued tables, checks columns where they can be resolved,
-   allows a join between two different catalogued tables only when that pair is declared, and
-   injects or clamps the outer ``LIMIT``. What runs is SQL regenerated from the checked tree
+   lets one query reach two different catalogued tables only when that pair is declared (through
+   a join, a subquery, a CTE or a set operation alike), bounds how large a value it can build
+   (:func:`_check_output_size`), and injects or clamps the outer ``LIMIT``. What runs is SQL regenerated from the checked tree
    (comments dropped), never the caller's text, and DuckDB's own parser must agree that it is a
    single ``SELECT``.
 2. :func:`harden` locks the connection the views live on: no file or network access (except the
@@ -116,7 +117,7 @@ _FUNCTIONS: Final = _classes(
     "Count", "CountIf", "Sum", "Avg", "Min", "Max", "Median", "PercentileCont", "PercentileDisc",
     "Quantile", "ApproxQuantile", "ApproxDistinct", "Stddev", "StddevPop", "StddevSamp",
     "Variance", "VariancePop", "Corr", "CovarPop", "CovarSamp", "AnyValue", "ArgMax", "ArgMin",
-    "First", "Last", "LogicalAnd", "LogicalOr", "GroupConcat", "ArrayAgg", "Mode", "Kurtosis",
+    "First", "Last", "LogicalAnd", "LogicalOr", "Mode", "Kurtosis",
     "Skewness", "RegrSlope", "RegrIntercept", "RegrR2", "RegrCount",
     # window
     "RowNumber", "Rank", "DenseRank", "PercentRank", "CumeDist", "Ntile", "Lag", "Lead",
@@ -128,7 +129,6 @@ _FUNCTIONS: Final = _classes(
     "Lower", "Upper", "Trim", "Length", "Substring", "Replace", "Concat", "ConcatWs", "Left",
     "Right", "SplitPart", "StrPosition", "Pad", "Initcap", "Reverse", "StartsWith", "EndsWith",
     "Contains", "RegexpLike", "RegexpFullMatch", "RegexpILike", "RegexpExtract", "RegexpReplace",
-    "Levenshtein",
     # dates and times
     "Year", "Quarter", "Month", "Week", "WeekOfYear", "Day", "DayOfMonth", "DayOfWeek",
     "DayOfWeekIso", "DayOfYear", "Hour", "Minute", "Second", "Extract", "TimestampTrunc",
@@ -146,12 +146,12 @@ _ANONYMOUS_FUNCTIONS: Final = frozenset(
         "yearweek", "isodow", "isoyear", "century", "decade", "era", "to_years", "to_months",
         "to_days", "age", "try_strptime", "today", "now", "current_localtimestamp",
         "ifnull", "round_even", "even", "pi", "isfinite", "gcd", "lcm", "factorial", "fdiv", "fmod",
-        "lcase", "ucase", "ltrim", "rtrim", "lpad", "rpad", "instr", "strpos", "position", "prefix",
-        "suffix", "strip_accents", "regexp_split_to_array", "string_split", "str_split", "printf",
-        "format", "bit_length", "char_length", "len", "list_value", "array_length",
+        "lcase", "ucase", "ltrim", "rtrim", "instr", "strpos", "position", "prefix",
+        "suffix", "strip_accents", "regexp_split_to_array", "string_split", "str_split",
+        "bit_length", "char_length", "len", "list_value", "array_length",
         "fsum", "favg", "sumkahan", "kahan_sum", "product", "geomean", "geometric_mean", "entropy",
-        "mad", "quantile", "quantile_disc", "quantile_cont", "bool_and", "bool_or", "string_agg",
-        "list", "max_by", "min_by", "arg_max_null", "arg_min_null", "count_star", "var_samp",
+        "mad", "quantile", "quantile_disc", "quantile_cont", "bool_and", "bool_or",
+        "max_by", "min_by", "arg_max_null", "arg_min_null", "count_star", "var_samp",
         "var_pop", "stddev_samp", "stddev_pop", "regr_avgx", "regr_avgy", "regr_sxx", "regr_syy",
         "regr_sxy",
     }
@@ -164,6 +164,31 @@ _VAR_PARENTS: Final = _classes(
 )  # fmt: skip
 
 _ALLOWED: Final = _STRUCTURE + _FUNCTIONS
+
+# Functions whose output size or running time a query can push past what one answer may use, where DuckDB's
+# memory limit and interrupt don't help (one long call holds memory the limit doesn't count, and can't be
+# interrupted). Refused by name with a next step. lpad/rpad stay allowed with a capped length (MAX_PAD_LENGTH);
+# repeat, range, generate_series, printf and format are not on the allowlist at all.
+_UNBOUNDED_MESSAGE: Final = (
+    "Joining many rows into one text or list (string_agg, group_concat, list, array_agg) is not allowed here, "
+    "because the result can grow without limit. Return the values as rows instead, with GROUP BY."
+)
+_UNBOUNDED_CLASSES: Final = _classes("GroupConcat", "ArrayAgg")
+_UNBOUNDED_NAMES: Final = frozenset({"string_agg", "group_concat", "listagg", "list", "array_agg"})
+_SLOW_CLASSES: Final = _classes("Levenshtein")
+_SLOW_MESSAGE: Final = (
+    "levenshtein() is not allowed here: on long text one call can run past the time limit. Compare values "
+    "with =, LIKE or ILIKE instead."
+)
+
+# The longest text lpad/rpad may build, and how many times larger than its inputs a value may grow through
+# concatenation, replace, lists and structs (see _check_output_size).
+MAX_PAD_LENGTH: Final = 1_000
+MAX_GROWTH: Final = 256
+TOO_LARGE: Final = (
+    "This query could build text or lists too large to answer safely. Join fewer values together (||, concat, "
+    "replace, lists), or return the parts as separate columns."
+)
 
 # Clauses of a SELECT (and of a set operation) the guard understands; any other is refused.
 _SELECT_CLAUSES: Final = frozenset(
@@ -209,6 +234,7 @@ def guard_sql(
 
     tree = _parse(sql)
     _check_nodes(tree)
+    _check_output_size(tree)
     _check_tables(tree, tables)
     scopes = _scopes(tree)
     used: set[str] = set()
@@ -216,6 +242,8 @@ def guard_sql(
         _check_scope_sources(scope, tables, used)
         _check_columns(scope, tables)
         _check_joins(scope, tables, joins)
+    # Every catalogued table named anywhere, a CTE no scope reads included, is checked as one more scope.
+    _check_pairs({t.name.casefold() for t in tree.find_all(exp.Table)} & set(tables), joins)
     limit = _apply_limit(tree, max_rows)
 
     for node in tree.walk():
@@ -306,6 +334,12 @@ def _check_nodes(tree: exp.Expr) -> None:
             if isinstance(node.parent, _VAR_PARENTS):
                 continue
             raise SqlRefused("forbidden_construct", f"This is not supported here: {node.name[:40]}.")
+        if isinstance(node, _UNBOUNDED_CLASSES) or (
+            isinstance(node, exp.Anonymous) and str(node.name).casefold() in _UNBOUNDED_NAMES
+        ):
+            raise SqlRefused("too_large", _UNBOUNDED_MESSAGE)
+        if isinstance(node, _SLOW_CLASSES):
+            raise SqlRefused("too_slow", _SLOW_MESSAGE)
         if isinstance(node, exp.Anonymous):
             if str(node.name).casefold() in _ANONYMOUS_FUNCTIONS:
                 continue
@@ -325,6 +359,80 @@ def _check_nodes(tree: exp.Expr) -> None:
         raise SqlRefused(
             "forbidden_construct", f"This part of the query is not supported: {node.key.upper()}."
         )
+
+
+def _is_constant(node: exp.Expr | None) -> bool:
+    return isinstance(node, exp.Literal | exp.Null | exp.Boolean)
+
+
+def _string_literal_length(node: exp.Expr | None) -> int | None:
+    if isinstance(node, exp.Literal) and node.is_string:
+        return len(node.name)
+    return None
+
+
+def _count_growing(parts: Iterable[exp.Expr | None]) -> int:
+    """How many of a node's inputs can carry a large value (constants can't)."""
+    return sum(1 for part in parts if not _is_constant(part))
+
+
+def _growth(node: exp.Expr) -> int:
+    """How many times larger than its largest input one node's output can be (1: it can't grow)."""
+    if isinstance(node, exp.DPipe):
+        return max(1, _count_growing((node.this, node.expression)))
+    if isinstance(node, exp.ConcatWs):
+        separator, *values = node.expressions
+        repeats = 0 if _is_constant(separator) else len(values) - 1
+        return max(1, _count_growing(values) + repeats)
+    if isinstance(node, exp.Concat | exp.Array):
+        return max(1, _count_growing(node.expressions))
+    if isinstance(node, exp.Struct):
+        return max(
+            1, _count_growing(p.expression if isinstance(p, exp.PropertyEQ) else p for p in node.expressions)
+        )
+    if isinstance(node, exp.Replace | exp.RegexpReplace):
+        replacement = _string_literal_length(node.args.get("replacement"))
+        if replacement is None:
+            raise SqlRefused(
+                "too_large",
+                "In replace() and regexp_replace(), write the replacement as quoted text, such as ' ' or '-'.",
+            )
+        search = _string_literal_length(node.expression)
+        if isinstance(node, exp.Replace) and search:
+            return max(1, -(-replacement // search))  # each match of the search text becomes the replacement
+        return replacement + 1  # a pattern can match between every pair of characters
+    return 1
+
+
+def _check_output_size(tree: exp.Expr) -> None:
+    """Bound how large a value the query can build, before it runs (issue #74).
+
+    DuckDB's memory limit doesn't count a string one function call builds, and an interrupt can't stop that
+    call, so the guard refuses what could grow without limit: a recursive WITH, which can repeat any step;
+    lpad/rpad with a length that isn't a whole number up to MAX_PAD_LENGTH; and any query whose growing steps
+    (||, concat, concat_ws, replace, regexp_replace, lists, structs), multiplied together as if each fed the
+    next, could make a value more than MAX_GROWTH times larger than its inputs. The OS-level memory limit and
+    hard kill of a child process are the second layer (#64).
+    """
+    growth = 1
+    for node in tree.walk():
+        if isinstance(node, exp.With) and node.args.get("recursive"):
+            raise SqlRefused(
+                "too_large",
+                "Recursive WITH queries are not allowed here, because they can grow without limit. Ask for the "
+                "rows you need directly, with WHERE and GROUP BY.",
+            )
+        if isinstance(node, exp.Pad):
+            length = _literal_int(node.expression)
+            if length is None or length > MAX_PAD_LENGTH:
+                raise SqlRefused(
+                    "too_large",
+                    f"lpad and rpad can make text at most {MAX_PAD_LENGTH:,} characters long here: give the "
+                    f"length as a whole number up to {MAX_PAD_LENGTH:,}.",
+                )
+        growth *= _growth(node)
+        if growth > MAX_GROWTH:
+            raise SqlRefused("too_large", TOO_LARGE)
 
 
 def _check_clauses(node: exp.Expr) -> None:
@@ -467,26 +575,26 @@ def _check_joins(
 ) -> None:
     """Rows of two different catalogued tables are combined only when the pair is declared.
 
-    The inputs of one SELECT are its FROM/JOIN sources and its subqueries (IN, EXISTS, scalar);
-    a set operation stacks rows rather than combining them, so its branches are checked on their own.
+    Checked for every scope: each SELECT, each branch of a UNION, INTERSECT or EXCEPT, every subquery and every
+    CTE. Every catalogued table a scope reaches, through its sources, subqueries and set-operation branches,
+    must be declared joinable with every other one it reaches. Stacking rows with UNION ALL and adding them up
+    in an outer GROUP BY combines two tables just as a join does (issue #74), so set operations get no
+    exemption.
     """
-    if isinstance(scope.expression, exp.SetOperation):
-        return
-    inputs = [
-        _reachable(source, tables) if isinstance(source, Scope) else {source.name.casefold()} & set(tables)
-        for _node, source in scope.selected_sources.values()
-    ]
-    inputs += [_reachable(child, tables) for child in scope.subquery_scopes]
-    for i, left in enumerate(inputs):
-        for right in inputs[i + 1 :]:
-            for a in sorted(left):
-                for b in sorted(right):
-                    if a != b and frozenset({a, b}) not in joins:
-                        raise SqlRefused(
-                            "undeclared_join",
-                            f"The tables {a} and {b} can't be combined: their contracts don't declare a join "
-                            "between them, so rows may not line up. Query each one on its own.",
-                        )
+    _check_pairs(_reachable(scope, tables), joins)
+
+
+def _check_pairs(names: Iterable[str], joins: frozenset[frozenset[str]]) -> None:
+    """Refuse when two different tables among ``names`` are not a declared pair."""
+    reached = sorted(names)
+    for i, a in enumerate(reached):
+        for b in reached[i + 1 :]:
+            if frozenset({a, b}) not in joins:
+                raise SqlRefused(
+                    "undeclared_join",
+                    f"The tables {a} and {b} can't be combined: their contracts don't declare a join "
+                    "between them, so rows may not line up. Query each one on its own.",
+                )
 
 
 def _literal_int(node: exp.Expr | None) -> int | None:

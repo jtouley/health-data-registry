@@ -1,12 +1,15 @@
 """The snapshot lake: raw bytes kept hash-addressed, one normalised snapshot per dataset version.
 
-Layout under the lake root ($HDR_LAKE, default ./lake), partitioned by source and run date:
+Layout under the lake root, partitioned by source and run date. The root is $HDR_LAKE when it is set to a full
+path, else a fixed per-user data folder (default_lake): never the folder the tool happens to be started in, so a
+lake/ planted in a folder a clinician opens is never read (issue #74).
 
     raw/<sha256>                         every byte fetched from a publisher, never rewritten (ADR 0005)
     datasets/<id>/run_date=<YYYY-MM-DD>/<snapshot_id>/
         data.parquet                     the normalised table, for publishing
         data.duckdb                      the same table, attached read-only by the server
-        manifest.json                    provenance: URLs, retrieved_at, sha256s, contract version
+        manifest.json                    provenance: URLs, retrieved_at, sha256s (raw bytes and the two data
+                                         files), contract version
     datasets/<id>/LATEST                 the snapshot_id the server reads
     fetch_log/source=<id>/run_date=<YYYY-MM-DD>.jsonl
                                          one row per fetch attempt, ok or error: URL, time, status, bytes,
@@ -25,9 +28,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
+import sys
 import tempfile
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
@@ -40,6 +45,10 @@ import duckdb
 from health_data_registry.registry import Contract, Dataset
 
 _SNAPSHOT_ID = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{12}$")
+APP_NAME = "health-data-registry"
+# The data files of a snapshot whose sha256 the manifest records and every read checks.
+SNAPSHOT_FILES = ("data.duckdb", "data.parquet")
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -84,6 +93,8 @@ class Manifest:
     # Dashboard sources: the sha256 of each worksheet's column list read ("<view>/<worksheet>" -> sha256), so a
     # redesign is visible in provenance as well as stopping the load.
     layouts: dict[str, str] = field(default_factory=dict)
+    # Lake snapshots: the sha256 of each data file (SNAPSHOT_FILES), checked before the server reads the snapshot.
+    files: dict[str, str] = field(default_factory=dict)
 
     @staticmethod
     def read(path: Path) -> Manifest:
@@ -159,8 +170,46 @@ def read_fetch_log(lake: Path, source: str) -> list[dict[str, Any]]:
     return rows
 
 
+def default_lake() -> Path:
+    """The per-user data folder the lake lives in when HDR_LAKE is not set (platformdirs' user_data_dir layout).
+
+    Linux and other Unix: $XDG_DATA_HOME/health-data-registry/lake (when $XDG_DATA_HOME is a full path), else
+    ~/.local/share/health-data-registry/lake. macOS: ~/Library/Application Support/health-data-registry/lake.
+    Windows: %LOCALAPPDATA%\\health-data-registry\\lake.
+    """
+    home = Path.home()
+    if sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA", "")
+        base = Path(local) if local and Path(local).is_absolute() else home / "AppData" / "Local"
+    elif sys.platform == "darwin":
+        base = home / "Library" / "Application Support"
+    else:
+        xdg = os.environ.get("XDG_DATA_HOME", "")
+        base = Path(xdg) if xdg and Path(xdg).is_absolute() else home / ".local" / "share"
+    return base / APP_NAME / "lake"
+
+
 def lake_root() -> Path:
-    return Path(os.environ.get("HDR_LAKE", "lake")).resolve()
+    """$HDR_LAKE when it is a full path, else default_lake(); never a path relative to the working folder.
+
+    A relative HDR_LAKE (such as "lake") would read whatever folder the tool is started in, so it is ignored with
+    a warning in the log, as other mistyped settings are, and the per-user folder is used instead.
+    """
+    env = os.environ.get("HDR_LAKE", "").strip()
+    if env:
+        path = Path(env).expanduser()
+        if path.is_absolute():
+            return path.resolve()
+        logger.warning("HDR_LAKE=%r is not a full path; using %s instead", env, default_lake())
+    return default_lake()
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _q(ident: str) -> str:
@@ -267,6 +316,7 @@ def build_snapshot(
             partial=partial,
             layouts=dict(layouts or {}),
             notes=list(notes),
+            files={name: sha256_file(tmp / name) for name in SNAPSHOT_FILES},
         )
         (tmp / "manifest.json").write_text(json.dumps(asdict(manifest), indent=2) + "\n", encoding="utf-8")
         out.parent.mkdir(parents=True, exist_ok=True)

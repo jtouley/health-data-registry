@@ -48,7 +48,7 @@ import yaml
 
 from health_data_registry.product import Port, load_ports
 from health_data_registry.registry import Dataset, Registry
-from health_data_registry.store import Manifest, latest_snapshot
+from health_data_registry.store import Manifest, latest_snapshot, sha256_file
 
 HF_PREFIX = "hf://datasets/"
 STAGING = Path("build") / "hub"
@@ -101,14 +101,6 @@ class Release:
 
 
 # ------------------------------------------------------------------------------------------------ helpers
-
-
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def hf_repo_id(url: str) -> str:
