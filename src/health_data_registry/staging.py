@@ -282,13 +282,29 @@ def staged_source(
     entry: CatalogEntry, relation: str, present: set[str] | None
 ) -> tuple[str, set[str] | None, int]:
     """The relation after the source's staging extensions, the fields it then has (None when not known), and how
-    many staged rows one raw row makes."""
+    many staged rows one raw row makes.
+
+    With ``present`` None (the generated dbt model, a ``--max-rows`` sample) each step is given only the fields
+    it declares it reads, so its layout check can't see a missing or extra column: the full load already refused
+    such a file before LATEST moved, and dbt reads only what LATEST names. ``made_fields`` gives the fields the
+    steps make in either case, for the row guard.
+    """
     sql, fields, rows_per_row = relation, present, 1
     for ext, args in _steps(entry):
         step = ext.run(args, sql, sorted(fields) if fields is not None else list(ext.input_fields(args)))
         sql, rows_per_row = step.sql, rows_per_row * step.rows_per_row
         fields = set(step.fields) if fields is not None else None
     return sql, fields, rows_per_row
+
+
+def made_fields(entry: CatalogEntry) -> set[str]:
+    """The fields the source's staging steps make from the fields they declare they read: known without a load,
+    so the row guard on what an extension makes runs on every load, a partial sample included."""
+    fields: set[str] = set()
+    for ext, args in _steps(entry):
+        ins = list(ext.input_fields(args))
+        fields = (fields - set(ins)) | set(ext.run(args, "raw", sorted(fields | set(ins))).fields)
+    return fields
 
 
 def stage_entry(
@@ -312,8 +328,7 @@ def stage_entry(
         sql, fields, rows_per_row = staged_source(entry, source, present)
     except ExtensionRefused as e:
         raise ContractLayoutRefused(f"{contract.id}: {e}") from e
-    if fields is not None:
-        check_grain(f"{entry.id} (staged)", sorted(fields))
+    check_grain(f"{entry.id} (staged)", sorted(fields if fields is not None else made_fields(entry)))
     row = con.execute(f"SELECT count(*) FROM {source}").fetchone()  # noqa: S608 - a relation built by the caller
     raw_rows = int(row[0]) if row else 0
     report = stage(con, contract, sql, table=table, temp=temp, present=fields)

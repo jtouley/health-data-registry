@@ -60,6 +60,16 @@ All notable changes to this project are documented here. The format follows
   The row-level guard (hard rule 4) runs on every page of every type, with no way to switch it off. A snapshot's
   identity now includes how its records were read (the type, its config and extensions), so a config-only change
   builds a new snapshot; existing snapshots are rebuilt once on their next refresh.
+- From the review of the crawler factory (#148): the new types keep every field a document gives in the raw layer,
+  not only the contract's, so a year the codebook doesn't list stops the load instead of being dropped; a
+  contract for a type that adds per-row metadata must declare it (and `failed_checks` when it reconciles), and a
+  staging step's added key must be in the contract's primary key. `failed_checks` is a JSON array of sentences,
+  on the cell it concerns in the long layout. A `pdf_table` snapshot keeps its index page as a fetch. A listing
+  crawl's checkpoint is tied to how its items were read, a finished year rechecks its listing's total once a run,
+  a moving total restarts the listing walk instead of stopping the crawl for good, a gone item is named and asked
+  for again without walking the listing, and one year that can't finish no longer holds the others back. A fetch
+  sends exactly the URL the scope check approved, and every redirect stays on the source's own hosts. Valid HTML
+  that leaves out optional end tags is read as a browser reads it.
 - `serve --http`: the hosted, read-only connector over stateless Streamable HTTP (hub releases and live reads
   only), with one deadline per tool call, a result-size cap, rate limits per MCP session and overall, and no
   request content in any log; `space/` for a Hugging Face Docker Space and `docs/dev/hosting.md`.

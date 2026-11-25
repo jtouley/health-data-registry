@@ -8,9 +8,10 @@ from typing import Any
 import pytest
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def no_sockets(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No network at all: an extension that tried to fetch anything would fail its test."""
+    """No network at all, for every adapter and extension test here (autouse): an extension or a type that tried to
+    fetch anything but the fake site would fail its test."""
 
     def refuse(*_a: Any, **_k: Any) -> Any:
         raise RuntimeError("sockets are disabled in extension tests")

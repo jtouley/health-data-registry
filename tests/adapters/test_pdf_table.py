@@ -127,7 +127,8 @@ def test_pdf_table(case: Case) -> None:
         with pytest.raises(case.refused, match=case.match):
             list(pages(e, site))
         return
-    got = list(pages(e, site))
+    index_page, *got = list(pages(e, site))
+    assert index_page.fetch.url == INDEX and index_page.records == []  # the index, kept for provenance
     assert [published(p) for p in got] == case.records
     if case.calls is not None:
         assert site.calls == case.calls
@@ -163,7 +164,8 @@ def test_max_rows_fields_and_publisher_fields() -> None:
     )
     e = entry("pdf_table", BLOCK, **SCOPE)
     got = list(pages(e, site, max_rows=1, fields=["Disease", "2024"]))
-    assert [published(p) for p in got] == [[{"Disease": "Salmonellosis", "2024": "12"}]]
+    # every field the report gives is handed on (hard rule 15); staging reads the contract's
+    assert [published(p) for p in got[1:]] == [[EXPECTED[0]]]
     assert publisher_fields(e, site) == {"Group", "Disease", "2023", "2024", *DOCUMENT_FIELDS}
 
 
@@ -206,7 +208,7 @@ FACTS_USE = [{"name": "probe_facts", "hook": "parse"}]
 def test_printed_facts_are_read_from_the_text_and_added_to_each_row(monkeypatch: pytest.MonkeyPatch) -> None:
     seen = _facts_extension(monkeypatch, lambda text: [{"report_title": text.splitlines()[0]}])
     e = entry("pdf_table", BLOCK, **SCOPE, extensions=FACTS_USE)
-    got = list(pages(e, Site(FACTS_SITE)))
+    got = list(pages(e, Site(FACTS_SITE)))[1:]
     assert [published(p) for p in got] == [
         [{**r, "report_title": "Communicable disease report"} for r in EXPECTED]
     ]
@@ -261,7 +263,7 @@ RECONCILE = {"total_rows": "(?i)(sub)?totals?\\b.*", "max_failed_rows": 1}
 def _one(block: dict[str, Any], pdf: bytes, **source: Any) -> list[dict[str, Any]]:
     site = Site({INDEX: index("/files/reports/a.pdf"), report("a.pdf"): pdf})
     got = list(pages(entry("pdf_table", {**BLOCK, **block}, **SCOPE, **source), site))
-    return published(got[0])
+    return published(got[1])  # got[0] is the index page, with no records
 
 
 def test_long_layout_gives_one_record_per_printed_cell() -> None:
@@ -296,12 +298,17 @@ def test_a_value_column_named_like_metadata_is_refused() -> None:
 @pytest.mark.parametrize("layout", ["wide", "long"])
 def test_failed_checks_are_recorded_on_the_rows_they_concern(layout: str) -> None:
     got = _one({"layout": layout, "reconcile": RECONCILE}, render(TOTALS))
-    flagged = {(r["Disease"], r["failed_checks"]) for r in got}
-    assert flagged == {
-        ("Salmonellosis", None),
-        ("Shigellosis", None),
-        ("Total", "Enteric Total: 2024 is 16, but the 2 rows it totals sum to 15"),
-    }
+    flagged = {(r["Disease"], r.get("column_header"), r["failed_checks"]) for r in got}
+    failure = '["Enteric Total: 2024 is 16, but the 2 rows it totals sum to 15"]'
+    if layout == "wide":
+        assert flagged == {
+            ("Salmonellosis", None, "[]"),
+            ("Shigellosis", None, "[]"),
+            ("Total", None, failure),
+        }
+    else:  # on the cell of the column the check concerns, not on every cell of the row
+        assert ("Total", "2024", failure) in flagged and ("Total", "2023", "[]") in flagged
+        assert {f for d, _c, f in flagged if d != "Total"} == {"[]"}
     values = {r["2024"] for r in got} if layout == "wide" else {r["cell_text"] for r in got}
     assert "16" in values  # the printed value is kept as printed; only metadata is added
 
@@ -315,13 +322,38 @@ def test_fields_keep_the_metadata() -> None:
     site = Site({INDEX: index("/files/reports/a.pdf"), report("a.pdf"): render(TOTALS)})
     e = entry("pdf_table", {**BLOCK, "reconcile": RECONCILE}, **SCOPE)
     got = list(pages(e, site, fields=["Disease"]))
-    assert [set(r) for r in got[0].records] == [{"Disease", "failed_checks", *DOCUMENT_FIELDS}] * 3
+    assert all({"Disease", "failed_checks", *DOCUMENT_FIELDS} <= set(r) for r in got[1].records)
+
+
+def test_a_failed_check_holding_a_semicolon_stays_one_entry() -> None:
+    import json as _json
+
+    from health_data_registry.adapters.reconcile import as_text
+
+    assert _json.loads(as_text(["Total; all: 2024 is 16, but 15", "x"])) == [
+        "Total; all: 2024 is 16, but 15",
+        "x",
+    ]
+
+
+def test_two_value_columns_with_one_header_are_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    from health_data_registry.adapters import pdf_table, pdf_tables
+
+    real = pdf_tables.parse_tables
+
+    def twice(geometry: Any, spec: Any) -> Any:
+        rows = real(geometry, spec)
+        return [r.__class__(**{**r.__dict__, "cells": (*r.cells, *r.cells)}) for r in rows]
+
+    monkeypatch.setattr(pdf_table, "parse_tables", twice)
+    with pytest.raises(LayoutError, match="both headed"):
+        _one({}, PDF)
 
 
 def test_document_provenance_is_on_every_row_with_keys_stripped() -> None:
     url = report("a.pdf") + "?app_token=secret&v=2"
     site = Site({INDEX: index("/files/reports/a.pdf?app_token=secret&v=2"), url: PDF})
-    got = list(pages(entry("pdf_table", BLOCK, **SCOPE), site))
+    got = list(pages(entry("pdf_table", BLOCK, **SCOPE), site))[1:]
     rows = got[0].records
     assert {r["document_url"] for r in rows} == {report("a.pdf") + "?v=2"}
     assert {r["document_sha256"] for r in rows} == {got[0].fetch.sha256}

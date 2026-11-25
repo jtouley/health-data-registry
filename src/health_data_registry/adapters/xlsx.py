@@ -37,6 +37,9 @@ BUILTIN_FORMATS = {
 }  # fmt: skip
 _CELL_REF = re.compile(r"^([A-Z]{1,3})(\d{1,7})$")
 MAX_COLUMNS = 2_000  # a published table is far narrower; a wider sheet is refused rather than expanded
+# The grid is built dense (rows x columns), so its size is capped, not only its corner: two cells at A1 and
+# BXX1000000 pass both caps above yet would make two billion cells.
+MAX_GRID_CELLS = 20_000_000
 
 
 class XlsxRefused(LayoutError):
@@ -76,6 +79,8 @@ def _text(el: Any) -> str:
 def _sheet_part(zf: SafeZip, sheet: str) -> str:
     wb = _xml(zf, "xl/workbook.xml")
     found = [s for s in wb.iter(f"{NS}sheet") if s.get("name") == sheet]
+    if len(found) > 1:
+        raise XlsxRefused(f"the workbook has {len(found)} sheets named {sheet!r}")
     if not found:
         names = [str(s.get("name")) for s in wb.iter(f"{NS}sheet")]
         raise XlsxRefused(f"the workbook has no sheet named {sheet!r} (it has {', '.join(names)})")
@@ -94,16 +99,32 @@ def _sheet_part(zf: SafeZip, sheet: str) -> str:
     return path
 
 
+def _int(text: object, what: str) -> int:
+    """A non-negative whole number from the workbook, or a refusal (never a bare ValueError)."""
+    try:
+        n = int(str(text))
+    except ValueError as e:
+        raise XlsxRefused(f"the workbook's {what} is {text!r}, not a whole number") from e
+    if n < 0:
+        raise XlsxRefused(f"the workbook's {what} is {n}, below zero")
+    return n
+
+
 def _formats(zf: SafeZip) -> list[str]:
     """The number format code of each cell style, by style index."""
     if not zf.has("xl/styles.xml"):
         return []
     styles = _xml(zf, "xl/styles.xml")
-    custom = {int(f.get("numFmtId")): str(f.get("formatCode")) for f in styles.iter(f"{NS}numFmt")}
+    custom: dict[int, str] = {}
+    for f in styles.iter(f"{NS}numFmt"):
+        fid = _int(f.get("numFmtId"), "number format id")
+        if fid in custom:
+            raise XlsxRefused(f"the workbook declares number format {fid} twice")
+        custom[fid] = str(f.get("formatCode"))
     xfs = styles.find(f"{NS}cellXfs")
     out = []
     for xf in xfs.findall(f"{NS}xf") if xfs is not None else []:
-        fid = int(xf.get("numFmtId") or 0)
+        fid = _int(xf.get("numFmtId") or 0, "number format id")
         out.append(custom.get(fid) or BUILTIN_FORMATS.get(fid) or f"builtin:{fid}")
     return out
 
@@ -132,12 +153,21 @@ def read_sheet(
                 raise XlsxRefused(f"the sheet {sheet!r} has a cell past column {MAX_COLUMNS:,}")
             if r >= max_rows:
                 raise XlsxRefused(f"the sheet {sheet!r} has more than {max_rows:,} rows")
-            style = int(c.get("s") or 0)
+            style = _int(c.get("s") or 0, f"style of {c.get('r')}")
+            if formats and style >= len(formats):
+                raise XlsxRefused(f"the sheet {sheet!r} gives {c.get('r')} a style the workbook doesn't have")
             fmt = formats[style] if style < len(formats) else "General"
+            if col in rows.get(r, {}):
+                raise XlsxRefused(f"the sheet {sheet!r} has two cells at {c.get('r')}")
             rows.setdefault(r, {})[col] = Cell(value=_value(c, shared, sheet), number_format=fmt)
     merged = [str(m.get("ref")) for m in root.iter(f"{NS}mergeCell")]
     width = 1 + max((c for cells in rows.values() for c in cells), default=-1)
     height = 1 + max(rows, default=-1)
+    if width * height > MAX_GRID_CELLS:
+        raise XlsxRefused(
+            f"the sheet {sheet!r} spans {height:,} rows by {width:,} columns, more cells than a published table "
+            "has; it is not read"
+        )
     empty = Cell(value=None, number_format="General")
     grid = [[rows.get(r, {}).get(c, empty) for c in range(width)] for r in range(height)]
     return grid, merged

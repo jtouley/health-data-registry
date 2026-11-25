@@ -7,6 +7,12 @@ standard parser (HTML has no external entities). Supported selectors, enough to 
     descendant (``div.entry h1``) and child (``ul > li``) combinators, and comma-separated groups
 
 Anything else is refused when the catalog loads (``parse_selector``), never half-matched.
+
+The tree follows HTML's implied end tags for the elements a table or a list is built from: a new cell closes the
+open cell, a new row closes the open row (and its cell), a new ``thead``/``tbody``/``tfoot`` closes the open section,
+and a new ``li``/``p``/``dt``/``dd``/``option`` closes the open one, as a browser builds them. ``Element.text``
+collapses runs of whitespace to one space, as a browser shows the text; that is the only normalisation done, and
+html_table's records say so.
 """
 
 from __future__ import annotations
@@ -46,11 +52,38 @@ MAX_DEPTH: Final = 512
 MAX_NODES: Final = 2_000_000
 
 
+# HTML's optional end tags (WHATWG HTML, 13.1.2.4): starting the key closes an open element of these tags, as long
+# as no element in ``_SCOPE`` (a nested table or list) sits between them.
+_IMPLIED_CLOSE: Final[dict[str, frozenset[str]]] = {
+    "td": frozenset({"td", "th"}),
+    "th": frozenset({"td", "th"}),
+    "tr": frozenset({"tr", "td", "th"}),
+    "thead": frozenset({"thead", "tbody", "tfoot", "tr", "td", "th"}),
+    "tbody": frozenset({"thead", "tbody", "tfoot", "tr", "td", "th"}),
+    "tfoot": frozenset({"thead", "tbody", "tfoot", "tr", "td", "th"}),
+    "li": frozenset({"li"}),
+    "dt": frozenset({"dt", "dd"}),
+    "dd": frozenset({"dt", "dd"}),
+    "option": frozenset({"option"}),
+    "p": frozenset({"p"}),
+}
+_SCOPE: Final[dict[str, frozenset[str]]] = {
+    "td": frozenset({"table"}), "th": frozenset({"table"}), "tr": frozenset({"table"}),
+    "thead": frozenset({"table"}), "tbody": frozenset({"table"}), "tfoot": frozenset({"table"}),
+    "li": frozenset({"ul", "ol", "table"}), "dt": frozenset({"dl", "table"}), "dd": frozenset({"dl", "table"}),
+    "option": frozenset({"select", "datalist"}), "p": frozenset({"table", "div", "section", "article", "li", "td", "th"}),
+}  # fmt: skip
+
+
 class SelectorError(ValueError):
     """A selector this reader does not support."""
 
 
-@dataclass
+class PageTooLarge(ValueError):
+    """A page too large or too deeply nested to read; the adapters refuse it as a layout change."""
+
+
+@dataclass(eq=False)  # compared by identity: a value comparison would walk parent and children without end
 class Element:
     tag: str
     attrs: dict[str, str]
@@ -93,11 +126,27 @@ class _Builder(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.nodes += 1
         if self.nodes > MAX_NODES or len(self.open) > MAX_DEPTH:
-            raise SelectorError("the page is too large or too deeply nested to read")
+            raise PageTooLarge("the page is too large or too deeply nested to read")
+        self._close_implied(tag)
         el = Element(tag, {k: v or "" for k, v in attrs}, parent=self.open[-1])
         self.open[-1].children.append(el)
         if tag not in VOID:
             self.open.append(el)
+
+    def _close_implied(self, tag: str) -> None:
+        closes = _IMPLIED_CLOSE.get(tag)
+        if closes is None:
+            return
+        stop = _SCOPE.get(tag, frozenset())
+        outermost = None  # a new row closes its open cell and the row itself, so the outermost match wins
+        for i in range(len(self.open) - 1, 0, -1):
+            t = self.open[i].tag
+            if t in stop:
+                break
+            if t in closes:
+                outermost = i
+        if outermost is not None:
+            del self.open[outermost:]
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.handle_starttag(tag, attrs)

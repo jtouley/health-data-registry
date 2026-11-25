@@ -41,11 +41,20 @@ if TYPE_CHECKING:
 ROBOTS_MAX_AGE_S: Final = 24 * 3600.0
 DORMANT_AFTER: Final = timedelta(weeks=8)
 LOCKS_ENV: Final = "HDR_CRAWL_LOCKS"
-# Query parameters that carry a credential: never written to a manifest, a fetch log or an answer.
+# Query parameters that carry a credential: never written to a manifest, a fetch log or an answer. Names are
+# compared folded (lower case, without "$", "-" and "_"), so api-key, apiKey and API_KEY are one name; a name
+# that starts with one of SECRET_PREFIXES (cloud pre-signed URLs) is a credential whatever follows.
 SECRET_PARAMS: Final = frozenset(
-    {"key", "apikey", "api_key", "app_token", "token", "access_token", "auth", "signature", "sig", "password",
-     "secret", "client_secret", "subscription-key"}
+    {"key", "apikey", "apptoken", "token", "accesstoken", "auth", "authorization", "signature", "sig", "password",
+     "passwd", "pwd", "secret", "clientsecret", "subscriptionkey", "credential", "sessiontoken", "securitytoken",
+     "idtoken", "refreshtoken", "bearer", "jwt"}
 )  # fmt: skip
+SECRET_PREFIXES: Final = ("xamz", "xgoog", "xms", "awsaccesskey")
+
+
+def _secret(name: str) -> bool:
+    folded = name.lower().lstrip("$").replace("-", "").replace("_", "")
+    return folded in SECRET_PARAMS or folded.startswith(SECRET_PREFIXES)
 
 
 class ScopeRefused(ValueError):
@@ -120,15 +129,24 @@ def in_scope(source: Source, url: str, *, own_paths: Iterable[str] = ()) -> bool
 
 
 def redact_url(url: str) -> str:
-    """``url`` with the value of every credential-like query parameter removed (provenance, logs, answers)."""
-    parts = urlsplit(url)
-    if not parts.query:
+    """``url`` with every credential-like query parameter, any user name or password and the fragment removed
+    (provenance, logs, answers, refusals). Anything that isn't a URL is returned as it is."""
+    try:
+        parts = urlsplit(url)
+        netloc = parts.hostname or ""
+        if parts.port is not None:
+            netloc += f":{parts.port}"
+    except ValueError:
+        return url
+    if not parts.netloc:
+        return url
+    if "@" not in parts.netloc and not parts.fragment and not parts.query:
         return url
     pairs = parse_qsl(parts.query, keep_blank_values=True)
-    if not any(k.lstrip("$").lower() in SECRET_PARAMS for k, _ in pairs):
-        return url
-    kept = [(k, v) for k, v in pairs if k.lstrip("$").lower() not in SECRET_PARAMS]
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(kept), parts.fragment))
+    kept = [(k, v) for k, v in pairs if not _secret(k)]
+    query = parts.query if len(kept) == len(pairs) else urlencode(kept)
+    host = netloc if "@" in parts.netloc else parts.netloc
+    return urlunsplit((parts.scheme, host, parts.path, query, ""))
 
 
 # ------------------------------------------------------------------------------------------------- pace
@@ -278,8 +296,10 @@ def clamp_live(count: int, per_item_s: float) -> int:
     at ``per_item_s`` each (at least one, so the read can say in plain words that it ran out of time)."""
     from health_data_registry import deadline
 
+    if not per_item_s > 0:
+        raise ValueError(f"a live read's time per item is a positive number of seconds, got {per_item_s!r}")
     left = deadline.remaining()
-    if left is None or per_item_s <= 0:
+    if left is None:
         return count
     return max(1, min(count, int(left // per_item_s)))
 
@@ -328,9 +348,20 @@ class FailureStreaks:
         p = self.path(source)
         if not p.is_file():
             return Streak(source=source)
-        raw = json.loads(p.read_text(encoding="utf-8"))
-        return Streak(**{k: raw.get(k) for k in ("first_failure_at", "last_failure_at", "last_status")},
-                      source=source, failed_runs=int(raw.get("failed_runs") or 0))  # fmt: skip
+        try:
+            raw = json.loads(p.read_text(encoding="utf-8"))
+            s = Streak(**{k: raw.get(k) for k in ("first_failure_at", "last_failure_at", "last_status")},
+                       source=source, failed_runs=int(raw.get("failed_runs") or 0))  # fmt: skip
+            for stamp in (s.first_failure_at, s.last_failure_at):
+                if stamp is not None and datetime.fromisoformat(str(stamp)).tzinfo is None:
+                    raise ValueError("a failure time without its time zone")
+        except (ValueError, TypeError, AttributeError) as e:
+            raise CrawlStopped(
+                "state_unreadable",
+                f"the saved failure streak of {source} ({p}) can't be read, so the 8-week rule can't be applied; "
+                "delete that file to start the streak again",
+            ) from e
+        return s
 
     def failed(self, source: str, when: datetime, status: str) -> Streak:
         s = self.get(source)

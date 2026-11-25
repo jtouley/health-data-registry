@@ -147,9 +147,8 @@ def test_html_table(case: Case) -> None:
 
 def test_fields_max_rows_and_publisher_fields() -> None:
     e = entry("html_table", {"shape": "table", "table_selector": "#cases"})
-    assert published(list(pages(e, Site({URL: SIMPLE}), fields=["Cases"], max_rows=1))[0]) == [
-        {"Cases": "1,204a"}
-    ]
+    got = published(list(pages(e, Site({URL: SIMPLE}), fields=["Cases"], max_rows=1))[0])
+    assert len(got) == 1 and got[0]["Cases"] == "1,204a" and "County" in got[0]  # every column kept
     assert publisher_fields(e, Site({URL: SIMPLE})) == {"County", "Cases", *DOCUMENT_FIELDS}
 
 
@@ -207,3 +206,68 @@ def test_read_table_alone_gives_the_labels_and_records() -> None:
     )
     labels, records = read_table(e, e.source.config(), SIMPLE)  # type: ignore[arg-type]
     assert labels == list(records[0]) and records == published(list(pages(e, Site({URL: SIMPLE})))[0])
+
+
+# ------------------------------------------------------------------------------- fix round of #148
+
+
+def test_a_body_row_repeating_the_header_is_compared_by_identity_not_value() -> None:
+    """Elements compare by identity: comparing two equal rows by value walked parent and children without end."""
+    repeated = page(
+        '<table id="cases"><thead><tr><th>County</th><th>Cases</th></tr></thead><tbody>'
+        "<tr><td>Wayne</td><td>4</td></tr><tr><td>County</td><td>Cases</td></tr></tbody></table>"
+    )
+    e = entry("html_table", {"shape": "table", "table_selector": "#cases"})
+    got = published(list(pages(e, Site({URL: repeated})))[0])
+    assert got == [{"County": "Wayne", "Cases": "4"}, {"County": "County", "Cases": "Cases"}]
+
+
+def test_optional_end_tags_are_implied_as_a_browser_does() -> None:
+    bare = page(
+        '<table id="cases"><thead><tr><th>County<th>Cases<th>Deaths<tbody>'
+        "<tr><td>Alpena<td>12<td>3<tr><td>Wayne<td>4<td>0</table>"
+    )
+    e = entry("html_table", {"shape": "table", "table_selector": "#cases"})
+    got = published(list(pages(e, Site({URL: bare})))[0])
+    assert got == [
+        {"County": "Alpena", "Cases": "12", "Deaths": "3"},
+        {"County": "Wayne", "Cases": "4", "Deaths": "0"},
+    ]
+    nested = parse_html("<ul><li>a<li>b<ul><li>c<li>d</ul><li>e</ul>")
+    top = nested.children[0]
+    assert [li.text() for li in top.children if getattr(li, "tag", None) == "li"] == ["a", "b c d", "e"]
+
+
+def test_a_page_too_deep_to_read_is_a_layout_refusal() -> None:
+    deep = ("<div>" * 600).encode()
+    e = entry("html_table", {"shape": "table", "table_selector": "#cases"})
+    with pytest.raises(LayoutError, match="too large or too deeply nested"):
+        list(pages(e, Site({URL: deep})))
+
+
+def test_a_table_page_follows_a_redirect_only_inside_its_scope() -> None:
+    from health_data_registry.fetch import FetchRefused
+
+    moved = f"https://{HOST}/toy/data/"
+    e = entry("html_table", {"shape": "table", "table_selector": "#cases"})
+    site = Site({URL: FetchRefused("too_many_redirects", "moved", status=301, location=moved), moved: SIMPLE})
+    got = list(pages(e, site))
+    assert site.calls == [URL, moved] and published(got[0])[0]["County"] == "Wayne"
+    away = Site(
+        {URL: FetchRefused("too_many_redirects", "moved", status=301, location="https://elsewhere.org/x")}
+    )
+    with pytest.raises(LayoutError, match="outside this source's pages"):
+        list(pages(e, away))
+    loop = Site({URL: FetchRefused("too_many_redirects", "moved", status=301, location=URL)})
+    with pytest.raises(LayoutError, match="redirected more than"):
+        list(pages(e, loop))
+
+
+def test_an_item_page_with_none_of_its_fields_is_refused() -> None:
+    from health_data_registry.adapters.html_table import item_records
+    from tests.adapters.test_listing import item, listing_entry
+
+    e = listing_entry()
+    cfg = e.source.config().listing  # type: ignore[attr-defined]
+    with pytest.raises(LayoutError, match="none of the fields the catalog names"):
+        item_records(e, cfg, b"<main><h2>Redesigned</h2></main>", item("a"))

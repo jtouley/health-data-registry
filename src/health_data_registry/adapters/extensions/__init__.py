@@ -11,8 +11,6 @@ refuses is refused when the catalog loads (``health-data-registry validate``).
 
 The hooks and their fixed signatures (``args`` is the validated argument model):
 
-    resolve   (args, base_url, index_bytes) -> list[str]   which URLs to fetch; the core checks every one against
-                                                           the source's own hosts and scope before fetching
     locate    (args, grid) -> Location                     where the data sit in a grid of cell text (a header
                                                            row); never changes a value
     parse     (args, content, url) -> list[dict[str, str]] records keyed by the publisher's own labels, every value
@@ -34,11 +32,21 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from health_data_registry.adapters.errors import LayoutError
 from health_data_registry.source_config import TYPE_HOOKS, ExtensionUse, Strict
+
+# Hooks a type runs once: a second extension at one of them would be ignored or would read the first one's
+# output as if it were the publisher's, so the catalog may name only one.
+ONE_PER_SOURCE: frozenset[str] = frozenset({"locate", "staging"})
 
 
 class ExtensionRefused(ValueError):
-    """A catalog entry's extension choice, or an extension's input, is refused."""
+    """A catalog entry's extension choice is refused (when the catalog loads)."""
+
+
+class ExtensionLayoutRefused(ExtensionRefused, LayoutError):
+    """An extension's input is not laid out as its arguments describe: refused in the same plain words as any
+    layout change (adapters.LayoutError), so the server and the CLI give one refusal for all."""
 
 
 @dataclass(frozen=True)
@@ -59,6 +67,9 @@ class StagingStep:
     sql: str
     fields: tuple[str, ...]
     rows_per_row: int
+    # Fields the step adds to the grain (wide_to_long's key_field): the contract's primary key must include each,
+    # or the staged model's one-row-per-key test would fail on good data (registry checks it at load).
+    key_fields: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -71,6 +82,9 @@ class Extension:
     # staging only: the raw fields the step reads, from its arguments (the adapter hands these on, not the
     # contract's fields, and the raw contract lists them).
     input_fields: Callable[[Any], Sequence[str]] | None = None
+    # staging only: what one raw field it reads holds, in plain words, for the generated raw-source docs
+    # ("POP for YEAR 2023"), as (the staged field it lands in, the sentence); None when it is copied as it is.
+    explain_input: Callable[[Any, str], tuple[str, str] | None] | None = None
     version: str = "1"  # bumped when a change to the extension changes its output (snapshot identity)
 
 
@@ -91,6 +105,7 @@ def check_uses(kind: str, uses: Sequence[ExtensionUse]) -> None:
     arguments its model accepts. Called when the catalog loads."""
     _load()
     seen: set[str] = set()
+    hooks: set[str] = set()
     for use in uses:
         ext = EXTENSIONS.get(use.name)
         if ext is None:
@@ -104,6 +119,9 @@ def check_uses(kind: str, uses: Sequence[ExtensionUse]) -> None:
         if use.name in seen:
             raise ExtensionRefused(f"extension {use.name} is listed twice")
         seen.add(use.name)
+        if use.hook in ONE_PER_SOURCE and use.hook in hooks:
+            raise ExtensionRefused(f"a source names one {use.hook} extension at most")
+        hooks.add(use.hook)
         ext.args_model.model_validate(use.args)
 
 

@@ -80,6 +80,7 @@ class SafeZip:
                 f"{what} expands to {total:,} bytes, more than {caps.max_uncompressed_bytes:,}"
             )
         self.names = names
+        self.inflated = 0  # bytes read out of the archive so far, across every part: capped as a whole
 
     def has(self, name: str) -> bool:
         return _clean(name) in self.names
@@ -89,7 +90,9 @@ class SafeZip:
         info = self.names.get(_clean(name))
         if info is None:
             raise ArchiveRefused(f"{self.what} has no entry {name!r}")
-        limit = min(self.caps.max_uncompressed_bytes, self.caps.max_ratio * max(info.compress_size, 1))
+        limit = min(
+            self.caps.max_uncompressed_bytes - self.inflated, self.caps.max_ratio * max(info.compress_size, 1)
+        )
         out = bytearray()
         try:
             with self.zf.open(info) as fh:
@@ -99,6 +102,7 @@ class SafeZip:
                         raise ArchiveRefused(f"{self.what}: {name!r} expands past its cap")
         except (zipfile.BadZipFile, OSError, EOFError, RuntimeError) as e:
             raise ArchiveRefused(f"{self.what}: {name!r} can't be read") from e
+        self.inflated += len(out)
         return bytes(out)
 
 

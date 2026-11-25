@@ -87,8 +87,12 @@ flowchart LR
    The dbt project in `transform/` (dbt-duckdb) reads the full load each dataset's `LATEST` pointer names, from
    `raw_records/<id>/<snapshot_id>.ndjson` (`dbt_raw.py`, a dbt-duckdb plugin). Every staging row carries its
    snapshot id and raw sha256. A source with no load to read is empty, with a warning, so the rest still
-   builds. Staging models are generated from the contracts by `make contracts` and only type: no row is dropped
-   or deduplicated, and a declared key that repeats fails a test. Business rules go in intermediate models, and
+   builds. Staging models are generated from the contracts by `make contracts` and type the load: no row is
+   dropped or deduplicated, and a declared key that repeats fails a test. A source may also name staging
+   extensions (ADR 0016), such as `wide_to_long`. They run in the one shared projection (`staging.py`), so the
+   lake, the live read and the dbt model apply the same SQL. They may reshape, and so change the grain (one raw
+   row makes a declared number of rows, checked on load), but they never compute a value or filter a row; the
+   contract's primary key includes any field they add to the grain. Business rules go in intermediate models, and
    dimensions and one fact per source in marts.
 5. **DuckDB read-only views.** `store.py` builds views over the snapshot from the contract. Connections are
    read-only.

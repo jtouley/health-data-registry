@@ -4,7 +4,9 @@ The raw store keeps the downloaded file itself (the zip, not the extracted membe
 member read and its own sha256. Records are keyed by the header row's labels (``header_row``, or a ``locate``
 extension such as header_row_finder), every value as stored: CSV text as written, and for xlsx the cell's stored
 value with its number format beside it under ``<label> (number format)``, never the display string (xlsx.py).
-Footer rows the config names (``skip_footer_rows``) are left out; nothing else is dropped, renamed or computed.
+Footer rows the config names (``skip_footer_rows``) are left out, and the number left out is recorded with the
+file's provenance (``skipped_footer_rows``); nothing else is dropped, renamed or computed. Every column the file has
+is handed on, not only the ones the contract reads (hard rule 15).
 Every row carries its document's provenance (``document_url``, ``document_sha256``, ``document_retrieved_at``).
 
 Refused rather than guessed: a file whose sha256 is not the pinned ``expected_sha256``, an empty or repeated
@@ -63,11 +65,15 @@ def _grid(
 
 
 def _header_index(entry: CatalogEntry, cfg: HttpsFileConfig, grid: list[list[str | None]]) -> int:
+    """The 0-based header row: ``header_row``, or the one ``locate`` extension's (the catalog allows one)."""
     found = resolved(entry.source.extensions, "locate")
     if not found:
         return cfg.header_row - 1
     ext, args = found[0]
-    return int(ext.run(args, [[c or "" for c in row] for row in grid]).header_row)
+    h = ext.run(args, [[c or "" for c in row] for row in grid]).header_row
+    if not isinstance(h, int) or isinstance(h, bool) or not 0 <= h < len(grid):
+        raise LayoutError(f"{entry.id}: extension {ext.name} named row {h!r}, which the file doesn't have")
+    return h
 
 
 def read_records(
@@ -91,6 +97,11 @@ def read_records(
     if len(set(header)) != len(header):
         raise LayoutError(f"{entry.id}: the header row repeats a label")
     end = len(grid) - cfg.skip_footer_rows
+    if cfg.skip_footer_rows:
+        provenance = {
+            **provenance,
+            "skipped_footer_rows": str(min(cfg.skip_footer_rows, max(0, len(grid) - h - 1))),
+        }
     body = range(h + 1, end)
     if len(body) > cfg.max_rows:
         raise LayoutError(f"{entry.id}: the file has more than {cfg.max_rows:,} rows")
@@ -128,11 +139,6 @@ def pages(read: Read) -> Iterator[Page]:
     cfg: HttpsFileConfig = read.config
     content, page = _download(read.entry, cfg, read.get)
     header, recs, provenance = read_records(read.entry, cfg, content)
-    if read.fields is not None:
-        keep = set(read.fields)
-        recs = [
-            {k: v for k, v in r.items() if k in keep or k.removesuffix(FORMAT_SUFFIX) in keep} for r in recs
-        ]
     if read.max_rows is not None:
         recs = recs[: max(0, read.max_rows)]
     yield Page(fetch=page.fetch, records=with_document(recs, page.fetch), provenance=provenance)

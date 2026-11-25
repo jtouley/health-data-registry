@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from health_data_registry.adapters import AdapterType, Page, Read, register
+from health_data_registry.adapters import DOCUMENT_FIELDS, AdapterType, Page, Read, register
 from health_data_registry.source_config import CONFIG_MODELS
 
 
@@ -62,18 +62,19 @@ register(
     AdapterType(
         "https_file", CONFIG_MODELS["https_file"], _lazy("https_file", "pages"), _lazy("https_file", "publisher_fields"),
         accept="text/csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/zip, */*;q=0.5",
+        adds_fields=DOCUMENT_FIELDS,
     )
 )  # fmt: skip
 register(
     AdapterType(
         "html_table", CONFIG_MODELS["html_table"], _lazy("html_table", "pages"), _lazy("html_table", "publisher_fields"),
-        accept="text/html, application/xhtml+xml;q=0.9", follows_redirects=False,
+        accept="text/html, application/xhtml+xml;q=0.9", follows_redirects=False, adds_fields=DOCUMENT_FIELDS,
     )
 )  # fmt: skip
 register(
     AdapterType(
         "pdf_table", CONFIG_MODELS["pdf_table"], _lazy("pdf_table", "pages"), _lazy("pdf_table", "publisher_fields"),
-        accept="text/html, application/pdf;q=0.9",
+        accept="text/html, application/pdf;q=0.9", adds_fields=DOCUMENT_FIELDS,
     )
 )  # fmt: skip
 register(

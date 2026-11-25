@@ -174,12 +174,11 @@ WIDE_CATALOG = CATALOG.replace(
   api_url: https://data.cdc.gov/resource/toy0-toy0.json
 """,
     """source:
-  type: https_file
+  type: https_csv
   host: data.cdc.gov
   dataset: toy0-toy0
   landing_url: https://data.cdc.gov/d/toy0-toy0
   api_url: https://data.cdc.gov/resource/toy0-toy0.csv
-  https_file: {format: csv}
   extensions:
     - name: wide_to_long
       hook: staging
@@ -193,9 +192,65 @@ WIDE = [
 ]
 
 
+# The unpivot makes one row per year, so the contract declares the grain it makes (registry checks it).
+WIDE_CONTRACT = (
+    CONTRACT.replace(
+        "        description: MMWR year of report.\n",
+        "        description: MMWR year of report.\n        primaryKey: true\n        primaryKeyPosition: 2\n",
+    )
+    .replace(
+        "        description: The state where the case lived, or US RESIDENTS for the national total.\n",
+        "        description: The state where the case lived, or US RESIDENTS for the national total.\n"
+        "        primaryKey: true\n        primaryKeyPosition: 1\n",
+    )
+    .replace(
+        "        description: Notifiable condition.\n",
+        "        description: Notifiable condition.\n        primaryKey: true\n        primaryKeyPosition: 3\n",
+    )
+)
+
+
 @pytest.fixture
 def wide(tmp_path: Path) -> Dataset:
-    return load_registry(write_registry(tmp_path / "wide", catalog=WIDE_CATALOG)).get("toy_cases")
+    root = write_registry(tmp_path / "wide", catalog=WIDE_CATALOG, contract=WIDE_CONTRACT)
+    return load_registry(root).get("toy_cases")
+
+
+def test_a_contract_key_without_the_unpivots_key_field_is_refused(tmp_path: Path) -> None:
+    from health_data_registry.registry import RegistryError
+
+    with pytest.raises(RegistryError, match="primary key includes the column reading year"):
+        load_registry(write_registry(tmp_path / "nokey", catalog=WIDE_CATALOG))
+
+
+def test_reshape_and_a_staging_extension_together_are_refused() -> None:
+    from tests.adapters.helpers import entry
+
+    with pytest.raises(ValidationError, match="reshapes its file once"):
+        entry("https_csv", None, reshape={"wide_to_long": {"keep": ["STATE"], "stubs": ["POP"], "key_field": "YEAR"}},
+              extensions=[{"name": "wide_to_long", "hook": "staging", "args": ARGS}])  # fmt: skip
+
+
+def test_a_document_type_whose_contract_drops_its_metadata_is_refused(tmp_path: Path) -> None:
+    from health_data_registry.registry import RegistryError
+
+    doc = CATALOG.replace("  portal: socrata\n", "  type: https_file\n  https_file: {format: csv}\n")
+    with pytest.raises(RegistryError, match="adds document_url, document_sha256, document_retrieved_at"):
+        load_registry(write_registry(tmp_path / "doc", catalog=doc))
+
+
+def test_an_extra_year_in_the_file_stops_the_load_end_to_end(wide: Dataset, tmp_path: Path) -> None:
+    """The adapter hands on every column (hard rule 15), so a year the codebook doesn't list reaches the layout
+    check of a real load and is refused, never dropped."""
+    from health_data_registry.store import build_snapshot, write_ndjson
+    from tests.conftest import raw_fetch
+
+    lake = tmp_path / "lake"
+    lake.mkdir()
+    nd = tmp_path / "wide.ndjson"
+    write_ndjson(nd, [{**r, "m12025": "1"} for r in WIDE])
+    with pytest.raises(ContractLayoutRefused, match="m12025"):
+        build_snapshot(lake, wide, [raw_fetch("https://data.cdc.gov/resource/toy0-toy0.csv", WIDE)], [nd])
 
 
 def _typed(con: duckdb.DuckDBPyConnection, table: str) -> list[tuple[Any, ...]]:
@@ -296,3 +351,59 @@ def test_no_staging_extensions_means_the_projection_is_unchanged(tmp_path: Path)
 
 def test_contract_semantic_unchanged_by_fixture() -> None:
     assert "sourceField, value: m1" in CONTRACT and "case_count" in SEMANTIC and json.dumps(WIDE)
+
+
+def test_the_guard_on_what_a_step_makes_runs_on_a_partial_load_too() -> None:
+    from tests.adapters.helpers import entry
+
+    args = {"keep": ["Age", "Sex"], "stubs": ["Onset "], "key_field": "Year", "expected_keys": ["2024"]}
+    e = entry(
+        "https_file",
+        {"format": "csv"},
+        extensions=[{"name": "wide_to_long", "hook": "staging", "args": args}],
+    )
+    with pytest.raises(RowLevelRefused):  # present=None: a --max-rows sample, whose fields aren't checked
+        stage_entry(duckdb.connect(), e, cast(Contract, None), "raw", table="t", present=None)
+
+
+def test_a_second_staging_extension_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(
+        EXTENSIONS, "probe_stage",
+        Extension("probe_stage", "staging", Strict, lambda a, r, f: StagingStep(r, tuple(f), 1), "x",
+                  input_fields=lambda a: []),
+    )  # fmt: skip
+    uses = [
+        ExtensionUse(name="wide_to_long", hook="staging", args=ARGS),
+        ExtensionUse(name="probe_stage", hook="staging"),
+    ]
+    with pytest.raises(ExtensionRefused, match="one staging extension at most"):
+        check_uses("https_csv", uses)
+
+
+def test_a_layout_refusal_from_an_extension_is_a_layout_error() -> None:
+    from health_data_registry.adapters import LayoutError
+
+    with pytest.raises(LayoutError):
+        hrf.locate(hrf.Args.model_validate({"first_cell": "Year"}), GRID)
+
+
+def test_the_generated_docs_say_what_staging_extensions_do(wide: Dataset) -> None:
+    """The raw source describes each wide column by the value it holds and the column it lands in; the staging
+    model names its extensions, the rows they make and the grain they add; the SQL header says so too."""
+    import yaml
+
+    from health_data_registry.registry import Registry
+    from health_data_registry.transform_gen import ADDED_DOCS, raw_sources, staging_sql, staging_yml
+
+    table = yaml.safe_load(raw_sources(cast(Registry, [wide])))["sources"][0]["tables"][0]
+    docs = {c["name"]: c["description"] for c in table["columns"]}
+    assert "the value of m1 for year = 2023" in docs["m12023"] and "into cases" in docs["m12023"]
+    assert "staging reshapes it (wide_to_long)" in table["description"]
+    model = yaml.safe_load(staging_yml(wide))["models"][0]
+    assert model["meta"]["staging_extensions"] == [
+        {"name": "wide_to_long", "hook": "staging", "rows_per_row": 2, "adds_to_grain": ["year"]}
+    ]
+    assert "one row per raw row and year" in model["description"]
+    assert {c["name"]: c.get("meta", {}).get("made_by") for c in model["columns"]}["year"] == "wide_to_long"
+    assert "-- Staging steps: wide_to_long (one raw row makes 2 rows" in staging_sql(wide)
+    assert all(not d.startswith("Publisher field") for d in ADDED_DOCS.values())

@@ -2,13 +2,16 @@
 
 Generic and driven by the catalog's ``reconcile`` block (source_config.Reconcile): which rows are totals, which
 columns are summed down, which columns sum across, and how far apart two numbers may be and still count as equal.
-Each failed check is a plain sentence recorded on the row it concerns (``failed_checks``); a table with more
+Each failed check is a plain sentence recorded on the row it concerns (``failed_checks``, a JSON array of the
+sentences, ``[]`` when the row failed none; in the long layout, on the cell of the column it concerns); a table
+with more
 failing rows than ``max_failed_rows`` was misread, so the whole document is refused (fail closed). A check with a
 suppressed or blank value in it is skipped: its true sum is unknown.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
@@ -50,10 +53,13 @@ def is_total(rule: Reconcile, row: Row) -> bool:
     )
 
 
-def _down(rule: Reconcile, rows: Sequence[Row], headers: Sequence[str]) -> dict[int, list[str]]:
+Failure = tuple[str, str]  # (the column the check concerns, the sentence)
+
+
+def _down(rule: Reconcile, rows: Sequence[Row], headers: Sequence[str]) -> dict[int, list[Failure]]:
     """Each total row against the sum of the rows it covers, in every declared column."""
     columns = [h for h in headers if any(match_whole(p, h) is not None for p in rule.columns)]
-    out: dict[int, list[str]] = {}
+    out: dict[int, list[Failure]] = {}
     totals = [is_total(rule, r) for r in rows]
     for k, t in enumerate(rows):
         if not totals[k]:
@@ -73,14 +79,17 @@ def _down(rule: Reconcile, rows: Sequence[Row], headers: Sequence[str]) -> dict[
             expected = sum(v for v in parts if v is not None)
             if not _equal(total, expected, rule.tolerance):
                 out.setdefault(k, []).append(
-                    f"{_name(t)}: {h} is {total:g}, but the {len(members)} rows it totals sum to {expected:g}"
+                    (
+                        h,
+                        f"{_name(t)}: {h} is {total:g}, but the {len(members)} rows it totals sum to {expected:g}",
+                    )
                 )
     return out
 
 
-def _across(rule: Reconcile, rows: Sequence[Row], headers: Sequence[str]) -> dict[int, list[str]]:
+def _across(rule: Reconcile, rows: Sequence[Row], headers: Sequence[str]) -> dict[int, list[Failure]]:
     """Each declared total column against the sum of the part columns that share its key, row by row."""
-    out: dict[int, list[str]] = {}
+    out: dict[int, list[Failure]] = {}
     for pair in rule.column_sums:
         for th in headers:
             tm = match_whole(pair.total, th)
@@ -99,22 +108,33 @@ def _across(rule: Reconcile, rows: Sequence[Row], headers: Sequence[str]) -> dic
                 expected = sum(v for v in vals if v is not None)
                 if not _equal(total, expected, rule.tolerance):
                     out.setdefault(k, []).append(
-                        f"{_name(row)}: {th} is {total:g}, but {', '.join(parts)} sum to {expected:g}"
+                        (th, f"{_name(row)}: {th} is {total:g}, but {', '.join(parts)} sum to {expected:g}")
                     )
     return out
 
 
-def failed_checks(rule: Reconcile, rows: Sequence[Row], headers: Sequence[str]) -> list[list[str]]:
-    """The failed checks of each row, in row order (empty when it reconciles or can't be checked).
+def failed_cells(rule: Reconcile, rows: Sequence[Row], headers: Sequence[str]) -> list[list[Failure]]:
+    """The failed checks of each row, in row order, each with the column it concerns (empty when the row
+    reconciles or can't be checked).
 
     Refused, whole, when more than ``max_failed_rows`` rows fail."""
     down, across = _down(rule, rows, headers), _across(rule, rows, headers)
     found = [down.get(k, []) + across.get(k, []) for k in range(len(rows))]
     failing = [f for f in found if f]
     if len(failing) > rule.max_failed_rows:
-        shown = [c for f in failing for c in f][:5]
+        shown = [c for f in failing for _col, c in f][:5]
         raise ReconcileRefused(
             f"{len(failing)} rows disagree with the table's own printed totals, more than the "
             f"{rule.max_failed_rows} the catalog allows, so the table was not read: " + "; ".join(shown)
         )
     return found
+
+
+def failed_checks(rule: Reconcile, rows: Sequence[Row], headers: Sequence[str]) -> list[list[str]]:
+    """The failed checks of each row as sentences, in row order (failed_cells without the columns)."""
+    return [[c for _col, c in f] for f in failed_cells(rule, rows, headers)]
+
+
+def as_text(sentences: Sequence[str]) -> str:
+    """The ``failed_checks`` value: a JSON array of sentences, so a printed label holding "; " can't split one."""
+    return json.dumps(list(sentences), ensure_ascii=False)

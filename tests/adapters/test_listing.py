@@ -32,7 +32,8 @@ LISTING = {
 def listing_entry(**source: Any) -> CatalogEntry:
     return entry(
         "html_table", {"shape": "listing", "listing": source.pop("listing", LISTING)},
-        scope_paths=[r"/search/", r"/abstract/[a-z0-9-]+/"], min_interval_s=120.0, **source,
+        scope_paths=[r"/search/", r"/abstract/[a-z0-9-]+/"],
+        min_interval_s=source.pop("min_interval_s", 120.0), **source,
     )  # fmt: skip
 
 
@@ -101,9 +102,46 @@ def test_a_complete_crawl_hands_on_every_item_in_order(tmp_path: Path) -> None:
         (tmp_path / "crawl_state" / "listing" / "toy_source" / "2025" / "checkpoint.json").read_text()
     )
     assert ck["complete"] and ck["total"] == 3 and len(ck["done"]) == 3
-    # a second run reads nothing again: the crawl is complete
+    # a second run reads no item again: it only checks the listing's total, which hasn't changed
     s.calls.clear()
-    assert len(run(e, s, tmp_path, clock)) == 3 and s.calls == []
+    assert len(run(e, s, tmp_path, clock)) == 3 and s.calls == [search(1)]
+
+
+def test_a_finished_partition_opens_again_when_its_listing_grows(tmp_path: Path) -> None:
+    e, clock = listing_entry(), Clock()
+    run(e, site(), tmp_path, clock)
+    grown = site(total=4, slugs=("a", "b", "c", "d"))
+    grown.pages[search(2)] = listing_html(4, ["c", "d"])
+    got = run(e, grown, tmp_path, clock)
+    assert [p.records[0]["title"] for p in got] == ["A", "B", "C", "D"]
+    assert grown.calls == [search(1), search(1), search(2), item("d")]  # only the new item page is read
+
+
+def test_a_checkpoint_of_another_method_is_discarded(tmp_path: Path) -> None:
+    e, clock = listing_entry(), Clock()
+    run(e, site(), tmp_path, clock)
+    other = listing_entry(listing={**LISTING, "fields": {"title": "h1.entry-title"}})  # another parse
+    s = site()
+    got = run(other, s, tmp_path, clock)
+    assert [published(p) for p in got] == [[{"title": t}] for t in ("A", "B", "C")]
+    assert s.calls == [search(1), item("a"), item("b"), search(2), item("c")]  # read again, the new way
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        lambda ck: "{not json",
+        lambda ck: json.dumps({**ck, "done": {item("a"): "../../../../etc/passwd"}}),
+        lambda ck: json.dumps({**ck, "unknown": 1}),
+    ],
+)
+def test_a_checkpoint_that_cannot_be_trusted_is_refused(tmp_path: Path, tamper: Any) -> None:
+    e, clock = listing_entry(), Clock()
+    run(e, site(), tmp_path, clock, max_rows=1)
+    p = tmp_path / "crawl_state" / "listing" / "toy_source" / "2025" / "checkpoint.json"
+    p.write_text(tamper(json.loads(p.read_text())))
+    with pytest.raises(LayoutError, match="not reused|can't be read"):
+        run(e, site(), tmp_path, clock)
 
 
 def test_through_the_core_and_the_guard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -170,11 +208,43 @@ def test_max_rows_builds_a_partial_sample(tmp_path: Path) -> None:
     assert len(got) == 2 and s.calls == [search(1), item("a"), item("b")]
 
 
-def test_a_changed_total_mid_crawl_is_refused(tmp_path: Path) -> None:
+def test_a_sample_that_stops_part_way_through_a_page_does_not_skip_its_items(tmp_path: Path) -> None:
+    e, clock = listing_entry(), Clock()
+    assert len(run(e, site(), tmp_path, clock, max_rows=1)) == 1
     s = site()
-    s.pages[search(2)] = listing_html(5, ["c"])
-    with pytest.raises(LayoutError, match="now shows 5 results, not 3"):
-        run(listing_entry(), s, tmp_path, Clock())
+    got = run(e, s, tmp_path, clock)  # the full run reads b, which the sample left on page 1
+    assert [p.records[0]["title"] for p in got] == ["A", "B", "C"]
+    assert s.calls == [search(1), item("b"), search(2), item("c")]
+
+
+def test_a_changed_total_mid_crawl_walks_the_listing_again(tmp_path: Path) -> None:
+    s = site(total=4, slugs=("a", "b", "c", "d"))
+    s.pages[search(1)] = listing_html(3, ["a", "b"])  # the count moves between page 1 and page 2
+    s.pages[search(2)] = listing_html(4, ["c", "d"])
+
+    def get(url: str) -> Any:
+        got = s(url)
+        if url == search(2):  # after page 2 is read once, page 1 shows the new count too
+            s.pages[search(1)] = listing_html(4, ["a", "b"])
+        return got
+
+    got = run(listing_entry(), get, tmp_path, Clock())
+    assert [p.records[0]["title"] for p in got] == ["A", "B", "C", "D"]
+    assert s.calls == [search(1), item("a"), item("b"), search(2), search(1), search(2), item("c"), item("d")]
+
+
+def test_a_total_that_keeps_moving_leaves_the_crawl_incomplete_not_stuck(tmp_path: Path) -> None:
+    s = site()
+    n = iter(range(10, 100))
+    s.pages[search(2)] = listing_html(3, ["c"])
+
+    def get(url: str) -> Any:
+        if url.startswith(f"https://{HOST}/search/"):
+            s.pages[url] = listing_html(next(n), ["a", "b"] if url == search(1) else ["c"])
+        return s(url)
+
+    with pytest.raises(CrawlIncomplete, match="changed its number of results"):
+        run(listing_entry(), get, tmp_path, Clock())
 
 
 def test_listing_layout_refusals(tmp_path: Path) -> None:
@@ -216,6 +286,15 @@ def test_the_pace_is_written_before_each_request_and_survives_a_restart(tmp_path
     restarted.now = 1_000_130.0
     run(e, site(), tmp_path, restarted, max_rows=2)
     assert restarted.slept[0] == pytest.approx(110.0)
+
+
+def test_a_lowered_pace_takes_effect_on_the_next_run(tmp_path: Path) -> None:
+    clock = Clock()
+    run(listing_entry(min_interval_s=600.0), site(), tmp_path, clock, max_rows=1)
+    later = Clock()
+    later.now = clock.now
+    run(listing_entry(), site(), tmp_path, later, max_rows=2)
+    assert later.slept == [120.0, 120.0]  # the saved 600 s is not carried over
 
 
 def test_a_saved_pace_that_cannot_be_trusted_is_refused(tmp_path: Path) -> None:
@@ -380,10 +459,33 @@ def test_a_listed_item_that_is_gone_leaves_the_crawl_incomplete(tmp_path: Path) 
     s = site()
     clock = Clock()
     s.pages[item("b")] = FetchRefused("http_error", "The publisher answered 410.", status=410)
-    with pytest.raises(CrawlIncomplete, match="shows 3 results but 2"):
+    with pytest.raises(
+        CrawlIncomplete, match=r"shows 3 results but 2 .*1 listed item page is gone: .*abstract/b/"
+    ):
         run(listing_entry(), s, tmp_path, clock)
+    s.calls.clear()
+    with pytest.raises(CrawlIncomplete):  # still gone: only that page is asked for, not the whole listing
+        run(listing_entry(), s, tmp_path, clock)
+    assert s.calls == [item("b")]
     s.pages[item("b")] = item_html("b")  # back again: the next run reads it and completes
+    s.calls.clear()
     assert len(run(listing_entry(), s, tmp_path, clock)) == 3
+    assert s.calls == [item("b")]
+
+
+def test_a_partition_that_cannot_finish_does_not_hold_back_the_others(tmp_path: Path) -> None:
+    two_years = {**LISTING, "years": {"first": 2024, "last": 2025}}
+    s = Site(
+        {
+            search(1, 2024): listing_html(2, ["a"]),  # says 2, links 1
+            search(1, 2025): listing_html(1, ["c"]),
+            item("a"): item_html("a"),
+            item("c"): item_html("c"),
+        }
+    )
+    with pytest.raises(CrawlIncomplete, match="2024 listing shows 2 results but 1"):
+        run(listing_entry(listing=two_years), s, tmp_path, Clock())
+    assert item("c") in s.calls  # 2025 was crawled before the run said it was incomplete
 
 
 def test_other_refusals_still_stop_the_crawl(tmp_path: Path) -> None:

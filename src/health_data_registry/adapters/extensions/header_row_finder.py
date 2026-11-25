@@ -11,7 +11,7 @@ from collections.abc import Sequence
 
 from pydantic import Field
 
-from health_data_registry.adapters.extensions import Extension, ExtensionRefused, Location, register
+from health_data_registry.adapters.extensions import Extension, ExtensionLayoutRefused, Location, register
 from health_data_registry.source_config import Strict
 
 
@@ -27,11 +27,11 @@ def locate(args: Args, grid: Sequence[Sequence[str]]) -> Location:
         if first == args.first_cell.strip():
             hits.append(i)
     if not hits:
-        raise ExtensionRefused(
+        raise ExtensionLayoutRefused(
             f"no row in the first {args.max_scan} starts with {args.first_cell!r}, so the header can't be found"
         )
     if len(hits) > 1:
-        raise ExtensionRefused(
+        raise ExtensionLayoutRefused(
             f"rows {', '.join(str(h + 1) for h in hits)} all start with {args.first_cell!r}"
         )
     return Location(header_row=hits[0])

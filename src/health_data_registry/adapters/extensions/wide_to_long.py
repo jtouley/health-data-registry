@@ -15,7 +15,7 @@ from collections.abc import Iterable
 
 from pydantic import Field, field_validator, model_validator
 
-from health_data_registry.adapters.extensions import Extension, ExtensionRefused, StagingStep, register
+from health_data_registry.adapters.extensions import Extension, ExtensionLayoutRefused, StagingStep, register
 from health_data_registry.source_config import Strict, match_whole, safe_pattern
 
 
@@ -54,13 +54,25 @@ def input_fields(args: Args) -> list[str]:
     return [*args.keep, *(f"{stub}{k}" for k in args.expected_keys for stub in args.stubs)]
 
 
+def explain_input(args: Args, field: str) -> tuple[str, str] | None:
+    """For ``<stub><key>``: the stub's column it lands in, and which key's value it holds."""
+    for stub in args.stubs:
+        key = field[len(stub) :]
+        if field.startswith(stub) and key in args.expected_keys:
+            return (
+                stub,
+                f"the value of {stub} for {args.key_field} = {key}, unpivoted in staging to one row per {args.key_field}",
+            )
+    return None
+
+
 def check_fields(args: Args, present: Iterable[str]) -> None:
     """Refuse a layout this pivot would read wrongly: a missing input column, or a <stub><key> column for a key
     the codebook doesn't list."""
     have = set(present)
     missing = [f for f in input_fields(args) if f not in have]
     if missing:
-        raise ExtensionRefused(f"the file no longer has the columns {', '.join(missing)}")
+        raise ExtensionLayoutRefused(f"the file no longer has the columns {', '.join(missing)}")
     extra = sorted(
         f
         for f in have
@@ -70,7 +82,7 @@ def check_fields(args: Args, present: Iterable[str]) -> None:
         and f[len(stub) :] not in args.expected_keys
     )
     if extra:
-        raise ExtensionRefused(
+        raise ExtensionLayoutRefused(
             f"the file has {', '.join(extra)}, for keys its layout doesn't list ({', '.join(args.expected_keys)}); "
             "a renamed or extra column is not pivoted"
         )
@@ -90,7 +102,10 @@ def staging(args: Args, relation: str, fields: Iterable[str]) -> StagingStep:
     wide = {f"{s}{k}" for k in args.expected_keys for s in args.stubs}
     kept = [f for f in fields if f not in wide]
     return StagingStep(
-        sql=sql, fields=(*kept, args.key_field, *args.stubs), rows_per_row=len(args.expected_keys)
+        sql=sql,
+        fields=(*kept, args.key_field, *args.stubs),
+        rows_per_row=len(args.expected_keys),
+        key_fields=(args.key_field,),
     )
 
 
@@ -102,5 +117,6 @@ EXTENSION = register(
         run=staging,
         summary="Columns named <stub><key> become one row per key; every value is copied as published.",
         input_fields=input_fields,
+        explain_input=explain_input,
     )
 )

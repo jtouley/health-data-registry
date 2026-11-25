@@ -15,8 +15,14 @@ contract's business.
 record per printed cell (its group, label, ``column_header`` and ``cell_text``), for tables whose column headers
 change from report to report, so a period header is parsed in staging, one row to one row. Either way the core's
 row guard checks the table by its own printed headers. A ``reconcile`` block checks the table against its own
-printed totals (reconcile.py) and records each row's failed checks as ``failed_checks``; every row also carries
-the provenance of its document (``document_url``, ``document_sha256``, ``document_retrieved_at``).
+printed totals (reconcile.py) and records the failed checks as ``failed_checks`` (a JSON array of sentences: on
+each row in the wide layout, on the cell of the column a check concerns in the long layout); every row also carries
+the provenance of its document (``document_url``, ``document_sha256``, ``document_retrieved_at``). Two value
+columns printing the same header are refused: one would overwrite the other.
+
+The index page is kept as a fetch of the snapshot with no records of its own (its bytes in the raw store, its
+sha256 in the snapshot's identity and manifest), so a snapshot shows which index chose its reports. Every field a
+report gives is handed on, not only the ones the contract reads (hard rule 15).
 
 A live read takes at most ``live.max_documents`` reports (newest first by the year in the file name, when the
 catalog says so), and never more than the hosted deadline leaves time for (access.clamp_live).
@@ -38,12 +44,12 @@ from health_data_registry.adapters import (
     LayoutError,
     Page,
     Read,
+    parse_page,
     with_document,
 )
 from health_data_registry.adapters.extensions import resolved
-from health_data_registry.adapters.html import parse_html
 from health_data_registry.adapters.pdf_tables import PageGeometry, TableSpec, lines, parse_tables, read_pdf
-from health_data_registry.adapters.reconcile import FAILED_CHECKS, Row, failed_checks
+from health_data_registry.adapters.reconcile import FAILED_CHECKS, Row, as_text, failed_cells
 from health_data_registry.registry import CatalogEntry
 from health_data_registry.source_config import (
     LONG_FIELDS,
@@ -72,7 +78,7 @@ def spec_of(cfg: PdfTableConfig) -> TableSpec:
 def documents(entry: CatalogEntry, cfg: PdfTableConfig, index: bytes, base: str) -> list[str]:
     """The report links on the index page, in page order, each in scope and matching the pattern whole."""
     found: list[str] = []
-    for el in parse_html(index).iter():
+    for el in parse_page(index).iter():
         if el.tag != "a" or "href" not in el.attrs:
             continue
         try:
@@ -144,6 +150,14 @@ def read_document(
             "changed"
         )
     group_h, label_h = cfg.table.group_header, cfg.table.label_header
+    for r in rows:
+        cols = [c.column for c in r.cells]
+        if len(set(cols)) != len(cols):
+            twice = sorted({c for c in cols if cols.count(c) > 1})
+            raise LayoutError(
+                f"two value columns of the report are both headed {', '.join(repr(c) for c in twice)}; one would "
+                "overwrite the other, so the report was not read"
+            )
     headers = list(dict.fromkeys(c.column for r in rows for c in r.cells))
     reserved = {group_h, label_h, FAILED_CHECKS} | (set(LONG_FIELDS) if cfg.layout == "long" else set())
     for h in headers:
@@ -156,9 +170,9 @@ def read_document(
         rec: dict[str, str | None] = {group_h: row.group or None, label_h: row.label}
         rec.update({c.column: c.raw for c in row.cells})
         wide.append(rec)
-    checks: list[list[str]] = [[] for _ in rows]
+    checks: list[list[tuple[str, str]]] = [[] for _ in rows]
     if cfg.reconcile is not None:
-        checks = failed_checks(
+        checks = failed_cells(
             cfg.reconcile,
             [
                 Row(r.group, r.label, {c.column: c.value for c in r.cells}, grand_total=r.trailing_total)
@@ -172,14 +186,17 @@ def read_document(
         raise LayoutError(f"a printed fact is named like a table column ({', '.join(clash)})")
     out: list[dict[str, str | None]] = []
     for row, rec, found in zip(rows, wide, checks, strict=True):
-        meta: dict[str, str | None] = {FAILED_CHECKS: "; ".join(found) or None} if cfg.reconcile else {}
         if cfg.layout == "wide":
+            meta = {FAILED_CHECKS: as_text([s for _c, s in found])} if cfg.reconcile else {}
             out.append({**rec, **facts, **meta})
             continue
         for c in row.cells:
+            cell = (
+                {FAILED_CHECKS: as_text([s for col, s in found if col == c.column])} if cfg.reconcile else {}
+            )
             out.append(
                 {group_h: rec[group_h], label_h: row.label, LONG_FIELDS[0]: c.column, LONG_FIELDS[1]: c.raw,
-                 **facts, **meta}
+                 **facts, **cell}
             )  # fmt: skip
     return Document(records=out, table=GuardTable(url or "report", [group_h, label_h, *headers], wide))
 
@@ -195,6 +212,7 @@ def pages(read: Read) -> Iterator[Page]:
     base = read.entry.source.api_url
     index = read.get(base)
     urls = documents(read.entry, cfg, index.content, base)
+    yield Page(fetch=index, records=[])  # kept for provenance: the page that chose the reports
     if read.live:
         ordered = _newest_first(urls) if cfg.live.order_by == "year_in_filename" else urls
         urls = ordered[: clamp_live(cfg.live.max_documents, LIVE_SECONDS_PER_DOCUMENT)]
@@ -203,9 +221,6 @@ def pages(read: Read) -> Iterator[Page]:
         raw = read.get(url)
         doc = read_document(cfg, raw.content, uses=read.entry.source.extensions, url=raw.url)
         recs: list[dict[str, Any]] = list(doc.records)
-        if read.fields is not None:
-            keep = set(read.fields) | {FAILED_CHECKS}
-            recs = [{k: v for k, v in r.items() if k in keep} for r in recs]
         if left is not None:
             recs, left = recs[: max(0, left)], max(0, left - len(recs))
         yield Page(fetch=raw, records=with_document(recs, raw), tables=(doc.table,))

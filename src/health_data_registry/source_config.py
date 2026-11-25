@@ -63,8 +63,8 @@ TYPE_HOOKS: Final[dict[str, frozenset[str]]] = {
     "socrata": frozenset({"staging"}),
     "odata": frozenset({"staging"}),
     "https_csv": frozenset({"staging"}),
-    "https_file": frozenset({"resolve", "locate", "staging"}),
-    "html_table": frozenset({"resolve", "parse", "staging"}),
+    "https_file": frozenset({"locate", "staging"}),
+    "html_table": frozenset({"parse", "staging"}),
     "pdf_table": frozenset({"parse", "staging"}),  # parse: facts the document prints once, from its text
     "tableau": frozenset(),
     "doi": frozenset(),

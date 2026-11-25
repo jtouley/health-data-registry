@@ -436,6 +436,10 @@ class Source(_Strict):
         from health_data_registry.adapters.extensions import check_uses
 
         check_uses(kind, self.extensions)
+        if self.reshape is not None and any(u.hook == "staging" for u in self.extensions):
+            raise ValueError(
+                "a source reshapes its file once: the older reshape block (on load) or a staging extension, not both"
+            )
         return self
 
 
@@ -1483,11 +1487,52 @@ def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticMode
                 "overlap or count different things; filter each to one value"
             )
     _check_additive_needs_totals_excluded(entry.id, contract, semantic)
+    _check_load_metadata(entry, contract)
     for c in contract.columns:
         if c.flag_for is not None and c.flag_for not in cols:
             raise RegistryError(f"{entry.id}: {c.name} flags unknown column {c.flag_for}")
         if c.flag_codes and c.flag_for is None:
             raise RegistryError(f"{entry.id}: {c.name} lists flagCodes but flags no column (flagFor)")
+
+
+def _check_load_metadata(entry: CatalogEntry, contract: Contract) -> None:
+    """What the adapter adds to each row, and the grain a staging step makes, are declared in the contract up front
+    (hard rule 15, ADR 0016): a type that adds per-row metadata (a document's provenance; ``failed_checks`` when
+    the source reconciles) needs a contract column reading each, typed; and a staging step that adds to the grain
+    (wide_to_long's ``key_field``) needs the contract's primary key to include it, so the staged model's
+    one-row-per-key test checks the grain the step makes instead of failing on good data."""
+    from health_data_registry.adapters import TYPES
+    from health_data_registry.adapters.extensions import resolved
+
+    by_field: dict[str, list[Column]] = {}
+    for c in contract.columns:
+        by_field.setdefault(c.source_field, []).append(c)
+    t = TYPES.get(entry.source.kind)
+    added = list(t.adds_fields) if t is not None else []
+    if getattr(entry.source.config(), "reconcile", None) is not None:
+        added.append("failed_checks")
+    missing = [f for f in added if f not in by_field]
+    if missing:
+        raise RegistryError(
+            f"{entry.id}: a {entry.source.kind} source adds {', '.join(missing)} to every row; its contract declares "
+            "a column reading each (sourceField), with its type, so the metadata is kept and typed in staging"
+        )
+    for c in by_field.get("document_retrieved_at", []) if "document_retrieved_at" in added else []:
+        if c.physical_type.upper() != "TIMESTAMP":
+            raise RegistryError(
+                f"{entry.id}: {c.name} reads document_retrieved_at, a time (UTC), so its physicalType is TIMESTAMP"
+            )
+    schema = (contract.raw.get("schema") or [{}])[0]
+    keyed = {str(p.get("name")) for p in schema.get("properties") or [] if p.get("primaryKey") is True}
+    for ext, args in resolved(entry.source.extensions, "staging"):
+        reads = list(ext.input_fields(args)) if ext.input_fields is not None else []
+        step = ext.run(args, "raw", reads)
+        for f in step.key_fields:
+            if not any(c.name in keyed for c in by_field.get(f, [])):
+                raise RegistryError(
+                    f"{entry.id}: staging extension {ext.name} makes one row per {f}, so the contract's primary key "
+                    f"includes the column reading {f}"
+                )
 
 
 def load_registry(root: Path | None = None) -> Registry:

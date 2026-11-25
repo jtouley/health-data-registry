@@ -382,8 +382,16 @@ class PoliteGetter:
     robots_overrides: list[str] = field(default_factory=list)
     policy: Robots | None = None
 
+    # The getter bound to one source (``for_source``): its redirects stay on that source's hosts and follow its
+    # type's capabilities, whatever other entry's URL the address also starts with.
+    bound: Callable[[Source], Getter] | None = None
+
     def __call__(self, url: str) -> RawFetch:
         return self.get(url)
+
+    def for_source(self, source: Source) -> Getter:
+        """This getter for one source's reads (adapters.scoped binds every adapter read with it)."""
+        return self.bound(source) if self.bound is not None else self.get
 
     def pace_for(self, host: str) -> float:
         """The wait this getter's access policy keeps between two requests to ``host``."""
@@ -430,18 +438,20 @@ def fetcher(
     overridden: list[str] = []
     robots_notes = policy.robots_overrides if policy is not None else []
 
-    def one(url: str, timeout: float) -> FetchResult:
+    def one(url: str, timeout: float, bound: Source | None = None) -> FetchResult:
         from health_data_registry.adapters import TYPES
 
         host = (urlsplit(url).hostname or "").lower()
-        src = _source_for(registry, url)
+        src = bound if bound is not None else _source_for(registry, url)
         kind = TYPES[src.kind] if src is not None else None
+        # Every hop of a source's fetch stays on that source's own hosts, never another source's (access.py).
+        reach = hosts & src.hosts if src is not None else hosts
         if src is None or not src.browser:
             # A type that doesn't follow redirects makes one request per call; a redirect is reported to it.
             once = {} if kind is None or kind.follows_redirects else {"max_redirects": 0}
             return fetch(
                 url,
-                allowed_hosts=hosts,
+                allowed_hosts=reach,
                 headers={"Accept": kind.accept if kind is not None else "application/json"},
                 timeout=timeout,
                 **once,
@@ -452,7 +462,7 @@ def fetcher(
         run = browser or browser_fetch
         got = run(
             url,
-            allowed_hosts=hosts,
+            allowed_hosts=reach,
             capture=capture,
             timeout=timeout,
             allow=policy.allowed if policy is not None else None,
@@ -470,14 +480,14 @@ def fetcher(
         else:
             blocked.add(host)
 
-    def get(url: str) -> RawFetch:
-        r = _get(url)
+    def get(url: str, bound: Source | None = None) -> RawFetch:
+        r = _get(url, bound)
         # Provenance never carries a key or token the URL held (hard rule 8, sharp edges): the manifest, the fetch
         # log and every answer cite the address without it.
         return RawFetch(url=redact_url(r.url), content=r.content, sha256=r.sha256, retrieved_at=r.retrieved_at,
                         capture_url=redact_url(r.capture_url) if r.capture_url else None)  # fmt: skip
 
-    def _get(url: str) -> RawFetch:
+    def _get(url: str, bound: Source | None = None) -> RawFetch:
         shown = redact_url(url)
         host = (urlsplit(url).hostname or "").lower()
         note = None
@@ -507,7 +517,7 @@ def fetcher(
             when = datetime.now(UTC)
             budget = deadline.cap(FETCH_TIMEOUT_S)  # raises DeadlineExceeded when nothing is left
             try:
-                r = one(url, budget)
+                r = one(url, budget, bound)
             except FetchRefused as e:
                 if e.status == RATE_LIMITED:
                     # Owner decision, 25 Nov 2026: a 429 is backed off and asked again on every host; the host is
@@ -583,7 +593,12 @@ def fetcher(
             return RawFetch(url=url, content=r.content, sha256=r.sha256, retrieved_at=r.retrieved_at,
                             capture_url=capture)  # fmt: skip
 
-    return PoliteGetter(get=get, overridden=overridden, robots_overrides=robots_notes, policy=policy)
+    def bind(source: Source) -> Getter:
+        return lambda url: get(url, source)
+
+    return PoliteGetter(
+        get=get, overridden=overridden, robots_overrides=robots_notes, policy=policy, bound=bind
+    )
 
 
 def _busy(registry: Registry, url: str, wait: float) -> str:

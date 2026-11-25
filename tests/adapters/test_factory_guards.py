@@ -144,8 +144,11 @@ def test_every_real_catalog_entry_loads_through_its_type() -> None:
 
 # ------------------------------------------------------------------------------------------- purity
 
-ALLOWED_IMPORTS = {"__future__", "collections", "collections.abc", "dataclasses", "typing", "re", "pydantic",
+# Not the standard ``re``: a backtracking engine has no place on publisher text (source_config.match_whole is RE2).
+ALLOWED_IMPORTS = {"__future__", "collections", "collections.abc", "dataclasses", "typing", "pydantic",
                    "health_data_registry.source_config", "health_data_registry.adapters.extensions", "math",
+                   # The one layout refusal, in a module of its own with no imports (checked below).
+                   "health_data_registry.adapters.errors",
                    "decimal", "unicodedata", "string", "itertools", "functools", "html", "json",
                    # The HTML reader parse extensions use: a pure parser (checked below), no network or files.
                    "health_data_registry.adapters.html"}  # fmt: skip
@@ -157,6 +160,12 @@ MUTATION_HARNESS = "mutmut."
 
 def _allowed(name: str, extra: frozenset[str] = frozenset()) -> bool:
     return name in ALLOWED_IMPORTS or name in extra or name.startswith(MUTATION_HARNESS)
+
+
+def _called(node: ast.Call) -> str:
+    """The name a call ends in: ``open(...)``, ``builtins.open(...)`` and ``io.open(...)`` all call ``open``."""
+    f = node.func
+    return f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else ""
 
 
 def test_extensions_are_pure() -> None:
@@ -186,9 +195,21 @@ def test_the_html_reader_extensions_may_use_is_pure() -> None:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     names = [a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names]
     names += [n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
-    assert names and not [n for n in names if not _allowed(n, frozenset({"html.parser"}))]
-    calls = [n.func.id for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)]
+    # re parses the catalog's selectors here, never publisher text
+    assert names and not [n for n in names if not _allowed(n, frozenset({"html.parser", "re"}))]
+    calls = [_called(n) for n in ast.walk(tree) if isinstance(n, ast.Call)]
     assert not set(calls) & FORBIDDEN_CALLS
+
+
+def test_the_layout_error_module_imports_nothing() -> None:
+    tree = ast.parse((ADAPTERS / "errors.py").read_text(encoding="utf-8"))
+    imports = [n for n in ast.walk(tree) if isinstance(n, ast.Import | ast.ImportFrom)]
+    assert [getattr(n, "module", None) for n in imports] == ["__future__"]
+
+
+def test_the_purity_lint_catches_attribute_calls() -> None:
+    tree = ast.parse("import builtins\nbuiltins.open('x')\nio.open('y')\n")
+    assert [_called(n) for n in ast.walk(tree) if isinstance(n, ast.Call)] == ["open", "open"]
 
 
 def test_the_purity_lint_catches_an_impure_import() -> None:
@@ -251,12 +272,12 @@ def test_every_record_producing_extension_passes_the_row_guard(monkeypatch: pyte
     assert producing, "at least wide_to_long produces records"
     probe = Extension("probe_parse", "parse", Strict, lambda args, content, url: ROW_LEVEL, "test only")
     monkeypatch.setitem(EXTENSIONS, "probe_parse", probe)
-    from tests.adapters.test_listing import listing_entry
+    from tests.adapters.test_listing import item_html, listing_entry
 
     e = listing_entry(extensions=[{"name": "probe_parse", "hook": "parse"}])
     from health_data_registry.adapters.html_table import item_records
 
-    recs = item_records(e, e.source.config().listing, b"", "https://data.example.gov/abstract/a/")  # type: ignore[attr-defined]
+    recs = item_records(e, e.source.config().listing, item_html("a"), "https://data.example.gov/abstract/a/")  # type: ignore[attr-defined]
     page = Page(fetch=fetch_of("https://data.example.gov/abstract/a/", b""), records=recs)
     with pytest.raises(RowLevelRefused):
         adapters.guard_page("probe", page)

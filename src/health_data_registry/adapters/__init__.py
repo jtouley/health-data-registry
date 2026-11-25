@@ -20,24 +20,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from health_data_registry.adapters.errors import LayoutError
 from health_data_registry.registry import CatalogEntry
 from health_data_registry.source_config import Strict
 from health_data_registry.store import RawFetch
 
 Fetcher = Callable[[str], RawFetch]
-
-
-class LayoutError(ValueError):
-    """The publisher's answer is not laid out as the catalog entry describes; nothing is guessed.
-
-    Every type's layout error subclasses this, so the server and the CLI give one plain-words refusal for all.
-    """
-
-    code = "layout_changed"
-    next_step = (
-        "The publisher changed how this source is laid out, so it was not read. Use the source's own page for now; "
-        "a maintainer reviews the change before it is read again."
-    )
+__all__ = ["LayoutError"]  # re-exported: every type's layout error subclasses it (adapters/errors.py)
 
 
 @dataclass(frozen=True)
@@ -96,6 +85,8 @@ class AdapterType:
     build_command: str | None = None  # how its private store is built, with {source} fields (refresh refuses)
     # Exact paths on the source's host the type reads besides its catalogued URLs (Socrata's column metadata).
     own_paths: Callable[[CatalogEntry], list[str]] = lambda _entry: []
+    # Metadata the type adds to every row it reads (hard rule 15): its contract declares a column reading each.
+    adds_fields: tuple[str, ...] = ()
 
 
 TYPES: dict[str, AdapterType] = {}
@@ -158,19 +149,44 @@ def guard_page(name: str, page: Page) -> Page:
     return page
 
 
+def parse_page(content: bytes) -> Any:
+    """A publisher's HTML page as a tree (adapters.html); a page too large or too deeply nested to read is refused
+    as a layout change, in the same plain words as any other."""
+    from health_data_registry.adapters.html import PageTooLarge, parse_html
+
+    try:
+        return parse_html(content)
+    except PageTooLarge as e:
+        raise LayoutError(str(e)) from e
+
+
 def scoped(entry: CatalogEntry, get: Fetcher) -> Fetcher:
-    """``get``, refusing before any request a URL outside this source's own hosts and declared paths."""
-    from health_data_registry.access import ScopeRefused, in_scope
+    """``get``, refusing before any request a URL outside this source's own hosts and declared paths.
+
+    The URL fetched is the normalised one that was checked (access.normalise), never the string as given: a path
+    the check and the server would resolve differently (``a%2Fx/../..``) can't pass the one and reach the other.
+    A getter that can be bound to one source (``for_source``) is: its redirects and the capabilities it fetches
+    with are this source's, never decided by looking the URL up across the catalog.
+    """
+    from health_data_registry.access import ScopeRefused, in_scope, normalise
 
     own = adapter_type(entry).own_paths(entry)
+    bind = getattr(get, "for_source", None)
+    inner: Fetcher = bind(entry.source) if callable(bind) else get
 
     def checked(url: str) -> RawFetch:
-        if not in_scope(entry.source, url, own_paths=own):
+        try:
+            norm = normalise(url)
+        except ScopeRefused:
+            norm = None
+        if norm is None or not in_scope(entry.source, norm, own_paths=own):
+            from health_data_registry.access import redact_url
+
             raise ScopeRefused(
-                f"{url} is outside what the catalog entry {entry.id} may read (its own hosts and declared paths), "
-                "so it was not fetched"
+                f"{redact_url(url)} is outside what the catalog entry {entry.id} may read (its own hosts and "
+                "declared paths), so it was not fetched"
             )
-        return get(url)
+        return inner(norm)
 
     return checked
 
@@ -219,16 +235,26 @@ def publisher_fields(entry: CatalogEntry, fetcher: Fetcher) -> set[str]:
 
 def method_digest(entry: CatalogEntry) -> str:
     """A digest of everything besides the raw bytes that shapes a source's records: its type and the type's
-    version, its config block, and each extension's name, hook, arguments and version. Part of a snapshot's
+    version, its config block (and, for the older types, their settings still on the shared block), and each
+    extension's name, hook, arguments and version. Part of a snapshot's
     identity, so a config-only change builds a new snapshot instead of returning the old parse."""
     from health_data_registry.adapters.extensions import EXTENSIONS, _load
+    from health_data_registry.source_config import LEGACY_FIELDS
 
     _load()
     t = adapter_type(entry)
+    src = entry.source
     doc = {
         "type": t.name,
         "type_version": t.version,
-        "config": entry.source.config().model_dump(mode="json"),
+        "config": src.config().model_dump(mode="json"),
+        # The settings older types still keep on the shared block (https_csv's encoding and reshape, tableau's
+        # views, a doi source's years), so a change to them is a new snapshot too.
+        "legacy": {
+            name: src.model_dump(mode="json", include={name}).get(name)
+            for name, owner in sorted(LEGACY_FIELDS.items())
+            if owner == t.name
+        },
         "extensions": [
             {**use.model_dump(mode="json"), "version": EXTENSIONS[use.name].version}
             for use in entry.source.extensions

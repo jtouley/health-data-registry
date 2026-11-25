@@ -87,6 +87,12 @@ def test_pages_refuse_an_out_of_scope_url_before_any_request() -> None:
         ("https://h.gov/a?api_key=k&Token=t&y=2", "https://h.gov/a?y=2"),
         ("https://h.gov/a?x=1", "https://h.gov/a?x=1"),
         ("https://h.gov/a", "https://h.gov/a"),
+        ("https://h.gov/a?api-key=S&x=1", "https://h.gov/a?x=1"),  # names compared folded
+        ("https://h.gov/a?accessToken=S", "https://h.gov/a"),
+        ("https://h.gov/f?X-Amz-Signature=S&X-Amz-Credential=C&v=2", "https://h.gov/f?v=2"),  # pre-signed
+        ("https://h.gov/f?sig=S&sv=2024", "https://h.gov/f?sv=2024"),
+        ("https://u:p@h.gov/a?x=1#frag", "https://h.gov/a?x=1"),  # user name, password and fragment dropped
+        ("not a url", "not a url"),
     ],
 )
 def test_redact_url(url: str, want: str) -> None:
@@ -118,6 +124,50 @@ def test_provenance_never_carries_a_key(tmp_path: Path, registry: Any) -> None:
     assert "SECRET" not in got.url and all(
         "SECRET" not in r["url"] for r in read_fetch_log(tmp_path, "toy_cases")
     )
+
+
+def test_the_url_fetched_is_the_one_checked() -> None:
+    """An encoded slash can't move a ``..`` past the scope check: the check and the request see one string."""
+    e = entry("https_file", {"format": "csv"}, api_url=f"https://{HOST}/reports/index.csv",
+              landing_url=f"https://{HOST}/reports/")  # fmt: skip
+    seen: list[str] = []
+
+    def get(url: str) -> Any:
+        seen.append(url)
+        raise FetchRefused("http_error", "stop", status=404)
+
+    from health_data_registry.adapters import scoped
+
+    with pytest.raises(FetchRefused):
+        scoped(e, get)(f"https://{HOST}/reports/a%2Fx/../../index.csv")  # a server would read /index.csv
+    assert seen == [f"https://{HOST}/reports/index.csv"]  # the normalised URL the check approved
+    with pytest.raises(ScopeRefused):
+        scoped(e, get)(f"https://{HOST}/reports/a%2Fx/../../../admin/secret")
+
+
+def test_a_bound_getter_fetches_with_its_own_sources_capabilities(tmp_path: Path, registry: Any) -> None:
+    """adapters.scoped binds a polite getter to its source: redirects stay on that source's hosts and follow its
+    type's capability, never what a lookup of the URL across the catalog finds."""
+    import health_data_registry.fetch as fetch_mod
+    from health_data_registry.fetch import FetchResult
+
+    calls: list[dict[str, Any]] = []
+
+    def fake(u: str, **kw: Any) -> Any:
+        calls.append({"url": u, **kw})
+        return FetchResult(url=u, final_url=u, status=200, content=b"<table id='t'><tr><th>A</th></tr></table>",
+                           content_type=None, sha256="0" * 64, retrieved_at=datetime(2026, 1, 1, tzinfo=UTC))  # fmt: skip
+
+    e = entry("html_table", {"shape": "table", "table_selector": "#t"}, host="data.cdc.gov",
+              api_url="https://data.cdc.gov/toy/t", landing_url="https://data.cdc.gov/toy/")  # fmt: skip
+    mp = pytest.MonkeyPatch()
+    mp.setattr(fetch_mod, "fetch", fake)
+    try:
+        get = crawl.fetcher(registry, None, robots=False)
+        get.for_source(e.source)("https://data.cdc.gov/toy/t")
+    finally:
+        mp.undo()
+    assert calls[0]["max_redirects"] == 0 and calls[0]["allowed_hosts"] == frozenset({"data.cdc.gov"})
 
 
 # ------------------------------------------------------------------------------------------- pace
@@ -201,7 +251,9 @@ def test_live_reads_are_clamped_to_the_deadline() -> None:
         assert clamp_live(3, 20.0) == 2
     with deadline.call_deadline(1.0):
         assert clamp_live(3, 20.0) == 1
-    assert clamp_live(3, 0) == 3
+    for bad in (0, -1.0):  # a zero or negative cost would switch the clamp off: refused
+        with pytest.raises(ValueError, match="positive"):
+            clamp_live(3, bad)
 
 
 # ------------------------------------------------------------------------------------------- the 8-week rule
@@ -278,6 +330,24 @@ def test_the_digest_covers_type_config_and_extensions() -> None:
                  extensions=[{"name": "header_row_finder", "hook": "locate", "args": {"first_cell": "B"}}])  # fmt: skip
     digests = {method_digest(e) for e in (base, other, ext, ext2)}
     assert len(digests) == 4 and method_digest(base) == method_digest(entry("https_file", {"format": "csv"}))
+
+
+def test_the_digest_covers_the_older_types_settings_on_the_shared_block() -> None:
+    a = entry("https_csv", None)
+    b = entry("https_csv", None, encoding="latin-1")
+    c = entry("https_csv", None, reshape={"wide_to_long": {"keep": ["S"], "stubs": ["P"], "key_field": "Y"}})
+    assert len({method_digest(x) for x in (a, b, c)}) == 3
+
+
+def test_a_corrupt_failure_streak_is_refused_in_plain_words(tmp_path: Path) -> None:
+    from health_data_registry.access import CrawlStopped, FailureStreaks
+
+    s = FailureStreaks(tmp_path)
+    for bad in ("{not json", '{"failed_runs": "x"}', '{"first_failure_at": "2026-01-01T00:00:00"}'):
+        s.path("toy").parent.mkdir(parents=True, exist_ok=True)
+        s.path("toy").write_text(bad)
+        with pytest.raises(CrawlStopped, match="can't be read"):
+            s.get("toy")
 
 
 # ------------------------------------------------------------------------------------------- the schema

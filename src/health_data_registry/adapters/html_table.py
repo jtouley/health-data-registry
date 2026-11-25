@@ -1,7 +1,8 @@
 """html_table adapter type: tables on server-rendered HTML pages, or a listing of item pages.
 
 Shape ``table``: the one ``<table>`` the selector names on the page at ``api_url`` (an optional caption must match
-exactly). Header cells give the field names, every body cell is a record value as printed (footnote markers
+exactly). The type makes one request per call; a redirect is followed, as a request of its own, only to a page
+inside the source's own scope (at most ``MAX_HOPS``). Header cells give the field names, every body cell is a record value as printed (footnote markers
 kept). A header cell spanning columns or rows is joined top-down with ``header_separator`` when the catalog
 declares one, else refused; a body cell that spans is refused. Nested tables are not read into their parent.
 
@@ -9,6 +10,10 @@ Shape ``listing``: a paginated search listing and one page per item, crawled by 
 listing.py; this module reads one listing page (its item links and its own total) and one item page (its fields,
 by selector, or a ``parse`` extension). Every record carries the provenance of the page it was read from
 (``document_url``, ``document_sha256``, ``document_retrieved_at``).
+
+Every field the page has is handed on, not only the ones the contract reads (hard rule 15: the raw layer keeps what
+the publisher sent; staging reads the contract's fields). Cell text is the text a browser shows: runs of
+whitespace collapse to one space (html.Element.text); nothing else about a value is changed.
 """
 
 from __future__ import annotations
@@ -18,14 +23,41 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
-from health_data_registry.access import ScopeRefused, normalise
-from health_data_registry.adapters import DOCUMENT_FIELDS, Fetcher, LayoutError, Page, Read, with_document
+from health_data_registry.access import ScopeRefused, normalise, redact_url
+from health_data_registry.adapters import (
+    DOCUMENT_FIELDS,
+    Fetcher,
+    LayoutError,
+    Page,
+    Read,
+    parse_page,
+    with_document,
+)
 from health_data_registry.adapters.extensions import resolved
-from health_data_registry.adapters.html import Element, parse_html, select
+from health_data_registry.adapters.html import Element, select
+from health_data_registry.fetch import FetchRefused
 from health_data_registry.registry import CatalogEntry
 from health_data_registry.source_config import HtmlTableConfig, ListingConfig, match_whole
+from health_data_registry.store import RawFetch
 
 MAX_SPAN = 100
+MAX_HOPS = 3  # redirects followed for one table page, each a request of its own and each checked for scope
+
+
+def get_following(entry: CatalogEntry, get: Fetcher, url: str) -> RawFetch:
+    """``url``, following a redirect only into the source's own scope (the scoped getter checks each hop)."""
+    for _hop in range(MAX_HOPS + 1):
+        try:
+            return get(url)
+        except FetchRefused as e:
+            if e.code != "too_many_redirects" or e.location is None:
+                raise
+            url = e.location
+        except ScopeRefused as e:
+            raise LayoutError(
+                f"{entry.id}: the page redirects to {redact_url(url)}, outside this source's pages"
+            ) from e
+    raise LayoutError(f"{entry.id}: the page redirected more than {MAX_HOPS} times")
 
 
 def _closest_table(el: Element) -> Element | None:
@@ -89,7 +121,7 @@ def read_table(
 ) -> tuple[list[str], list[dict[str, str]]]:
     """The labels and records of the one table the config names."""
     assert cfg.table_selector is not None  # noqa: S101 - the config model requires it for shape table
-    doc = parse_html(content)
+    doc = parse_page(content)
     found = [t for t in select(doc, cfg.table_selector) if t.tag == "table"]
     if len(found) != 1:
         raise LayoutError(
@@ -125,11 +157,8 @@ def pages(read: Read) -> Iterator[Page]:
 
         yield from crawl_pages(read)
         return
-    raw = read.get(read.entry.source.api_url)
+    raw = get_following(read.entry, read.get, read.entry.source.api_url)
     _labels, recs = read_table(read.entry, cfg, raw.content)
-    if read.fields is not None:
-        keep = set(read.fields)
-        recs = [{k: v for k, v in r.items() if k in keep} for r in recs]
     if read.max_rows is not None:
         recs = recs[: max(0, read.max_rows)]
     yield Page(fetch=raw, records=with_document(recs, raw))
@@ -140,7 +169,7 @@ def publisher_fields(entry: CatalogEntry, get: Fetcher) -> set[str]:
     assert isinstance(cfg, HtmlTableConfig)  # noqa: S101 - registered for html_table only
     if cfg.listing is not None:
         return set(cfg.listing.fields) | set(DOCUMENT_FIELDS)
-    labels, _recs = read_table(entry, cfg, get(entry.source.api_url).content)
+    labels, _recs = read_table(entry, cfg, get_following(entry, get, entry.source.api_url).content)
     return set(labels) | set(DOCUMENT_FIELDS)
 
 
@@ -161,7 +190,7 @@ def listing_page(
 ) -> tuple[int, list[ListingItem]]:
     """A listing page's own total and its item links (absolute, normalised), each one checked whole against the
     item path pattern. A total that can't be read, or a link outside the pattern, is refused."""
-    doc = parse_html(content)
+    doc = parse_page(content)
     counts = [el.text() for el in select(doc, cfg.results_count_selector)]
     totals = [m for t in counts if (m := match_whole(cfg.results_count_pattern, t)) is not None]
     if len(totals) != 1:
@@ -209,14 +238,20 @@ def check_item(entry: CatalogEntry, cfg: ListingConfig, item: ListingItem, year:
 def item_records(entry: CatalogEntry, cfg: ListingConfig, content: bytes, url: str) -> list[dict[str, Any]]:
     """One item page's record: the declared fields' text (a field the page doesn't have is empty; one it has
     twice is refused), then each ``parse`` extension's fields, in the catalog's order. Each extension reads one
-    record from the page; a field two of them, or one and a selector, both read is refused."""
-    doc = parse_html(content)
+    record from the page; a field two of them, or one and a selector, both read is refused. A page with none of
+    the declared fields at all is refused: the site was redesigned, and a crawl of empty records is no crawl."""
+    doc = parse_page(content)
     rec: dict[str, Any] = {}
     for name, selector in cfg.fields.items():
         hits = select(doc, selector)
         if len(hits) > 1:
             raise LayoutError(f"{entry.id}: {url} has {len(hits)} elements for {name}, not one")
         rec[name] = hits[0].text() if hits else None
+    if cfg.fields and all(rec[name] is None for name in cfg.fields):
+        raise LayoutError(
+            f"{entry.id}: {url} has none of the fields the catalog names ({', '.join(cfg.fields)}); the page's "
+            "layout changed"
+        )
     for ext, args in resolved(entry.source.extensions, "parse"):
         got = [dict(r) for r in ext.run(args, content, url)]
         if len(got) != 1:

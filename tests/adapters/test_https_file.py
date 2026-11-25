@@ -248,10 +248,11 @@ def test_xlsx_in_zip_reads_the_same_as_alone() -> None:
     assert published(alone[0]) == published(inside[0])
 
 
-def test_fields_narrow_the_records_and_keep_their_formats() -> None:
+def test_every_column_is_handed_on_with_its_format() -> None:
     e = entry("https_file", {"format": "xlsx", "sheet": "Table 1"})
-    got = list(pages(e, Site({URL: WB}), fields=["Share"]))
-    assert published(got[0]) == [{"Share": "0.123", "Share (number format)": "0.0%"}]
+    got = published(list(pages(e, Site({URL: WB}), fields=["Share"]))[0])
+    # hard rule 15: the raw layer keeps every column the file has, not only the contract's
+    assert got[0]["Share"] == "0.123" and got[0]["Share (number format)"] == "0.0%" and len(got[0]) > 2
 
 
 def test_publisher_fields() -> None:
@@ -327,3 +328,82 @@ def test_archive_reads_member_and_caps_what_it_inflates() -> None:
     )  # a header that lies about its size gains nothing: the read is capped too
     with pytest.raises(ArchiveRefused, match="past its cap"):
         tight.read("a.csv")
+
+
+# ------------------------------------------------------------------------------- fix round of #148: refusals
+
+
+def _patched(part: str, old: str, new: str, wb: bytes = WB) -> bytes:
+    src = zipfile.ZipFile(io.BytesIO(wb))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as out:
+        for name in src.namelist():
+            data = src.read(name)
+            if name == part:
+                assert old.encode() in data
+                data = data.replace(old.encode(), new.encode())
+            out.writestr(name, data)
+    return buf.getvalue()
+
+
+SHEET = "xl/worksheets/sheet1.xml"
+
+
+@pytest.mark.parametrize(
+    ("content", "match"),
+    [
+        # two cells at the far corners: tiny on disk, two billion cells as a dense grid
+        (_patched(SHEET, '<c r="D2" s="0">', '<c r="BXX999999"><v>1</v></c><c r="D2" s="0">'), "more cells"),
+        (_patched(SHEET, '<c r="B2" s="1">', '<c r="B2" s="-1">'), "below zero"),
+        (_patched(SHEET, '<c r="B2" s="1">', '<c r="B2" s="9">'), "style the workbook doesn't have"),
+        (_patched(SHEET, '<c r="B2" s="1">', '<c r="B2" s="x">'), "not a whole number"),
+        (_patched(SHEET, '<c r="C2" s="2">', '<c r="B2" s="2">'), "two cells at B2"),
+        (_patched("xl/workbook.xml", 'name="Notes"', 'name="Table 1"'), "2 sheets named"),
+    ],
+)
+def test_ambiguous_or_oversized_sheets_are_refused(content: bytes, match: str) -> None:
+    e = entry("https_file", {"format": "xlsx", "sheet": "Table 1"})
+    with pytest.raises(LayoutError, match=match):
+        list(pages(e, Site({URL: content})))
+
+
+def test_the_archive_cap_counts_every_part_read() -> None:
+    from health_data_registry.adapters.archive import ArchiveRefused, Caps, SafeZip
+
+    zf = SafeZip(zip_bytes({"a.txt": b"x" * 400, "b.txt": b"y" * 400}), Caps(1_000, 1_000, 5))
+    zf.read("a.txt")
+    zf.read("b.txt")
+    with pytest.raises(ArchiveRefused, match="past its cap"):
+        zf.read("a.txt")  # 1,200 bytes inflated in all: past the archive's cap of 1,000
+
+
+def test_a_locate_extension_is_named_once_and_its_row_checked(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pydantic import ValidationError as _VE
+
+    from health_data_registry.adapters.extensions import EXTENSIONS, Extension, Location
+    from health_data_registry.source_config import Strict
+
+    monkeypatch.setitem(
+        EXTENSIONS,
+        "probe_locate",
+        Extension("probe_locate", "locate", Strict, lambda a, g: Location(-1), "test"),
+    )
+    use = {"name": "header_row_finder", "hook": "locate", "args": {"first_cell": "County"}}
+    with pytest.raises(_VE, match="one locate extension at most"):  # a second would be ignored
+        entry("https_file", {"format": "csv"}, extensions=[use, {"name": "probe_locate", "hook": "locate"}])
+    e = entry("https_file", {"format": "csv"}, extensions=[{"name": "probe_locate", "hook": "locate"}])
+    with pytest.raises(LayoutError, match="named row -1"):
+        list(pages(e, Site({URL: CSV})))
+
+
+def test_a_header_the_extension_cannot_find_is_a_layout_refusal() -> None:
+    e = entry("https_file", {"format": "csv"},
+              extensions=[{"name": "header_row_finder", "hook": "locate", "args": {"first_cell": "Region"}}])  # fmt: skip
+    with pytest.raises(LayoutError, match="no row in the first"):
+        list(pages(e, Site({URL: CSV})))
+
+
+def test_skipped_footer_rows_are_recorded() -> None:
+    e = entry("https_file", {"format": "csv", "skip_footer_rows": 1})
+    got = list(pages(e, Site({URL: CSV})))
+    assert got[0].provenance["skipped_footer_rows"] == "1" and len(got[0].records) == 1
