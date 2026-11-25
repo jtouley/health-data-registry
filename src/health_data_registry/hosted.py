@@ -17,6 +17,11 @@ The same tools as the stdio server (server.build_server), with these rules on to
   whenever the bind address isn't the explicitly public 0.0.0.0 or ::.
 - One deadline per tool call (HDR_TOOL_TIMEOUT_S, default 200 s, under claude.ai's 240 s) that caps every
   fetch, retry and download (deadline.py); one call reads the engine at a time.
+- Every query runs in a child process with an OS memory limit and a hard kill at the deadline (isolation.py), so
+  no query can outrun its deadline, exhaust the server's memory or touch the server's state. Anything that outlives
+  its call anyway (a child that won't die, a tool body stuck in a library call, a hub download still running)
+  poisons the engine until it ends: new questions get a plain BUSY refusal that says so, /healthz reports the
+  cause and since when, and after HDR_POISONED_EXIT_S (900 s) the server exits so it can be started afresh.
 - Long answers come in pages (paging.py, in the tools layer, so stdio and the CLI page the same way): each page
   stays under HDR_PAGE_CHARS (default 120,000, both copies counted), carries real rows, its provenance and the
   exact call for the next page. HDR_MAX_RESULT_CHARS (default 140,000, under claude.ai's ~150,000) stays as a
@@ -33,6 +38,7 @@ The same tools as the stdio server (server.build_server), with these rules on to
 from __future__ import annotations
 
 import contextlib
+import datetime as dt
 import hmac
 import json
 import logging
@@ -55,7 +61,8 @@ from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from health_data_registry import __version__, tools
-from health_data_registry.deadline import DeadlineExceeded, call_deadline
+from health_data_registry.deadline import DeadlineExceeded, call_deadline, stragglers
+from health_data_registry.isolation import POISONED
 from health_data_registry.paging import MIN_PAGE_CHARS, page_budget, sign, wire_size
 from health_data_registry.server import Fmt, Out
 
@@ -139,6 +146,8 @@ class HostedConfig:
     rate_per_session: float = field(default_factory=lambda: _env_float("HDR_RATE_PER_SESSION", 30))
     rate_global: float = field(default_factory=lambda: _env_float("HDR_RATE_GLOBAL", 300))
     metrics_every_s: float = field(default_factory=lambda: _env_float("HDR_METRICS_LOG_S", 3600))
+    # Poisoned this long without clearing, the server exits so the platform starts a fresh one (nothing else would).
+    poisoned_exit_s: float = field(default_factory=lambda: _env_float("HDR_POISONED_EXIT_S", 900))
 
 
 # ----------------------------------------------------------------------------------------------- counters
@@ -197,20 +206,88 @@ BUSY = (
 class CallGuard:
     """Runs one tool body under the hosted rules (server.Guard): a deadline, one engine user, the size cap.
 
-    The engine lock is never held past a call's deadline: when a body ignores its deadline (stuck inside a library
-    call), the guard interrupts every engine connection, takes the lock back from the stuck worker and answers.
-    The worker stops at its next step (query.Engine.connect checks the deadline) and never releases a lock it no
-    longer owns. At most MAX_WAITING calls queue for the engine; the rest get BUSY at once.
+    The engine lock is never held past a call's deadline. A query runs in a child process that isolation.py kills
+    at its own timer, at the deadline; that kill, not this guard, stops a query. When a body ignores its deadline
+    anyway (stuck inside a library call outside a query), the guard interrupts the engine connections (which
+    stops only work running in this process: the stdio engine's own queries, never a child's), takes the lock back
+    from the stuck worker and answers. The worker never releases a lock it no longer owns. A thread can't be
+    killed, so until the stuck worker ends the engine is poisoned: every new call is refused in plain words
+    (POISONED) before it touches the engine, so nothing the stuck worker does can mix with the next question. The
+    same holds while a query child won't die (isolation.Isolation.poisoned) or a bounded download outlived its
+    call (deadline.stragglers). The onset is logged once with its cause, /healthz shows the cause and since when,
+    and after cfg.poisoned_exit_s still poisoned the process exits so the platform restarts it. At most
+    MAX_WAITING calls queue for the engine; the rest get BUSY at once.
     """
 
-    def __init__(self, cfg: HostedConfig, metrics: Metrics, engine: Any = None) -> None:
+    def __init__(
+        self, cfg: HostedConfig, metrics: Metrics, engine: Any = None, *,
+        clock: Callable[[], float] = time.monotonic, exit_fn: Callable[[], None] | None = None,
+    ) -> None:  # fmt: skip
         self.cfg = cfg
         self.metrics = metrics
         self.engine = engine
+        self._clock = clock
+        self._exit = exit_fn or (lambda: os._exit(70))  # EX_SOFTWARE: a stuck thread would block a clean exit
+        self._since: float | None = None  # clock() when the engine became poisoned
+        self._since_wall: str | None = None  # the same moment, for /healthz
+        self._reasons: list[str] = []
         self._lock = threading.Lock()  # query.Engine holds one DuckDB connection and is not thread safe
         self._state = threading.Lock()  # guards _owner and _waiting
         self._owner: object | None = None  # the call that holds _lock now
         self._waiting = 0
+        self._stuck: list[threading.Thread] = []  # workers that outlived their deadline and are still running
+
+    def poison_reasons(self) -> list[str]:
+        """What is still running past its call, in plain words; empty when the engine is clean."""
+        with self._state:
+            self._stuck = [t for t in self._stuck if t.is_alive()]
+            stuck = bool(self._stuck)
+        isolation = getattr(self.engine, "isolation", None)
+        reasons = []
+        if stuck:
+            reasons.append("a tool call is still running past its deadline")
+        if stragglers() > 0:
+            reasons.append("a hub download is still running after its call gave up")
+        if isolation is not None and bool(isolation.poisoned()):
+            reasons.append("a query process did not stop when it was killed")
+        return reasons
+
+    def poisoned(self) -> bool:
+        """True while anything that outlived its call is still running; it clears itself when they end.
+
+        Logs the onset once with its cause and the clearing once; exits the process once it has lasted
+        cfg.poisoned_exit_s, since only a restart clears work that never ends.
+        """
+        reasons = self.poison_reasons()
+        now = self._clock()
+        with self._state:
+            if reasons and self._since is None:
+                self._since = now
+                self._since_wall = dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
+                log.warning("engine poisoned: %s; questions are refused until it ends", "; ".join(reasons))
+            elif not reasons and self._since is not None:
+                log.warning("engine no longer poisoned after %.0f s", now - self._since)
+                self._since = self._since_wall = None
+            self._reasons = reasons
+            overdue = self._since is not None and now - self._since >= self.cfg.poisoned_exit_s
+        if overdue:
+            log.warning("engine poisoned for over %.0f s; exiting so the platform restarts the server",
+                        self.cfg.poisoned_exit_s)  # fmt: skip
+            self._exit()
+        return bool(reasons)
+
+    def poison_status(self) -> dict[str, Any]:
+        """For /healthz: why the engine is poisoned, since when, and when the server restarts itself."""
+        poisoned = self.poisoned()
+        with self._state:
+            since, wall, reasons = self._since, self._since_wall, list(self._reasons)
+        return {
+            "poisoned": poisoned,
+            "poisoned_since": wall if poisoned else None,
+            "poisoned_for_s": round(self._clock() - since, 1) if poisoned and since is not None else None,
+            "poisoned_reasons": reasons,
+            "restarts_after_s": self.cfg.poisoned_exit_s,
+        }
 
     def _interrupt(self) -> None:
         """Interrupt every connection a call may be using: the engine's and its pinned engines' (later pages)."""
@@ -250,11 +327,18 @@ class CallGuard:
         box: dict[str, Any] = {"status": "error"}
         owner = object()
 
+        if self.poisoned():  # refused before any thread or lock: the earlier work may still be running
+            self.metrics.record(tool, "poisoned", time.monotonic() - start)
+            return tools.message(POISONED, fmt, refused="busy")
+
         def work() -> None:
             if not self._acquire(owner, budget - (time.monotonic() - start)):
                 box["status"], box["out"] = "busy", tools.message(BUSY, fmt, refused="busy")
                 return
             try:
+                if self.poisoned():  # became poisoned while this call waited for the engine
+                    box["status"], box["out"] = "poisoned", tools.message(POISONED, fmt, refused="busy")
+                    return
                 left = budget - (time.monotonic() - start)
                 with call_deadline(left):
                     box["out"], box["status"] = fn(), "ok"
@@ -272,6 +356,8 @@ class CallGuard:
         worker.join(budget + GRACE_S)
         if worker.is_alive():  # the body ignored its deadline (e.g. inside a library call): answer anyway
             self._interrupt()
+            with self._state:
+                self._stuck.append(worker)  # poisoned until it ends: no new call runs beside it
             self._release(owner)  # never let the stuck worker hold the engine for the calls behind it
             box["status"], box["out"] = "timeout", tools.refusal(DeadlineExceeded(budget), fmt)
         out: Out = box["out"]
@@ -524,6 +610,10 @@ class Hosted:
         except Exception as e:  # noqa: BLE001 - a failed warm-up is retried by the first question
             log.info("warm start incomplete: %s", getattr(e, "code", e.__class__.__name__))
         finally:
+            isolation = getattr(self.engine, "isolation", None)
+            if isolation is not None:  # one tiny query, so /healthz says whether the memory limit took effect
+                with contextlib.suppress(Exception):
+                    isolation.measure()
             self.warm["done"] = True
 
 
@@ -540,6 +630,7 @@ def build_hosted(
     `host` is the address the server binds to: Host and Origin are checked unless it is explicitly public.
     """
     from health_data_registry.hub import Hub
+    from health_data_registry.isolation import Isolation
     from health_data_registry.query import Engine
     from health_data_registry.registry import load_registry
     from health_data_registry.server import build_server
@@ -550,7 +641,9 @@ def build_hosted(
         cfg.cache.mkdir(parents=True, exist_ok=True)
         hub = Hub(url=cfg.hub_url, cache=cfg.cache)
         # Never a local lake: an empty directory that nothing writes to, so only the hub and live tiers answer.
-        engine = Engine(registry=reg, lake=cfg.cache / "no-local-lake", hub=hub, cache=cfg.cache)
+        # Every query runs in a killable child process (isolation.py).
+        engine = Engine(registry=reg, lake=cfg.cache / "no-local-lake", hub=hub, cache=cfg.cache,
+                        isolation=Isolation())  # fmt: skip
     metrics = Metrics(cfg.metrics_every_s, clock=clock)
     guard = CallGuard(cfg, metrics, engine)
     limiter = RateLimiter(cfg.rate_per_session, cfg.rate_global, clock=clock)
@@ -558,13 +651,19 @@ def build_hosted(
     mcp = build_server(reg, engine, guard=guard)
 
     async def healthz(_: Request) -> Response:
+        poison = guard.poison_status()
+        poisoned = poison["poisoned"]
+        isolation = getattr(engine, "isolation", None)
         return JSONResponse(
             {
-                "status": "ok",
+                "status": "poisoned" if poisoned else "ok",
+                **poison,
                 "version": __version__,
                 "warm": state.warm["done"],
                 "release": state.warm["release"],
-            }
+                "query_isolation": isolation.status() if isolation is not None else None,
+            },
+            status_code=503 if poisoned else 200,
         )
 
     async def index(request: Request) -> Response:

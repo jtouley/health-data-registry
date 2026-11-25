@@ -17,6 +17,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 
 _DEADLINE: ContextVar[float | None] = ContextVar("hdr_call_deadline", default=None)
+_STRAGGLERS: set[threading.Thread] = set()  # bounded() helpers still running after their caller gave up
+_STRAGGLERS_LOCK = threading.Lock()
 
 
 class DeadlineExceeded(TimeoutError):
@@ -78,7 +80,8 @@ def bounded[T](fn: Callable[[], T]) -> T:
 
     Outside a deadline it simply runs. Inside one it runs on a helper thread, and when the budget runs out first
     the caller gets DeadlineExceeded at once; the helper finishes or fails on its own, holding nothing of the
-    caller's (no engine lock, no connection).
+    caller's (no engine lock, no connection). Until it does it is a straggler (`stragglers()`): it may still write
+    the hub cache, so the hosted server takes no new question while one is alive.
     """
     left = remaining()
     if left is None:
@@ -97,7 +100,17 @@ def bounded[T](fn: Callable[[], T]) -> T:
     helper.start()
     helper.join(left)
     if helper.is_alive():
+        with _STRAGGLERS_LOCK:
+            _STRAGGLERS.add(helper)
         raise DeadlineExceeded()
     if "error" in box:
         raise box["error"]  # type: ignore[misc]
     return box["value"]  # type: ignore[return-value]
+
+
+def stragglers() -> int:
+    """How many bounded() helpers outlived their caller and are still running (finished ones are forgotten)."""
+    with _STRAGGLERS_LOCK:
+        for t in [t for t in _STRAGGLERS if not t.is_alive()]:
+            _STRAGGLERS.discard(t)
+        return len(_STRAGGLERS)

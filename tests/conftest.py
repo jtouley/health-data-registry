@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import textwrap
+import time
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -174,6 +176,18 @@ def _isolated_read_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("HDR_HUB", "off")  # the default public hub is never read by an offline test
     monkeypatch.delenv("HF_TOKEN", raising=False)
     monkeypatch.setenv("HDR_FETCH_AT_RUN_TIME", "0")
+
+
+@pytest.fixture(autouse=True)
+def _no_straggler_outlives_its_test() -> Iterator[None]:
+    """A helper a test left running past its deadline (a slow fake download) is a straggler, which poisons every
+    hosted guard; wait for it here so it can't fail whichever test runs next (mutmut runs tests in its own order)."""
+    from health_data_registry import deadline
+
+    yield
+    end = time.monotonic() + 10
+    while deadline.stragglers() and time.monotonic() < end:
+        time.sleep(0.02)
 
 
 @pytest.fixture
