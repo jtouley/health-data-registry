@@ -189,3 +189,4 @@ The server is a read-only MCP server. Claude picks the tools; nobody calls them 
 - **Code:** [Apache-2.0](LICENSE). **Data** keeps each publisher's terms, shown with every result. No data is
   stored in this repository.
 - **Security:** report vulnerabilities privately, as [SECURITY.md](SECURITY.md) describes.
+<!-- ci probe -->
