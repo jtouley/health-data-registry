@@ -501,24 +501,24 @@ def _check_output_size(tree: exp.Expr, scopes: list[Scope]) -> None:
     size: dict[int, int] = {}
     by_expression = {id(scope.expression): scope for scope in scopes}
 
-    def output(scope: Scope) -> int:
+    def _output(scope: Scope) -> int:
         key = id(scope.expression)
         if key not in size:
-            measure(scope.expression, scope)
+            _measure(scope.expression, scope)
         return size[key]
 
-    def derived(scope: Scope | None, qualifier: str = "") -> int:
+    def _derived(scope: Scope | None, qualifier: str = "") -> int:
         """The size of a column read from the CTEs and derived tables in reach (1 for a catalogued table)."""
         found = 1
         while scope is not None:
             for name, (_node, source) in scope.selected_sources.items():
                 if isinstance(source, Scope) and (not qualifier or name.casefold() == qualifier):
-                    found = max(found, output(source))
+                    found = max(found, _output(source))
             # Only a subquery can name its outer query's columns; a CTE or derived table can't.
             scope = scope.parent if scope.is_subquery else None
         return found
 
-    def in_scope(root: exp.Expr) -> list[exp.Expr]:
+    def _in_scope(root: exp.Expr) -> list[exp.Expr]:
         """The nodes under root in pre-order, stopping at (but including) each nested query's own node."""
         found: list[exp.Expr] = []
         stack = [root]
@@ -529,17 +529,17 @@ def _check_output_size(tree: exp.Expr, scopes: list[Scope]) -> None:
                 stack.extend(node.iter_expressions())
         return found
 
-    def measure(root: exp.Expr, scope: Scope | None) -> None:
-        for node in reversed(in_scope(root)):  # children before parents
+    def _measure(root: exp.Expr, scope: Scope | None) -> None:
+        for node in reversed(_in_scope(root)):  # children before parents
             if id(node) in size:
                 continue
             inner = by_expression.get(id(node))
             if inner is not None and inner is not scope:
-                output(inner)
+                _output(inner)
                 continue
             column_size = 1
             if isinstance(node, exp.Column | exp.Star):
-                column_size = derived(scope, node.table.casefold() if isinstance(node, exp.Column) else "")
+                column_size = _derived(scope, node.table.casefold() if isinstance(node, exp.Column) else "")
             if inner is not None and isinstance(node, exp.Select):
                 value = max((size[id(e)] for e in node.expressions), default=0)
             else:
@@ -549,8 +549,8 @@ def _check_output_size(tree: exp.Expr, scopes: list[Scope]) -> None:
             size[id(node)] = value
 
     for scope in scopes:
-        output(scope)
-    measure(tree, by_expression.get(id(tree)))
+        _output(scope)
+    _measure(tree, by_expression.get(id(tree)))
 
 
 def _check_clauses(node: exp.Expr) -> None:

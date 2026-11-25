@@ -24,6 +24,9 @@ work is not committed to the PR branch: it stays uncommitted or goes on a separa
 
 `make help` lists every target.
 
+The README's images (`assets/readme/*.svg`, light and dark) come from one token set: edit and run
+`python3 -I tools/readme_svg/gen.py`, never the SVGs by hand.
+
 | Command | What it does |
 |---|---|
 | `make install` | `uv sync` |
