@@ -22,6 +22,7 @@ records are not rewritten.
 | [0014](0014-bibliographic-registries-as-primary-routes.md) | Bibliographic registries (Crossref, OpenAlex, Europe PMC) are primary-source routes for DOI records, not aggregators | Accepted |
 | [0015](0015-elt-raw-data-stored-as-sent.md) | ELT, not ETL: raw data is stored as the publisher sent it; values change only in staging and the dbt models; the raw source contract is loose; a change to the raw layer is a new contract version and a new snapshot, never a rewrite | Proposed |
 | [0016](0016-crawler-factory.md) | Crawler factory: a closed set of generic adapter types, per-source config in the catalog, named pure extensions, one shared fetch core ([audit](../dev/crawler-audit.md)) | Proposed |
+| [0017](0017-immutable-raw-reproducible-builds.md) | Immutable raw, reproducible builds: one raw writer, a build manifest pinning every input, outputs keyed by build id, determinism rules, a rebuild-from-raw test, and data-quality gates on `LATEST` and publishing | Proposed |
 
 The spec's current positioning (three layers: crawler and lake, an open health data hub on Hugging Face, and the MCP
 server with analysis tools; datasets hosted on the hub wherever the licence allows; restricted sources "listed, not
