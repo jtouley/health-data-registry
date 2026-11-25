@@ -47,6 +47,12 @@ def load(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], Any]:
 SQL_KNOWN = {
     "#56 lone surrogate": ("KNOWN_LONE_SURROGATE", "SELECT 1 AS \udcff"),
     "#57 repeated alias": ("KNOWN_OPTIMIZE_ERROR", "SELECT d.state FROM deaths d JOIN deaths d ON true"),
+    # the input the PR fuzzing run found: the same error, first read in _check_columns
+    "#57 repeated alias, column check": (
+        "KNOWN_OPTIMIZE_ERROR",
+        "WITH t AS (SELECT state, ye+ar FROM pop) SELECT t.s~t-ate, count(*) FROM t JOIN deaths d ON dOVERte = "
+        "t.state AND d JOIN deaths d ON dOVERte =e",
+    ),
     "#71 initcap": ("KNOWN_REWRITES", "SELECT initcap(state) FROM deaths"),
     "#71 two-argument length": ("KNOWN_REWRITES", "SELECT length(state, year) FROM deaths"),
     "#71 current_date(x)": ("KNOWN_REWRITES", "SELECT current_date(state) FROM deaths"),

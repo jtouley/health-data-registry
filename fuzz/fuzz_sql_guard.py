@@ -299,8 +299,16 @@ def known_guard_error(sql: str, e: Exception) -> bool:
             "extract_statements(): incompatible function arguments"
         )
     if KNOWN_OPTIMIZE_ERROR and type(e) is OptimizeError:
-        # issue #57: two sources share an alias
-        return where == "_check_scope_sources" and re.fullmatch(r"Alias already used: .+", str(e)) is not None
+        # issue #57: two sources share an alias. sqlglot raises it from the lazy Scope.selected_sources, wherever
+        # in guard_sql's scope checks that is first read (_check_scope_sources, _check_columns, ...).
+        last = traceback.extract_tb(e.__traceback__)[-1]
+        return (
+            where is not None
+            and where.startswith("_")
+            and last.name == "selected_sources"
+            and last.filename.replace("\\", "/").endswith("optimizer/scope.py")
+            and re.fullmatch(r"Alias already used: .+", str(e)) is not None
+        )
     if KNOWN_GENERATE_PARSE_ERROR and type(e) is ParseError and _REWRITES[0][0].search(sql):
         # issue #72: initcap() with no argument fails in sqlglot's generator, after _parse
         return where == "guard_sql"
