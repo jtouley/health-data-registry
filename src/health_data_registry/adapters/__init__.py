@@ -37,8 +37,10 @@ def pages(
         from health_data_registry.adapters import https_csv
 
         yield from https_csv.pages(entry, fetcher, max_rows=max_rows, fields=fields)
-    else:  # croi: crawled page by page by croi_index.py into a private store, never paged here
-        raise ValueError(f"{entry.id} is not read through a portal adapter; see croi_index.py")
+    else:  # croi and doi: built by croi_index.py / doi_harvest.py into a private store, never paged here
+        raise ValueError(
+            f"{entry.id} is not read through a portal adapter; see croi_index.py or doi_harvest.py"
+        )
 
 
 def publisher_fields(entry: CatalogEntry, fetcher: Fetcher) -> set[str]:
@@ -52,5 +54,9 @@ def publisher_fields(entry: CatalogEntry, fetcher: Fetcher) -> set[str]:
     if entry.source.portal == "croi":
         raise ValueError(
             f"{entry.id}: CROI pages are checked by the parser itself (LayoutError) on every crawl"
+        )
+    if entry.source.portal == "doi":
+        raise ValueError(
+            f"{entry.id}: DOI harvests are checked by the parser itself (ApiLayoutError) on every run"
         )
     return https_csv.publisher_fields(entry, fetcher)
