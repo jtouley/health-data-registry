@@ -4,23 +4,32 @@ A publisher's sitemap lists every page it serves, with the date each last change
 comparing it with the last gives the crawlers their queue: pages that are new, changed or gone. Nothing here is
 data about people; a sitemap is a public index of a website.
 
-Copies go to a private Hugging Face dataset (default `jtouley/health-data-registry-ops-sitemaps`, named by
-naming.py), never to git:
+Copies go to a private Hugging Face dataset (default `<HDR_PRIVATE_HF_OWNER>/health-data-registry-ops-sitemaps`,
+named by naming.py), never to git:
 
     sitemaps/<host>/<name>/<YYYY-MM-DD>.xml.gz    the sitemap as fetched (gzipped), one per run
-    sitemaps/<host>/<name>/latest.json            every page and its lastmod from the newest run, plus provenance
-    sitemaps/<host>/<name>/<YYYY-MM-DD>.diff.json pages new, changed and removed since the previous run
+    sitemaps/<host>/<name>/<YYYY-MM-DD>.json      every page and its lastmod from that day's run, plus provenance
+    sitemaps/<host>/<name>/latest.json            the same, for the newest run
+    sitemaps/<host>/<name>/<YYYY-MM-DD>.diff.json pages new, changed and removed since the last run on an earlier
+                                                  day; a second run the same day diffs against that same earlier
+                                                  run, so the day's diff is never emptied
 
-Two fetchers, both reading robots.txt first and both sending the repo's own honest user agent:
+Two fetchers, both reading robots.txt first, both at least PACE_S (10 s) apart per host, and both sending the
+repo's own honest user agent:
 
 - `browser` (the default): headless Chromium through `browser_fetch.py`. michigan.gov's edge network (Akamai)
-  refuses plain HTTPS clients from cloud servers, and serves the same public sitemap to a real browser.
+  refuses plain HTTPS clients from cloud servers, and serves the same public sitemap to a real browser. The
+  maintainer allowed this on government hosts, under stop conditions (docs/adr/0013).
 - `http`: the guarded fetcher (`fetch.py`), for hosts that answer it, or where the browser fetcher isn't
   installed yet.
 
-A refusal (a 401/403, an edge "Access Denied" page, a robots.txt that disallows the path) is final: the seed is
-reported as not taken and nothing is retried another way. A maintainer can instead upload a copy they downloaded
-in their own browser (`--from-file`). This job never disguises itself.
+Hosts: a seed is fetched only from a host a catalog entry names, or one ADR 0013 records as an exception until
+its catalog entry lands. Child sitemaps must be HTTPS on the seed's own host.
+
+A refusal (a 401/403/429, an edge "Access Denied" or challenge page, a CAPTCHA, a robots.txt that disallows the
+path or that the host refuses to show) is final: the seed is reported as not taken and nothing is retried another
+way. A maintainer can instead upload a copy they downloaded in their own browser (`--from-file`). This job never
+disguises itself.
 
 Run it with `health-data-registry sitemaps snapshot --help`. Uploading needs HF_TOKEN with write access.
 """
@@ -31,9 +40,12 @@ import argparse
 import gzip
 import hashlib
 import importlib
+import io
 import json
 import os
 import sys
+import time
+import zlib
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -48,12 +60,16 @@ from health_data_registry.crawl import Robots
 from health_data_registry.fetch import FetchRefused
 
 OPS_JOB = "sitemaps"
-DEFAULT_REPO = naming.ops_dataset(OPS_JOB)
 BROWSER_MODULE = "health_data_registry.browser_fetch"
 FETCHERS = ("browser", "http")
 NS = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
 MAX_SITEMAP_BYTES = 100_000_000
+# The sitemaps protocol caps one sitemap at 50 MB uncompressed (sitemaps.org/protocol.html); a gzipped sitemap is
+# never expanded past it.
+MAX_UNCOMPRESSED_BYTES = 52_428_800
 MAX_CHILD_SITEMAPS = 200
+# The government-host policy (ADR 0013): at least this many seconds between two requests to one host.
+PACE_S = 10.0
 
 
 @dataclass(frozen=True)
@@ -75,6 +91,11 @@ SEEDS: tuple[Seed, ...] = (
     Seed("emergingdiseases", "https://www.michigan.gov/emergingdiseases/sitemap.xml"),
     Seed("kentcounty", "https://www.kentcountymi.gov/sitemap.xml"),
 )
+
+# Hard rule 6: fetches go only to catalogued publisher hosts. These two seed hosts aren't named by a catalog entry
+# yet (the Michigan entries come with PR #19), so the maintainer recorded them as an exception in
+# docs/adr/0013-browser-fetcher-on-government-hosts.md. Adding a host here needs an amendment to that ADR.
+ADR_0013_HOSTS: frozenset[str] = frozenset({"www.michigan.gov", "www.kentcountymi.gov"})
 
 
 class SitemapError(ValueError):
@@ -105,10 +126,29 @@ class Snapshot:
         self.sha256 = hashlib.sha256(self.raw).hexdigest()
 
 
+def _gunzip(content: bytes) -> bytes:
+    """A gzipped sitemap, expanded no further than MAX_UNCOMPRESSED_BYTES; a damaged file is a SitemapError."""
+    try:
+        with gzip.GzipFile(fileobj=io.BytesIO(content)) as fh:
+            out = fh.read(MAX_UNCOMPRESSED_BYTES + 1)
+    except (OSError, EOFError, zlib.error) as e:
+        raise SitemapError(f"a damaged gzip file: {e}") from e
+    if len(out) > MAX_UNCOMPRESSED_BYTES:
+        raise SitemapError(f"expands past {MAX_UNCOMPRESSED_BYTES} bytes, the sitemaps protocol's limit")
+    return out
+
+
 def parse(content: bytes) -> tuple[list[Page], list[str]]:
     """The pages of a <urlset>, or the child sitemap URLs of a <sitemapindex>. Raises SitemapError otherwise."""
     if content[:2] == b"\x1f\x8b":
-        content = gzip.decompress(content)
+        content = _gunzip(content)
+    elif len(content) > MAX_UNCOMPRESSED_BYTES:
+        raise SitemapError(f"larger than {MAX_UNCOMPRESSED_BYTES} bytes, the sitemaps protocol's limit")
+    if content[:512].lstrip().lower().startswith((b"<!doctype html", b"<html")):
+        # An edge "Access Denied" or challenge page, or a CAPTCHA: a block, never retried another way (ADR 0013).
+        raise SitemapError(
+            "the host answered with a web page, not a sitemap (an access-denied or challenge page)"
+        )
     try:
         root = ElementTree.fromstring(content)  # noqa: S314 - stdlib parser; no DTDs or external entities in sitemaps
     except ElementTree.ParseError as e:
@@ -143,7 +183,10 @@ def take(seed: Seed, get: Getter, *, today: date) -> Snapshot:
             )
         parts = [content]
         for child in children:
-            if (urlsplit(child).hostname or "").lower() != seed.host:
+            where = urlsplit(child)
+            if where.scheme != "https":
+                raise SitemapError(f"{seed.url} points to a sitemap that is not HTTPS: {child}")
+            if (where.hostname or "").lower() != seed.host:
                 raise SitemapError(f"{seed.url} points to a sitemap on another host: {child}")
             body, _ = get(child)
             child_pages, grandchildren = parse(body)
@@ -195,38 +238,59 @@ def latest_document(snap: Snapshot) -> dict[str, Any]:
     }
 
 
-def previous_pages(api: Any, repo_id: str, seed: Seed) -> list[Page] | None:
-    """The pages from the newest snapshot on the hub, or None when there isn't one yet."""
+def _hub_json(api: Any, repo_id: str, path: str) -> dict[str, Any] | None:
     from huggingface_hub.errors import EntryNotFoundError, RepositoryNotFoundError
 
     try:
-        path = api.hf_hub_download(repo_id, f"{_prefix(seed)}/latest.json", repo_type="dataset")
+        local = api.hf_hub_download(repo_id, path, repo_type="dataset")
     except (EntryNotFoundError, RepositoryNotFoundError):
         return None
-    doc = json.loads(Path(path).read_text(encoding="utf-8"))
-    return [Page(p["loc"], p.get("lastmod")) for p in doc["pages"]]
+    doc: dict[str, Any] = json.loads(Path(local).read_text(encoding="utf-8"))
+    return doc
+
+
+def previous_pages(api: Any, repo_id: str, seed: Seed, today: date) -> tuple[list[Page] | None, str | None]:
+    """The pages and date of the newest snapshot taken BEFORE `today`; (None, None) when there isn't one.
+
+    latest.json is that snapshot unless a run already happened today; then its `previous_taken_on` names the
+    earlier day, whose dated page list is read instead. A second run on one day so diffs against the same earlier
+    run as the first, and the day's diff keeps every page the first run found.
+    """
+    doc = _hub_json(api, repo_id, f"{_prefix(seed)}/latest.json")
+    if doc is not None and doc.get("taken_on", "") >= today.isoformat():
+        before = doc.get("previous_taken_on")
+        doc = _hub_json(api, repo_id, f"{_prefix(seed)}/{before}.json") if before else None
+    if doc is None:
+        return None, None
+    return [Page(p["loc"], p.get("lastmod")) for p in doc["pages"]], doc.get("taken_on")
 
 
 def upload(api: Any, repo_id: str, snaps: Iterable[Snapshot]) -> list[dict[str, Any]]:
-    """One commit per run: each snapshot's gzipped sitemap, its latest.json and its diff. Returns the diffs."""
+    """One commit per run: each snapshot's gzipped sitemap, page lists and diff. Returns the diffs."""
     from huggingface_hub import CommitOperationAdd
 
     # Created private on the first run if missing; an existing dataset that is public is never written to.
-    api.create_repo(repo_id, repo_type="dataset", private=True, exist_ok=True)
-    if not api.repo_info(repo_id, repo_type="dataset").private:
-        raise SitemapError(f"{repo_id} is public; sitemap snapshots go only to a private dataset")
+    try:
+        naming.assert_private(api, repo_id)
+    except naming.NotPrivate as e:
+        raise SitemapError(str(e)) from e
     ops, summary = [], []
     for snap in snaps:
         prefix = _prefix(snap.seed)
         day = snap.taken_on.isoformat()
-        change = diff(previous_pages(api, repo_id, snap.seed), snap.pages)
+        before, since = previous_pages(api, repo_id, snap.seed, snap.taken_on)
+        change = diff(before, snap.pages)
         report = {"seed": snap.seed.name, "taken_on": day, "pages": len(snap.pages)}
         report.update({k: len(v) for k, v in change.items()})
         summary.append(report)
+        page_list = json.dumps(latest_document(snap) | {"previous_taken_on": since}, indent=1).encode()
         files = {
             f"{prefix}/{day}.xml.gz": gzip.compress(snap.raw, mtime=0),
-            f"{prefix}/latest.json": json.dumps(latest_document(snap), indent=1).encode(),
-            f"{prefix}/{day}.diff.json": json.dumps({"taken_on": day, **change}, indent=1).encode(),
+            f"{prefix}/{day}.json": page_list,
+            f"{prefix}/latest.json": page_list,
+            f"{prefix}/{day}.diff.json": json.dumps(
+                {"taken_on": day, "since": since, **change}, indent=1
+            ).encode(),
         }
         ops += [CommitOperationAdd(path_in_repo=p, path_or_fileobj=b) for p, b in files.items()]
     if ops:
@@ -237,20 +301,61 @@ def upload(api: Any, repo_id: str, snaps: Iterable[Snapshot]) -> list[dict[str, 
     return summary
 
 
-def _hosts() -> frozenset[str]:
-    return frozenset(s.host for s in SEEDS)
+def catalogued_hosts(registry: Any = None) -> frozenset[str]:
+    """Every host a catalog entry names: its data host and the hosts of its landing, data, codebook and terms pages."""
+    if registry is None:
+        from health_data_registry.registry import load_registry
+
+        registry = load_registry()
+    found: set[str] = set()
+    for ds in registry:
+        e = ds.entry
+        found.add(e.source.host.lower())
+        for url in (e.source.landing_url, e.source.api_url, e.codebook_url, e.licence.terms_url):
+            found.add((urlsplit(url).hostname or "").lower())
+    return frozenset(found - {""})
 
 
-def publisher_getter() -> Getter:
+def allowed_hosts(seeds: Iterable[Seed] = SEEDS, *, registry: Any = None) -> frozenset[str]:
+    """The seed hosts that may be fetched: those a catalog entry names, plus ADR 0013's recorded exceptions."""
+    allowed = catalogued_hosts(registry) | ADR_0013_HOSTS
+    return frozenset(s.host for s in seeds if s.host in allowed)
+
+
+class Pace:
+    """At least PACE_S seconds between two requests to one host (ADR 0013), whatever robots.txt allows."""
+
+    def __init__(
+        self,
+        seconds: float = PACE_S,
+        *,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.seconds, self.sleep, self.clock = seconds, sleep, clock
+        self.last: dict[str, float] = {}
+
+    def wait(self, url: str) -> None:
+        host = (urlsplit(url).hostname or "").lower()
+        if host in self.last:
+            due = self.last[host] + self.seconds - self.clock()
+            if due > 0:
+                self.sleep(due)
+        self.last[host] = self.clock()
+
+
+def publisher_getter(*, hosts: frozenset[str] | None = None, pace: Pace | None = None) -> Getter:
     """Plain HTTPS: robots.txt first, then the guarded fetcher, with the repo's honest user agent."""
     from health_data_registry.fetch import fetch
 
-    hosts = _hosts()
-    robots = Robots(hosts)
+    allowed = allowed_hosts() if hosts is None else hosts
+    robots = Robots(allowed)
+    paced = pace or Pace()
 
     def get(url: str) -> tuple[bytes, datetime]:
         robots.wait_turn(url)
-        r = fetch(url, allowed_hosts=hosts, max_bytes=MAX_SITEMAP_BYTES)
+        paced.wait(url)
+        r = fetch(url, allowed_hosts=allowed, max_bytes=MAX_SITEMAP_BYTES)
         if r.status != 200:
             raise SitemapError(f"{url} answered with status {r.status}")
         return r.content, r.retrieved_at
@@ -261,10 +366,17 @@ def publisher_getter() -> Getter:
 Reader = Callable[[str], tuple[bytes, datetime]]
 
 
-class BrowserRobots(Robots):
-    """crawl.Robots, with robots.txt read by the same browser as the sitemap (same rules for each answer).
+# The only answers for robots.txt that mean "there is no robots.txt", so everything is allowed (RFC 9309).
+ROBOTS_ABSENT = frozenset({404, 410})
+# Answers that are a refusal: the seed is not taken (ADR 0013).
+ROBOTS_REFUSED = frozenset({401, 403, 429})
 
-    A host that blocks the browser's robots.txt request raises FetchRefused("blocked"): the seed is not taken.
+
+class BrowserRobots(Robots):
+    """crawl.Robots, with robots.txt read by the same browser as the sitemap.
+
+    Only a 404 or 410 for robots.txt allows everything. A 401, 403 or 429 (as "http_error" or "blocked") raises
+    FetchRefused("blocked"), and any other refusal or a 5xx is raised as it came: the seed is not taken.
     """
 
     def __init__(self, hosts: frozenset[str], read: Reader, **kw: Any) -> None:
@@ -279,14 +391,21 @@ class BrowserRobots(Robots):
             body, _ = self.read(f"https://{host}/robots.txt")
             rp.parse(body.decode("utf-8", "replace").splitlines())
         except FetchRefused as e:
-            if e.code != "http_error" or e.status is None or e.status >= 500:
+            if e.code == "http_error" and e.status in ROBOTS_ABSENT:
+                rp.parse([])  # no robots.txt, so everything is allowed (RFC 9309)
+            elif e.code == "http_error" and e.status in ROBOTS_REFUSED:
+                raise FetchRefused(
+                    "blocked", f"{host} refused to show its robots.txt (status {e.status})", status=e.status
+                ) from e
+            else:
                 raise
-            rp.parse([])  # 404 and other 4xx: no robots.txt, so everything is allowed (RFC 9309)
         self.rules[host] = rp
         return rp
 
 
-def browser_getter(*, module: Any = None) -> Getter:
+def browser_getter(
+    *, module: Any = None, hosts: frozenset[str] | None = None, pace: Pace | None = None
+) -> Getter:
     """Headless Chromium (browser_fetch.py) with the honest user agent; robots.txt read the same way first."""
     if module is None:
         try:
@@ -295,13 +414,15 @@ def browser_getter(*, module: Any = None) -> Getter:
             raise BrowserUnavailable(
                 "The browser fetcher isn't in this version yet. Use --fetcher http, or wait for it to be merged."
             ) from e
-    hosts = _hosts()
+    allowed = allowed_hosts() if hosts is None else hosts
+    paced = pace or Pace()
 
     def read(url: str) -> tuple[bytes, datetime]:
-        page = module.browser_fetch(url, allowed_hosts=hosts, max_bytes=MAX_SITEMAP_BYTES).page
+        paced.wait(url)
+        page = module.browser_fetch(url, allowed_hosts=allowed, max_bytes=MAX_SITEMAP_BYTES).page
         return page.content, page.retrieved_at
 
-    robots = BrowserRobots(hosts, read)
+    robots = BrowserRobots(allowed, read)
 
     def get(url: str) -> tuple[bytes, datetime]:
         robots.wait_turn(url)
@@ -311,7 +432,10 @@ def browser_getter(*, module: Any = None) -> Getter:
 
 
 def add_arguments(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--repo", default=DEFAULT_REPO, help="Hugging Face dataset to write to (private)")
+    p.add_argument(
+        "--repo",
+        help="Hugging Face dataset to write to (private; default: <HDR_PRIVATE_HF_OWNER>'s ops-sitemaps)",
+    )
     p.add_argument("--seed", action="append", help="only these seed names (default: all)")
     p.add_argument(
         "--fetcher", choices=FETCHERS, default="browser",
@@ -319,8 +443,13 @@ def add_arguments(p: argparse.ArgumentParser) -> None:
     )  # fmt: skip
     p.add_argument(
         "--from-file", action="append", default=[], metavar="NAME=PATH",
-        help="use a sitemap a maintainer downloaded for seed NAME instead of fetching it",
+        help="use a sitemap a maintainer downloaded for seed NAME instead of fetching it (NAME must be chosen)",
     )  # fmt: skip
+
+
+def default_repo() -> str:
+    """The sitemap dataset of HDR_PRIVATE_HF_OWNER (else jtouley), read when the command runs."""
+    return naming.ops_dataset(OPS_JOB, naming.private_owner())
 
 
 def checked_repo(repo_id: str) -> str:
@@ -340,20 +469,32 @@ def snapshot(
 ) -> int:
     """Take every chosen seed, upload what was taken in one commit. 0: all taken; 1: one or more not taken."""
     try:
-        repo = checked_repo(args.repo)
-    except ValueError as e:
+        repo = checked_repo(args.repo or default_repo())
+    except ValueError as e:  # naming.BadName from HDR_PRIVATE_HF_OWNER is a ValueError too
         error(str(e))
         return 2
     seeds = {s.name: s for s in SEEDS}
     unknown = set(args.seed or []) - set(seeds)
     files: dict[str, Path] = {}
     for item in args.from_file:
-        name, _, path = item.partition("=")
-        files[name] = Path(path)
+        name, eq, path = item.partition("=")
+        if not eq or not name or not path.strip():
+            error(f"--from-file {item!r}: give it as NAME=PATH, e.g. mdhhs=~/Downloads/sitemap.xml")
+            return 2
+        files[name] = Path(path).expanduser()
     unknown |= set(files) - set(seeds)
     if unknown:
         error(f"unknown seed(s): {', '.join(sorted(unknown))}; known: {', '.join(seeds)}")
+        return 2
     chosen = [seeds[n] for n in (args.seed or seeds)]
+    left_out = set(files) - {s.name for s in chosen}
+    if left_out:
+        error(
+            f"--from-file names {', '.join(sorted(left_out))}, which --seed leaves out; add --seed for each, "
+            "or drop --seed"
+        )
+        return 2
+    allowed = allowed_hosts(chosen) if get is None else frozenset(s.host for s in chosen)
     today = datetime.now(UTC).date()
     snaps, failed = [], []
     getter = get
@@ -362,8 +503,13 @@ def snapshot(
             if seed.name in files:
                 snaps.append(from_file(seed, files[seed.name], today=today))
                 continue
+            if seed.host not in allowed:
+                raise SitemapError(
+                    f"{seed.host} is not a catalogued host or an ADR 0013 exception (hard rule 6)"
+                )
             if getter is None:
-                getter = browser_getter() if args.fetcher == "browser" else publisher_getter()
+                kind = browser_getter if args.fetcher == "browser" else publisher_getter
+                getter = kind(hosts=allowed)
             snaps.append(take(seed, getter, today=today))
         except BrowserUnavailable as e:
             print(str(e), file=sys.stderr)

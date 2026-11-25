@@ -72,6 +72,29 @@ def api(tmp_path: Path) -> FakeApi:
     return a
 
 
+REPO = "me/health-data-registry-ops-sitemaps"
+HOSTS = frozenset({"www.example.gov"})
+
+
+@pytest.fixture(autouse=True)
+def example_owner_and_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The private owner is `me`, and the synthetic host www.example.gov is allowed like an ADR 0013 host."""
+    monkeypatch.setenv("HDR_PRIVATE_HF_OWNER", "me")
+    monkeypatch.setattr(sm, "ADR_0013_HOSTS", sm.ADR_0013_HOSTS | HOSTS)
+
+
+class NoWait:
+    def __init__(self) -> None:
+        self.slept: list[float] = []
+
+    def __call__(self, seconds: float) -> None:
+        self.slept.append(seconds)
+
+
+def browser(fake: Any) -> sm.Getter:
+    return sm.browser_getter(module=fake, hosts=HOSTS, pace=sm.Pace(sleep=NoWait()))
+
+
 @pytest.mark.parametrize("gzipped", [False, True], ids=["plain", "gzip"])
 def test_parse_urlset_pagesAndLastmod_readInOrder(gzipped: bool) -> None:
     # Arrange
@@ -163,12 +186,12 @@ def test_upload_twoWeeks_privateRepoDatedCopiesAndDiff(api: FakeApi) -> None:
                         WHEN, "publisher")  # fmt: skip
 
     # Act
-    sm.upload(api, "me/ops-sitemaps", [week1])
-    report = sm.upload(api, "me/ops-sitemaps", [week2])
+    sm.upload(api, REPO, [week1])
+    report = sm.upload(api, REPO, [week2])
 
     # Assert
     prefix = "sitemaps/www.example.gov/demo"
-    assert api.created == [("me/ops-sitemaps", True)] * 2
+    assert api.created == [(REPO, True)] * 2
     assert {f"{prefix}/2026-11-17.xml.gz", f"{prefix}/2026-11-24.xml.gz", f"{prefix}/latest.json"} <= set(
         api.files
     )
@@ -238,7 +261,20 @@ def test_seeds_michiganAndKentCounty_namedByNamingPy() -> None:
         "emergingdiseases": "https://www.michigan.gov/emergingdiseases/sitemap.xml",
         "kentcounty": "https://www.kentcountymi.gov/sitemap.xml",
     }
-    assert sm.DEFAULT_REPO == "jtouley/health-data-registry-ops-sitemaps"
+    assert set(sm.ADR_0013_HOSTS) >= {s.host for s in sm.SEEDS}
+
+
+def test_defaultRepo_readsThePrivateOwnerWhenTheCommandRuns(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("HDR_PRIVATE_HF_OWNER")
+    assert sm.default_repo() == "jtouley/health-data-registry-ops-sitemaps"
+    monkeypatch.setenv("HDR_PRIVATE_HF_OWNER", "org")
+    assert sm.default_repo() == "org/health-data-registry-ops-sitemaps"
+
+
+def test_main_noRepo_writesToThePrivateOwnersDataset(api: FakeApi, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sm, "SEEDS", (SEED,))
+    assert sm.main([], api=api, get=lambda url: (urlset(("https://www.example.gov/a", "1")), WHEN)) == 0
+    assert api.created == [(REPO, True)]
 
 
 def test_upload_publicRepo_refusedBeforeAnyCommit(api: FakeApi) -> None:
@@ -246,8 +282,50 @@ def test_upload_publicRepo_refusedBeforeAnyCommit(api: FakeApi) -> None:
     snap = sm.Snapshot(SEED, date(2026, 11, 24), urlset(("https://www.example.gov/a", "1")),
                        [sm.Page("https://www.example.gov/a", "1")], WHEN, "publisher")  # fmt: skip
     with pytest.raises(sm.SitemapError, match="is public"):
-        sm.upload(api, "me/ops-sitemaps", [snap])
+        sm.upload(api, REPO, [snap])
     assert api.commits == []
+
+
+def test_upload_otherOwner_refusedBeforeCreatingAnything(api: FakeApi) -> None:
+    snap = sm.Snapshot(SEED, date(2026, 11, 24), urlset(("https://www.example.gov/a", "1")),
+                       [sm.Page("https://www.example.gov/a", "1")], WHEN, "publisher")  # fmt: skip
+    with pytest.raises(sm.SitemapError, match="not a private or ops dataset of me"):
+        sm.upload(api, "someone-else/health-data-registry-ops-sitemaps", [snap])
+    assert api.created == [] and api.commits == []
+
+
+def test_upload_sameDayRerun_keepsTheDaysDiff(api: FakeApi) -> None:
+    """A second run on one day diffs against the last earlier day, so the day's diff is never emptied."""
+    page = sm.Page
+
+    def snap(day: date, pages: list[sm.Page]) -> sm.Snapshot:
+        return sm.Snapshot(SEED, day, urlset(*((p.loc, p.lastmod) for p in pages)), pages, WHEN, "publisher")
+
+    monday, next_monday = date(2026, 11, 16), date(2026, 11, 23)
+    sm.upload(api, REPO, [snap(monday, [page("https://www.example.gov/a", "1")])])
+    week = [page("https://www.example.gov/a", "2"), page("https://www.example.gov/b", None)]
+    sm.upload(api, REPO, [snap(next_monday, week)])
+    # The re-run the same day (e.g. after --from-file) finds one more page.
+    report = sm.upload(api, REPO, [snap(next_monday, [*week, page("https://www.example.gov/c", None)])])
+
+    prefix = "sitemaps/www.example.gov/demo"
+    change = json.loads(api.files[f"{prefix}/2026-11-23.diff.json"])
+    assert change["since"] == "2026-11-16"
+    assert change["new"] == ["https://www.example.gov/b", "https://www.example.gov/c"]
+    assert change["changed"] == ["https://www.example.gov/a"]
+    assert report[0]["new"] == 2
+    latest = json.loads(api.files[f"{prefix}/latest.json"])
+    assert (latest["taken_on"], latest["previous_taken_on"]) == ("2026-11-23", "2026-11-16")
+    assert json.loads(api.files[f"{prefix}/2026-11-23.json"]) == latest
+
+
+def test_upload_sameDayRerun_withoutAnEarlierDay_listsEveryPageAsNew(api: FakeApi) -> None:
+    first = sm.Snapshot(
+        SEED, date(2026, 11, 24), b"x", [sm.Page("https://www.example.gov/a", "1")], WHEN, "publisher"
+    )
+    sm.upload(api, REPO, [first])
+    again = sm.upload(api, REPO, [first])
+    assert again[0]["new"] == 1 and again[0]["removed"] == 0
 
 
 class FakeBrowser:
@@ -280,7 +358,7 @@ def test_browserGetter_readsRobotsFirstThenSitemap(monkeypatch: pytest.MonkeyPat
     )
 
     # Act
-    snap = sm.take(SEED, sm.browser_getter(module=fake), today=date(2026, 11, 24))
+    snap = sm.take(SEED, browser(fake), today=date(2026, 11, 24))
 
     # Assert
     assert [c[0] for c in fake.calls] == [ROBOTS, SEED.url]
@@ -293,7 +371,7 @@ def test_browserGetter_robotsDisallows_refusedWithoutFetching(monkeypatch: pytes
     monkeypatch.setattr(sm, "SEEDS", (SEED,))
     fake = FakeBrowser({ROBOTS: b"User-agent: *\nDisallow: /demo/\n"})
     with pytest.raises(FetchRefused) as e:
-        sm.browser_getter(module=fake)(SEED.url)
+        browser(fake)(SEED.url)
     assert e.value.code == "robots_disallowed"
     assert [c[0] for c in fake.calls] == [ROBOTS]
 
@@ -307,7 +385,7 @@ def test_browserGetter_noRobotsFile_allowsEverything(monkeypatch: pytest.MonkeyP
             SEED.url: urlset(("https://www.example.gov/a", None)),
         }
     )
-    body, _ = sm.browser_getter(module=fake)(SEED.url)
+    body, _ = browser(fake)(SEED.url)
     assert sm.parse(body)[0] == [sm.Page("https://www.example.gov/a", None)]
 
 
@@ -326,15 +404,62 @@ def test_browserGetter_robotsRefusedOrBroken_isFinal(
     monkeypatch.setattr(sm, "SEEDS", (SEED,))
     fake = FakeBrowser({ROBOTS: refusal})
     with pytest.raises(FetchRefused) as e:
-        sm.browser_getter(module=fake)(SEED.url)
+        browser(fake)(SEED.url)
     assert e.value is refusal
     assert [c[0] for c in fake.calls] == [ROBOTS]
+
+
+@pytest.mark.parametrize("status", [401, 403, 429])
+@pytest.mark.parametrize("code", ["http_error", "blocked"])
+def test_browserGetter_robotsRefusalStatus_isABlock(
+    monkeypatch: pytest.MonkeyPatch, status: int, code: str
+) -> None:
+    """A 401, 403 or 429 for robots.txt is a block, never 'no robots.txt' (ADR 0013)."""
+    fake = FakeBrowser({ROBOTS: FetchRefused(code, "refused", status=status), SEED.url: urlset(("x", None))})
+    with pytest.raises(FetchRefused) as e:
+        browser(fake)(SEED.url)
+    assert (e.value.code, e.value.status) == ("blocked", status)
+    assert [c[0] for c in fake.calls] == [ROBOTS]
+
+
+@pytest.mark.parametrize("status", [400, 405, 451])
+def test_browserGetter_otherRobotsClientError_isNotPermission(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    refusal = FetchRefused("http_error", "odd", status=status)
+    fake = FakeBrowser({ROBOTS: refusal, SEED.url: urlset(("x", None))})
+    with pytest.raises(FetchRefused) as e:
+        browser(fake)(SEED.url)
+    assert e.value is refusal
+    assert [c[0] for c in fake.calls] == [ROBOTS]
+
+
+def test_pace_keepsTenSecondsBetweenRequestsToOneHost() -> None:
+    now = [100.0]
+    slept = NoWait()
+    pace = sm.Pace(sleep=slept, clock=lambda: now[0])
+    pace.wait("https://www.example.gov/a")
+    now[0] = 103.0
+    pace.wait("https://www.example.gov/b")
+    pace.wait("https://other.example.gov/a")
+    now[0] = 200.0
+    pace.wait("https://www.example.gov/c")
+    assert slept.slept == [7.0]
+    assert sm.PACE_S == 10.0
+
+
+def test_browserGetter_pacesEveryRequest() -> None:
+    fake = FakeBrowser({ROBOTS: b"", SEED.url: urlset(("https://www.example.gov/a", None))})
+    slept = NoWait()
+    get = sm.browser_getter(module=fake, hosts=HOSTS, pace=sm.Pace(sleep=slept, clock=lambda: 0.0))
+    get(SEED.url)
+    assert slept.slept == [10.0]  # robots.txt, then the sitemap 10 s later
 
 
 def test_browserRobots_readsEachHostOnce(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sm, "SEEDS", (SEED,))
     fake = FakeBrowser({ROBOTS: b"", SEED.url: urlset(("https://www.example.gov/a", None))})
-    get = sm.browser_getter(module=fake)
+    get = browser(fake)
     get(SEED.url)
     get(SEED.url)
     assert [c[0] for c in fake.calls] == [ROBOTS, SEED.url, SEED.url]
@@ -365,7 +490,8 @@ def test_main_fetcherFlag_picksTheGetter(
     used: list[str] = []
 
     def make(kind: str) -> Any:
-        def factory() -> sm.Getter:
+        def factory(*, hosts: frozenset[str]) -> sm.Getter:
+            assert hosts == HOSTS
             used.append(kind)
             return lambda url: (urlset(("https://www.example.gov/a", "1")), WHEN)
 
@@ -437,7 +563,7 @@ def test_cli_sitemapsSnapshot_runsWithoutTheRegistry(monkeypatch: pytest.MonkeyP
 
 def test_addArguments_defaultsAndBadFetcher() -> None:
     p = snapshot_args([])
-    assert (p["repo"], p["fetcher"], p["seed"]) == (sm.DEFAULT_REPO, "browser", None)
+    assert (p["repo"], p["fetcher"], p["seed"]) == (None, "browser", None)
     with pytest.raises(SystemExit):
         cli.main(["sitemaps", "snapshot", "--fetcher", "curl"])
     with pytest.raises(SystemExit):
@@ -469,3 +595,159 @@ def test_checkedRepo_acceptsOnlyTheOpsSitemapsName() -> None:
         sm.checked_repo(name + "-public")
     with pytest.raises(ValueError, match="not a Hugging Face user"):
         sm.checked_repo("bad owner/health-data-registry-ops-sitemaps")
+
+
+def test_parse_gzipBomb_refusedPastTheProtocolLimit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sm, "MAX_UNCOMPRESSED_BYTES", 1000)
+    body = urlset(*((f"https://www.example.gov/{i}", None) for i in range(100)))
+    assert len(body) > 1000
+    with pytest.raises(sm.SitemapError, match="expands past 1000 bytes"):
+        sm.parse(gzip.compress(body))
+    with pytest.raises(sm.SitemapError, match="larger than 1000 bytes"):
+        sm.parse(body)
+
+
+def test_parse_exactlyAtTheLimit_isRead(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = urlset(("https://www.example.gov/a", None))
+    monkeypatch.setattr(sm, "MAX_UNCOMPRESSED_BYTES", len(body))
+    assert len(sm.parse(gzip.compress(body))[0]) == 1
+    assert len(sm.parse(body)[0]) == 1
+
+
+def test_parse_protocolLimitIs50MB() -> None:
+    assert sm.MAX_UNCOMPRESSED_BYTES == 52_428_800
+
+
+@pytest.mark.parametrize(
+    "content",
+    [gzip.compress(urlset(("https://www.example.gov/a", None)))[:-12], b"\x1f\x8b" + b"\x00" * 40],
+    ids=["truncated", "garbage"],
+)
+def test_parse_damagedGzip_isASitemapError(content: bytes) -> None:
+    with pytest.raises(sm.SitemapError, match="damaged gzip"):
+        sm.parse(content)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"<!DOCTYPE html><html><body>Please verify you are a human</body></html>",
+        b"  <HTML><body>x</body></HTML>",
+    ],
+    ids=["challenge", "uppercase"],
+)
+def test_parse_webPage_isABlock(content: bytes) -> None:
+    with pytest.raises(sm.SitemapError, match="challenge page"):
+        sm.parse(content)
+
+
+def test_main_damagedGzipForOneSeed_otherSeedsStillUpload(
+    api: FakeApi, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    other = sm.Seed("other", "https://www.example.gov/other/sitemap.xml")
+    monkeypatch.setattr(sm, "SEEDS", (SEED, other))
+
+    def get(url: str) -> tuple[bytes, datetime]:
+        if url == other.url:
+            return gzip.compress(urlset(("https://www.example.gov/b", None)))[:-12], WHEN
+        return urlset(("https://www.example.gov/a", "1")), WHEN
+
+    assert sm.main([], api=api, get=get) == 1
+    assert len(api.commits) == 1 and "demo 20" in api.commits[0]
+    assert "other: not taken: a damaged gzip file" in capsys.readouterr().err
+
+
+def test_take_childOverPlainHttp_refused() -> None:
+    child = "http://www.example.gov/demo/a.xml"
+    served = {SEED.url: index(child), child: urlset(("https://www.example.gov/1", None))}
+    with pytest.raises(sm.SitemapError, match="not HTTPS"):
+        sm.take(SEED, lambda url: (served[url], WHEN), today=date(2026, 11, 24))
+
+
+@pytest.mark.parametrize("value", ["demo", "demo=", "=x.xml", "demo=  "])
+def test_main_fromFileWithoutNameAndPath_isAUsageError(api: FakeApi, value: str) -> None:
+    with pytest.raises(SystemExit):
+        sm.main(["--from-file", value], api=api, get=lambda url: (b"", WHEN))
+    assert api.created == []
+
+
+def test_main_fromFileForASeedLeftOut_isAUsageError(
+    api: FakeApi, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    other = sm.Seed("other", "https://www.example.gov/other/sitemap.xml")
+    monkeypatch.setattr(sm, "SEEDS", (SEED, other))
+    f = tmp_path / "demo.xml"
+    f.write_bytes(urlset(("https://www.example.gov/a", "1")))
+    with pytest.raises(SystemExit):
+        sm.main(["--seed", "other", "--from-file", f"demo={f}"], api=api, get=lambda url: (b"", WHEN))
+    assert "--seed leaves out" in capsys.readouterr().err
+    assert api.created == []
+
+
+def test_snapshot_errorThatReturns_stopsBeforeFetching(api: FakeApi, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With an error callback that doesn't exit, a usage error still returns 2 and takes nothing."""
+    monkeypatch.setattr(sm, "SEEDS", (SEED,))
+    errors: list[str] = []
+
+    def never(url: str) -> tuple[bytes, datetime]:
+        raise AssertionError("nothing is fetched after a usage error")
+
+    for argv in (["--seed", "nope"], ["--from-file", "demo"], ["--from-file", "nope=x"]):
+        args = sm.argparse.Namespace(**snapshot_args(argv))
+        assert sm.snapshot(args, api=api, get=never, error=errors.append) == 2
+    assert len(errors) == 3 and api.created == []
+
+
+def test_allowedHosts_catalogOrAdrExceptionOnly(monkeypatch: pytest.MonkeyPatch) -> None:
+    from health_data_registry.registry import load_registry
+
+    monkeypatch.setattr(sm, "ADR_0013_HOSTS", frozenset({"www.michigan.gov", "www.kentcountymi.gov"}))
+    reg = load_registry()
+    catalogued = sm.catalogued_hosts(reg)
+    assert "data.cdc.gov" in catalogued and "" not in catalogued
+    cdc = sm.Seed("cdc", "https://data.cdc.gov/sitemap.xml")
+    assert sm.allowed_hosts((*sm.SEEDS, cdc, SEED), registry=reg) == {
+        "www.michigan.gov",
+        "www.kentcountymi.gov",
+        "data.cdc.gov",
+    }
+
+
+def test_main_uncataloguedHost_notTaken(
+    api: FakeApi, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stray = sm.Seed("stray", "https://stray.example.org/sitemap.xml")
+    monkeypatch.setattr(sm, "SEEDS", (stray,))
+    used: list[frozenset[str]] = []
+
+    def factory(*, hosts: frozenset[str]) -> sm.Getter:
+        used.append(hosts)
+        raise AssertionError("no getter for an uncatalogued host")
+
+    monkeypatch.setattr(sm, "publisher_getter", factory)
+    assert sm.main(["--fetcher", "http"], api=api) == 1
+    assert "stray: not taken: stray.example.org is not a catalogued host" in capsys.readouterr().err
+    assert used == [] and api.created == []
+
+
+def test_publisherGetter_pacesAndUsesTheAllowedHosts(monkeypatch: pytest.MonkeyPatch) -> None:
+    from health_data_registry import fetch as fetch_mod
+
+    calls: list[tuple[str, frozenset[str]]] = []
+
+    def fake_fetch(url: str, *, allowed_hosts: frozenset[str], max_bytes: int = 0, **kw: Any) -> Any:
+        calls.append((url, allowed_hosts))
+        if url.endswith("robots.txt"):
+            return SimpleNamespace(status=200, content=b"", retrieved_at=WHEN)
+        return SimpleNamespace(
+            status=200, content=urlset(("https://www.example.gov/a", None)), retrieved_at=WHEN
+        )
+
+    monkeypatch.setattr(fetch_mod, "fetch", fake_fetch)
+    slept = NoWait()
+    get = sm.publisher_getter(hosts=HOSTS, pace=sm.Pace(sleep=slept, clock=lambda: 0.0))
+    get(SEED.url)
+    get(SEED.url)
+    assert [c[0] for c in calls] == [ROBOTS, SEED.url, SEED.url]
+    assert all(c[1] == HOSTS for c in calls)
+    assert slept.slept == [10.0]
