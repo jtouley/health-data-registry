@@ -86,12 +86,15 @@ The scheduled refresh, crawls, sitemap snapshots, publishing and Space deploy ru
 needs. Every Hugging Face repository is named by one convention, built in `naming.py`: see [naming.md](naming.md).
 
 **Checking the crawl keys.** The `crawl` environment holds `CENSUS_API_KEY`, `SOCRATA_APP_TOKEN` and
-`OPENALEX_API_KEY`, which only an Actions job in that environment can read. To check they work, open the Actions
-tab, choose "Check crawl API keys", then "Run workflow" with the branch set to `main` (it refuses any other
-branch). It makes one request each to the Census API, data.cdc.gov and OpenAlex, and prints one line per key: accepted, or rejected with the HTTP status. The
-run fails if a key is missing or rejected. It never prints a key, a request URL, response headers or a body, and
-writes nothing. To make GitHub enforce the main-only rule too, set the `crawl` environment's deployment branches
-to `main`.
+`OPENALEX_API_KEY`. Its deployment branches must be set to `main` (Settings → Environments → `crawl`): that rule
+is what keeps the keys off other branches, because a run on another branch uses that branch's copy of the
+workflow, which can drop the workflow's own main-only check. To check the keys, open the Actions tab, choose
+"Check crawl API keys", then "Run workflow" with the branch set to `main`. It makes one request each to the
+Census API, data.cdc.gov and OpenAlex, and reports each key as rejected (the publisher's bad-key answer), not
+rejected (HTTP 200), or not checked (no answer, a rate limit or an outage: try again later, and don't replace
+the key). A 200 shows only that a key was not rejected: these APIs also answer without a key. The run fails
+unless every key is present and not rejected. It never prints a key, a request URL, response headers or a body,
+and writes nothing.
 
 To run the server in Claude Code from a checkout:
 

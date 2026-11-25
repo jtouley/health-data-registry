@@ -1,9 +1,18 @@
 # Manual check that the `crawl` environment's API keys work. Run it from the Actions tab on main.
 #
-#   main-only  refuses, and fails the run, unless it was started on main. It holds no secrets.
+#   main-only  refuses, and fails the run, unless it was started on main. It holds no secrets. This is an early
+#              refusal only: a run on another branch uses that branch's copy of this file. What keeps the keys
+#              off other branches is the `crawl` environment's deployment-branch rule (main only), which the
+#              maintainer must set: docs/dev/automation.md.
 #   check      in the GitHub environment `crawl`: one request to the Census API with CENSUS_API_KEY, one to
 #              CDC's Socrata portal with SOCRATA_APP_TOKEN and one to OpenAlex with OPENALEX_API_KEY. Each step
-#              prints one line, accepted or rejected, and the job fails if any key is missing or rejected.
+#              reports its key as rejected (the publisher's bad-key answer), not rejected (HTTP 200), or not
+#              checked (no answer, a rate limit, an outage or any other status, which says nothing about the
+#              key). The Socrata step adds one line on throttle headers. The job fails unless every key is
+#              present and not rejected.
+#
+# A 200 shows only that a key was not rejected: each of these APIs also answers some requests with no key, so
+# it does not show that the key was applied or is needed.
 #
 # What it never does: print a key, a request URL, response headers or a response body; put a key on a command
 # line (curl reads it from stdin, so it is not in the process list); check out the repository; use an action;
@@ -41,10 +50,10 @@ jobs:
           echo "Running on main."
 
   check:
-    name: Check the Census key and the Socrata token
+    name: Check the crawl API keys
     needs: main-only
-    # Defence in depth: the job that can read the environment's secrets never starts off main, even if
-    # main-only is edited away.
+    # An early refusal, like main-only, not a protection: a branch's copy of this file can drop both. Only the
+    # crawl environment's deployment-branch rule (main only) keeps its secrets off other branches.
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -66,7 +75,8 @@ jobs:
           fi
           echo "::add-mask::$CENSUS_API_KEY"
           # The key goes in on stdin (--data-urlencode key@-, appended to the query by -G), never on the command
-          # line. No redirects: the Census API answers a bad key with a redirect to an error page.
+          # line. The Census API answers a bad key with a 302 to an error page. There is no -L, so curl never
+          # follows it; --max-redirs 0 keeps it that way if -L is ever added. Never add -L here.
           rc=0
           resp=$(printf '%s' "$CENSUS_API_KEY" | curl -sS --fail-with-body --proto '=https' --max-redirs 0 \
             --max-time 30 -G --data-urlencode 'key@-' -w '\n%{http_code}' \
@@ -77,18 +87,26 @@ jobs:
             echo "::error::Census key: not checked: the Census API could not be reached (curl exit $rc). Try again later."
             exit 1
           fi
-          if [ "$code" = "200" ]; then
-            # Header row plus one data row; only the count is printed, never the body.
-            rows=$(jq -er 'if type == "array" then length - 1 else error("not an array") end' <<<"$body" 2>/dev/null) || rows=""
-            if [ "$rows" = "1" ]; then
-              echo "Census key: accepted (HTTP 200, 1 row)"
-              exit 0
-            fi
-            echo "::error::Census key: rejected (HTTP 200, but not the expected one row)"
-            exit 1
-          fi
-          echo "::error::Census key: rejected (HTTP $code)"
-          exit 1
+          case "$code" in
+            200)
+              # Header row plus one data row; only the count is printed, never the body.
+              rows=$(jq -er 'if type == "array" then length - 1 else error("not an array") end' <<<"$body" 2>/dev/null) || rows=""
+              if [ "$rows" = "1" ]; then
+                echo "Census key: not rejected (HTTP 200, 1 row)"
+                exit 0
+              fi
+              echo "::error::Census key: rejected (HTTP 200, but not the expected one row)"
+              exit 1
+              ;;
+            3??|401|403)
+              echo "::error::Census key: rejected (HTTP $code). Check the key, or request a new one from the Census Bureau."
+              exit 1
+              ;;
+            *)
+              echo "::error::Census key: not checked: the Census API answered HTTP $code, which does not say whether the key is good. Try again later."
+              exit 1
+              ;;
+          esac
 
       - name: Socrata app token
         # Runs even when the Census step failed, so one run reports on both keys.
@@ -121,12 +139,19 @@ jobs:
             echo "::error::Socrata token: not checked: data.cdc.gov could not be reached (curl exit $rc). Try again later."
             exit 1
           fi
-          if [ "$code" != "200" ]; then
-            echo "::error::Socrata token: rejected (HTTP $code)"
-            exit 1
-          fi
-          echo "Socrata token: accepted (HTTP 200)"
-          # Socrata answers 403 to a bad token, so a 200 means the token was accepted. Throttle headers, when
+          case "$code" in
+            200) ;;
+            401|403)
+              echo "::error::Socrata token: rejected (HTTP $code). Check the token, or create a new one on data.cdc.gov."
+              exit 1
+              ;;
+            *)
+              echo "::error::Socrata token: not checked: data.cdc.gov answered HTTP $code, which does not say whether the token is good. Try again later."
+              exit 1
+              ;;
+          esac
+          echo "Socrata token: not rejected (HTTP 200)"
+          # Socrata answers 403 to a bad token, so a 200 means the token was not rejected. Throttle headers, when
           # Socrata sends them, would show the token was applied; only their names are printed.
           throttle=$(tr -d '\r' <<<"$headers" | grep -ioE '^x-soda2-[a-z0-9-]*(throttl|limit)[a-z0-9-]*' | sort -u | paste -sd, -) || throttle=""
           if [ -n "$throttle" ]; then
@@ -153,9 +178,10 @@ jobs:
           fi
           echo "::add-mask::$OPENALEX_API_KEY"
           # OpenAlex takes the key as the api_key query parameter. It goes in on stdin
-          # (--data-urlencode api_key@-, appended to the query by -G), never on the command line. Cursor paging
-          # needs a key, and a bad key gets 401, so a 200 means the key works. --globoff keeps curl from reading
-          # the URL as a pattern. The body is discarded.
+          # (--data-urlencode api_key@-, appended to the query by -G), never on the command line. A bad key gets
+          # 401, so a 200 means the key was not rejected. OpenAlex also answers this request with no key at all
+          # (cursor paging included), so a 200 does not show the key was applied. --globoff keeps curl from
+          # reading the URL as a pattern. The body is discarded.
           rc=0
           code=$(printf '%s' "$OPENALEX_API_KEY" | curl -sS --fail-with-body --proto '=https' --max-redirs 0 \
             --max-time 30 --globoff -G --data-urlencode 'api_key@-' -o /dev/null -w '%{http_code}' \
@@ -164,9 +190,17 @@ jobs:
             echo "::error::OpenAlex key: not checked: api.openalex.org could not be reached (curl exit $rc). Try again later."
             exit 1
           fi
-          if [ "$code" = "200" ]; then
-            echo "OpenAlex key: accepted (HTTP 200)"
-            exit 0
-          fi
-          echo "::error::OpenAlex key: rejected (HTTP $code)"
-          exit 1
+          case "$code" in
+            200)
+              echo "OpenAlex key: not rejected (HTTP 200). OpenAlex also answers without a key, so this does not show the key was applied."
+              exit 0
+              ;;
+            401|403)
+              echo "::error::OpenAlex key: rejected (HTTP $code). Check the key in your OpenAlex account."
+              exit 1
+              ;;
+            *)
+              echo "::error::OpenAlex key: not checked: api.openalex.org answered HTTP $code, which does not say whether the key is good. Try again later."
+              exit 1
+              ;;
+          esac
