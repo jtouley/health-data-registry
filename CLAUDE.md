@@ -45,9 +45,11 @@ One review round, one fix round, merge, then follow-ups. We don't get stuck in r
    - Then push the commit to `pre-pr/<branch>` and wait until every CI check there is green. If one is red, fix it
      on the pre-pr branch, run `make precheck` again, and push again.
    - Only then open the PR, or fast-forward the PR branch, to that exact green commit. The PR's CI then reuses the
-     pre-pr mutation verdict instead of running the shards again: only a completed, successful "Mutation tests
-     (changed modules)" from a push to `pre-pr/**` in this repository, for exactly the PR's head SHA, on a PR into
-     main, counts; anything else runs the shards as usual. Every other check still runs on the PR.
+     whole pre-pr verdict instead of running it again: only a completed, successful "CI result" from a push to
+     `pre-pr/**` in this repository, for exactly the PR's head SHA, on a PR into main whose tested merge has the
+     head's own tree, counts; anything else runs everything as usual. CodeQL still runs on the PR.
+   - CI runs only what a change can affect (`scripts/ci_impact.py`); the merge queue, main and nightly run
+     everything. "CI result" is the one required CI check.
    - Fix-round pushes follow the same path. Merging main into a branch is a change like any other: precheck, then
      pre-pr, then the PR branch.
 

@@ -106,27 +106,26 @@ A pull request's CI should pass the first time. So a commit is checked twice bef
    them, then the 70% floor on the total. Each step prints a PASS or FAIL line, and a summary follows. It checks
    the working tree, so commit first: CI checks the commit you push. It runs on macOS's bash 3.2 as well.
 2. **Push to `pre-pr/<branch>`** (`git push origin HEAD:pre-pr/<branch>`). CI and CodeQL run on every push to
-   `pre-pr/**`, mutation shards included, against `origin/main`. A newer push to the same pre-pr branch cancels
-   the older run. `make precheck` does not run CodeQL or the Python 3.13 test leg; CI runs them here, and again
-   on the PR.
+   `pre-pr/**`, against `origin/main`, with only what the change can affect (see [CI](#ci) below). A newer push to
+   the same pre-pr branch cancels the older run, its queued jobs and shards included. `make precheck` does not
+   run CodeQL; CI runs it here, and again on the PR.
 3. **When every check is green**, open the PR from that exact commit, or fast-forward the PR branch to it
    (`git push origin <green sha>:<pr-branch>`).
 
-**The PR reuses the pre-pr mutation verdict.** The mutation shards are by far the dearest part of a CI run, and
-the account runs only a few jobs at once, so a PR does not mutate a commit the gate already mutated. On a
-`pull_request` event, the list job runs `scripts/mutation_reuse.py`, which asks the Actions API, with the run's own
-read-only `GITHUB_TOKEN` (`actions: read` on that job only), for a CI run that:
+**The PR reuses the whole pre-pr verdict when it tests the same tree.** On a `pull_request` event into `main`, the
+changes job runs main's copy of `scripts/verdict_reuse.py`, which asks the Actions API, with the run's own read-only
+`GITHUB_TOKEN` (`actions: read` on that job only), for a CI run that:
 
 - was triggered by a `push` to a `pre-pr/**` branch of this repository (not a fork), from `.github/workflows/ci.yml`;
 - is for exactly the PR's head SHA, taken from the event payload (`github.event.pull_request.head.sha`);
-- has a "Mutation tests (changed modules)" job, in its latest attempt, that completed with conclusion `success`;
+- has a "CI result" job, in its latest attempt, that completed with conclusion `success`;
 
-and only when the PR's base is `main`, the branch a pre-pr run compares with. If one exists, the list job lists no
-modules, the shards are skipped, and "Mutation tests (changed modules)" passes on the PR with a log line naming the
-reused run. A failed, cancelled, skipped or still-running verdict never counts, nor does one for another SHA, and
-an API error means no reuse, so the shards run as before. Lint, types, tests, smoke, the kit, pre-commit and
-CodeQL still run on the PR, and every required check still reports. So push the green pre-pr commit unchanged:
-any new commit on the PR branch has no pre-pr verdict and runs the shards.
+and only when the commit the PR's run tests (GitHub's merge of the PR into main) has exactly the head commit's
+tree, so the pre-pr run checked exactly this code (#96's rule). If one exists, every other job is skipped and "CI
+result" passes with a log line naming the reused run. A failed, cancelled, skipped or still-running verdict never
+counts, nor does one for another SHA or another tree, and any API or git error means no reuse, so everything runs.
+CodeQL still runs on the PR. So push the green pre-pr commit unchanged, on a branch that already contains main:
+any new commit on the PR branch, or a main that moved on, has no matching verdict and runs everything.
 
 Red on the pre-pr branch? Fix it there, run `make precheck` again, and push again. Fix-round commits and merges
 of main take the same path.
@@ -175,13 +174,16 @@ Everything a clinician reads (tool descriptions, helpers, refusals) follows the 
   test, or say in the PR why the mutant is equivalent. Every status but `killed` (and `caught by type check`)
   lowers the score, `no tests` and `skipped` included. `make mutate` is part of `make check`. CI runs the same
   check on every PR in shards: `--list` names the shards of the changed functions, one job per shard runs mutmut
-  (at most 6 at once per run), and the aggregate job applies the 70% floor to the summed counts and lists every
-  mutant not killed. The list job resolves the merge base once and hands it to every shard, so they scope to the
-  same functions. Each shard generates mutants for its own module only, and mutmut's stats run covers only the
-  test files that import that module, directly or through other modules (a test left out can only lower the
-  score). Shards are named `<module>#<k>of<n>@<split>`: the changed functions, split by function, and a big
-  function by the last digit of its mutant numbers, to about 3 minutes of mutants each (`SHARD_TARGET`, smaller
-  for `registry.py`; the job's limit is 8 minutes). The split
+  (at most 6 at once per run), and "CI result" applies the 70% floor to the summed counts and lists every
+  mutant not killed. The changes job resolves the merge base once and hands it to every shard, so they scope to
+  the same functions. Each shard generates mutants for its own module only. It starts from main's mutmut stats
+  (which tests call which function; the main-only job "Mutation stats (main)" caches them, and shards only read
+  them), and mutmut collects stats again only for the tests main's map links to a changed function and for every
+  test in a changed test file. Without main's stats (a cache miss), mutmut's stats run covers the test files that
+  import the module, directly or through other modules. Either way a test left out can only lower the score, never
+  count a mutant as killed. Shards are named `<module>#<k>of<n>@<split>`: the changed functions, split by function,
+  and a big function by the last digit of its mutant numbers, to about 2 minutes of mutants each (`SHARD_TARGET`,
+  smaller for `registry.py`; the job's limit is 8 minutes). The split
   comes from the module's source and the changed functions alone, read with the same Python 3.12 in `--list` and in every shard; `<split>`
   is a hash of it, and a shard refuses an id whose hash differs from its own split, so an edit made after
   `--list` (in CI or during precheck) fails the shard instead of running the wrong mutants. Each shard also
@@ -193,12 +195,51 @@ Everything a clinician reads (tool descriptions, helpers, refusals) follows the 
   CI.
 - **New features and fixes add tests.** A bug fix includes a test that fails without it.
 
+## CI
+
+`.github/workflows/ci.yml` runs only what a change can affect, and everything where it matters most:
+
+| Event | What runs |
+|---|---|
+| Pull request, push to `pre-pr/**` | The changes job maps the changed files to work (`scripts/ci_impact.py`, rules in its docstring); Checks; the test files the change can reach on Python 3.12; mutation shards of the changed functions |
+| Merge queue (`merge_group`), push to `main`, nightly, by hand | Everything: Checks with the kit and dbt, every test on Python 3.12 and 3.13 with the coverage floor. No mutation (checked on the PR). Main and nightly also refresh mutmut's stats for the PR shards |
+
+- **Changes** (seconds): what the change can affect, the mutation shards, and on a PR whether a green pre-pr run
+  already checked this exact tree (then every other job is skipped).
+- **Checks**: generated files current (`make docs`, `make contracts`), then in parallel every pre-commit hook
+  (ruff, mypy, actionlint and the rest), the Claude Projects kit, and `dbt build` on the fixtures when dbt inputs or
+  the Python dbt imports changed.
+- **Tests**: `pytest -n auto` (one worker per core). A README-only change runs no test; a change to a module runs
+  every test file that imports it, however indirectly; a change to CI config, `scripts/`, the lockfile or any path
+  the map does not know runs everything.
+- **CI result**, the one required CI check: it passes only when every job the changes job selected passed, every
+  other job was skipped, and the mutation total meets the floor. A cancelled run fails it.
+
+What a pull request skips, the merge queue runs before the merge, so main is always tested as it will be.
+
+**Budgets.** `ci/budgets.yml` holds a time budget for every job: on a pull request or a pre-pr push, 3 minutes from
+push to every check done, about 2 minutes per job. "CI result"'s CI budget step reads this run's job times from the
+Actions API and fails the run when a job went over, listing the slow jobs (queue time is printed, never counted).
+Budgets only tighten: the Checks job fails a change that loosens one, unless the change touches
+`ci/budgets.yml` alone (a pull request of its own, for the maintainer to approve).
+
+**What cannot fit is deferred to the merge queue, by name, never skipped.** On a pull request a mutation shard needs
+main's mutmut stats and gets 100 seconds; without the stats, or past the time, it reports itself deferred. A change
+of more than 6 shards lists none on the PR. "CI result" names each deferral, and the merge queue runs every shard
+of the PR's changed functions with no budget, applying the 70% floor before the merge. Hard rule 13 holds: every
+change is mutation-tested in CI before it reaches main.
+
+**Probes.** `tests/ci_probes/probes.yml` is a fixed set of tiny synthetic changes (docs only, a contract, a function
+in sql_guard.py and in registry.py, an allowlist constant in sql_guard.py, a new file), each with the jobs it must
+select and a time budget. `tests/test_ci_probes.py` checks every selection offline; `python scripts/ci_probe.py
+apply NAME` makes one in a checkout, for a live timing run on a pre-pr branch.
+
 ## Smoke journey
 
 `make smoke` runs the project spec's reference journey: a clinician asks about C. auris in Michigan in 2024.
 The spec itself is not in this repo; [docs/architecture.md](../architecture.md) describes the design it set
-out, and the journey is defined by `tests/smoke/test_c_auris_journey.py`. CI runs it on every pull request as
-the job "Smoke: C. auris journey". It is part of `make test` too.
+out, and the journey is defined by `tests/smoke/test_c_auris_journey.py`. It is part of `make test`, so CI runs it
+in the test job whenever a change can reach it, and on every full run.
 
 - **Offline, enforced.** `tests/smoke/conftest.py` makes any connection or DNS lookup off this machine fail the
   test, so a stray fetch can't quietly read live data.
