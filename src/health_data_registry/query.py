@@ -642,7 +642,7 @@ class Engine:
         self, con: duckdb.DuckDBPyConnection, ds: Dataset, path: Path, manifest: Manifest
     ) -> bool:
         """Check a lake snapshot (hub.verify_lake_snapshot) and attach it read-only; False, with the plain refusal
-        kept for this source, when it fails. Any error is that one source's refusal, never a crash of the others.
+        kept for this source, when it fails. A damaged copy is that one source's refusal, never a crash of the others.
         """
         from health_data_registry.hub import HubError, verify_lake_snapshot
 
@@ -655,7 +655,9 @@ class Engine:
         except HubError as e:
             self._lake_refused[ds.id] = self._lake_refusal(ds, str(e))
             return False
-        except Exception:  # noqa: BLE001 - a damaged manifest or file must not break the other sources
+        # A damaged manifest or file (a wrong type, a missing key, an unreadable or broken database) must not break
+        # the other sources: it is this source's refusal.
+        except (OSError, ValueError, LookupError, TypeError, AttributeError, duckdb.Error):
             with contextlib.suppress(duckdb.Error):  # best effort: nothing of it stays attached
                 con.execute(f"DETACH DATABASE IF EXISTS {_q(alias)}")
             self._lake_refused[ds.id] = self._lake_refusal(
