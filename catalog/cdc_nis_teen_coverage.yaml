@@ -1,0 +1,55 @@
+id: cdc_nis_teen_coverage
+title: Vaccination Coverage among Adolescents (13-17 Years)
+agency: CDC
+publisher: Centers for Disease Control and Prevention, National Center for Immunization and Respiratory Diseases (National Immunization Survey-Teen, TeenVaxView)
+level: federal
+country: US
+research_areas: [infectious_disease]
+id_areas: [vaccine_preventable]
+years: {start: 2006, end: null}
+geography: [nation, region, state, city, county]
+shape: estimate_table
+grain: "One row is one vaccine and dose, place (United States, HHS region, state, territory or selected local area), survey year or pooled survey years, and population group (an age group, or a group by insurance, poverty, race and ethnicity or urbanicity), giving the survey's estimated vaccination coverage with its published 95% confidence interval and the number of teens sampled."
+refresh: annual
+licence:
+  id: public-domain-us-federal
+  redistribution: true
+  terms_url: https://www.usa.gov/government-works
+citation: "Centers for Disease Control and Prevention, National Center for Immunization and Respiratory Diseases. Vaccination Coverage among Adolescents (13-17 Years), National Immunization Survey-Teen. https://data.cdc.gov/d/ee48-w5t6 (accessed <retrieved_at>)."
+source:
+  portal: socrata
+  host: data.cdc.gov
+  dataset: ee48-w5t6
+  landing_url: https://data.cdc.gov/d/ee48-w5t6
+  api_url: https://data.cdc.gov/resource/ee48-w5t6.json
+codebook_url: https://www.cdc.gov/vaccines/imz-managers/coverage/teenvaxview/data-sources.html
+caveats:
+  - "These are survey estimates, not counts: each coverage percent is weighted from a sample of teens, and comes with CDC's 95% confidence interval, which every answer shows."
+  - "Coverage is published once per survey year, and for some groups only as one estimate pooled over five survey years (2018-2022). A pooled estimate is not the coverage of any single year."
+  - "Each row is one population group: the whole age range (13-17 years), younger teens (13-15 years), or one group by insurance, poverty, race and ethnicity or urbanicity. The groups overlap, so percentages are never added or averaged across them."
+  - "NA in the publisher's table means the estimate is not applicable (CDC's column description); it is shown as no value, never as zero."
+  - "Places include HHS regions and selected cities and counties (for example IL-City of Chicago, TX-Bexar County) beside their states, and 'Rest of state' areas that leave those cities out. Detroit is not one of the local areas."
+  - "What counts as up to date differs by vaccine and changed over time (for HPV from 2016); this contract is a draft until a maintainer reads CDC's definitions."
+gbd:
+  # GBD cause mappings for each vaccine are proposals in the contract (gbdCauseProposals), pending a
+  # maintainer's review; none is asserted here (hard rule 1).
+  location_column: geography
+  causes: []
+conditions:
+  # Provenance: every distinct value of the vaccine column at https://data.cdc.gov/resource/ee48-w5t6.json, read
+  # 2026-11-25 (an exact structural fact from the publisher). Doses sit in the dose column.
+  dimension: vaccine
+  source: "CDC's own vaccine names, exactly as published on data.cdc.gov (checked 25 Nov 2026). Definitions: https://www.cdc.gov/vaccines/imz-managers/coverage/teenvaxview/data-sources.html."
+  labels:
+    - "≥1 Dose MenACWY"
+    - "≥2 Doses Hep A"
+    - "≥2 Doses MMR"
+    - "≥3 Doses HepB"
+    - "HPV"
+    - "Tetanus"
+    - "Varicella"
+  aliases: []
+contract: contracts/cdc_nis_teen_coverage.odcs.yaml
+semantic_model: semantic/cdc_nis_teen_coverage.yaml
+status: draft
+hosting: public
