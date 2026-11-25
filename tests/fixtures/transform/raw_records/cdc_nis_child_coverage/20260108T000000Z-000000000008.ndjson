@@ -1,0 +1,2 @@
+{"vaccine": "≥1 Dose MMR", "dose": "", "geography_type": "States/Local Areas", "geography": "Toy State", "year_season": "2021", "dimension_type": "Age", "dimension": "24 Months", "coverage_estimate": "90.0", "_95_ci": "85.0 to 94.0", "population_sample_size": "300"}
+{"vaccine": "DTaP", "dose": "≥4 Doses", "geography_type": "States/Local Areas", "geography": "Toy State", "year_season": "2020-2021", "dimension_type": "Age", "dimension": "24 Months", "coverage_estimate": "NA", "_95_ci": "", "population_sample_size": ""}

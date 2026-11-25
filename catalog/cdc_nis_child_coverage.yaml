@@ -1,0 +1,62 @@
+id: cdc_nis_child_coverage
+title: Vaccination Coverage among Young Children (0-35 Months)
+agency: CDC
+publisher: Centers for Disease Control and Prevention, National Center for Immunization and Respiratory Diseases (National Immunization Survey-Child, ChildVaxView)
+level: federal
+country: US
+research_areas: [infectious_disease]
+id_areas: [vaccine_preventable]
+years: {start: 2011, end: null}
+geography: [nation, region, state, city, county]
+shape: estimate_table
+grain: "One row is one vaccine and dose, place (United States, HHS region, state, territory or selected local area), birth year or birth cohort, and population group (the age by which the dose was given, or a group by insurance, poverty, race and ethnicity or urbanicity), giving the survey's estimated childhood vaccination coverage with its published 95% confidence interval and the number of children sampled."
+refresh: annual
+licence:
+  id: public-domain-us-federal
+  redistribution: true
+  terms_url: https://www.usa.gov/government-works
+citation: "Centers for Disease Control and Prevention, National Center for Immunization and Respiratory Diseases. Vaccination Coverage among Young Children (0-35 Months), National Immunization Survey-Child. https://data.cdc.gov/d/fhky-rtsk (accessed <retrieved_at>)."
+source:
+  portal: socrata
+  host: data.cdc.gov
+  dataset: fhky-rtsk
+  landing_url: https://data.cdc.gov/d/fhky-rtsk
+  api_url: https://data.cdc.gov/resource/fhky-rtsk.json
+codebook_url: https://www.cdc.gov/vaccines/imz-managers/coverage/childvaxview/data-source.html
+caveats:
+  - "These are survey estimates, not counts: each coverage percent is weighted from a sample of young children, and comes with CDC's 95% confidence interval."
+  - "CDC writes each 95% confidence interval as one piece of text ('92.2 to 96.1'). It is kept exactly as published and is not yet split into lower and upper numbers, so get_series doesn't show it; query_sql returns it (column ci_95) beside the estimate."
+  - "Periods are birth years, not calendar years of vaccination: coverage for children born in 2021 is measured up to age 35 months, so the newest data are about three years behind (CDC's column description)."
+  - "CDC publishes single birth years (e.g. 2021), two-year birth cohorts (e.g. 2020-2021) and four-year cohorts (2014-2017, 2016-2019) side by side. They overlap, so a cohort is never added to or averaged with its single years."
+  - "Each row is the coverage reached by one age (e.g. by 24 months, by 35 months), or, for the four-year cohorts only, one group by insurance, poverty, race and ethnicity or urbanicity. Ages and groups overlap, so percentages are never added or averaged across them."
+  - "The series read coverage by 24 months for most vaccines, by 8 months for rotavirus and by 3 days for the hepatitis B birth dose; other ages are in the table (describe_dataset lists them)."
+  - "NA in the estimate column is shown as no value, never as zero. This dataset's column description doesn't define NA; CDC's teen and kindergarten tables call it 'not applicable'."
+  - "Places include HHS regions and selected cities and counties (for example IL-City of Chicago, TX-Bexar County) beside their states, and 'Rest of state' areas that leave those cities out. Detroit is not one of the local areas."
+  - "What each dose and series means (e.g. the Combined 7 Series, Hib full series) is defined on ChildVaxView's data source page, not yet read for this draft contract."
+gbd:
+  # GBD cause mappings for each vaccine are proposals in the contract (gbdCauseProposals), pending a
+  # maintainer's review; none is asserted here (hard rule 1).
+  location_column: geography
+  causes: []
+conditions:
+  # Provenance: every distinct value of the vaccine column at https://data.cdc.gov/resource/fhky-rtsk.json, read
+  # 2026-11-25 (an exact structural fact from the publisher). Doses sit in the dose column.
+  dimension: vaccine
+  source: "CDC's own vaccine names, exactly as published on data.cdc.gov (checked 25 Nov 2026). Definitions: https://www.cdc.gov/vaccines/imz-managers/coverage/childvaxview/data-source.html."
+  labels:
+    - "Combined 7 Series"
+    - "DTaP"
+    - "Hep A"
+    - "Hep B"
+    - "Hib"
+    - "Influenza"
+    - "PCV"
+    - "Polio"
+    - "Rotavirus"
+    - "≥1 Dose MMR"
+    - "≥1 Dose Varicella"
+  aliases: []
+contract: contracts/cdc_nis_child_coverage.odcs.yaml
+semantic_model: semantic/cdc_nis_child_coverage.yaml
+status: draft
+hosting: public
