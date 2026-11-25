@@ -336,11 +336,6 @@ def test_trial_vaccination_is_declined_with_no_number(
     assert scored.a.passed and scored.a.prov_na, (reply, scored)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#37 item 9: suggest_datasets still offers cdc_respnet for 'HIV care' by word overlap",
-)
 def test_trial_hiv_care_is_declined_with_no_number(
     journey: Journey, trials: dict[str, ExpectedRecord]
 ) -> None:

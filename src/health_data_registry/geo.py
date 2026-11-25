@@ -6,6 +6,7 @@ GBD location names for US states are the plain state names, and "United States" 
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 
@@ -73,3 +74,99 @@ def containing_state(text: str) -> Place | None:
         if p is not None and p.level == "state":
             return p
     return None
+
+
+# --------------------------------------------------------------------------------------------- place keys
+
+# The transform's conformed place keys (dim_place): USA for the nation, US-<state FIPS> for a state,
+# US-<state FIPS><county FIPS> for a county, and <bigger place's key>/<name> for a declared part of one.
+NATION_KEY = "USA"
+
+
+@dataclass(frozen=True)
+class City:
+    name: str
+    key: str  # its conformed key: the part of a bigger place it is (dim_place declares the City of Detroit)
+    aliases: tuple[str, ...] = ()
+
+
+# Only the cities a catalogued source reports apart from its state. Detroit's key is dim_place's own; New York
+# City's says only that it is part of New York State, which is all a coverage check needs.
+CITIES: tuple[City, ...] = (
+    City("Detroit", "US-26163/detroit", ("city of detroit",)),
+    City("New York City", "US-36/nyc", ("nyc", "new york city")),
+)
+
+
+def key_of(p: Place) -> str:
+    """A US place's conformed place key."""
+    return NATION_KEY if p.level == "nation" else f"US-{p.fips}"
+
+
+def parent_key(key: str) -> str | None:
+    """The place a conformed key is part of, read from the key itself; None for the nation or a country."""
+    if "/" in key:
+        return key.rsplit("/", 1)[0]
+    if len(key) == 8 and key.startswith("US-"):  # a county: US-<2-digit state><3-digit county>
+        return key[:5]
+    if len(key) == 5 and key.startswith("US-"):  # a state
+        return NATION_KEY
+    return None
+
+
+def within(outer: str, inner: str) -> bool:
+    """Is the place `inner` the place `outer` or a part of it?"""
+    k: str | None = inner
+    while k is not None:
+        if k == outer:
+            return True
+        k = parent_key(k)
+    return False
+
+
+# Names written out in full, matched as whole words in any case; postal codes only as written ("US", "U.S.").
+_NAMED: tuple[tuple[str, str, str], ...] = tuple(
+    sorted(
+        [(p.name.lower(), p.name, key_of(p)) for p in PLACES]
+        + [("usa", "United States", NATION_KEY), ("new york state", "New York", "US-36")]
+        + [
+            ("washington dc", "District of Columbia", "US-11"),
+            ("washington, dc", "District of Columbia", "US-11"),
+        ]
+        + [(n.lower(), c.name, c.key) for c in CITIES for n in (c.name, *c.aliases)],
+        key=lambda t: -len(t[0]),
+    )
+)
+_NATION_MARKS = re.compile(r"(?<![\w.])(?:US|U\.S\.|USA|U\.S\.A\.)(?![\w])")
+
+
+def places_named(text: str) -> tuple[list[tuple[str, str]], str]:
+    """The places a question names, as (name, conformed key), and the text left once they are taken out.
+
+    Longest names first, so "New York City" is never read as New York State nor "West Virginia" as Virginia.
+    """
+    found: list[tuple[str, str]] = []
+    rest = text
+    for low, name, key in _NAMED:
+        pat = re.compile(rf"(?<![\w-]){re.escape(low)}(?![\w-])", re.IGNORECASE)
+        if pat.search(rest):
+            found.append((name, key))
+            rest = pat.sub(" ", rest)
+    if _NATION_MARKS.search(rest):
+        found.append(("United States", NATION_KEY))
+        rest = _NATION_MARKS.sub(" ", rest)
+    return list(dict.fromkeys(found)), rest
+
+
+def key_for(text: str) -> str | None:
+    """The conformed key of one place label ("Ohio", "OH", "Detroit"), the state a smaller place is written in
+    ("Travis County, Texas"), or None when the words name no place this module knows."""
+    p = place(text)
+    if p is not None:
+        return key_of(p)
+    low = " ".join(str(text).strip().lower().split())
+    for c in CITIES:
+        if low in (c.name.lower(), *c.aliases):
+            return c.key
+    st = containing_state(text)
+    return key_of(st) if st is not None else None

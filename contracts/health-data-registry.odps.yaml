@@ -132,7 +132,7 @@ outputPorts:
   - name: detroit_dhd_epi_annual
     description: Detroit Health Department Epidemiology Dashboard, annual cases and rates for Detroit and Michigan. Private tier, not hosted (no terms of reuse stated).
     type: tables
-    version: 0.1.0
+    version: 0.1.1
     contractId: detroit_dhd_epi_annual
     customProperties:
       - {property: hosted, value: false}

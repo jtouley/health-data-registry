@@ -8,6 +8,20 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- `suggest_datasets` marks a source "fits" only when its declared coverage holds the question's place,
+  condition and years (#111). A place it can't read, or a source that declares no places or conditions, is
+  "unknown", never a fit, and generic words ("cases", "years", "lost") never make a fit. Coverage is read in one
+  place, `coverage.declared_coverage`, from the contract's conformed place keys, else the catalog's own
+  federal or international declaration; it will read the transform's coverage mart once that carries keys. A
+  question about years of life lost, DALYs or other GBD-modelled measures is handed to the IHME GBD connector.
+- `get_series` and `get_aligned_with_gbd` read a live source only when its declared coverage holds a place asked
+  for, and give one refusal per source, never one per series (#111).
+- Detroit's annual dashboard loads again: its contract (0.1.1) marks `SUM(Cases) flag` as a field that appears only
+  when the dashboard shows a suppressed count, so a clean read no longer refuses the whole source (#111).
+- `get_series(source_id=...)` honours the source asked for, or refuses in plain words; it never answers from
+  another source's labels (#112). `query_sql` on a private abstract source no longer says other tools can answer;
+  it says a search tool is planned and where to browse the abstracts for now (#112, #106).
+
 - A summed count never adds up labels that overlap or count different things (hard rule 2). Semantic-model
   dimensions say `non_additive: true` or `false`, and each `true` says why in plain words
   (`non_additive_reason`), which the refusal and `describe_dataset` show. A metric or series that neither picks
