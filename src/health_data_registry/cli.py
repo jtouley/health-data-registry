@@ -1,5 +1,5 @@
 """Command line: serve [--http], refresh, fetch, export-public, check-contracts, validate, eval,
-publication-outlook, sitemaps snapshot, and the analysis tools."""
+publication-outlook, sitemaps snapshot, harvest-doi, and the analysis tools."""
 
 from __future__ import annotations
 
@@ -93,6 +93,9 @@ def check_contracts(registry: Registry) -> int:
     get = _fetcher(registry)
     bad = 0
     for ds in registry:
+        if ds.entry.source.portal == "doi":
+            print(f"skip {ds.id}: harvested by DOI; every harvest checks the APIs' answers as it reads them")
+            continue
         try:
             served = publisher_fields(ds.entry, get)
         except Exception as e:
@@ -106,6 +109,34 @@ def check_contracts(registry: Registry) -> int:
         else:
             print(f"ok   {ds.id}: all {len(ds.contract.columns)} contract fields served")
     return 1 if bad else 0
+
+
+def harvest_doi(
+    registry: Registry,
+    conference: str,
+    *,
+    year: int | None,
+    max_records: int | None,
+    enrich: bool,
+    lake: Path,
+) -> int:
+    """One conference year's DOI-published abstracts into its private store (doi_harvest.py)."""
+    from health_data_registry.adapters.doi_abstracts import ApiLayoutError
+    from health_data_registry.doi_harvest import HarvestRefused, harvest
+    from health_data_registry.fetch import FetchRefused
+    from health_data_registry.private import PrivateRefused
+
+    try:
+        summary = harvest(registry, lake, conference, year=year, max_records=max_records, enrich=enrich)
+    except (HarvestRefused, PrivateRefused, ApiLayoutError) as e:
+        print(f"harvest stopped: {e}", file=sys.stderr)
+        return 1
+    except FetchRefused as e:
+        print(f"harvest stopped: {e.message}", file=sys.stderr)
+        return 1
+    for line in summary.lines():
+        print(line)
+    return 0
 
 
 def run_eval(sealed: Path, run: Path | None) -> int:
@@ -276,6 +307,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     ev.add_argument("--sealed", type=Path, default=Path("eval/sealed"))
     ev.add_argument("--run", type=Path, default=None, help="JSON lines of a client's answers")
     _add_analysis_commands(sub)
+    hd = sub.add_parser(
+        "harvest-doi",
+        help="harvest one conference year's abstracts by DOI (Crossref, OpenAlex, Europe PMC) into its private store",
+    )
+    hd.add_argument("conference", help="the catalog's conference key: idweek, shea, apic, icid, ...")
+    hd.add_argument("--year", type=int, default=None, help="conference year; default the latest catalogued")
+    hd.add_argument("--max-records", type=int, default=None, help="stop after this many DOIs (a sample)")
+    hd.add_argument("--no-enrich", action="store_true", help="Crossref only; skip OpenAlex and Europe PMC")
     po = sub.add_parser(
         "publication-outlook",
         help="how often presented abstracts became full papers, per conference and stage (base rate only)",
@@ -340,6 +379,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_analysis(registry, a)
     if a.cmd == "check-contracts":
         return check_contracts(registry)
+    if a.cmd == "harvest-doi":
+        return harvest_doi(
+            registry, a.conference, year=a.year, max_records=a.max_records, enrich=not a.no_enrich,
+            lake=lake_root(),
+        )  # fmt: skip
     if a.cmd == "export-public":
         return export_public(registry, a.to, lake=lake_root(), run_date=a.run_date, tag_file=a.tag_file)
     if a.cmd == "fetch":
