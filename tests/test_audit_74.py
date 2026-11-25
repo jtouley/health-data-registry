@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import duckdb
@@ -423,7 +422,6 @@ def test_audit74_lakeSymlinkedFile_refused(lake: Path, registry: Registry, tmp_p
     assert "does not match" in str(lake_refusal(registry, lake))
 
 
-@pytest.mark.skipif(not hasattr(os, "getuid"), reason="Unix owners and modes")
 @pytest.mark.parametrize("which", ["folder", "file"])
 def test_audit74_lakeWritableByOthers_refused(lake: Path, registry: Registry, which: str) -> None:
     path, _ = snapshot_of(lake)
@@ -486,7 +484,7 @@ def test_audit74_engine_hubIntactError_isNotACrash(lake: Path, registry: Registr
             raise OSError("read-only cache")
 
     eng = Engine(registry=registry, lake=lake, hub=None)
-    eng.hub = Broken()  # type: ignore[assignment]
+    eng.hub = Broken()  # Engine.hub is typed Any: any object with still_intact will do
     assert eng._hub_intact(lake) is False
 
 
