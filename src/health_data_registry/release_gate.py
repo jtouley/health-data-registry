@@ -6,7 +6,10 @@ for each node's resource type, severity and dimension) and sorts every result in
     model error     a model, seed or snapshot failed to build, or one the project declares has no result
     skipped         a node was skipped because something it depends on failed (reported apart, so a failed
                     check upstream is not counted as a model that failed)
-    rule error      a test could not run (its SQL no longer fits the table, or it measured nothing)
+    rule error      a test could not run (its SQL no longer fits the table, or it measured nothing): a metric
+                    error, never counted as a data failure
+    not evaluated   a value rule whose column has no values, so there was nothing to judge (its test's error
+                    starts "Not evaluated"; transform/macros/odcs_check.sql): never a pass
     data failure    an error-severity test, or a unit test, ran and failed
     warning         a warn-severity test failed: served, and the warning travels with the answers
     incomplete      the run record has no results, or no test or unit test ran: nothing was judged
@@ -52,6 +55,7 @@ SERVING_LOG = "serving_log.jsonl"
 SERVING = "SERVING"
 BUILT_TYPES = ("model", "seed", "snapshot")  # resource types that build a relation
 TEST_TYPES = ("test", "unit_test")
+NOT_EVALUATED = "not evaluated:"  # odcs_check's error for a value rule with nothing to judge (dbt wraps it)
 RELEASE_TAG = re.compile(r"release-\d{4}-\d{2}-\d{2}(\.[2-9]|\.[1-9]\d+)?")
 
 
@@ -138,6 +142,7 @@ class Build:
     model_errors: list[dict[str, str]] = field(default_factory=list)
     skipped: list[dict[str, str]] = field(default_factory=list)
     rule_errors: list[dict[str, str]] = field(default_factory=list)
+    not_evaluated: list[dict[str, str]] = field(default_factory=list)
     data_failures: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[dict[str, Any]] = field(default_factory=list)
     incomplete: list[str] = field(default_factory=list)
@@ -146,7 +151,12 @@ class Build:
     @property
     def servable(self) -> bool:
         return not (
-            self.model_errors or self.skipped or self.rule_errors or self.data_failures or self.incomplete
+            self.model_errors
+            or self.skipped
+            or self.rule_errors
+            or self.not_evaluated
+            or self.data_failures
+            or self.incomplete
         )
 
     def reason(self) -> str:
@@ -160,6 +170,11 @@ class Build:
             )
         if self.rule_errors:
             parts.append(f"{len(self.rule_errors)} check(s) could not run")
+        if self.not_evaluated:
+            names = ", ".join(f["test"] for f in self.not_evaluated)
+            parts.append(
+                f"{len(self.not_evaluated)} check(s) could not be judged, having no values to check ({names})"
+            )
         if self.data_failures:
             names = ", ".join(f["test"] for f in self.data_failures)
             parts.append(f"{len(self.data_failures)} error-severity check(s) failed ({names})")
@@ -198,6 +213,7 @@ def read_build(
     model_errors: list[dict[str, str]] = []
     skipped: list[dict[str, str]] = []
     rule_errors: list[dict[str, str]] = []
+    unjudged: list[dict[str, str]] = []
     failures: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     built = passed = 0
@@ -234,6 +250,8 @@ def read_build(
                 warnings.append(item)
             elif status == "fail":
                 failures.append(item)
+            elif status == "error" and NOT_EVALUATED in message.lower():
+                unjudged.append({"test": name, "type": kind, "error": message})
             else:  # error, or a status this gate does not know: the check did not run
                 rule_errors.append({"test": name, "type": kind, "error": message or status})
         elif status != "success":  # any other resource type: fail closed on anything but success
@@ -246,7 +264,14 @@ def read_build(
     incomplete = []
     if not rows:
         incomplete.append("dbt's run record lists nothing built or tested")
-    elif not (passed or warnings or failures or rule_errors or any(s["type"] in TEST_TYPES for s in skipped)):
+    elif not (
+        passed
+        or warnings
+        or failures
+        or rule_errors
+        or unjudged
+        or any(s["type"] in TEST_TYPES for s in skipped)
+    ):
         incomplete.append("no test ran")
     invocation = str(meta.get("invocation_id") or "")
     built_by = str((manifest.get("metadata") or {}).get("invocation_id") or "")
@@ -271,6 +296,7 @@ def read_build(
         model_errors=model_errors,
         skipped=skipped,
         rule_errors=rule_errors,
+        not_evaluated=unjudged,
         data_failures=failures,
         warnings=warnings,
         incomplete=incomplete,

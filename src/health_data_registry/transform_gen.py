@@ -388,6 +388,13 @@ def quality_tests(ds: Dataset) -> list[dict[str, Any]]:
                 "arguments": {
                     "measure_sql": measure_sql(r, "{object}"),
                     "condition": condition_sql(r, "measured"),
+                    # A value rule over a column with no values has nothing to judge: the test's error says
+                    # "Not evaluated", so the release gate labels it apart from a rule that could not run.
+                    **(
+                        {"nothing_to_judge": True}
+                        if r.metric == "invalidValues" and not r.may_be_empty
+                        else {}
+                    ),
                 },
                 "config": {
                     "severity": r.severity,

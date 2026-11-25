@@ -49,6 +49,7 @@ models:
           = '')) = 0 THEN NULL ELSE count(*) FILTER (WHERE NOT ("m1_flag" IS NULL OR trim(CAST("m1_flag" AS VARCHAR))
           = '') AND "m1_flag" NOT IN ('-', 'U', 'N', 'NN', 'NP', 'NC')) END FROM {object}
         condition: measured = 0
+        nothing_to_judge: true
       config:
         severity: error
         meta:

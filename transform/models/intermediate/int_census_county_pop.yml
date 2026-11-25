@@ -34,6 +34,7 @@ models:
           = '')) = 0 THEN NULL ELSE count(*) FILTER (WHERE NOT ("sumlev" IS NULL OR trim(CAST("sumlev" AS VARCHAR))
           = '') AND "sumlev" NOT IN ('040', '050')) END FROM {object}
         condition: measured = 0
+        nothing_to_judge: true
       config:
         severity: error
         meta:
@@ -48,6 +49,7 @@ models:
           = '')) = 0 THEN NULL ELSE count(*) FILTER (WHERE NOT ("year" IS NULL OR trim(CAST("year" AS VARCHAR))
           = '') AND "year" NOT IN (2020, 2021, 2022, 2023, 2024, 2025)) END FROM {object}
         condition: measured = 0
+        nothing_to_judge: true
       config:
         severity: error
         meta:

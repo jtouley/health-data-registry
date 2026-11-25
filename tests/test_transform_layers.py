@@ -140,13 +140,16 @@ def test_every_contract_rule_becomes_a_named_dbt_test_with_its_dimension_and_sev
 MACRO = REPO / "transform" / "macros" / "odcs_check.sql"
 
 
-def _macro_sql(rule: Any, relation: str) -> str:
-    """The test odcs_check.sql renders, with the macro's own body and the generated arguments filled in."""
-    body = MACRO.read_text().split("{% test odcs_check(model, measure_sql, condition) %}")[1]
+def _macro_sql(arguments: dict[str, Any], relation: str) -> str:
+    """The test odcs_check.sql renders: the macro's own body, rendered with the generated arguments (as dbt does)."""
+    import jinja2
+
+    body = MACRO.read_text().split("{% test odcs_check(")[1].split("%}", 1)[1]
     body = body.split("{% endtest %}")[0]
     return (
-        body.replace("{{ measure_sql | replace('{object}', model) }}", measure_sql(rule, relation))
-        .replace("{{ condition }}", condition_sql(rule, "measured"))
+        jinja2.Environment(autoescape=False)  # noqa: S701 - SQL from a test fixture, never HTML
+        .from_string(body)
+        .render(model=relation, **{"nothing_to_judge": False, **arguments})
         .strip()
     )
 
@@ -170,14 +173,20 @@ def test_the_dbt_test_and_the_read_path_agree(tmp_path: Path, rows: int) -> None
     report = run_rules(con, "t", rules_for(ds.contract))
     results = {r["test"]: r["status"] for r in report.results}
     errors = {e["test"] for e in report.rule_errors}
+    arguments = {t["odcs_check"]["name"]: t["odcs_check"]["arguments"] for t in tg.quality_tests(ds)}
     for rule in rules_for(ds.contract):
+        assert arguments[f"toy_cases_{rule.id}"]["measure_sql"] == measure_sql(rule, "{object}")
+        assert arguments[f"toy_cases_{rule.id}"]["condition"] == condition_sql(rule, "measured")
         try:
-            failed = bool(con.execute(_macro_sql(rule, "t")).fetchall())
+            failed = bool(con.execute(_macro_sql(arguments[f"toy_cases_{rule.id}"], "t")).fetchall())
         except duckdb.Error as e:
             # dbt records both a NULL measurement (a rule error) and a value rule with nothing to judge (not
-            # evaluated) as a test that could not run; the read path keeps the two apart, and both block.
-            assert rule.id in errors or results.get(rule.id) == "not_evaluated", rule.id
-            assert "could not be judged" in str(e), rule.id
+            # evaluated) as a test that could not run, each with its own message, so the release gate keeps
+            # the two apart as the read path does; both block.
+            if results.get(rule.id) == "not_evaluated":
+                assert "Not evaluated: no row has a value in this column" in str(e), rule.id
+            else:
+                assert rule.id in errors and "could not be judged" in str(e), rule.id
             continue
         assert rule.id not in errors and failed == (results[rule.id] != "pass"), rule.id
     if rows:

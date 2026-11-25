@@ -116,6 +116,28 @@ def test_results_are_matched_by_name_never_by_position(tmp_path: Path) -> None:
     assert a.reason() == b.reason() == "1 error-severity check(s) failed (codes_a)"
 
 
+def test_not_evaluated_and_metric_errors_block_under_their_own_labels(tmp_path: Path) -> None:
+    """A value rule over an all-empty column is not evaluated: never a pass, never a data failure, and it blocks;
+    a rule that could not run is a metric error, labelled apart."""
+    t = target(tmp_path, [GOOD[0], ("test.p.codes_a.1", "error", "error"), *GOOD[2:]])
+    run = json.loads((t / "run_results.json").read_text())
+    run["results"][1]["message"] = (
+        "Database Error in test codes_a\n  Invalid Input Error: Not evaluated: no row has a value in this column, "
+        "so there was nothing to check."
+    )
+    (t / "run_results.json").write_text(json.dumps(run))
+    unjudged = rg.read_build(t, expected=TOY)
+    assert not unjudged.servable and not unjudged.data_failures and not unjudged.rule_errors
+    assert [n["test"] for n in unjudged.not_evaluated] == ["codes_a"]
+    assert unjudged.reason() == "1 check(s) could not be judged, having no values to check (codes_a)"
+    broken = rg.read_build(
+        target(tmp_path, [GOOD[0], ("test.p.codes_a.1", "error", "error"), *GOOD[2:]], invocation="broken"),
+        expected=TOY,
+    )
+    assert not broken.servable and not broken.not_evaluated and not broken.data_failures
+    assert broken.reason() == "1 check(s) could not run"
+
+
 def test_the_run_record_and_manifest_must_be_from_one_run(tmp_path: Path) -> None:
 
     mixed = rg.read_build(target(tmp_path, GOOD, manifest_invocation="inv-other"))
