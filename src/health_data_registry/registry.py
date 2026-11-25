@@ -19,6 +19,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 _ID = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
 _SQL_IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
+# A publisher field name goes into generated SQL and dbt Jinja: braces, quotes, backslashes and control
+# characters are refused rather than escaped in every place it lands.
+_UNSAFE_FIELD = re.compile(r"[{}\\'\"\x00-\x1f\x7f]")
 
 DUCKDB_TYPES = frozenset({"VARCHAR", "BIGINT", "INTEGER", "DOUBLE", "DATE", "BOOLEAN", "TIMESTAMP"})
 # The ODCS logicalType each physical type may carry: the two must say the same thing about a column.
@@ -388,6 +391,9 @@ class Column:
     # The flag code the publisher's codebook defines as "no reported cases" (NNDSS: '-'): an empty count with it
     # is read as zero, labelled so; it is never stored as a number (hard rule 1).
     no_cases_code: str | None = None
+    # customProperties.mayBeEmpty: true when the contract says this field can be absent or empty in a whole
+    # load (e.g. a field the publisher leaves empty in every row). Every other declared field must appear.
+    may_be_empty: bool = False
 
     def partial_note(self, label: str) -> str | None:
         """The contract's note when this place label covers only part of the place it is named after."""
@@ -576,6 +582,15 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
             raise RegistryError(
                 f"{expected_id}.{name}: a flag column keeps its codes; it can't have missingCodes"
             )
+        source_field = str(cp.get("sourceField") or name)
+        if _UNSAFE_FIELD.search(source_field):
+            raise RegistryError(
+                f"{expected_id}.{name}: sourceField {source_field!r} has a brace, quote, backslash or control "
+                "character, which generated SQL and dbt can't carry safely"
+            )
+        may_be_empty = cp.get("mayBeEmpty", False)
+        if not isinstance(may_be_empty, bool):
+            raise RegistryError(f"{expected_id}.{name}: mayBeEmpty must be true or false")
         pairs = {k: _pairs(cp.get(k), f"{expected_id}.{name}.{k}") for k in _PAIR_PROPS}
         zero = cp.get("noCasesCode")
         if zero is not None and (cp.get("flagFor") is None or str(zero) not in dict(pairs["flagCodes"])):
@@ -591,7 +606,7 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
                 description=desc,
                 required=bool(p.get("required", False)),
                 role=role,
-                source_field=str(cp.get("sourceField") or name),
+                source_field=source_field,
                 unit=None if cp.get("unit") is None else str(cp.get("unit")),
                 missing_codes=tuple(str(m) for m in missing),
                 flag_for=None if cp.get("flagFor") is None else str(cp.get("flagFor")),
@@ -599,6 +614,7 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
                 partial_places=pairs["partialPlaces"],
                 renamed_labels=pairs["renamedLabels"],
                 no_cases_code=None if zero is None else str(zero),
+                may_be_empty=may_be_empty,
             )
         )
     if not cols:

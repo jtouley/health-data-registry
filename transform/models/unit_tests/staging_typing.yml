@@ -1,0 +1,35 @@
+# Hand-written dbt unit tests of the generated staging models' typing: what `dbt build` itself proves about the
+# projection in staging.typed_select. The plugin that picks the LATEST load is tested in tests/test_dbt_raw.py.
+version: 2
+
+unit_tests:
+  - name: stg_cdc_nndss_weekly_counts_become_whole_numbers_and_flags_stay_as_published
+    model: stg_cdc_nndss_weekly
+    given:
+      - input: source('raw', 'cdc_nndss_weekly')
+        rows:
+          - {states: MICHIGAN, year: "2024", week: "52", label: Legionellosis, m1: "7.0", m1_flag: null,
+             _snapshot_id: s1, _raw_sha256: h1}
+          - {states: Ohio, year: "2025", week: "53", label: Legionellosis, m1: null, m1_flag: "-",
+             _snapshot_id: s1, _raw_sha256: h1}
+          - {states: Ohio, year: "2025", week: "53", label: Legionellosis, m1: " ", m1_flag: "Z",
+             _snapshot_id: s1, _raw_sha256: h1}
+    expect:
+      rows:
+        - {states: MICHIGAN, year: 2024, week: 52, m1: 7, m1_flag: null, _snapshot_id: s1, _raw_sha256: h1}
+        - {states: Ohio, year: 2025, week: 53, m1: null, m1_flag: "-", _snapshot_id: s1, _raw_sha256: h1}
+        - {states: Ohio, year: 2025, week: 53, m1: null, m1_flag: "Z", _snapshot_id: s1, _raw_sha256: h1}
+
+  - name: stg_cdc_nhsn_ar_hai_suppressed_reads_true_false_or_empty
+    model: stg_cdc_nhsn_ar_hai
+    given:
+      - input: source('raw', 'cdc_nhsn_ar_hai')
+        rows:
+          - {geography: A, suppressed: "true", percent_resistant: null}
+          - {geography: B, suppressed: "false", percent_resistant: "25.0"}
+          - {geography: C, suppressed: "", percent_resistant: " "}
+    expect:
+      rows:
+        - {geography: A, suppressed: true, percent_resistant: null}
+        - {geography: B, suppressed: false, percent_resistant: 25.0}
+        - {geography: C, suppressed: null, percent_resistant: null}

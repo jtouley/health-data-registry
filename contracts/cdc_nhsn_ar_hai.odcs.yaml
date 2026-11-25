@@ -199,6 +199,7 @@ schema:
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: display_tested}
+          - {property: mayBeEmpty, value: true, description: "Empty in every row observed, so a load may carry none of it."}
       - name: lower_confidence_interval
         physicalType: DOUBLE
         logicalType: number

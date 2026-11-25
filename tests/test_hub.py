@@ -179,6 +179,28 @@ def test_unpinned_hub_resolves_newest_release(tmp_path: Path) -> None:
     assert hub.newest_release([]) is None
 
 
+def test_hosted_answers_carry_the_snapshot_notes(tmp_path: Path, reg: Registry, released: Path) -> None:
+    """A flag code the contract doesn't list shows on a hosted answer as it does on a lake answer."""
+    rel = json.loads((released / "manifest.json").read_text())
+    snap = rel["sources"]["toy_cases"]["snapshot"]
+    snap["notes"] = ["A note the maintainer's lake wrote."]
+    snap["silver"] = {"layout_version": "1", "row_count": 4, "unlisted_codes": {"n_flag": ["Z"]}}
+    (released / "manifest.json").write_text(json.dumps(rel))
+    _, m = Hub(url=str(released), cache=tmp_path / "c").snapshot(reg.get("toy_cases"))
+    unlisted = (
+        "The publisher's n_flag column holds the code 'Z', which the reviewed contract doesn't list, so what it "
+        "means is not known here."
+    )
+    assert m.notes == ["A note the maintainer's lake wrote.", unlisted]
+    # Notes the snapshot already carries are not repeated, and an older release with no silver section reads.
+    assert hub.hub_notes({"notes": [unlisted], "silver": snap["silver"]}) == [unlisted]
+    assert hub.hub_notes({}) == []
+    assert hub.hub_notes({"notes": None, "silver": {"unlisted_codes": {"a": ["X", "Y"]}}}) == [
+        "The publisher's a column holds the codes 'X', 'Y', which the reviewed contract doesn't list, so what "
+        "they mean is not known here."
+    ]
+
+
 def test_local_hub_copy_must_be_a_tagged_release(tmp_path: Path, reg: Registry, released: Path) -> None:
     rel = json.loads((released / "manifest.json").read_text())
     (released / "manifest.json").write_text(json.dumps(rel | {"tag": "main"}))

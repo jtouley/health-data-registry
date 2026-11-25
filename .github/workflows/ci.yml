@@ -135,6 +135,11 @@ jobs:
         run: |
           make contracts
           git diff --exit-code -- transform/
+          # A generated file that was never committed is out of date too.
+          test -z "$(git status --porcelain --untracked-files=all -- transform/)" || {
+            git status --porcelain --untracked-files=all -- transform/
+            exit 1
+          }
       - name: dbt build on synthetic fixtures
         run: make transform
 

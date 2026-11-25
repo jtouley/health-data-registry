@@ -126,6 +126,11 @@ def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[st
 
     Refuses a file-backed connection: the source's terms forbid keeping a copy (ADR 0009), so this checks the
     connection itself rather than trusting the caller. A table that can't be normalised leaves nothing behind.
+
+    The checks are the lake's, on purpose: an empty required value (a row with no country or year) or a declared
+    field that no record carries refuses the whole source for this session, as it would a stored load. Answering
+    from the other rows would drop rows from totals without saying so (hard rules 1 and 2); the refusal tells the
+    clinician the source is unavailable instead.
     """
     where = con.execute(
         "SELECT path FROM duckdb_databases() WHERE database_name = current_database()"
@@ -147,6 +152,7 @@ def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[st
                 f"INSERT INTO {q(raw)} VALUES ({marks})",  # noqa: S608 - quoted contract identifiers, bound values
                 [[r.get(f) for f in fields] for r in records],
             )
-        return stage(con, ds.contract, q(raw), table=ds.id, temp=True)
+        present = {k for r in records for k in r} or None
+        return stage(con, ds.contract, q(raw), table=ds.id, temp=True, present=present)
     finally:
         con.execute(f"DROP TABLE IF EXISTS {q(raw)}")

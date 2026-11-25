@@ -12,8 +12,9 @@ macro-paths: ["macros"]
 target-path: target
 clean-targets: [target, dbt_packages]
 
-# Raw records are read from HDR_RAW_RECORDS (default ../lake/raw_records: raw_records/<id>/<snapshot id>.ndjson);
-# CI points it at the synthetic fixtures in tests/fixtures/transform/raw_records.
+# Raw sources are resolved by the dbt_raw plugin (profiles.yml) from the lake at HDR_LAKE (default ../lake): the
+# full load each dataset's LATEST pointer names, raw_records/<id>/<snapshot id>.ndjson. A source with no such load
+# is empty, with a warning. CI points HDR_LAKE at the synthetic fixture lake in tests/fixtures/transform.
 
 vars:
   # The MMWR years the calendar covers (contracts/models/mmwr_calendar.odcs.yaml).
@@ -30,3 +31,11 @@ models:
     reference:
       +materialized: table
       +schema: reference
+    # Business rules (total rows, renamed labels, partial places, conformed keys) and review queues.
+    intermediate:
+      +materialized: table
+      +schema: intermediate
+    # Dimensions and one fact per source; metrics read them.
+    marts:
+      +materialized: table
+      +schema: marts

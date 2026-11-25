@@ -213,6 +213,10 @@ def build_snapshot(
     snapshot_id = f"{retrieved:%Y%m%dT%H%M%SZ}-{digest}"
     out = snapshot_dir(lake, ds.id, snapshot_id)
     if (out / "manifest.json").is_file():  # the same inputs were snapshotted already: never overwrite
+        if not partial and ds.entry.licence.redistribution:
+            keep_raw_records(
+                lake, ds, snapshot_id, records_files
+            )  # a lake from before raw_records gets them now
         _point_latest(lake, ds.id, snapshot_id)
         return Manifest.read(out / "manifest.json")
     tmp = Path(tempfile.mkdtemp(prefix=f".{ds.id}-", dir=lake))
@@ -223,7 +227,11 @@ def build_snapshot(
         con = duckdb.connect(str(tmp / "data.duckdb"))
         try:
             raw = f"read_json({files}, format='newline_delimited', columns={cols})"
-            report = stage(con, ds.contract, raw, table=ds.id)
+            # A full load must carry every declared field: read_json fills a missing one with NULL, so a renamed
+            # publisher field would otherwise load as an all-empty column. A partial sample is not checked.
+            report = stage(
+                con, ds.contract, raw, table=ds.id, present=None if partial else fields_in(con, files)
+            )
             write_parquet(con, ds.contract, ds.id, str(tmp / "data.parquet"))
         finally:
             con.close()
@@ -250,24 +258,43 @@ def build_snapshot(
     finally:
         if tmp.exists():
             shutil.rmtree(tmp, ignore_errors=True)
-    if not partial:
-        keep_raw_records(lake, ds.id, snapshot_id, records_files)
+    if not partial and ds.entry.licence.redistribution:
+        keep_raw_records(lake, ds, snapshot_id, records_files)
     _point_latest(lake, ds.id, snapshot_id)
     return manifest
 
 
-def keep_raw_records(lake: Path, dataset_id: str, snapshot_id: str, records_files: Sequence[Path]) -> Path:
-    """Keep one load's parsed records where the dbt staging models read them; written once, never rewritten."""
-    target = lake / "raw_records" / dataset_id / f"{snapshot_id}.ndjson"
+def fields_in(con: duckdb.DuckDBPyConnection, files: str) -> set[str] | None:
+    """Every field name in a load's records (`files` is a SQL list of paths), or None when it has no records."""
+    rows = con.execute(
+        f"SELECT DISTINCT unnest(json_keys(json)) FROM read_ndjson_objects({files})"  # noqa: S608 - quoted paths
+    ).fetchall()
+    return {str(r[0]) for r in rows} or None
+
+
+def keep_raw_records(lake: Path, ds: Dataset, snapshot_id: str, records_files: Sequence[Path]) -> Path:
+    """Keep one full load's parsed records where the dbt staging models read them; written once, never rewritten.
+
+    Refuses a source whose licence forbids keeping a copy (ADR 0009), whatever the caller checked. A failed copy
+    leaves no temporary file behind.
+    """
+    if not ds.entry.licence.redistribution:
+        raise ValueError(
+            f"{ds.id}: its licence forbids keeping a copy, so its records are never kept on disk"
+        )
+    target = lake / "raw_records" / ds.id / f"{snapshot_id}.ndjson"
     if target.is_file():
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-    with tmp.open("wb") as out:
-        for p in records_files:
-            with p.open("rb") as fh:
-                shutil.copyfileobj(fh, out)
-    os.replace(tmp, target)
+    try:
+        with tmp.open("wb") as out:
+            for p in records_files:
+                with p.open("rb") as fh:
+                    shutil.copyfileobj(fh, out)
+        os.replace(tmp, target)
+    finally:
+        tmp.unlink(missing_ok=True)
     return target
 
 

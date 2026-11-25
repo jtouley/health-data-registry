@@ -141,7 +141,7 @@ schema:
         physicalType: DOUBLE
         logicalType: number
         required: false
-        description: "Point estimate: hospitalizations per 100,000 site catchment population (rates) or percent of hospitalized patients (clinical rows); unit given by estimate_type. Published as text; cast to number."
+        description: "Point estimate: hospitalizations per 100,000 site catchment population (rates) or percent of hospitalized patients (clinical rows); unit given by estimate_type."
         customProperties:
           - {property: role, value: measure}
           - {property: sourceField, value: estimate}
