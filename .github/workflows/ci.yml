@@ -113,7 +113,7 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
-          BASE_REF: ${{ github.base_ref || 'main' }}
+          BASE_REF: ci/fast-ci-probe-base
         run: |
           if [ "${EVENT}" = "pull_request" ] || [[ "${REF}" == refs/heads/pre-pr/* ]]; then
             if ! merge_base="$(git merge-base "origin/${BASE_REF}" HEAD)" || ! [[ "${merge_base}" =~ ^[0-9a-f]{40}$ ]]; then
@@ -342,7 +342,7 @@ jobs:
   # for the PR shards above. Not part of "CI result": it gates nothing, and a failure only makes shards start cold.
   mutation-stats:
     name: Mutation stats (main)
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+    if: startsWith(github.ref, 'refs/heads/pre-pr/ci-fast-ci-probe-')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
