@@ -198,6 +198,9 @@ def test_cache_is_bounded(tmp_path: Path, reg: Registry, released: Path) -> None
     h = Hub(url=str(released), cache=cache, max_bytes=8_000)
     local, _ = h.snapshot(reg.get("toy_cases"))
     assert local.is_file() and not stale.exists()
+    assert local.stat().st_mode & 0o222 == 0  # verified copies are read-only: no query child can truncate one
+    again, _ = Hub(url=str(released), cache=cache, max_bytes=8_000).snapshot(reg.get("toy_cases"))
+    assert again == local and again.is_file()  # a fresh copy replaces a read-only one
     total = sum(p.stat().st_size for p in (cache / "hub").rglob("*") if p.is_file())
     assert total <= 8_000 or [p for p in (cache / "hub").rglob("*") if p.is_file()] == [local]
     assert hub.evict(tmp_path / "missing", 0, set()) == []

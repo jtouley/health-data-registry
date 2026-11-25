@@ -164,6 +164,10 @@ def test_hosted_queries_run_in_a_child_and_a_poisoned_engine_shows_on_health(
     iso = health.json()["query_isolation"]
     assert iso["memory_limit_mb"] == 4096 and iso["poisoned"] is False
     assert sick.status_code == 503 and sick.json()["status"] == "poisoned" and sick.json()["poisoned"] is True
+    assert sick.json()["poisoned_reasons"] == ["a tool call is still running past its deadline"]
+    assert sick.json()["poisoned_since"] and sick.json()["restarts_after_s"] == 900
+    assert health.json()["poisoned_since"] is None and health.json()["poisoned_reasons"] == []
+    assert "engine poisoned: a tool call is still running past its deadline" in log_stream.getvalue()
 
 
 def test_initialize_gets_an_opaque_session_id_and_rate_limits_answer_429(

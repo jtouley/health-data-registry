@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -539,12 +539,14 @@ class Engine:
 
     def _run(
         self, sql: str, params: Sequence[Any] = (), *, limit: int | None = None, guarded: GuardedQuery | None = None,
-        timeout_s: float | None = None,
+        timeout_s: float | None = None, tables: Collection[str] = (),
     ) -> tuple[list[str], list[Any]]:  # fmt: skip
         """Run one query: in a killable child process when this engine has an Isolation, else on the connection.
 
         `guarded` runs through sql_guard.run_guarded (query_sql); otherwise `sql` is trusted SQL this module built,
-        with bound `params`. Returns (columns, rows), at most `limit` rows (all when None).
+        with bound `params`, reading `tables`. Returns (columns, rows), at most `limit` rows (all when None). The
+        child gets only the tables the query reads (a guarded query's own), so a large or broken table elsewhere
+        never slows or fails it.
         """
         con = self.connect()
         if self.isolation is None:
@@ -556,7 +558,9 @@ class Engine:
             return cols, cur.fetchall() if limit is None else cur.fetchmany(limit)
         from health_data_registry.isolation import DEFAULT_JOB_TIMEOUT_S, IsolationRefused, Job
 
-        job = Job(tuple(self._sources), sql=sql, params=tuple(params), limit=limit, guarded=guarded,
+        reads = set(guarded.tables if guarded is not None else tables)
+        job = Job(tuple(s for s in self._sources if s.dataset_id in reads), sql=sql, params=tuple(params),
+                  limit=limit, guarded=guarded,
                   timeout_s=timeout_s or (20.0 if guarded is not None else DEFAULT_JOB_TIMEOUT_S))  # fmt: skip
         try:
             return self.isolation.run(job, deadline.remaining())  # type: ignore[no-any-return]
@@ -776,7 +780,7 @@ class Engine:
         ds = self.registry.get(dataset_id)
         manifest = self.manifest(dataset_id)
         cm = compile_metric(ds, metric, filters=filters, group_by=group_by, period=period)
-        _, rows = self._run(cm.sql + f" LIMIT {MAX_ROWS + 1}", cm.params)
+        _, rows = self._run(cm.sql + f" LIMIT {MAX_ROWS + 1}", cm.params, tables=(dataset_id,))
         m = ds.semantic.metric(metric)
         if m.aggregation == "none" and group_by:
             keys = [tuple(r[: len(group_by)]) for r in rows]
@@ -802,7 +806,8 @@ class Engine:
         self.manifest(dataset_id)
         if column not in ds.contract.column_names:
             raise QueryRefused("unknown_column", f"{dataset_id} has no column {column}")
-        _, rows = self._run(f"SELECT DISTINCT {_q(column)} FROM {_q(dataset_id)} ORDER BY 1")  # noqa: S608 - quoted contract identifiers
+        sql = f"SELECT DISTINCT {_q(column)} FROM {_q(dataset_id)} ORDER BY 1"  # noqa: S608 - quoted contract identifiers
+        _, rows = self._run(sql, tables=(dataset_id,))
         return [r[0] for r in rows if r[0] is not None]
 
     def loaded_values(
@@ -822,9 +827,14 @@ class Engine:
         sql = f"SELECT DISTINCT {_q(column)} FROM {_q(dataset_id)} ORDER BY 1"  # noqa: S608 - quoted contract identifiers
         if self.isolation is not None:
             try:
-                _, rows = self._run(sql, timeout_s=timeout_s)
-            except (QueryRefused, OSError):
+                _, rows = self._run(sql, timeout_s=timeout_s, tables=(dataset_id,))
+            except QueryRefused as e:
+                if e.code == "busy":  # a poisoned engine: the clinician is told, and no further child starts
+                    raise
+                return None  # slow, too big or broken here: describe_dataset carries on without the values
+            except OSError:
                 return None
+            # A DeadlineExceeded isn't caught: the call's whole budget is gone, so the call ends with its message.
             return [r[0] for r in rows if r[0] is not None]
         timer = threading.Timer(timeout_s, con.interrupt)
         timer.start()

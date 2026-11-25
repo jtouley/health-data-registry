@@ -37,9 +37,11 @@ All notable changes to this project are documented here. The format follows
 - Hosted query isolation (#64, #74 item 1): every query runs in a child process with an OS memory limit
   (`HDR_QUERY_MEMORY_MB`), a hard kill at the deadline and a capped JSON reply (`HDR_QUERY_RESULT_MB`), so a
   long `lpad` or `repeat` call is stopped and can't exhaust the server's memory. Anything that outlives its call
-  poisons the engine until it ends: new calls get a plain BUSY refusal and `/healthz` answers 503. No page of an
-  answer goes over `HDR_PAGE_CHARS`: pages are measured and re-cut, and a single row too long for any page is
-  refused in plain words.
+  poisons the engine until it ends: new calls get a plain BUSY refusal, `/healthz` answers 503 with the cause and
+  since when, and after `HDR_POISONED_EXIT_S` (900 s) the server exits so it can be started afresh. Each child
+  gets only the tables its query reads and none of the server's environment, and `/healthz` reports whether the
+  memory limit was measured to hold. No page of an answer goes over `HDR_PAGE_CHARS`: pages are measured and
+  re-cut, and a single row too long for any page, even in a one-row answer, is refused in plain words.
 - Condition vocabulary: each catalog entry lists the publisher's own condition labels (`conditions:`, with
   where they come from), and `get_series`, `get_rate` and `get_trend` accept any of them through the semantic
   model's `generic_series`, with the same aggregation rules as the named series. `validate` fails when a local
