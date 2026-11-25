@@ -170,8 +170,9 @@ _ALLOWED: Final = _STRUCTURE + _FUNCTIONS
 # interrupted). Refused by name with a next step. lpad/rpad stay allowed with a capped length (MAX_PAD_LENGTH);
 # repeat, range, generate_series, printf and format are not on the allowlist at all.
 _UNBOUNDED_MESSAGE: Final = (
-    "Joining many rows into one text or list (string_agg, group_concat, list, array_agg) is not allowed here, "
-    "because the result can grow without limit. Return the values as rows instead, with GROUP BY."
+    "Joining many rows into one text or list (string_agg, group_concat, list, array_agg, ARRAY(SELECT ...), or "
+    "max, min, arg_max or arg_min with a count) is not allowed here, because the result can grow without limit. "
+    "Return the values as rows instead, with GROUP BY, or ORDER BY and LIMIT."
 )
 _UNBOUNDED_CLASSES: Final = _classes("GroupConcat", "ArrayAgg")
 _UNBOUNDED_NAMES: Final = frozenset({"string_agg", "group_concat", "listagg", "list", "array_agg"})
@@ -234,9 +235,9 @@ def guard_sql(
 
     tree = _parse(sql)
     _check_nodes(tree)
-    _check_output_size(tree)
     _check_tables(tree, tables)
     scopes = _scopes(tree)
+    _check_output_size(tree, scopes)
     used: set[str] = set()
     for scope in scopes:
         _check_scope_sources(scope, tables, used)
@@ -371,68 +372,153 @@ def _string_literal_length(node: exp.Expr | None) -> int | None:
     return None
 
 
-def _count_growing(parts: Iterable[exp.Expr | None]) -> int:
-    """How many of a node's inputs can carry a large value (constants can't)."""
-    return sum(1 for part in parts if not _is_constant(part))
-
-
-def _growth(node: exp.Expr) -> int:
-    """How many times larger than its largest input one node's output can be (1: it can't grow)."""
-    if isinstance(node, exp.DPipe):
-        return max(1, _count_growing((node.this, node.expression)))
-    if isinstance(node, exp.ConcatWs):
-        separator, *values = node.expressions
-        repeats = 0 if _is_constant(separator) else len(values) - 1
-        return max(1, _count_growing(values) + repeats)
-    if isinstance(node, exp.Concat | exp.Array):
-        return max(1, _count_growing(node.expressions))
-    if isinstance(node, exp.Struct):
-        return max(
-            1, _count_growing(p.expression if isinstance(p, exp.PropertyEQ) else p for p in node.expressions)
+def _factor(node: exp.Expr) -> int:
+    """How many times larger than its input text a replace or regexp_replace can make it."""
+    replacement = _string_literal_length(node.args.get("replacement"))
+    if replacement is None:
+        raise SqlRefused(
+            "too_large",
+            "In replace() and regexp_replace(), write the replacement as quoted text, such as ' ' or '-'.",
         )
+    search = _string_literal_length(node.expression)
+    if isinstance(node, exp.Replace) and search:
+        return max(1, -(-replacement // search))  # each match of the search text becomes the replacement
+    return replacement + 1  # a pattern can match between every pair of characters
+
+
+# Functions that turn one text into a list: n characters can become n entries of about 16 bytes each.
+_SPLITTERS: Final = frozenset({"regexp_split_to_array", "string_split", "str_split"})
+SPLIT_GROWTH: Final = 16
+
+
+def _is_splitter(node: exp.Expr) -> bool:
+    split = getattr(exp, "Split", None)
+    return (isinstance(split, type) and isinstance(node, split)) or (
+        isinstance(node, exp.Anonymous) and str(node.name).casefold() in _SPLITTERS
+    )
+
+
+def _node_size(node: exp.Expr, children: list[int], column_size: int) -> int:
+    """How large one node's value can be, in units of the largest value a table cell holds, from its children's.
+
+    A cell is 1 and a constant 0 (the query's own text is short). Joining values (||, concat, concat_ws, lists,
+    structs) adds their sizes; replace, regexp_replace and the splitters multiply; every other node is no larger
+    than its largest input.
+    """
+    if isinstance(node, exp.Column | exp.Star):
+        return column_size
+    if isinstance(node, exp.ConcatWs):
+        separator, *values = children or [0]
+        return sum(values) + separator * max(0, len(values) - 1)
+    if isinstance(node, exp.DPipe | exp.Concat | exp.Array | exp.Struct):  # after ConcatWs, a Concat
+        return sum(children)
     if isinstance(node, exp.Replace | exp.RegexpReplace):
-        replacement = _string_literal_length(node.args.get("replacement"))
-        if replacement is None:
+        return children[0] * _factor(node) if children else 0
+    if _is_splitter(node):
+        return (children[0] if children else 0) * SPLIT_GROWTH
+    return max(children, default=0)
+
+
+def _check_shape(node: exp.Expr) -> None:
+    """Refuse the constructs that grow without a bound the size model can see."""
+    if isinstance(node, exp.With) and node.args.get("recursive"):
+        raise SqlRefused(
+            "too_large",
+            "Recursive WITH queries are not allowed here, because they can grow without limit. Ask for the "
+            "rows you need directly, with WHERE and GROUP BY.",
+        )
+    if isinstance(node, exp.Pad):
+        length = _literal_int(node.expression)
+        if length is None or length > MAX_PAD_LENGTH:
             raise SqlRefused(
                 "too_large",
-                "In replace() and regexp_replace(), write the replacement as quoted text, such as ' ' or '-'.",
+                f"lpad and rpad can make text at most {MAX_PAD_LENGTH:,} characters long here: give the "
+                f"length as a whole number up to {MAX_PAD_LENGTH:,}.",
             )
-        search = _string_literal_length(node.expression)
-        if isinstance(node, exp.Replace) and search:
-            return max(1, -(-replacement // search))  # each match of the search text becomes the replacement
-        return replacement + 1  # a pattern can match between every pair of characters
-    return 1
+    if isinstance(node, exp.Array | exp.Struct):
+        # ARRAY(SELECT ...) and [(SELECT ...)] gather a whole column into one list, as array_agg does.
+        values = (v.expression if isinstance(v, exp.PropertyEQ) else v for v in node.expressions)
+        if any(isinstance(v, exp.Query | exp.Subquery) for v in values):
+            raise SqlRefused("too_large", _UNBOUNDED_MESSAGE)
+    if isinstance(node, exp.Min | exp.Max | exp.ArgMax | exp.ArgMin) and node.args.get("count") is not None:
+        raise SqlRefused("too_large", _UNBOUNDED_MESSAGE)  # max(x, n) returns a list of the n largest values
+    if isinstance(node, exp.TimeToStr) and _string_literal_length(node.args.get("format")) is None:
+        raise SqlRefused("too_large", "In strftime(), write the format as quoted text, such as '%Y-%m-%d'.")
 
 
-def _check_output_size(tree: exp.Expr) -> None:
+def _check_output_size(tree: exp.Expr, scopes: list[Scope]) -> None:
     """Bound how large a value the query can build, before it runs (issue #74).
 
     DuckDB's memory limit doesn't count a string one function call builds, and an interrupt can't stop that
     call, so the guard refuses what could grow without limit: a recursive WITH, which can repeat any step;
-    lpad/rpad with a length that isn't a whole number up to MAX_PAD_LENGTH; and any query whose growing steps
-    (||, concat, concat_ws, replace, regexp_replace, lists, structs), multiplied together as if each fed the
-    next, could make a value more than MAX_GROWTH times larger than its inputs. The OS-level memory limit and
-    hard kill of a child process are the second layer (#64).
+    lpad/rpad with a length that isn't a whole number up to MAX_PAD_LENGTH; a list built from a subquery
+    (ARRAY(SELECT ...)) or by max/min/arg_max with a count, which gather a whole column as array_agg does; and
+    strftime with a format that isn't quoted text.
+
+    Every other value is sized per expression, bottom-up (:func:`_node_size`): a cell is 1, joining values adds
+    their sizes, replace and splitting multiply. A column read from a CTE or a derived table carries the size of
+    that query's largest output, so growth through a chain of CTEs is counted. Any value larger than MAX_GROWTH is
+    refused. Separate output columns and conditions don't multiply each other: the largest one counts.
+
+    The real ceiling for one value is MAX_PAD_LENGTH x MAX_GROWTH characters (256,000), because lpad/rpad can turn
+    a one-character cell into MAX_PAD_LENGTH characters before it is joined. The OS-level memory limit and hard
+    kill of a child process are the second layer (#64).
     """
-    growth = 1
     for node in tree.walk():
-        if isinstance(node, exp.With) and node.args.get("recursive"):
-            raise SqlRefused(
-                "too_large",
-                "Recursive WITH queries are not allowed here, because they can grow without limit. Ask for the "
-                "rows you need directly, with WHERE and GROUP BY.",
-            )
-        if isinstance(node, exp.Pad):
-            length = _literal_int(node.expression)
-            if length is None or length > MAX_PAD_LENGTH:
-                raise SqlRefused(
-                    "too_large",
-                    f"lpad and rpad can make text at most {MAX_PAD_LENGTH:,} characters long here: give the "
-                    f"length as a whole number up to {MAX_PAD_LENGTH:,}.",
-                )
-        growth *= _growth(node)
-        if growth > MAX_GROWTH:
-            raise SqlRefused("too_large", TOO_LARGE)
+        _check_shape(node)
+    size: dict[int, int] = {}
+    by_expression = {id(scope.expression): scope for scope in scopes}
+
+    def output(scope: Scope) -> int:
+        key = id(scope.expression)
+        if key not in size:
+            measure(scope.expression, scope)
+        return size[key]
+
+    def derived(scope: Scope | None, qualifier: str = "") -> int:
+        """The size of a column read from the CTEs and derived tables in reach (1 for a catalogued table)."""
+        found = 1
+        while scope is not None:
+            for name, (_node, source) in scope.selected_sources.items():
+                if isinstance(source, Scope) and (not qualifier or name.casefold() == qualifier):
+                    found = max(found, output(source))
+            # Only a subquery can name its outer query's columns; a CTE or derived table can't.
+            scope = scope.parent if scope.is_subquery else None
+        return found
+
+    def in_scope(root: exp.Expr) -> list[exp.Expr]:
+        """The nodes under root in pre-order, stopping at (but including) each nested query's own node."""
+        found: list[exp.Expr] = []
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            found.append(node)
+            if node is root or id(node) not in by_expression:
+                stack.extend(node.iter_expressions())
+        return found
+
+    def measure(root: exp.Expr, scope: Scope | None) -> None:
+        for node in reversed(in_scope(root)):  # children before parents
+            if id(node) in size:
+                continue
+            inner = by_expression.get(id(node))
+            if inner is not None and inner is not scope:
+                output(inner)
+                continue
+            column_size = 1
+            if isinstance(node, exp.Column | exp.Star):
+                column_size = derived(scope, node.table.casefold() if isinstance(node, exp.Column) else "")
+            if inner is not None and isinstance(node, exp.Select):
+                value = max((size[id(e)] for e in node.expressions), default=0)
+            else:
+                value = _node_size(node, [size[id(c)] for c in node.iter_expressions()], column_size)
+            if value > MAX_GROWTH:
+                raise SqlRefused("too_large", TOO_LARGE)
+            size[id(node)] = value
+
+    for scope in scopes:
+        output(scope)
+    measure(tree, by_expression.get(id(tree)))
 
 
 def _check_clauses(node: exp.Expr) -> None:

@@ -9,16 +9,24 @@ All notable changes to this project are documented here. The format follows
 ### Security
 
 - `query_sql` refuses queries that could build values too large to answer safely (#74): `lpad`/`rpad` lengths
-  over 1,000, `string_agg`/`list`/`array_agg`, `levenshtein`, recursive `WITH`, non-literal `replace`
-  replacements, and chains of `||`, `concat`, `replace`, lists or structs that could grow a value more than
-  256-fold. Each refusal says what to ask instead.
+  over 1,000, `string_agg`/`list`/`array_agg` and the other ways to gather a whole column into one value
+  (`ARRAY(SELECT ...)`, `max`/`min`/`arg_max`/`arg_min` with a count), `levenshtein`, recursive `WITH`,
+  non-literal `replace` replacements and `strftime` formats, and any one value that `||`, `concat`, `replace`,
+  splitting, lists or structs could grow more than 256-fold. Growth is counted per value, through CTEs and
+  subqueries, so separate columns and conditions don't add up against each other. Each refusal says what to ask
+  instead, and `query_sql` passes that next step on.
 - `query_sql` refuses any query that reaches two sources with no declared join in any part of it, including each
   branch of a `UNION`, `INTERSECT` or `EXCEPT`, every subquery and every CTE (#74).
 - The lake is never read from the working folder: it is `$HDR_LAKE` (a full path) or a per-user data folder.
-  Before a lake snapshot is read, its dataset id, snapshot id, contract version, review status and the sha256 of
-  `data.duckdb` and `data.parquet` are checked against its manifest; a mismatch is refused in plain words.
-  Cached hub files are re-hashed each time the server reconnects (#74). Snapshots built before this change have
-  no file fingerprints and must be rebuilt with `refresh`.
+  Each time the server connects, it checks each lake snapshot's dataset id, snapshot id, contract version and
+  review status, that its folder and files belong to the current user and can't be changed by others (on Unix),
+  and that `data.duckdb` is a regular file with the sha256 in its manifest. A snapshot that fails, or can't be
+  read, is refused in plain words; the others still answer. DuckDB then reads the file by its path, so a change
+  made after that check is read until the next reconnect. The manifest sits beside the data, so these hashes
+  catch damage, not tampering. A file is hashed once per server process and again only when its size, times or
+  inode change. `export-public` checks `data.duckdb` and `data.parquet` the same way before publishing, and
+  compares the copy it publishes. Cached hub files are checked again each time the server reconnects (#74).
+  Snapshots built before this change have no file fingerprints and must be rebuilt with `refresh`.
 
 ### Added
 

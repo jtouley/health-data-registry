@@ -72,8 +72,10 @@ flowchart LR
    refresh; nothing is guessed, and no model output is stored as data
    ([ADR 0006](adr/0006-no-llm-extraction.md), [ADR 0007](adr/0007-odcs-contracts-and-semantic-models.md)).
 4. **Parquet snapshot and manifest.** Each run writes a new dataset version under
-   `datasets/<id>/<snapshot_id>/`: `data.parquet`, `data.duckdb` and a `manifest.json` that lists the raw hashes, source URLs, `retrieved_at`, the contract and semantic model versions, and the sha256 of `data.duckdb` and `data.parquet`,
-   which the server checks, with the dataset id, snapshot id and contract version, before it reads a snapshot. Snapshots live
+   `datasets/<id>/<snapshot_id>/`: `data.parquet`, `data.duckdb` and a `manifest.json` that lists the raw hashes, source URLs, `retrieved_at`, the contract and semantic model versions, and the sha256 of `data.duckdb` and `data.parquet`.
+   Each time the server connects, it checks the dataset id, snapshot id, contract version, owner and the sha256 of
+   `data.duckdb` (the file it attaches); `export-public` checks both files before publishing. The manifest sits
+   beside the data, so the hashes catch damage, not tampering. Snapshots live
    in the lake (`$HDR_LAKE` as a full path, else a per-user data folder, never the working folder) and, for redistributable sources, may be published to a public
    Hugging Face dataset ([ADR 0009](adr/0009-licences-decide-mirroring.md)).
 5. **DuckDB read-only views.** `store.py` builds views over the snapshot from the contract. Connections are

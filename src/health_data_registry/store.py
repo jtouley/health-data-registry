@@ -93,7 +93,8 @@ class Manifest:
     # Dashboard sources: the sha256 of each worksheet's column list read ("<view>/<worksheet>" -> sha256), so a
     # redesign is visible in provenance as well as stopping the load.
     layouts: dict[str, str] = field(default_factory=dict)
-    # Lake snapshots: the sha256 of each data file (SNAPSHOT_FILES), checked before the server reads the snapshot.
+    # Lake snapshots: the sha256 of each data file (SNAPSHOT_FILES). The server checks data.duckdb when it connects;
+    # export-public checks both before publishing (hub.verify_lake_snapshot).
     files: dict[str, str] = field(default_factory=dict)
 
     @staticmethod

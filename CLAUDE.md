@@ -96,8 +96,9 @@ src/health_data_registry/
                   runs guarded SQL, wraps every answer with its source, version, SQL and method
   sql_guard.py    governed read-only SQL: one SELECT, allowlisted functions, declared joins only
   fetch.py        HTTPS-only fetcher to catalogued, publicly routable publisher hosts
-  store.py        the lake ($HDR_LAKE, default ./lake): raw/<sha256>, datasets/<id>/run_date=<d>/<snapshot>/
-                  with data.parquet, data.duckdb and manifest.json, LATEST, fetch_log/
+  store.py        the lake ($HDR_LAKE as a full path, else a per-user data folder): raw/<sha256>,
+                  datasets/<id>/run_date=<d>/<snapshot>/ with data.parquet, data.duckdb and manifest.json,
+                  LATEST, fetch_log/
   crawl.py        fetch one source into a lake (refresh, fetch, and run-time fetches)
   publish.py      export-public to the open data hub: cards, licence, manifest, pre-publish checks, tag
   hub.py          hosted read path: immutable hub release, sha256 and contract checks, bounded cache

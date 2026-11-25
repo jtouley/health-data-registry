@@ -6,6 +6,7 @@ so a clinician (or a grader) can check the number without trusting the model tha
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -46,9 +47,10 @@ NEXT_STEPS: dict[str, str] = {
     "needs_single_value": "Ask for the year's total, or for one week.",
     "not_a_human_count": "Use get_series to read these counts as published; they are not cases in people, so "
     "there is no rate per 100,000 people.",
-    "lake_unverified": "Run the Something's wrong helper. A maintainer can rebuild the local copy with refresh, or "
-    "unset HDR_LAKE so the published release is read instead.",
-    "too_large": "Ask for fewer values joined together, or return them as separate rows or columns.",
+    "lake_unverified": "Run the Something's wrong helper. A maintainer can rebuild the source's local copy with "
+    "refresh, or remove that source's folder from the local lake so the published release is read instead.",
+    "too_large": "Ask for fewer values joined together, or split the question into smaller ones that return the "
+    "parts as separate rows or columns.",
     "too_slow": "Compare the values with =, LIKE or ILIKE instead.",
 }
 
@@ -478,7 +480,6 @@ class Engine:
     def connect(self) -> duckdb.DuckDBPyConnection:
         if self._con is not None:
             return self._con
-        from health_data_registry.hub import HubError, verify_lake_snapshot
         from health_data_registry.live import load_live
 
         con = duckdb.connect(":memory:")
@@ -498,15 +499,8 @@ class Engine:
                 manifest = table.manifest
             elif (found := self._lake_snapshot(ds)) is not None:
                 path, manifest = found
-                try:
-                    verify_lake_snapshot(ds, path, manifest)
-                except HubError as e:
-                    self._lake_refused[ds.id] = QueryRefused(e.code, str(e))
+                if not self._attach_lake(con, ds, path, manifest):
                     continue
-                alias = f"snap_{ds.id}"
-                db = str(path / "data.duckdb").replace("'", "''")
-                con.execute(f"ATTACH '{db}' AS {_q(alias)} (READ_ONLY)")
-                con.execute(f"CREATE VIEW {_q(ds.id)} AS SELECT * FROM {_q(alias)}.{_q(ds.id)}")  # noqa: S608 - quoted contract identifiers, bound values
             elif ds.id in self._hub_files and not self._hub_intact(self._hub_files[ds.id][0]):
                 del self._hub_files[
                     ds.id
@@ -524,15 +518,55 @@ class Engine:
         self._con = con
         return con
 
-    def _lake_snapshot(self, ds: Dataset) -> tuple[Path, Manifest] | None:
-        """The lake's latest snapshot of a source; a damaged pointer or manifest is a refusal, not a crash."""
+    def _lake_refusal(self, ds: Dataset, message: str) -> QueryRefused:
+        """A lake_unverified refusal whose next step names this lake's folder for the source."""
         from health_data_registry.hub import LAKE_UNVERIFIED
 
+        return QueryRefused(
+            LAKE_UNVERIFIED,
+            message,
+            next_step=(
+                "Run the Something's wrong helper. A maintainer can rebuild this source's local copy with "
+                f"`refresh {ds.id}`, or remove the folder {self.lake / 'datasets' / ds.id} so the published "
+                "release is read instead."
+            ),
+        )
+
+    def _attach_lake(
+        self, con: duckdb.DuckDBPyConnection, ds: Dataset, path: Path, manifest: Manifest
+    ) -> bool:
+        """Check a lake snapshot (hub.verify_lake_snapshot) and attach it read-only; False, with the plain refusal
+        kept for this source, when it fails. Any error is that one source's refusal, never a crash of the others.
+        """
+        from health_data_registry.hub import HubError, verify_lake_snapshot
+
+        alias = f"snap_{ds.id}"
+        try:
+            verify_lake_snapshot(ds, path, manifest)
+            db = str(path / "data.duckdb").replace("'", "''")
+            con.execute(f"ATTACH '{db}' AS {_q(alias)} (READ_ONLY)")
+            con.execute(f"CREATE VIEW {_q(ds.id)} AS SELECT * FROM {_q(alias)}.{_q(ds.id)}")  # noqa: S608 - quoted contract identifiers, bound values
+        except HubError as e:
+            self._lake_refused[ds.id] = self._lake_refusal(ds, str(e))
+            return False
+        except Exception:  # noqa: BLE001 - a damaged manifest or file must not break the other sources
+            with contextlib.suppress(duckdb.Error):  # best effort: nothing of it stays attached
+                con.execute(f"DETACH DATABASE IF EXISTS {_q(alias)}")
+            self._lake_refused[ds.id] = self._lake_refusal(
+                ds,
+                f"The local copy of {ds.entry.title} was not used, because it could not be checked or opened. "
+                "No numbers were read from it.",
+            )
+            return False
+        return True
+
+    def _lake_snapshot(self, ds: Dataset) -> tuple[Path, Manifest] | None:
+        """The lake's latest snapshot of a source; a damaged pointer or manifest is a refusal, not a crash."""
         try:
             return latest_snapshot(self.lake, ds.id)
         except (OSError, ValueError, TypeError):
-            self._lake_refused[ds.id] = QueryRefused(
-                LAKE_UNVERIFIED,
+            self._lake_refused[ds.id] = self._lake_refusal(
+                ds,
                 f"The local copy of {ds.entry.title} was not used, because its LATEST pointer or manifest is "
                 "damaged. No numbers were read from it.",
             )
@@ -541,7 +575,10 @@ class Engine:
     def _hub_intact(self, file: Path) -> bool:
         """Re-check a cached hub file's sha256 on every reconnect (a hub without that check: the file exists)."""
         check = getattr(self.hub, "still_intact", None)
-        return bool(check(file)) if check is not None else file.is_file()
+        try:
+            return bool(check(file)) if check is not None else file.is_file()
+        except OSError:
+            return False  # unreadable: downloaded and checked again on next use
 
     def _reconnect(self) -> None:
         if self._con is not None:

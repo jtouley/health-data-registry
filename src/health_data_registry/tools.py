@@ -19,7 +19,7 @@ from typing import Any, Literal, NamedTuple
 import duckdb
 
 from health_data_registry import geo
-from health_data_registry.query import Engine, QueryRefused, next_step_for
+from health_data_registry.query import DEFAULT_NEXT_STEP, NEXT_STEPS, Engine, QueryRefused, next_step_for
 from health_data_registry.registry import Dataset, Registry, Series, UnknownDataset, norm_label, spelling_key
 
 Fmt = Literal["csv", "json"]
@@ -1291,19 +1291,24 @@ def unlisted_condition_labels(registry: Registry, engine: Engine) -> dict[str, l
     return out
 
 
+SQL_NEXT_STEP = "Use get_series, get_rate or describe_dataset, which answer most questions without SQL."
+SQL_OTHER_TOOLS = "The other tools (get_series, describe_dataset) can usually answer the same question."
+
+
 def query_sql(engine: Engine, sql: str, *, fmt: Fmt = "csv") -> Out:
     from health_data_registry.sql_guard import SqlRefused
 
     try:
         out = engine.query_sql(sql)
     except (SqlRefused, QueryRefused) as e:
-        return message(
-            f"That query can't run: {e} The other tools (get_series, describe_dataset) can usually answer the "
-            "same question.",
-            fmt,
-            refused=getattr(e, "code", "refused"),
-            next_step="Use get_series, get_rate or describe_dataset, which answer most questions without SQL.",
-        )
+        code = getattr(e, "code", "refused")
+        # A refusal with a next step of its own (too_large, too_slow, lake_unverified, ...) keeps it; the others
+        # point to the tools that answer most questions without SQL.
+        step = getattr(e, "next_step", None)
+        if step is None or step == DEFAULT_NEXT_STEP:
+            step = NEXT_STEPS.get(code, SQL_NEXT_STEP)
+        tail = "" if code == "lake_unverified" else " " + SQL_OTHER_TOOLS
+        return message(f"That query can't run: {e}{tail}", fmt, refused=code, next_step=step)
     sources = [out["source"]] if out.get("source") else list(out.get("sources") or [])
     notes = [f"SQL run: {out['sql']}", f"Method: {out['method']}"]
     for src in sources:  # every table the query read, never only the first
