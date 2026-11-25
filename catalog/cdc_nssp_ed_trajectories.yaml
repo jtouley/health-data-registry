@@ -1,0 +1,56 @@
+id: cdc_nssp_ed_trajectories
+title: NSSP Emergency Department Visit Trajectories by State and Sub-State Regions (COVID-19, Influenza, RSV, Combined)
+agency: CDC
+publisher: "Centers for Disease Control and Prevention, National Syndromic Surveillance Program (NSSP)"
+level: federal
+country: US
+research_areas: [infectious_disease]
+id_areas: [respiratory]
+years: {start: 2022, end: null}
+geography: [nation, state, county]
+shape: surveillance_series
+grain: "One row is one week (week ending date) and one place: the United States, a state, or a county. A county row carries the figures of its Health Service Area (HSA), the group of counties that share patterns of care seeking, so every county of one HSA has the same values. Each row holds the percent of emergency department visits for COVID-19, influenza, RSV and the three combined (as observed and smoothed), the trend and the activity level for each virus, and the weekly build the table came from."
+refresh: weekly
+licence:
+  id: public-domain-us-federal
+  redistribution: true
+  terms_url: https://www.usa.gov/government-works
+citation: "Centers for Disease Control and Prevention, National Syndromic Surveillance Program. NSSP Emergency Department Visit Trajectories by State and Sub State Regions - COVID-19, Flu, RSV, Combined. https://data.cdc.gov/d/rdmq-nq56 (accessed <retrieved_at>)."
+source:
+  portal: socrata
+  host: data.cdc.gov
+  dataset: rdmq-nq56
+  landing_url: https://data.cdc.gov/d/rdmq-nq56
+  api_url: https://data.cdc.gov/resource/rdmq-nq56.json
+codebook_url: https://www.cdc.gov/ncird/surveillance/respiratory-illnesses/index.html#companion-guide
+caveats:
+  - "A percent of all emergency department visits, not a case count: it moves with how many people come to the emergency department for anything else."
+  - "A county's figures are those of its Health Service Area, reported for each county in it, so several counties carry one shared value. County values are never added up, and two counties of one Health Service Area are not two separate measurements."
+  - "Percents, trends and activity levels are never added, across viruses, places or weeks. The combined percent is CDC's own column, not COVID-19 plus influenza plus RSV."
+  - "CDC rebuilds the whole table every week (the build number on each row), and a rebuild can change earlier weeks. Every answer names the build it was read from."
+  - "'Data Unavailable', 'Limited Data' and 'Sparse' are kept exactly as CDC writes them; what separates them is an open question in the contract, and none of them means zero."
+  - "Not every emergency department reports to NSSP, and the share that does differs by state. That coverage is not in this table (see the contract's open questions)."
+  - "The activity levels (Very Low to Very High) are CDC's own categories; the cut-points behind them are not in this table and are never worked out here."
+gbd:
+  # Proposed GBD keys, not reviewed (hard rules 1 and 3): an emergency department visit percent is not a GBD
+  # measure, so these key a row to a cause and place only. A maintainer confirms them on review.
+  location_column: geography
+  causes:
+    - {condition: "COVID-19", cause: "COVID-19", pathogen: null}
+    - {condition: "Influenza", cause: "Lower respiratory infections", pathogen: "Influenza"}
+    - {condition: "RSV", cause: "Lower respiratory infections", pathogen: "Respiratory syncytial virus"}
+conditions:
+  # One column per virus, so there is no condition column (dimension: null). Provenance: the virus names in the
+  # dataset title and column names at https://data.cdc.gov/api/views/rdmq-nq56.json, read 2026-11-25.
+  dimension: null
+  source: "CDC's names for the three viruses this table reports, from its title and column names on data.cdc.gov (checked 25 Nov 2026): COVID-19, Flu (influenza) and RSV, each as a percent of all emergency department visits."
+  labels:
+    - "COVID-19"
+    - "Influenza"
+    - "RSV"
+  aliases: []
+contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
+semantic_model: semantic/cdc_nssp_ed_trajectories.yaml
+status: draft
+# Private until a maintainer's reviewed catalog change says public.
+hosting: private
