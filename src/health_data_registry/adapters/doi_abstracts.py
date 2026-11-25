@@ -254,9 +254,18 @@ def _date_parts(value: Any) -> str | None:
         parts = value["date-parts"][0]
     except (KeyError, IndexError, TypeError):
         return None
-    if not parts or parts[0] is None:
+    if not isinstance(parts, list):
         return None
-    return "-".join(f"{int(p):02d}" if i else f"{int(p):04d}" for i, p in enumerate(parts[:3]))
+    out: list[str] = []
+    for i, p in enumerate(parts[:3]):
+        if p is None:
+            break  # "[[2023, null]]": the date is known only as far as the first missing part
+        try:
+            n = int(p)
+        except (TypeError, ValueError):
+            break
+        out.append(f"{n:02d}" if i else f"{n:04d}")
+    return "-".join(out) or None
 
 
 def crossref_authors(authors: Any) -> str | None:
@@ -362,11 +371,9 @@ def inverted_to_text(index: Any) -> str | None:
 
 
 def _openalex_licence(work: Mapping[str, Any]) -> str | None:
-    for key in ("primary_location", "best_oa_location"):
-        loc = work.get(key)
-        if isinstance(loc, Mapping) and _clean(loc.get("license")):
-            return _clean(loc.get("license"))
-    return None
+    """The version-of-record licence: primary_location's only. best_oa_location is often a repository or PMC
+    copy under its own licence, which says nothing about the published abstract, so it is never used."""
+    return _clean(_obj(work.get("primary_location")).get("license"))
 
 
 def parse_openalex(content: bytes) -> list[ApiRecord]:
@@ -472,7 +479,9 @@ class _Acc:
 
 def merge(records: Iterable[ApiRecord]) -> dict[str, Abstract]:
     """One Abstract per DOI. Each field comes from the first API in API_ORDER that gives it; the abstract text
-    and its licence come together from the first API that gives text (else the licence alone, first given).
+    and its licence always come together from one API: the first that gives text and a licence, else the first
+    that gives text (whose licence is then unknown, so the text is link_only). A licence is never borrowed from
+    another API's answer for the text (hard rule 1); with no text, the licence shown is the first given.
 
     The result doesn't depend on the order records arrive in, and merging a DOI's records again changes nothing.
     A record whose title is missing from every API is dropped (there is nothing to show).
@@ -498,10 +507,10 @@ def merge(records: Iterable[ApiRecord]) -> dict[str, Abstract]:
         title = values.pop("title")
         if title is None:
             continue
-        texted = next((r for r in recs if r.abstract), None)
-        licence = texted.licence if texted is not None and texted.licence else None
-        if licence is None:
-            licence = next((r.licence for r in recs if r.licence), None)
+        texted = next((r for r in recs if r.abstract and r.licence), None) or next(
+            (r for r in recs if r.abstract), None
+        )
+        licence = texted.licence if texted is not None else next((r.licence for r in recs if r.licence), None)
         out[doi] = Abstract(
             doi=doi,
             title=title,

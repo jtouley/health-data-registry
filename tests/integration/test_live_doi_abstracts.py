@@ -16,7 +16,9 @@ pytestmark = pytest.mark.network
 
 def test_each_conference_route_answers_as_catalogued() -> None:
     reg = load_registry()
-    get = fetcher(reg, None, robots=Robots(reg.hosts, min_interval_s=doi.MIN_INTERVAL_S))
+    # Only the DOI sources' own hosts: the enrich hosts are not in the registry-wide allowlist.
+    hosts = frozenset().union(*(ds.entry.source.hosts for ds in conferences(reg).values()))
+    get = fetcher(reg, None, robots=Robots(hosts, min_interval_s=doi.MIN_INTERVAL_S), hosts=hosts)
     for key, ds in sorted(conferences(reg).items()):
         sup = supplement(ds, None)
         page = doi.parse_crossref(get(doi.crossref_url(sup, rows=200)).content, sup)

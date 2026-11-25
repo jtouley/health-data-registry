@@ -393,6 +393,11 @@ def test_crossref_dates() -> None:
     assert one(published=None, issued={"date-parts": [[2025, 12, 1]]}) == "2025-12-01"
     assert one(published={"date-parts": [[None]]}, issued=None) is None
     assert one(published={"date-parts": [[]]}) is None
+    # A missing month or day: the date as far as it is known, never a crash.
+    assert one(published={"date-parts": [[2023, None]]}) == "2023"
+    assert one(published={"date-parts": [[2023, 5, None]]}) == "2023-05"
+    assert one(published={"date-parts": [[2023, "x"]]}) == "2023"
+    assert one(published={"date-parts": ["2023"]}, issued=None) is None
 
 
 @pytest.mark.parametrize(
@@ -460,7 +465,7 @@ def test_parse_openalex() -> None:
     assert four.pages == "S4" and four.published == "2026"
     oa_only = oa_work(5, primary_location={"license": None}, best_oa_location={"license": "cc-by-nc"})
     (five,) = doi.parse_openalex(json.dumps({"results": [oa_only]}).encode())
-    assert five.licence == "cc-by-nc" and five.journal is None
+    assert five.licence is None and five.journal is None  # a repository copy's licence is never borrowed
     bare = oa_work(6, primary_location=None, authorships=None, abstract_inverted_index=None)
     (six,) = doi.parse_openalex(json.dumps({"results": [bare]}).encode())
     assert six.licence is None and six.authors is None and six.abstract is None
@@ -560,7 +565,13 @@ def test_merge_licence_without_text_and_dropped_titles() -> None:
     oa = doi.ApiRecord(doi="10.1000/a", api="openalex", licence="cc-by")
     ep = doi.ApiRecord(doi="10.1000/a", api="europepmc", abstract="text")  # text with no licence
     (a,) = doi.merge([cr, oa, ep]).values()
-    assert (a.abstract, a.abstract_api, a.licence) == ("text", "europepmc", "cc-by")
+    # OpenAlex's licence is not borrowed for Europe PMC's text: the text's licence is unknown, so link only.
+    assert (a.abstract, a.abstract_api, a.licence, a.tier) == ("text", "europepmc", None, "link_only")
+    # The first API that gives text with a licence wins over one that gives text alone.
+    cr_text = doi.ApiRecord(doi="10.1000/a", api="crossref", title="568. T", abstract="cr text")
+    ep_lic = doi.ApiRecord(doi="10.1000/a", api="europepmc", abstract="ep text", licence="cc by")
+    (c,) = doi.merge([cr_text, ep_lic]).values()
+    assert (c.abstract, c.abstract_api, c.licence, c.tier) == ("ep text", "europepmc", "cc by", "public")
     assert a.abstract_number == "568"
     (b,) = doi.merge([cr, oa]).values()
     assert (b.abstract, b.abstract_api, b.licence, b.tier) == (None, None, "cc-by", "link_only")
@@ -685,10 +696,24 @@ def test_harvest_reads_every_page_and_writes_one_row_per_doi(registry: Any, tmp_
     assert r1["metadata_terms"].startswith("Crossref metadata") and "CC0" in r1["metadata_terms"]
     assert r1["condition_tags"] == "candida_auris; mrsa" and r1["design_tags"] == "cohort"
     assert r1["retrieved_at"] == "2026-11-24T12:00:00+00:00"
-    # Each row points at the Crossref page that listed it, and those bytes are in the lake.
+    # Each row points at the Crossref page that listed it, and those bytes are in the source's private area only.
     first = get.urls[0]
     assert r1["source_url"] == first and "cursor=*" in first
-    assert (tmp_path / "raw" / r1["raw_sha256"]).read_bytes() == two_pages()[0]
+    raw_dir = private.area(tmp_path, "idweek_abstracts") / "raw"
+    assert (raw_dir / r1["raw_sha256"]).read_bytes() == two_pages()[0]
+    assert not (tmp_path / "raw").exists()  # nothing in the shared lake/raw/
+    assert raw_dir.stat().st_mode & 0o777 == 0o700
+    assert (raw_dir / r1["raw_sha256"]).stat().st_mode & 0o777 == 0o600
+    # The enriching answers are recorded too, each pointing at its own bytes.
+    oa_url = next(u for u in get.urls if urlsplit(u).hostname == doi.OPENALEX_HOST)
+    ep_url = next(u for u in get.urls if urlsplit(u).hostname == doi.EUROPEPMC_HOST)
+    assert r1["openalex_source_url"] == oa_url and r1["europepmc_source_url"] == ep_url
+    assert r1["openalex_retrieved_at"] == r1["europepmc_retrieved_at"] == "2026-11-24T12:00:00+00:00"
+    for col in ("openalex_raw_sha256", "europepmc_raw_sha256"):
+        assert hashlib.sha256((raw_dir / r1[col]).read_bytes()).hexdigest() == r1[col]
+    r4 = rows["10.1093/ofid/ofaf695.004"]
+    assert r4["openalex_source_url"] == oa_url and r4["europepmc_source_url"] is None  # Europe PMC gave none
+    assert r4["europepmc_raw_sha256"] is None and r4["europepmc_retrieved_at"] is None
     assert rows["10.1093/ofid/ofaf695.004"]["source_url"] == get.urls[1]
     # A DOI with no Crossref licence or text takes OpenAlex's.
     r3 = rows["10.1093/ofid/ofaf695.003"]
@@ -719,7 +744,8 @@ def test_harvest_sample_stops_at_max_records(registry: Any, tmp_path: Path) -> N
 def test_harvest_notes_an_api_it_could_not_read(registry: Any, tmp_path: Path) -> None:
     s = doi_harvest.harvest(registry, tmp_path, "idweek", get=FakeApis(two_pages(), epmc_fails=True))
     assert s.rows == 3 and s.skipped == [
-        "Europe PMC could not be read (The publisher answered with status 503.); its fields are missing this run"
+        "Europe PMC could not be read (The publisher answered with status 503.); stored rows keep what it gave "
+        "them before"
     ]
     assert "note: Europe PMC could not be read" in "\n".join(s.lines())
 
@@ -760,8 +786,8 @@ def test_harvest_counts_licences_and_survives_a_failing_publisher(registry: Any,
 
     s2 = doi_harvest.harvest(registry, tmp_path / "b", "idweek", get=Broken([page]))
     assert s2.skipped == [
-        "OpenAlex could not be read (the publisher answered with status 500 instead of the data); its fields "
-        "are missing this run"
+        "OpenAlex could not be read (the publisher answered with status 500 instead of the data); stored rows "
+        "keep what it gave them before"
     ]
 
 
@@ -793,7 +819,8 @@ def test_harvest_default_getter_reads_robots_logs_and_paces(
     s = doi_harvest.harvest(registry, tmp_path, "idweek")
     urls = [u for u, _ in seen]
     assert urls[0] == "https://api.crossref.org/robots.txt"
-    assert all(hosts == registry.hosts for _, hosts in seen)
+    # Only this source's own hosts, its enrich hosts included; the registry-wide list doesn't carry them.
+    assert all(hosts == registry.get("idweek_abstracts").entry.source.hosts for _, hosts in seen)
     assert "https://api.openalex.org/robots.txt" in urls
     assert not any(u.startswith("https://api.openalex.org/works") for u in urls)  # robots.txt said no
     assert s.skipped and s.skipped[0].startswith("OpenAlex could not be read (The publisher's robots.txt")
@@ -862,7 +889,10 @@ def test_conferences_and_supplements_come_from_the_catalog(registry: Any) -> Non
         assert private.primary_key(ds) == ("doi",)
         assert set(ds.entry.source.enrich_hosts) == {doi.OPENALEX_HOST, doi.EUROPEPMC_HOST}
         assert ds.entry.source.host == doi.CROSSREF_HOST
-    assert {doi.CROSSREF_HOST, doi.OPENALEX_HOST, doi.EUROPEPMC_HOST} <= registry.hosts
+        assert ds.entry.source.hosts == {doi.CROSSREF_HOST, doi.OPENALEX_HOST, doi.EUROPEPMC_HOST}
+    # Enrich hosts are reachable from a DOI harvest's own fetcher only, never from every dataset's.
+    assert doi.CROSSREF_HOST in registry.hosts
+    assert not {doi.OPENALEX_HOST, doi.EUROPEPMC_HOST} & registry.hosts
 
 
 def test_the_catalog_checks_doi_sources(tmp_path: Path) -> None:

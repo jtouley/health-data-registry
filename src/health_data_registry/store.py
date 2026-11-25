@@ -209,6 +209,7 @@ def build_snapshot(
     records_files: Sequence[Path],
     *,
     partial: bool = False,
+    notes: Sequence[str] = (),
 ) -> Manifest:
     """Normalise newline-delimited JSON record files (publisher field names, raw values) into a snapshot."""
     if not fetches:
@@ -252,6 +253,7 @@ def build_snapshot(
             licence=ds.entry.licence.id,
             redistribution=ds.entry.licence.redistribution,
             partial=partial,
+            notes=list(notes),
         )
         (tmp / "manifest.json").write_text(json.dumps(asdict(manifest), indent=2) + "\n", encoding="utf-8")
         out.parent.mkdir(parents=True, exist_ok=True)
