@@ -72,4 +72,7 @@ customProperties:
   - {property: unreliableRule, value: {kind: none, description: "None: a review queue, not published numbers."}}
   - property: openQuestions
     value:
-      - "The thresholds (at most 1 this year after at least 10 the year before) are a starting point for review, not a codebook fact; a maintainer confirms or changes them."
+      - id: q1
+        status: open
+        changesNumbers: true
+        question: "The thresholds (at most 1 this year after at least 10 the year before) are a starting point for review, not a codebook fact; a maintainer confirms or changes them."

@@ -232,13 +232,43 @@ customProperties:
   - {property: unreliableRule, value: {kind: publisher_suppressed, threshold: 20, description: "Publisher: resistant counts and percent resistant are shown only when at least 20 isolates were tested; smaller cells are empty (column descriptions of isolates_resistant and percent_resistant)."}}
   - property: openQuestions
     value:
-      - "Licence: no licence field in the Socrata metadata; public-domain-us-federal assumed from its being a CDC work."
-      - "Dataset id stability: the title carries the year range (2011-2025) and the Socrata asset was created in November 2026. Does CDC publish a new 4x4 id each year? If so the adapter needs a lookup step."
-      - "Rows with suppressed empty (NULL) have no counts at all. Does NULL mean suppressed for fewer than 20 tested, not reported, or no isolates? The methodology PDF (arpsp.cdc.gov) was not fetched; maintainer to read it and decide missingCodes."
-      - "Are geographies assigned by facility location or patient residence? Not stated in the dataset metadata."
-      - "For 2021 and 2022 there are extra rows with source = 'state' and geography = 'United States' next to the national rows, with much smaller counts (e.g. CRE 2021: 1053 tested vs 25693 national). What are they? Metric filters pin source = 'national' for the US until answered."
-      - "Some confidence bounds carry float noise (e.g. 2.90000009536743); round to one decimal on ingest?"
-      - "Codebook URL is published as http://; https form assumed to resolve."
-      - "GBD 2023 has no bloodstream or urinary tract infection cause; HAI phenotypes are paired with 'Other infectious diseases' plus the pathogen, which is coarse. Enterococcus and coagulase-negative staphylococci have no GBD 2023 pathogen. Maintainer to confirm the crosswalk."
-      - "Case definitions: which NHSN Patient Safety Component manual year (CLABSI, CAUTI, SSI definitions) applies to each data year, and which phenotype definition version? Not in the data; add as caseDefinitions after a maintainer reads the arpsp.cdc.gov PDFs."
-      - "Are any years provisional (e.g. the latest year)? No flag is published."
+      - id: q1
+        status: open
+        changesNumbers: false
+        question: "Licence: no licence field in the Socrata metadata; public-domain-us-federal assumed from its being a CDC work."
+      - id: q2
+        status: open
+        changesNumbers: false
+        question: "Dataset id stability: the title carries the year range (2011-2025) and the Socrata asset was created in November 2026. Does CDC publish a new 4x4 id each year? If so the adapter needs a lookup step."
+      - id: q3
+        status: open
+        changesNumbers: true
+        question: "Rows with suppressed empty (NULL) have no counts at all. Does NULL mean suppressed for fewer than 20 tested, not reported, or no isolates? The methodology PDF (arpsp.cdc.gov) was not fetched; maintainer to read it and decide missingCodes."
+      - id: q4
+        status: open
+        changesNumbers: true
+        question: "Are geographies assigned by facility location or patient residence? Not stated in the dataset metadata."
+      - id: q5
+        status: open
+        changesNumbers: true
+        question: "For 2021 and 2022 there are extra rows with source = 'state' and geography = 'United States' next to the national rows, with much smaller counts (e.g. CRE 2021: 1053 tested vs 25693 national). What are they? Metric filters pin source = 'national' for the US until answered."
+      - id: q6
+        status: open
+        changesNumbers: true
+        question: "Some confidence bounds carry float noise (e.g. 2.90000009536743); round to one decimal on ingest?"
+      - id: q7
+        status: open
+        changesNumbers: true
+        question: "Codebook URL is published as http://; https form assumed to resolve."
+      - id: q8
+        status: open
+        changesNumbers: true
+        question: "GBD 2023 has no bloodstream or urinary tract infection cause; HAI phenotypes are paired with 'Other infectious diseases' plus the pathogen, which is coarse. Enterococcus and coagulase-negative staphylococci have no GBD 2023 pathogen. Maintainer to confirm the crosswalk."
+      - id: q9
+        status: open
+        changesNumbers: true
+        question: "Case definitions: which NHSN Patient Safety Component manual year (CLABSI, CAUTI, SSI definitions) applies to each data year, and which phenotype definition version? Not in the data; add as caseDefinitions after a maintainer reads the arpsp.cdc.gov PDFs."
+      - id: q10
+        status: open
+        changesNumbers: true
+        question: "Are any years provisional (e.g. the latest year)? No flag is published."

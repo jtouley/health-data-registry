@@ -216,7 +216,7 @@ def _caveats(ds: Dataset) -> list[str]:
         out.append(
             "- This dataset's contract is a draft: no maintainer has reviewed it against the codebook yet."
         )
-    out += [f"- Not yet confirmed: {q}" for q in ds.contract.open_questions]
+    out += [f"- Not yet confirmed: {q.question}" for q in ds.contract.open_questions if q.is_open]
     return out
 
 

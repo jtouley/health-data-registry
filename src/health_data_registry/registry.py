@@ -17,6 +17,14 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from health_data_registry.conformed import (
+    Conformed,
+    ConformedInvalid,
+    OpenQuestion,
+    parse_conformed,
+    parse_open_questions,
+)
+
 _ID = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
 _SQL_IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
 
@@ -167,13 +175,17 @@ def is_government_host(host: str) -> bool:
 
 
 class Source(_Strict):
-    portal: Literal["socrata", "who_gho", "https_csv", "tableau"]
+    portal: Literal["socrata", "who_gho", "https_csv", "tableau", "html_table"]
     host: str
     dataset: str
     landing_url: str
     api_url: str
     encoding: str = "utf-8"  # https_csv only: the file's text encoding, from the publisher's documentation
     reshape: Reshape | None = None  # https_csv only
+    # https_csv only: the one character between values, from the publisher's file layout (Census code files: |)
+    delimiter: str = ","
+    # html_table only: the id of the one HTML table read (e.g. UNSD's M49 page: downloadTableEN)
+    table_id: str | None = None
     tableau: Tableau | None = None  # tableau only: the views and worksheets read
     # A government host (only a host on the reviewed list GOVERNMENT_HOST_SUFFIXES / GOVERNMENT_DOMAINS): by the
     # maintainer's access policy a robots.txt disallow there does not stop the crawler (the pacing, the honest
@@ -198,8 +210,16 @@ class Source(_Strict):
 
     @model_validator(mode="after")
     def _csv_only(self) -> Source:
-        if self.portal != "https_csv" and (self.reshape is not None or self.encoding != "utf-8"):
-            raise ValueError("encoding and reshape apply only to the https_csv portal")
+        if self.portal != "https_csv" and (
+            self.reshape is not None or self.encoding != "utf-8" or self.delimiter != ","
+        ):
+            raise ValueError("encoding, delimiter and reshape apply only to the https_csv portal")
+        if len(self.delimiter) != 1 or self.delimiter in '\r\n"':
+            raise ValueError("delimiter is one character, not a quote or a line break")
+        if (self.portal == "html_table") != (self.table_id is not None):
+            raise ValueError(
+                "an html_table source names the id of the table it reads (table_id), and only one does"
+            )
         if (self.portal == "tableau") != (self.tableau is not None):
             raise ValueError(
                 "a tableau source lists its views (tableau.views), and only a tableau source does"
@@ -508,7 +528,7 @@ class Contract:
     columns: tuple[Column, ...]
     total_rows: str | None
     table_shape: str
-    open_questions: tuple[str, ...]
+    open_questions: tuple[OpenQuestion, ...]
     raw: Mapping[str, Any] = field(repr=False, compare=False)
     # The rule, if any, by which the publisher suppresses or marks unreliable values (from its own codebook).
     unreliable: UnreliableSpec = field(default_factory=lambda: UnreliableSpec("none", "Not stated."))
@@ -519,6 +539,13 @@ class Contract:
     # The contract's quality rules (quality.Rule), run on every snapshot and live read and as named dbt tests.
     quality: tuple[Any, ...] = ()
     raw_load: RawLoad = field(default_factory=RawLoad)
+    # How each row finds the shared condition, place and time keys, and what one count is (conformed.py).
+    conformed: Conformed = field(default_factory=Conformed)
+
+    @property
+    def blocking_questions(self) -> tuple[OpenQuestion, ...]:
+        """Open questions whose answer could change a number: while any is open the contract is not reviewed."""
+        return tuple(q for q in self.open_questions if q.blocks_review)
 
     @property
     def unreliable_rule(self) -> str:
@@ -651,7 +678,11 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
     if len(set(names)) != len(names):
         raise RegistryError(f"{expected_id}: duplicate column names in contract")
     top_custom = _custom(doc.get("customProperties"))
-    oq = top_custom.get("openQuestions") or []
+    try:
+        questions = parse_open_questions(top_custom.get("openQuestions"), expected_id)
+        conformed = parse_conformed(obj_custom.get("conformedDimensions"), expected_id, frozenset(names))
+    except ConformedInvalid as e:
+        raise RegistryError(str(e)) from e
     total_s = str(total).strip()
     return Contract(
         id=expected_id,
@@ -660,13 +691,14 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
         columns=tuple(cols),
         total_rows=None if total_s.lower() == "none" else total_s,
         table_shape=str(obj_custom.get("tableShape", "")),
-        open_questions=tuple(str(q) for q in oq),
+        open_questions=questions,
         raw=doc,
         unreliable=_unreliable(top_custom.get("unreliableRule"), expected_id),
         geography_basis=_text(top_custom.get("geographyBasis")),
         rate_denominator=_text(top_custom.get("rateDenominator")),
         quality=_quality(doc, expected_id),
         raw_load=_raw_load(top_custom.get("rawLoad"), expected_id, frozenset(names)),
+        conformed=conformed,
     )
 
 
@@ -917,6 +949,11 @@ class Dataset:
         return self.entry.id
 
     @property
+    def reviewed(self) -> bool:
+        """Reviewed only when a maintainer marked it so and no open question could change a number."""
+        return self.entry.status == "reviewed" and not self.contract.blocking_questions
+
+    @property
     def condition_labels(self) -> list[str]:
         """The publisher's own condition labels, as catalogued."""
         return list(self.entry.conditions.labels)
@@ -1020,6 +1057,11 @@ def load_dataset(root: Path, entry_path: Path) -> Dataset:
     except ValidationError as e:
         raise RegistryError(f"{semantic_path.name}: {e}") from e
     _cross_check(entry, contract, semantic)
+    if entry.status == "reviewed" and contract.blocking_questions:
+        raise RegistryError(
+            f"{entry.id}: status reviewed, but open questions could still change a number "
+            f"({', '.join(q.id for q in contract.blocking_questions)}); answer them first (hard rules 1 and 3)"
+        )
     return Dataset(entry=entry, contract=contract, semantic=semantic)
 
 

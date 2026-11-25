@@ -208,7 +208,9 @@ def test_describe_dataset_text(registry: Registry, lake: Path) -> None:
         "Total rows: reporting_area = 'US RESIDENTS'",
         "Counts and rates: cases: count (added up); rate: rate (never added up)",
         "- Counts for the latest year are provisional.",
-        "- Is 'N' a true zero or not notifiable?",
+        "- [q1, could change a number] Is 'N' a true zero or not notifiable?",
+        "One count is: confirmed and probable cases (toy)",
+        "Dates are by: MMWR year of report (toy)",
         "How to cite: CDC. Toy table. https://data.cdc.gov/d/toy0-toy0",
         "Licence: public-domain-us-federal (https://www.cdc.gov/other/agencymaterials.html)",
         "Review status: draft",
@@ -247,13 +249,20 @@ def test_provenance_and_caveats_exact(registry: Registry, lake: Path) -> None:
     assert len(_json(tools.get_provenance(registry, eng, source_id="toy_cases", fmt="json"))["notes"]) == 5
     cav = _json(tools.list_caveats(registry, source_id="toy_cases", fmt="json"))
     assert cav["columns"] == ["source_id", "kind", "caveat"]
-    assert cav["rows"][:4] == [
+    assert cav["rows"][:7] == [
         ["toy_cases", "caveat", "Counts for the latest year are provisional."],
-        ["toy_cases", "not yet confirmed", "Is 'N' a true zero or not notifiable?"],
+        [
+            "toy_cases",
+            "not yet confirmed",
+            "[q1, could change a number] Is 'N' a true zero or not notifiable?",
+        ],
         ["toy_cases", "unreliable values", "None stated (toy)."],
+        ["toy_cases", "counted unit", "confirmed and probable cases (toy)"],
+        ["toy_cases", "date basis", "MMWR year of report (toy)"],
         ["toy_cases", "review", "Contract is a draft; no maintainer has reviewed it yet."],
+        ["toy_cases", "review", "Not reviewed while 1 open question could change a number: q1."],
     ]
-    assert [r[:2] for r in cav["rows"][4:]] == [["all", "geography"]] * len(tools.GEOGRAPHY_TRAPS)
+    assert [r[:2] for r in cav["rows"][7:]] == [["all", "geography"]] * len(tools.GEOGRAPHY_TRAPS)
     other = _json(tools.list_caveats(registry, source_id="nope", fmt="json"))
     assert all(r[0] == "all" for r in other["rows"])
     assert all(

@@ -55,7 +55,7 @@ version: 0.1.0
 status: draft
 customProperties:
   - {property: unreliableRule, value: {kind: none, description: "None stated (toy)."}}
-  - {property: openQuestions, value: ["Is 'N' a true zero or not notifiable?"]}
+  - {property: openQuestions, value: [{id: q1, status: open, changesNumbers: true, question: "Is 'N' a true zero or not notifiable?"}]}
 schema:
   - name: toy_cases
     physicalName: toy_cases
@@ -63,6 +63,12 @@ schema:
     customProperties:
       - {property: totalRows, value: "reporting_area = 'US RESIDENTS'"}
       - {property: tableShape, value: surveillance_series}
+      - property: conformedDimensions
+        value:
+          countedUnit: confirmed and probable cases (toy)
+          condition: {column: condition}
+          place: {match: state_name, column: reporting_area, places: {US RESIDENTS: {key: USA, level: nation}}}
+          time: {year: year, dateBasis: MMWR year of report (toy)}
     properties:
       - name: reporting_area
         physicalType: VARCHAR

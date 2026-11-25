@@ -163,12 +163,39 @@ customProperties:
         not_read: "Gonorrhea (the view opened twice but sent no data), HepB (502 twice), HIV (HIV Line has another layout: Detroit and Michigan diagnosis and death rates as separate columns, 22 rows), COVID and ILI (daily curves, not yearly). The demographic worksheets (age, race, ethnicity, sex) are aggregate; the age charts show '<6' for small counts (AGG(Count Suppressed))."
   - property: openQuestions
     value:
-      - "Rate denominator: not in the data. The figures fit per 100,000 population (e.g. TB, Detroit 2024: 44 cases, rate 6.81) and, for congenital syphilis, per 100,000 live births (Detroit 2019: 6 cases, rate 64.2), but that is inferred, not stated. Maintainer to confirm from DHD before any rate is compared with another source."
-      - "Population source and year for the rates (Census estimates? which vintage?) are not stated."
-      - "Case definitions and status (confirmed only, or confirmed and probable; hepatitis C acute, chronic or both; late syphilis stage names) are not in the data; the Notes/Resources tab was fetched but its text has not been reviewed."
-      - "Is a case counted by the person's residence in Detroit, or by the reporting provider? (geographyBasis is unresolved until then.)"
-      - "Years: the STI and hepatitis charts end in 2024 and TB in 2025 on 2026-11-24; the dashboard's STI timestamp reads Feb 10, 2026. Is 2024 final?"
-      - "Licence: no terms of use are stated. Maintainer to confirm that live, unstored reads with attribution are acceptable."
-      - "Place labels: the legend labels 'Detroit Case Rate' and 'Michigan Case Rate' are not place names, so they do not resolve to geo.py places yet; a reviewed label mapping (Detroit Case Rate -> Detroit, Michigan Case Rate -> Michigan) would let get_series key them. Michigan's figures could then align with GBD Michigan; Detroit has no GBD location."
-      - "GBD causes: hepatitis C is not mapped (GBD splits acute hepatitis C from cirrhosis and liver cancer due to hepatitis C; which one the dashboard's count matches is not stated)."
-      - "Gonorrhea, hepatitis B and HIV yearly charts are on the dashboard but were not read on 2026-11-24 (see evidence); add them after a successful verification read. HIV figures may include Ryan White programme data; if so they must be labelled as programme data."
+      - id: q1
+        status: open
+        changesNumbers: true
+        question: "Rate denominator: not in the data. The figures fit per 100,000 population (e.g. TB, Detroit 2024: 44 cases, rate 6.81) and, for congenital syphilis, per 100,000 live births (Detroit 2019: 6 cases, rate 64.2), but that is inferred, not stated. Maintainer to confirm from DHD before any rate is compared with another source."
+      - id: q2
+        status: open
+        changesNumbers: true
+        question: "Population source and year for the rates (Census estimates? which vintage?) are not stated."
+      - id: q3
+        status: open
+        changesNumbers: true
+        question: "Case definitions and status (confirmed only, or confirmed and probable; hepatitis C acute, chronic or both; late syphilis stage names) are not in the data; the Notes/Resources tab was fetched but its text has not been reviewed."
+      - id: q4
+        status: open
+        changesNumbers: true
+        question: "Is a case counted by the person's residence in Detroit, or by the reporting provider? (geographyBasis is unresolved until then.)"
+      - id: q5
+        status: open
+        changesNumbers: true
+        question: "Years: the STI and hepatitis charts end in 2024 and TB in 2025 on 2026-11-24; the dashboard's STI timestamp reads Feb 10, 2026. Is 2024 final?"
+      - id: q6
+        status: open
+        changesNumbers: false
+        question: "Licence: no terms of use are stated. Maintainer to confirm that live, unstored reads with attribution are acceptable."
+      - id: q7
+        status: open
+        changesNumbers: true
+        question: "Place labels: the legend labels 'Detroit Case Rate' and 'Michigan Case Rate' are not place names, so they do not resolve to geo.py places yet; a reviewed label mapping (Detroit Case Rate -> Detroit, Michigan Case Rate -> Michigan) would let get_series key them. Michigan's figures could then align with GBD Michigan; Detroit has no GBD location."
+      - id: q8
+        status: open
+        changesNumbers: true
+        question: "GBD causes: hepatitis C is not mapped (GBD splits acute hepatitis C from cirrhosis and liver cancer due to hepatitis C; which one the dashboard's count matches is not stated)."
+      - id: q9
+        status: open
+        changesNumbers: true
+        question: "Gonorrhea, hepatitis B and HIV yearly charts are on the dashboard but were not read on 2026-11-24 (see evidence); add them after a successful verification read. HIV figures may include Ryan White programme data; if so they must be labelled as programme data."

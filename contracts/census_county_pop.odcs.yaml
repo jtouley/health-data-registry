@@ -147,7 +147,19 @@ customProperties:
   - {property: unreliableRule, value: {kind: none, description: "None stated: the file layout for CO-EST2025-ALLDATA gives no suppression or reliability rule; every value is a point estimate."}}
   - property: openQuestions
     value:
-      - "Licence: the file and its layout state no licence; public-domain-us-federal is assumed from its being a Census Bureau work (17 U.S.C. 105). Maintainer to confirm."
-      - "The ESTIMATESBASE2020 (April 1, 2020) column is not read; should a rate for 2020 use the July 1 estimate (as now) or the April 1 base?"
-      - "Counties: geo.py resolves states and the nation only, so no county series is mapped yet; county rows are readable through query_sql. Add a county series once county names can be matched by FIPS."
-      - "Should the pivot drop the July 1, 2020 estimate, since Vintage 2025 also publishes the April 1, 2020 base? Kept for now: it is the publisher's own July 1 figure."
+      - id: q1
+        status: open
+        changesNumbers: false
+        question: "Licence: the file and its layout state no licence; public-domain-us-federal is assumed from its being a Census Bureau work (17 U.S.C. 105). Maintainer to confirm."
+      - id: q2
+        status: open
+        changesNumbers: true
+        question: "The ESTIMATESBASE2020 (April 1, 2020) column is not read; should a rate for 2020 use the July 1 estimate (as now) or the April 1 base?"
+      - id: q3
+        status: open
+        changesNumbers: true
+        question: "Counties: geo.py resolves states and the nation only, so no county series is mapped yet; county rows are readable through query_sql. Add a county series once county names can be matched by FIPS."
+      - id: q4
+        status: open
+        changesNumbers: true
+        question: "Should the pivot drop the July 1, 2020 estimate, since Vintage 2025 also publishes the April 1, 2020 base? Kept for now: it is the publisher's own July 1 figure."

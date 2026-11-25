@@ -161,10 +161,31 @@ customProperties:
   - {property: unreliableRule, value: {kind: none, description: "None: WHO publishes a modelled estimate with low and high bounds for every value; none is marked unreliable."}}
   - property: openQuestions
     value:
-      - "Licence: read from the terms URL on 2026-11-24. It is WHO's own Terms and Conditions for datasets, not CC BY-NC-SA 3.0 IGO as the brief said: royalty-free use, copying and distribution for public health purposes; no use in promoting a commercial enterprise; alterations beyond minimal style changes need WHO's written authorization; WHO may terminate the licence. Maintainer to confirm that reading live and normalising column types in memory counts as a minimal change, and that the attribution format (WHO, dataset title, year, date of access, providing countries) is met by the citation."
-      - "Is the Low-High range a 95% uncertainty interval? Not stated in the GHO API response."
-      - "Does incidence include people with HIV and relapses for every year back to 2000? The definition is taken from the indicator name only; WHO's metadata registry entry was not fetched and its id (1076) is unverified."
-      - "WHO has announced a successor to the GHO OData API; when ghoapi.azureedge.net is retired the adapter and api_url must move. Current status not checked."
-      - "Is the Date column the load date or the WHO release date? Needed for the snapshot version string."
-      - "The GHO record has empty Dim1-Dim3 and DataSourceDim columns for this indicator; they are dropped. Confirm none are ever used (e.g. for sex or HIV status)."
-      - "GBD location crosswalk: spatial_dim holds ISO3 codes for countries; WHO region and income-group codes have no GBD equivalent and must not be mapped."
+      - id: q1
+        status: open
+        changesNumbers: false
+        question: "Licence: read from the terms URL on 2026-11-24. It is WHO's own Terms and Conditions for datasets, not CC BY-NC-SA 3.0 IGO as the brief said: royalty-free use, copying and distribution for public health purposes; no use in promoting a commercial enterprise; alterations beyond minimal style changes need WHO's written authorization; WHO may terminate the licence. Maintainer to confirm that reading live and normalising column types in memory counts as a minimal change, and that the attribution format (WHO, dataset title, year, date of access, providing countries) is met by the citation."
+      - id: q2
+        status: open
+        changesNumbers: true
+        question: "Is the Low-High range a 95% uncertainty interval? Not stated in the GHO API response."
+      - id: q3
+        status: open
+        changesNumbers: true
+        question: "Does incidence include people with HIV and relapses for every year back to 2000? The definition is taken from the indicator name only; WHO's metadata registry entry was not fetched and its id (1076) is unverified."
+      - id: q4
+        status: open
+        changesNumbers: true
+        question: "WHO has announced a successor to the GHO OData API; when ghoapi.azureedge.net is retired the adapter and api_url must move. Current status not checked."
+      - id: q5
+        status: open
+        changesNumbers: true
+        question: "Is the Date column the load date or the WHO release date? Needed for the snapshot version string."
+      - id: q6
+        status: open
+        changesNumbers: true
+        question: "The GHO record has empty Dim1-Dim3 and DataSourceDim columns for this indicator; they are dropped. Confirm none are ever used (e.g. for sex or HIV status)."
+      - id: q7
+        status: open
+        changesNumbers: true
+        question: "GBD location crosswalk: spatial_dim holds ISO3 codes for countries; WHO region and income-group codes have no GBD equivalent and must not be mapped."

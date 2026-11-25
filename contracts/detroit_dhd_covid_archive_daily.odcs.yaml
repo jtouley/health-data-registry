@@ -147,10 +147,31 @@ customProperties:
         not_read: "Epi Curve Deaths by Combined (2,158 days, 2020-03-18 to 2026-02-12; 2,121 of them shown as '<16') has its own date field and is not catalogued yet. The Demographic, Hospital Capacity, ZIP Code and Citywide Stats tabs were not opened."
   - property: openQuestions
     value:
-      - "Case status: the bars are labelled 'Confirmed' but their field is 'Confirmed & Probable Case Count', and the headline shows probable cases separately (18,031). Do the daily bars count confirmed cases only? Until a maintainer confirms it from DHD, no case status is stated for the series."
-      - "Suppression threshold: the tooltip reads '<16' on every day whose number is 16 or less, so the marker covers 16 itself. Is the rule 'fewer than 16' with the marker computed on another count, or 'at most 16'? The read leaves every marked day empty either way."
-      - "Disease date: is it the onset date, the specimen collection date, or the earliest of several dates ('Combined Disease Date')? The Dashboard Notes tab was not opened."
-      - "Is a case counted by the person's residence in Detroit? (geographyBasis is unresolved until then.)"
-      - "Archive: the timestamp reads 'Wednesday, May 27' with data to 2026-05-23. Is the dashboard frozen, and is there a final DHD statement of the archive date?"
-      - "Licence: no terms of use are stated. Maintainer to confirm that live, unstored reads with attribution are acceptable."
-      - "Deaths: the deaths curve is almost entirely shown as '<16' by day; a weekly or monthly table from DHD would be more useful than reading it."
+      - id: q1
+        status: open
+        changesNumbers: true
+        question: "Case status: the bars are labelled 'Confirmed' but their field is 'Confirmed & Probable Case Count', and the headline shows probable cases separately (18,031). Do the daily bars count confirmed cases only? Until a maintainer confirms it from DHD, no case status is stated for the series."
+      - id: q2
+        status: open
+        changesNumbers: true
+        question: "Suppression threshold: the tooltip reads '<16' on every day whose number is 16 or less, so the marker covers 16 itself. Is the rule 'fewer than 16' with the marker computed on another count, or 'at most 16'? The read leaves every marked day empty either way."
+      - id: q3
+        status: open
+        changesNumbers: true
+        question: "Disease date: is it the onset date, the specimen collection date, or the earliest of several dates ('Combined Disease Date')? The Dashboard Notes tab was not opened."
+      - id: q4
+        status: open
+        changesNumbers: true
+        question: "Is a case counted by the person's residence in Detroit? (geographyBasis is unresolved until then.)"
+      - id: q5
+        status: open
+        changesNumbers: true
+        question: "Archive: the timestamp reads 'Wednesday, May 27' with data to 2026-05-23. Is the dashboard frozen, and is there a final DHD statement of the archive date?"
+      - id: q6
+        status: open
+        changesNumbers: false
+        question: "Licence: no terms of use are stated. Maintainer to confirm that live, unstored reads with attribution are acceptable."
+      - id: q7
+        status: open
+        changesNumbers: true
+        question: "Deaths: the deaths curve is almost entirely shown as '<16' by day; a weekly or monthly table from DHD would be more useful than reading it."

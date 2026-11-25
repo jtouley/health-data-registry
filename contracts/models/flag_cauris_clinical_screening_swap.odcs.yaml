@@ -60,4 +60,8 @@ customProperties:
   - {property: unreliableRule, value: {kind: none, description: "None: a review queue, not published numbers."}}
   - property: openQuestions
     value:
-      - "Issue #16: which state did the eval researcher see, and does CDC's C. auris tracking page confirm the swap? Until answered this queue only lists candidates."
+      - id: q1
+        status: open
+        changesNumbers: true
+        issue: "#16"
+        question: "Issue #16: which state did the eval researcher see, and does CDC's C. auris tracking page confirm the swap? Until answered this queue only lists candidates."

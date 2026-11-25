@@ -141,9 +141,27 @@ customProperties:
         not_read: "Diagnoses by Age (21 rows) and Diagnoses by RaceEth (12 rows) carry SUM(Count) as fractions (each diagnosis's visits split by age band or race and ethnicity), aggregate but not catalogued yet. The Immunization tab was not opened."
   - property: openQuestions
     value:
-      - "Unit: the chart's axis says 'Percent of All ED Visits' but the data are fractions (0.0042). Read as a fraction of all ED visits; a maintainer to confirm from DHD that 0.0042 means 0.42% before the value is shown as a percent."
-      - "Denominator and network: which emergency departments are counted (all Detroit hospitals, a syndromic surveillance feed such as MSSS?), and is the denominator all ED visits at those hospitals or only visits by Detroit residents? Not stated."
-      - "Diagnosis definition: how a visit is classed as COVID-19, influenza or RSV (discharge diagnosis codes, chief complaint, laboratory confirmation) is not in the data. Until confirmed, no case definition or case status is stated for the series."
-      - "History: the dashboard shows the latest 7 weeks only. Are earlier weeks published anywhere by DHD? A weekly live read keeps no history (nothing is stored)."
-      - "Licence: no terms of use are stated. Maintainer to confirm that live, unstored reads with attribution are acceptable."
-      - "GBD alignment: an ED-visit share is not an incidence; COVID-19, influenza and RSV map to GBD causes for keying only, and no comparison with GBD estimates is implied."
+      - id: q1
+        status: open
+        changesNumbers: true
+        question: "Unit: the chart's axis says 'Percent of All ED Visits' but the data are fractions (0.0042). Read as a fraction of all ED visits; a maintainer to confirm from DHD that 0.0042 means 0.42% before the value is shown as a percent."
+      - id: q2
+        status: open
+        changesNumbers: true
+        question: "Denominator and network: which emergency departments are counted (all Detroit hospitals, a syndromic surveillance feed such as MSSS?), and is the denominator all ED visits at those hospitals or only visits by Detroit residents? Not stated."
+      - id: q3
+        status: open
+        changesNumbers: true
+        question: "Diagnosis definition: how a visit is classed as COVID-19, influenza or RSV (discharge diagnosis codes, chief complaint, laboratory confirmation) is not in the data. Until confirmed, no case definition or case status is stated for the series."
+      - id: q4
+        status: open
+        changesNumbers: true
+        question: "History: the dashboard shows the latest 7 weeks only. Are earlier weeks published anywhere by DHD? A weekly live read keeps no history (nothing is stored)."
+      - id: q5
+        status: open
+        changesNumbers: false
+        question: "Licence: no terms of use are stated. Maintainer to confirm that live, unstored reads with attribution are acceptable."
+      - id: q6
+        status: open
+        changesNumbers: true
+        question: "GBD alignment: an ED-visit share is not an incidence; COVID-19, influenza and RSV map to GBD causes for keying only, and no comparison with GBD estimates is implied."

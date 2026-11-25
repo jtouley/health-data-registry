@@ -168,10 +168,31 @@ customProperties:
         read: "Exposure Map: worksheets MI and MI (2) (84 and 86 rows, exposure-site counts by county), MI Site Table and MI County Site Table (exposure sites with street address, date and time). The site tables are refused by the row-level guard (an address field) and are not catalogued."
   - property: openQuestions
     value:
-      - "Period: the worksheet has no date or year. Is the count the 2026 calendar year to date, or since the start of the current outbreak? Until a maintainer confirms it from MDHHS, no time series is defined and the semantic model has no series."
-      - "Case definition and status: does 'Total Cases Reported' count confirmed cases only, or confirmed and probable? Not stated on the dashboard."
-      - "Is the county the county of residence or the county of the local health department that reported the case? (geographyBasis is unresolved until then)."
-      - "Licence: no terms of use are stated on the dashboard; michigan.gov's general policies page was not read. Maintainer to confirm that live, unstored reads with attribution are acceptable and whether redistribution can ever be allowed."
-      - "The 'Cases by Age', 'Cases by Vx' and 'Cases by Travel' worksheets (statewide counts by age band, vaccination status and travel history) are aggregate and could be catalogued as further tables after review."
-      - "Detroit appears in MDHHS data as part of Wayne County here; the City of Detroit is its own local health jurisdiction. Confirm how MDHHS attributes Detroit's cases."
-      - "The dashboard's <view>.csv export was not tried; the bootstrapSession read is the only path used."
+      - id: q1
+        status: open
+        changesNumbers: true
+        question: "Period: the worksheet has no date or year. Is the count the 2026 calendar year to date, or since the start of the current outbreak? Until a maintainer confirms it from MDHHS, no time series is defined and the semantic model has no series."
+      - id: q2
+        status: open
+        changesNumbers: true
+        question: "Case definition and status: does 'Total Cases Reported' count confirmed cases only, or confirmed and probable? Not stated on the dashboard."
+      - id: q3
+        status: open
+        changesNumbers: true
+        question: "Is the county the county of residence or the county of the local health department that reported the case? (geographyBasis is unresolved until then)."
+      - id: q4
+        status: open
+        changesNumbers: false
+        question: "Licence: no terms of use are stated on the dashboard; michigan.gov's general policies page was not read. Maintainer to confirm that live, unstored reads with attribution are acceptable and whether redistribution can ever be allowed."
+      - id: q5
+        status: open
+        changesNumbers: true
+        question: "The 'Cases by Age', 'Cases by Vx' and 'Cases by Travel' worksheets (statewide counts by age band, vaccination status and travel history) are aggregate and could be catalogued as further tables after review."
+      - id: q6
+        status: open
+        changesNumbers: true
+        question: "Detroit appears in MDHHS data as part of Wayne County here; the City of Detroit is its own local health jurisdiction. Confirm how MDHHS attributes Detroit's cases."
+      - id: q7
+        status: open
+        changesNumbers: true
+        question: "The dashboard's <view>.csv export was not tried; the bootstrapSession read is the only path used."

@@ -159,12 +159,39 @@ customProperties:
   - {property: unreliableRule, value: {kind: none, description: "None stated in the dataset metadata: no rate is marked unreliable or suppressed for small numbers."}}
   - property: openQuestions
     value:
-      - "Which counties make up each state's catchment area, and how have they changed by season? The RESP-NET methods pages (www.cdc.gov) were not fetched."
-      - "What populations are the denominators (which census estimates, which vintage)?"
-      - "Age-adjusted rates: which standard population? Needed before any comparison with GBD (GBD world standard)."
-      - "Are recent weeks provisional and how far back are they revised? Not stated in the dataset metadata."
-      - "Is a COVID-NET/FluSurv-NET/RSV-NET row with state equal to the network name the same as state = Overall, or a different (e.g. clinical-sample) aggregate?"
-      - "Should the adapter split date into a DATE week_ending column plus season rows, or keep text?"
-      - "Some rows have an empty estimate (27 on 2026-11-24, Estimated cumulative rates for the current season). Missing or not yet estimated? No missing code is published."
-      - "Is a Combined rate an unduplicated count of patients with any of the three viruses? Not stated."
-      - "Case definition: what laboratory tests and admission window define a RESP-NET case, by network and season? Not in the data; add as caseDefinitions after a maintainer reads the RESP-NET methods page."
+      - id: q1
+        status: open
+        changesNumbers: true
+        question: "Which counties make up each state's catchment area, and how have they changed by season? The RESP-NET methods pages (www.cdc.gov) were not fetched."
+      - id: q2
+        status: open
+        changesNumbers: true
+        question: "What populations are the denominators (which census estimates, which vintage)?"
+      - id: q3
+        status: open
+        changesNumbers: true
+        question: "Age-adjusted rates: which standard population? Needed before any comparison with GBD (GBD world standard)."
+      - id: q4
+        status: open
+        changesNumbers: true
+        question: "Are recent weeks provisional and how far back are they revised? Not stated in the dataset metadata."
+      - id: q5
+        status: open
+        changesNumbers: true
+        question: "Is a COVID-NET/FluSurv-NET/RSV-NET row with state equal to the network name the same as state = Overall, or a different (e.g. clinical-sample) aggregate?"
+      - id: q6
+        status: open
+        changesNumbers: false
+        question: "Should the adapter split date into a DATE week_ending column plus season rows, or keep text?"
+      - id: q7
+        status: open
+        changesNumbers: true
+        question: "Some rows have an empty estimate (27 on 2026-11-24, Estimated cumulative rates for the current season). Missing or not yet estimated? No missing code is published."
+      - id: q8
+        status: open
+        changesNumbers: true
+        question: "Is a Combined rate an unduplicated count of patients with any of the three viruses? Not stated."
+      - id: q9
+        status: open
+        changesNumbers: true
+        question: "Case definition: what laboratory tests and admission window define a RESP-NET case, by network and season? Not in the data; add as caseDefinitions after a maintainer reads the RESP-NET methods page."

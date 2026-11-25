@@ -274,7 +274,11 @@ def test_rate_provenance_caveats_prior_work(lake: Path, registry: Registry) -> N
     assert len(prov["rows"][0][3]) == 64
     assert "CSTE 2005" in prov["notes"][0]
     cav = tools.list_caveats(registry, condition="syphilis", fmt="json")
-    assert ["toy_cases", "not yet confirmed", "Is 'N' a true zero or not notifiable?"] in cav["rows"]
+    q1 = "[q1, could change a number] Is 'N' a true zero or not notifiable?"
+    assert ["toy_cases", "not yet confirmed", q1] in cav["rows"]
+    assert ["toy_cases", "review", "Not reviewed while 1 open question could change a number: q1."] in cav[
+        "rows"
+    ]
     assert "isn't built yet" in tools.find_prior_work(registry, condition="C. auris")
     assert "Use search_datasets" in tools.get_provenance(registry, eng, source_id="nope")
 

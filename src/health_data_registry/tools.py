@@ -19,6 +19,7 @@ from typing import Any, Literal, NamedTuple
 import duckdb
 
 from health_data_registry import geo
+from health_data_registry.conformed import OpenQuestion
 from health_data_registry.query import Engine, QueryRefused, next_step_for
 from health_data_registry.registry import Dataset, Registry, Series, UnknownDataset, norm_label, spelling_key
 
@@ -582,7 +583,9 @@ def describe_dataset(
         "geography_basis": c.geography_basis,
         "rate_denominator": c.rate_denominator,
         "caveats": e.caveats,
-        "open_questions": list(c.open_questions),
+        "open_questions": [q.as_dict() for q in c.open_questions],
+        "counted_unit": c.conformed.counted_unit,
+        "date_basis": c.conformed.time.date_basis,
         "how_to_cite": e.citation,
         "licence": f"{e.licence.id} ({e.licence.terms_url})",
         "review": e.status,
@@ -638,8 +641,16 @@ def describe_dataset(
     lines += [f"Rate denominator: {c.rate_denominator}"] if c.rate_denominator else []
     if e.caveats:
         lines += ["", "What this data can't tell you:"] + [f"- {x}" for x in e.caveats]
-    if c.open_questions:
-        lines += ["", "Not yet confirmed with the publisher:"] + [f"- {x}" for x in c.open_questions]
+    lines += [f"One count is: {c.conformed.counted_unit}", f"Dates are by: {c.conformed.time.date_basis}"]
+    open_qs = [q for q in c.open_questions if q.is_open]
+    if open_qs:
+        lines += ["", "Not yet confirmed with the publisher:"] + [f"- {question_line(q)}" for q in open_qs]
+    answered = [q for q in c.open_questions if not q.is_open]
+    if answered:
+        lines += ["", "Confirmed by a maintainer's review:"] + [
+            f"- {q.question} Answer: {q.answer} (source: {q.source}; {q.reviewed_by}, {q.reviewed_at})"
+            for q in answered
+        ]
     lines += ["", f"How to cite: {e.citation}", f"Licence: {info['licence']}", f"Review status: {e.status}"]
     lines.append(
         "Provenance: "
@@ -1230,6 +1241,27 @@ GEOGRAPHY_TRAPS = [
 ]
 
 
+def question_line(q: OpenQuestion) -> str:
+    """One open question in plain words, saying whether its answer could change a number."""
+    tag = "could change a number" if q.changes_numbers else "does not change a number"
+    return f"[{q.id}, {tag}] {q.question}"
+
+
+def review_notes(ds: Dataset) -> list[str]:
+    """Why a contract does not count as reviewed yet; empty when it does (hard rule 3)."""
+    out = []
+    if ds.entry.status != "reviewed":
+        out.append("Contract is a draft; no maintainer has reviewed it yet.")
+    blocking = ds.contract.blocking_questions
+    if blocking:
+        many = len(blocking) > 1
+        out.append(
+            f"Not reviewed while {len(blocking)} open question{'s' if many else ''} could change a number: "
+            f"{', '.join(q.id for q in blocking)}."
+        )
+    return out
+
+
 def list_caveats(
     registry: Registry, *, source_id: str | None = None, condition: str | None = None, fmt: Fmt = "csv"
 ) -> Out:
@@ -1240,10 +1272,16 @@ def list_caveats(
         if condition and not series_for(registry, condition, None, ds.id):
             continue
         rows += [[ds.id, "caveat", c] for c in ds.entry.caveats]
-        rows += [[ds.id, "not yet confirmed", q] for q in ds.contract.open_questions]
+        rows += [
+            [ds.id, "not yet confirmed", question_line(q)] for q in ds.contract.open_questions if q.is_open
+        ]
         rows.append([ds.id, "unreliable values", ds.contract.unreliable_rule])
-        if ds.entry.status != "reviewed":
-            rows.append([ds.id, "review", "Contract is a draft; no maintainer has reviewed it yet."])
+        rows.append([ds.id, "counted unit", ds.contract.conformed.counted_unit])
+        rows.append([ds.id, "date basis", ds.contract.conformed.time.date_basis])
+        limits = str((ds.contract.raw.get("description") or {}).get("limitations") or "").strip()
+        if limits:
+            rows.append([ds.id, "limitations", limits])
+        rows += [[ds.id, "review", r] for r in review_notes(ds)]
     rows += [["all", "geography", t] for t in GEOGRAPHY_TRAPS]
     return Result(["source_id", "kind", "caveat"], rows).render(fmt)
 

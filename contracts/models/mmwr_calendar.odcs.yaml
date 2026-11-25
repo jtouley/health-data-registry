@@ -54,4 +54,7 @@ customProperties:
   - {property: unreliableRule, value: {kind: none, description: "None: a calendar computed from CDC's published rule."}}
   - property: openQuestions
     value:
-      - "Which years should the calendar cover? It covers the years set by the dbt variables mmwr_first_year and mmwr_last_year (2015 to 2030), which span every catalogued weekly source; a maintainer confirms on review."
+      - id: q1
+        status: open
+        changesNumbers: true
+        question: "Which years should the calendar cover? It covers the years set by the dbt variables mmwr_first_year and mmwr_last_year (2015 to 2030), which span every catalogued weekly source; a maintainer confirms on review."
