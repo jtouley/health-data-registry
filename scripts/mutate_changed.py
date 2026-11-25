@@ -94,9 +94,21 @@ SEP = "ǁ"
 # mutants 3 s, mutmut's stats run 3.0 minutes and its clean test run 2.9 minutes over the 48 test files that reach
 # it, then 99 mutants in 1.2 minutes; registry.py took 5.1 minutes. Setup is now most of a shard; caching the stats
 # run is #115's work. The shard job's timeout-minutes (12) is the hard stop. Add a module here when its shards run
-# long.
+# long. crawl.py: its 6 shards at 150 took 5 to 10.5 minutes, and one hit the 12-minute stop (pre-pr run of the
+# crawler-factory core, 25 Nov 2026); most adapter and access tests reach it, so its mutants run slowly too.
+# fetch.py: one of its 2 shards at 150 hit the stop in the same run, for the same reason.
+# registry.py: at 40, a shard ran 7 minutes of mutants without finishing in that run (5 minutes of setup), as the
+# adapter-type tests build catalog entries through its validators; 30 keeps each shard under the stop, and lower
+# would take `--list --all` past MAX_SHARDS.
+# staging.py and store.py: at 150 their shards' setup took 6.5 minutes and most hit the stop in the same run.
 SHARD_TARGET = 150
-SHARD_TARGET_BY_MODULE = {"health_data_registry.registry": 40}
+SHARD_TARGET_BY_MODULE = {
+    "health_data_registry.registry": 30,
+    "health_data_registry.crawl": 75,
+    "health_data_registry.fetch": 60,
+    "health_data_registry.staging": 40,
+    "health_data_registry.store": 40,
+}
 # GitHub runs at most 256 jobs from one matrix.
 MAX_SHARDS = 256
 DIGITS = "0123456789"
