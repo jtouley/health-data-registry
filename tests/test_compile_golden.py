@@ -311,7 +311,14 @@ def test_build_snapshot_manifest_and_pointer(est: tuple[Registry, Engine, Path],
     assert found is not None
     path, read = found
     assert read == m
-    assert json.loads((path / "manifest.json").read_text()) == {
+    written = json.loads((path / "manifest.json").read_text())
+    quality = written.pop("quality")
+    # Every optional column gets a fill-rate check; this fixture fills them all, and its contract has no rules.
+    assert quality["tool"] == "contract-rules" and quality["rule_errors"] == []
+    assert {r["test"]: r["status"] for r in quality["results"]} == {
+        f"fill_rate_{c.name}": "pass" for c in reg.get("toy_cases").contract.columns if not c.required
+    }
+    assert written == {
         "dataset": "toy_cases",
         "snapshot_id": m.snapshot_id,
         "contract_version": "0.2.0",
@@ -331,7 +338,6 @@ def test_build_snapshot_manifest_and_pointer(est: tuple[Registry, Engine, Path],
         "release_contract_version": None,
         "release_files": {},
         "notes": [],
-        "quality": {},
         "silver": {"layout_version": "1", "row_count": 4, "unlisted_codes": {}},
         "layouts": {},
     }

@@ -33,6 +33,7 @@ from typing import Any
 
 import duckdb
 
+from health_data_registry.quality import QualityReport, rules_for, run_rules
 from health_data_registry.registry import Contract
 
 SILVER_METADATA_KEY = "health_data_registry.silver"
@@ -162,6 +163,26 @@ def stage(
     if not temp:
         _comment(con, contract, table)
     return StagingReport(row_count=int(row[0]) if row else 0, unlisted_codes=unlisted)
+
+
+@dataclass(frozen=True)
+class Staged:
+    """One staging run and the contract's quality rules run on its result."""
+
+    staging: StagingReport
+    quality: QualityReport
+
+    def notes(self) -> list[str]:
+        """Every plain-words note for answers from this table: unlisted codes, then data-check failures."""
+        return [*self.staging.notes(), *self.quality.caveats()]
+
+
+def stage_checked(
+    con: duckdb.DuckDBPyConnection, contract: Contract, source: str, *, table: str, temp: bool = False
+) -> Staged:
+    """Stage `source` into `table`, then run every quality rule of the contract on it (lake and live alike)."""
+    report = stage(con, contract, source, table=table, temp=temp)
+    return Staged(report, run_rules(con, table, rules_for(contract)))
 
 
 def _comment(con: duckdb.DuckDBPyConnection, contract: Contract, table: str) -> None:

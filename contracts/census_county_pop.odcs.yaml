@@ -54,6 +54,8 @@ schema:
           - {property: sourceField, value: SUMLEV}
         quality:
           - id: sumlev_codes
+            dimension: conformity
+            severity: error
             type: library
             metric: invalidValues
             arguments: {validValues: ["040", "050"]}
@@ -119,6 +121,8 @@ schema:
           - {property: sourceField, value: YEAR}
         quality:
           - id: year_range
+            dimension: conformity
+            severity: error
             type: library
             metric: invalidValues
             arguments: {validValues: [2020, 2021, 2022, 2023, 2024, 2025]}
@@ -137,6 +141,9 @@ customProperties:
   - {property: licence, value: public-domain-us-federal}
   - {property: citation, value: "U.S. Census Bureau, Population Division. Annual Resident Population Estimates for States and Counties: April 1, 2020 to July 1, 2025 (CO-EST2025-ALLDATA). Vintage 2025."}
   - {property: refresh, value: annual}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "Each refresh stores the complete table as a dated, append-only load. Incremental loading (only rows new or changed since the last load) waits for a reviewed row key and the publisher's update field."
   - {property: unreliableRule, value: {kind: none, description: "None stated: the file layout for CO-EST2025-ALLDATA gives no suppression or reliability rule; every value is a point estimate."}}
   - property: openQuestions
     value:

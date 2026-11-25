@@ -104,26 +104,36 @@ schema:
           - {property: flagCodes, value: {"<6": "fewer than 6 cases: the marker the same dashboard's age charts show for a small count (AGG(Count Suppressed)); the count is suppressed and left empty"}}
     quality:
       - id: some_counts_present
+        dimension: completeness
+        severity: error
         type: sql
         description: "Fill rate: an all-empty count column would pass every value check, so at least one row must carry a count (every row did on 2026-11-24)."
         query: "SELECT COUNT(*) FROM {object} WHERE cases IS NOT NULL"
         mustBeGreaterThan: 0
       - id: some_rates_present
+        dimension: completeness
+        severity: error
         type: sql
         description: "Fill rate for the published rate (every row carried one on 2026-11-24)."
         query: "SELECT COUNT(*) FROM {object} WHERE rate IS NOT NULL"
         mustBeGreaterThan: 0
       - id: empty_count_only_where_flagged
+        dimension: consistency
+        severity: error
         type: sql
         description: "A count is empty only where the dashboard shows a suppression marker for it."
         query: "SELECT COUNT(*) FROM {object} WHERE cases IS NULL AND cases_flag IS NULL"
         mustBe: 0
       - id: one_row_per_condition_place_year
+        dimension: uniqueness
+        severity: error
         type: sql
         description: "Grain: one row per yearly chart (condition), place and year."
         query: "SELECT COUNT(*) FROM (SELECT worksheet, location_label, year FROM {object} GROUP BY worksheet, location_label, year HAVING COUNT(*) > 1)"
         mustBe: 0
       - id: detroit_and_michigan_each_year
+        dimension: coverage
+        severity: error
         type: sql
         description: "Each chart has one Detroit row and one Michigan row for every year it shows (12 or 14 rows per chart, 2 per year, on 2026-11-24)."
         query: "SELECT COUNT(*) FROM (SELECT worksheet, year FROM {object} GROUP BY worksheet, year HAVING COUNT(*) <> 2)"

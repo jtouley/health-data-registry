@@ -107,6 +107,8 @@ schema:
           - {property: noCasesCode, value: "-", description: "Dataset notes (the publisher's codebook, quoted in flagCodes): '-' means no reported cases. An empty count with this flag is read as 0 and labelled no reported cases; it is stored as published (empty, with the flag)."}
         quality:
           - id: m1_flag_codes
+            dimension: conformity
+            severity: error
             type: library
             metric: invalidValues
             arguments: {validValues: ["-", "U", "N", "NN", "NP", "NC"]}
@@ -199,6 +201,9 @@ customProperties:
   - {property: licence, value: public-domain-us-federal}
   - {property: citation, value: "Centers for Disease Control and Prevention. National Notifiable Diseases Surveillance System (NNDSS). NNDSS Weekly Data. https://data.cdc.gov/d/x9gk-5huc"}
   - {property: refresh, value: weekly}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "Each refresh stores the complete table as a dated, append-only load. Incremental loading (only rows new or changed since the last load) waits for a reviewed row key and the publisher's update field."
   - {property: geographyBasis, value: "patient residence: cases are assigned to the jurisdiction where the patient usually lives (dataset notes)"}
   - {property: unreliableRule, value: {kind: none, description: "None: the publisher marks no counts as unreliable and publishes no rates. Empty counts carry a flag ('-' no reported cases; U, N, NN, NP, NC)."}}
   - property: openQuestions

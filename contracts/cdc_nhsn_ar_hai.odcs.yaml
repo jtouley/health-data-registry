@@ -173,11 +173,15 @@ schema:
           - {property: unit, value: "%"}
         quality:
           - id: percent_only_when_20_tested
+            dimension: conformity
+            severity: error
             type: sql
             description: "Publisher: percent resistant is only calculated when the number tested is at least 20."
             query: "SELECT COUNT(*) FROM {object} WHERE percent_resistant IS NOT NULL AND isolates_tested < 20"
             mustBe: 0
           - id: percent_matches_counts
+            dimension: accuracy
+            severity: error
             type: sql
             description: "Publisher formula (resistant / tested) x 100; tolerance 0.06 allows rounding to one decimal place."
             query: "SELECT COUNT(*) FROM {object} WHERE percent_resistant IS NOT NULL AND abs(percent_resistant - 100.0 * resistant_isolates / isolates_tested) > 0.06"
@@ -221,6 +225,9 @@ customProperties:
   - {property: licence, value: public-domain-us-federal}
   - {property: citation, value: "Centers for Disease Control and Prevention, National Healthcare Safety Network. National Healthcare Safety Network - Antimicrobial Resistance (2011-2025). https://data.cdc.gov/d/7wz3-n6um"}
   - {property: refresh, value: annual}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "Each refresh stores the complete table as a dated, append-only load. Incremental loading (only rows new or changed since the last load) waits for a reviewed row key and the publisher's update field."
   - {property: geographyBasis, value: "unresolved: the dataset doesn't say whether places are by facility location or patient residence (see openQuestions), so comparisons with residence-based figures are blocked"}
   - {property: unreliableRule, value: {kind: publisher_suppressed, threshold: 20, description: "Publisher: resistant counts and percent resistant are shown only when at least 20 isolates were tested; smaller cells are empty (column descriptions of isolates_resistant and percent_resistant)."}}
   - property: openQuestions

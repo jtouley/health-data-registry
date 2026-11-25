@@ -98,6 +98,9 @@ customProperties:
   - {property: licence, value: public-domain-us-federal}
   - {property: citation, value: "Centers for Disease Control and Prevention, Emerging Infections Program HAIC. HAICViz - CDI. https://data.cdc.gov/d/abgz-qs4g"}
   - {property: refresh, value: annual}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "Each refresh stores the complete table as a dated, append-only load. Incremental loading (only rows new or changed since the last load) waits for a reviewed row key and the publisher's update field."
   - {property: geographyBasis, value: "the Emerging Infections Program catchment areas combined; no state values"}
   - {property: rateDenominator, value: "the EIP catchment population per 100,000; which estimates, and whether rates are crude, are not confirmed (see openQuestions)"}
   - {property: unreliableRule, value: {kind: none, description: "None stated: data.cdc.gov publishes no codebook or small-number rule for these EIP figures (see openQuestions)."}}

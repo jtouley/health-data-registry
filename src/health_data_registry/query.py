@@ -486,7 +486,8 @@ class Engine:
                 manifest = replace(
                     table.manifest,
                     notes=[*table.manifest.notes, *report.notes()],
-                    silver=report.as_dict(),
+                    silver=report.staging.as_dict(),
+                    quality=report.quality.as_dict(),
                 )
             elif (found := latest_snapshot(self.lake, ds.id)) is not None:
                 path, manifest = found

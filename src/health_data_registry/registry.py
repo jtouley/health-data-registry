@@ -457,6 +457,47 @@ def _unreliable(value: Any, where: str) -> UnreliableSpec:
     return UnreliableSpec(kind, desc, t)
 
 
+LOAD_MODES = ("snapshot", "incremental")
+
+
+@dataclass(frozen=True)
+class RawLoad:
+    """How a source lands in raw (contract property rawLoad). Raw is append-only either way.
+
+    snapshot: every fetch stores the complete table, dated (sources with no update keys: dashboards, files).
+    incremental: a fetch stores only rows new or changed since the last load, found by the publisher's own update
+    field (e.g. Socrata's :updated_at); staging keeps the latest version of each row by `key`, the contract's
+    reviewed row identity. A change in shape forces a full fetch.
+    """
+
+    mode: str = "snapshot"
+    key: tuple[str, ...] = ()
+    updated_field: str | None = None
+    declared: bool = False
+
+
+def _raw_load(value: Any, where: str, columns: frozenset[str]) -> RawLoad:
+    if value is None:
+        return RawLoad()
+    if not isinstance(value, Mapping) or value.get("mode") not in LOAD_MODES:
+        raise RegistryError(f"{where}: rawLoad needs mode: snapshot or incremental")
+    if value["mode"] == "snapshot":
+        if value.get("key") or value.get("updatedField"):
+            raise RegistryError(f"{where}: a snapshot load takes no key or updatedField")
+        return RawLoad(declared=True)
+    key = tuple(str(k) for k in value.get("key") or ())
+    updated = str(value.get("updatedField") or "").strip()
+    if not key or not updated:
+        raise RegistryError(
+            f"{where}: an incremental load needs key (the reviewed row identity, contract columns) and updatedField "
+            "(the publisher's own update field)"
+        )
+    unknown = [k for k in key if k not in columns]
+    if unknown:
+        raise RegistryError(f"{where}: rawLoad key names unknown column {unknown[0]}")
+    return RawLoad("incremental", key, updated, True)
+
+
 @dataclass(frozen=True)
 class Contract:
     """The subset of an ODCS v3 contract the server relies on. `raw` keeps the whole document."""
@@ -475,6 +516,9 @@ class Contract:
     geography_basis: str | None = None
     # The population a published rate divides by, in plain words.
     rate_denominator: str | None = None
+    # The contract's quality rules (quality.Rule), run on every snapshot and live read and as named dbt tests.
+    quality: tuple[Any, ...] = ()
+    raw_load: RawLoad = field(default_factory=RawLoad)
 
     @property
     def unreliable_rule(self) -> str:
@@ -621,7 +665,18 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
         unreliable=_unreliable(top_custom.get("unreliableRule"), expected_id),
         geography_basis=_text(top_custom.get("geographyBasis")),
         rate_denominator=_text(top_custom.get("rateDenominator")),
+        quality=_quality(doc, expected_id),
+        raw_load=_raw_load(top_custom.get("rawLoad"), expected_id, frozenset(names)),
     )
+
+
+def _quality(doc: Mapping[str, Any], where: str) -> tuple[Any, ...]:
+    from health_data_registry.quality import QualityRuleInvalid, parse_rules
+
+    try:
+        return parse_rules(doc, where)
+    except QualityRuleInvalid as e:
+        raise RegistryError(str(e)) from e
 
 
 def _text(value: Any) -> str | None:

@@ -42,7 +42,7 @@ from typing import Any
 import duckdb
 
 from health_data_registry.registry import Dataset
-from health_data_registry.staging import stage, write_parquet
+from health_data_registry.staging import stage_checked, write_parquet
 
 _SNAPSHOT_ID = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{12}$")
 
@@ -223,7 +223,7 @@ def build_snapshot(
         con = duckdb.connect(str(tmp / "data.duckdb"))
         try:
             raw = f"read_json({files}, format='newline_delimited', columns={cols})"
-            report = stage(con, ds.contract, raw, table=ds.id)
+            staged = stage_checked(con, ds.contract, raw, table=ds.id)
             write_parquet(con, ds.contract, ds.id, str(tmp / "data.parquet"))
         finally:
             con.close()
@@ -236,13 +236,14 @@ def build_snapshot(
             retrieved_at=retrieved.isoformat(),
             source_urls=[f.url for f in fetches],
             raw_sha256=[f.sha256 for f in fetches],
-            row_count=report.row_count,
+            row_count=staged.staging.row_count,
             licence=ds.entry.licence.id,
             redistribution=ds.entry.licence.redistribution,
             partial=partial,
             layouts=dict(layouts or {}),
-            notes=[*notes, *report.notes()],
-            silver=report.as_dict(),
+            notes=[*notes, *staged.notes()],
+            quality=staged.quality.as_dict(),
+            silver=staged.staging.as_dict(),
         )
         (tmp / "manifest.json").write_text(json.dumps(asdict(manifest), indent=2) + "\n", encoding="utf-8")
         out.parent.mkdir(parents=True, exist_ok=True)
