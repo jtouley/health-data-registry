@@ -1,0 +1,167 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: mdhhs_measles_county
+name: Measles cases reported in Michigan by county (MDHHS Measles Tracking Dashboard)
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Measles cases MDHHS reports for each Michigan county on its Measles Tracking Dashboard (Case Map), with the outbreak-associated subset."
+  usage: "Read one county's count, or add counties for Michigan; never add outbreak-associated cases to reported cases. Read live from MDHHS; never stored."
+  limitations: "A dashboard, not a dataset: the period and case definition are not in the data, and the layout can change without notice (the worksheet layout hash stops the load when it does)."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://mdhhstableau-public.michigan.gov/views/MeaslesTrackingDashboardv2/CaseMap", description: "Dashboard view read (fetched 2026-11-24)"}
+    - {type: businessDefinition, url: "https://www.michigan.gov/measles", description: "MDHHS measles page (not fetched; see openQuestions)"}
+servers:
+  - id: mdhhs_tableau
+    server: mdhhstableau-public.michigan.gov
+    type: api
+    location: https://mdhhstableau-public.michigan.gov/views/MeaslesTrackingDashboardv2/CaseMap
+    description: "Tableau Server guest view, read in a browser; the data come from the view's bootstrapSession answer (adapters/tableau.py)."
+schema:
+  - name: mdhhs_measles_county
+    physicalName: mdhhs_measles_county
+    physicalType: table
+    logicalType: object
+    description: "One row per Michigan county."
+    dataGranularityDescription: "county (all 83 Michigan counties, zero included)"
+    customProperties:
+      - property: totalRows
+        value: none
+        description: "The Case By Cty Map worksheet has no total row (83 rows, one per county, on 2026-11-24). The dashboard's separate Cases Table worksheet has a '%all%' total row; it is not read."
+      - {property: tableShape, value: frequency_table}
+      - property: idDimensions
+        value:
+          condition: null
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: null
+          period: null
+          provisionalFlag: null
+        description: "The worksheet carries no condition, case definition, case status or period field: every row is measles, as the dashboard's title says. The period is an open question."
+    properties:
+      - name: view
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The dashboard view the row was read from (CaseMap); for provenance."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: view}
+      - name: worksheet
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The dashboard worksheet the row was read from (Case By Cty Map); for provenance."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: worksheet}
+      - name: county
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The Michigan county MDHHS assigns the cases to, by its plain name (e.g. Washtenaw, St. Joseph)."
+        examples: ["Washtenaw", "St. Joseph"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: "County (alias)"}
+      - name: case_indicator
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "The map's colour key for the county: whether it has outbreak-associated cases, other reported cases, or none."
+        enum: [{value: "Outbreak-associated Cases"}, {value: "Reported Case(s)"}, {value: "No Reported Cases"}]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: "c_Case Indicator (alias)"}
+      - name: total_cases
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Measles cases MDHHS reports in the county, outbreak-associated or not."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: "SUM(c_Total Cases Reported) (alias)"}
+          - {property: unit, value: "cases"}
+      - name: outbreak_cases
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Of the county's reported measles cases, those MDHHS counts as part of an outbreak; a subset of total_cases."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: "SUM(c_Outbreak Cases) (alias)"}
+          - {property: unit, value: "cases"}
+      - name: total_cases_flag
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "A suppression marker on the county's reported cases, exactly as the dashboard would show it (such as '<6'). The Case Map showed none on 2026-11-24, so no marker is quoted; this column is read so that a count the dashboard starts to suppress comes back empty with its marker, never as a number."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: "SUM(c_Total Cases Reported) flag"}
+          - {property: flagFor, value: total_cases}
+      - name: outbreak_cases_flag
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "A suppression marker on the county's outbreak-associated cases, exactly as shown; none was shown on 2026-11-24 (see total_cases_flag)."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: "SUM(c_Outbreak Cases) flag"}
+          - {property: flagFor, value: outbreak_cases}
+    quality:
+      - id: every_county_once
+        type: library
+        metric: rowCount
+        description: "One row for each of Michigan's 83 counties, zero-case counties included (83 rows on 2026-11-24)."
+        mustBeBetween: [83, 83]
+      - id: one_row_per_county
+        type: sql
+        description: "Grain: each county appears once."
+        query: "SELECT COUNT(*) FROM (SELECT county FROM {object} GROUP BY county HAVING COUNT(*) > 1)"
+        mustBe: 0
+      - id: some_counts_present
+        type: sql
+        description: "Fill rate: an all-empty count column would pass every value check, so at least one county must carry a reported count."
+        query: "SELECT COUNT(*) FROM {object} WHERE total_cases IS NOT NULL"
+        mustBeGreaterThan: 0
+      - id: empty_count_only_where_flagged
+        type: sql
+        description: "A county's reported count is empty only where the dashboard shows a suppression marker for it (every county, zero included, carries one). Not asserted for outbreak_cases: whether a county with no outbreak shows 0 or nothing was not recorded."
+        query: "SELECT COUNT(*) FROM {object} WHERE total_cases IS NULL AND total_cases_flag IS NULL"
+        mustBe: 0
+      - id: outbreak_within_total
+        type: sql
+        description: "Outbreak-associated cases are a subset of the county's reported cases, as this contract states (24 of 37 statewide on 2026-11-24)."
+        query: "SELECT COUNT(*) FROM {object} WHERE outbreak_cases > total_cases"
+        mustBe: 0
+customProperties:
+  - {property: licence, value: no-terms-stated}
+  - {property: redistribution, value: false}
+  - {property: citation, value: "Michigan Department of Health and Human Services. Measles Tracking Dashboard, Case Map. https://mdhhstableau-public.michigan.gov/views/MeaslesTrackingDashboardv2/CaseMap"}
+  - {property: refresh, value: irregular}
+  - {property: geographyBasis, value: "unresolved: the dashboard does not say whether a case's county is the county of residence"}
+  - {property: unreliableRule, value: {kind: none, description: "None stated: the dashboard shows whole counts down to 0 and 1 and marks nothing as suppressed or unreliable."}}
+  - property: evidence
+    value:
+      - retrieved_at: "2026-11-24T21:16:22Z"
+        url: https://mdhhstableau-public.michigan.gov/views/MeaslesTrackingDashboardv2/CaseMap
+        user_agent: "health-data-registry/0.0.1 (+https://github.com/jtouley/health-data-registry)"
+        raw_sha256: de010682ac55f7da0597c1a8602c84433c34a152f22701752631f84010597636
+        robots_txt: "404 (none published)"
+        worksheets_seen: ["Case By Cty Map", "Cases Table", "Cases by Age", "Cases by Travel", "Cases by Vx"]
+        read: "Case By Cty Map: 83 rows, one per county; columns c_Case Indicator, County, SUM(c_Total Cases Reported), SUM(c_Outbreak Cases), Latitude (generated), Longitude (generated). Reported cases summed to 37 (24 outbreak-associated); indicator counts: No Reported Cases 72, Reported Case(s) 6, Outbreak-associated Cases 5. Cases Table's '%all%' row also read 37. No suppression markers."
+      - retrieved_at: "2026-11-24T21:15:35Z"
+        url: https://mdhhstableau-public.michigan.gov/views/MeaslesTrackingDashboardv2/ExposureMap
+        raw_sha256: f167f36424f2e657ac1da0c540263dbe479de472f4e049f5ed382a12363cfc38
+        read: "Exposure Map: worksheets MI and MI (2) (84 and 86 rows, exposure-site counts by county), MI Site Table and MI County Site Table (exposure sites with street address, date and time). The site tables are refused by the row-level guard (an address field) and are not catalogued."
+  - property: openQuestions
+    value:
+      - "Period: the worksheet has no date or year. Is the count the 2026 calendar year to date, or since the start of the current outbreak? Until a maintainer confirms it from MDHHS, no time series is defined and the semantic model has no series."
+      - "Case definition and status: does 'Total Cases Reported' count confirmed cases only, or confirmed and probable? Not stated on the dashboard."
+      - "Is the county the county of residence or the county of the local health department that reported the case? (geographyBasis is unresolved until then)."
+      - "Licence: no terms of use are stated on the dashboard; michigan.gov's general policies page was not read. Maintainer to confirm that live, unstored reads with attribution are acceptable and whether redistribution can ever be allowed."
+      - "The 'Cases by Age', 'Cases by Vx' and 'Cases by Travel' worksheets (statewide counts by age band, vaccination status and travel history) are aggregate and could be catalogued as further tables after review."
+      - "Detroit appears in MDHHS data as part of Wayne County here; the City of Detroit is its own local health jurisdiction. Confirm how MDHHS attributes Detroit's cases."
+      - "The dashboard's <view>.csv export was not tried; the bootstrapSession read is the only path used."

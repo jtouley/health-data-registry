@@ -1,0 +1,56 @@
+id: detroit_dhd_epi_annual
+title: Detroit and Michigan annual cases and rates for TB, chlamydia, hepatitis C and syphilis (Detroit Health Department Epidemiology Dashboard)
+agency: Detroit Health Department
+publisher: City of Detroit Health Department (DHD)
+level: city
+country: US
+research_areas: [infectious_disease]
+id_areas: [tb, stis, hepatitis]
+years: {start: 2019, end: null}
+geography: [city, state]
+shape: rate_table
+grain: "One row is one condition, one place (Detroit or Michigan) and one calendar year, with the case count and the rate the dashboard's yearly chart shows."
+refresh: annual
+licence:
+  # Neither the dashboard nor detroitmi.gov's dashboard pages state terms for reuse of the data (checked
+  # 2026-11-24 on the dashboard and its Notes/Resources tab). With no terms, nothing is mirrored: read live,
+  # never stored or published (ADR 0009).
+  id: no-terms-stated
+  redistribution: false
+  terms_url: https://codtableau.detroitmi.gov/t/DHD/views/EpidemiologyDashboard_17430955327340/MainMenu
+citation: "City of Detroit Health Department. Epidemiology Dashboard. https://codtableau.detroitmi.gov/t/DHD/views/EpidemiologyDashboard_17430955327340/MainMenu (accessed <retrieved_at>)."
+source:
+  portal: tableau
+  host: codtableau.detroitmi.gov
+  dataset: EpidemiologyDashboard_17430955327340
+  landing_url: https://codtableau.detroitmi.gov/t/DHD/views/EpidemiologyDashboard_17430955327340/MainMenu
+  api_url: https://codtableau.detroitmi.gov/t/DHD/views/EpidemiologyDashboard_17430955327340
+  # The city's own Tableau Server: a government host under the maintainer's access policy (robots.txt was 404
+  # on 2026-11-24 in any case). Tableau Server builds the data session in JavaScript, so a browser reads it.
+  government_host: true
+  browser: true
+  tableau:
+    views:
+      - {view: TB, worksheets: {TByear: 848988d619fa5bcaba303b0a211b46914647f026793241244723268f30476144}}
+      - {view: Chlamydia, worksheets: {ChlamydiaYear: 848988d619fa5bcaba303b0a211b46914647f026793241244723268f30476144}}
+      - {view: HepC, worksheets: {HepCyear: 848988d619fa5bcaba303b0a211b46914647f026793241244723268f30476144}}
+      - {view: Syphilis-C, worksheets: {SyphilisCyear: 848988d619fa5bcaba303b0a211b46914647f026793241244723268f30476144}}
+      - {view: Syphilis-L, worksheets: {SyphilisLyear: 848988d619fa5bcaba303b0a211b46914647f026793241244723268f30476144}}
+      - {view: Syphilis-PS, worksheets: {SyphilisPSyear: 848988d619fa5bcaba303b0a211b46914647f026793241244723268f30476144}}
+codebook_url: https://codtableau.detroitmi.gov/t/DHD/views/EpidemiologyDashboard_17430955327340/NotesResources
+caveats:
+  - "Detroit and Michigan figures come from the dashboard's yearly charts. The rate's denominator is not stated; don't compare these rates with another source until it is confirmed (an open question in the contract)."
+  - "The place is the chart's legend label ('Detroit Case Rate', 'Michigan Case Rate'); Michigan includes Detroit."
+  - "Rates are never added; counts for Detroit and Michigan are never added together (Michigan already includes Detroit)."
+  - "The Detroit Health Department states no terms for reuse, so this source is read live from the city and never stored or published."
+gbd:
+  location_column: null
+  causes:
+    - {condition: TByear, cause: Tuberculosis, pathogen: null}
+    - {condition: ChlamydiaYear, cause: Chlamydial infection, pathogen: null}
+    - {condition: SyphilisPSyear, cause: Syphilis, pathogen: null}
+    - {condition: SyphilisLyear, cause: Syphilis, pathogen: null}
+    - {condition: SyphilisCyear, cause: Syphilis, pathogen: null}
+contract: contracts/detroit_dhd_epi_annual.odcs.yaml
+semantic_model: semantic/detroit_dhd_epi_annual.yaml
+status: draft
