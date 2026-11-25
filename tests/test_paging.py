@@ -564,6 +564,7 @@ def test_one_page_answers_are_unchanged_by_page_one(registry: Registry, eng: Eng
     assert bad == {
         "message": "Pages are numbered from 1. Ask for page=1, or leave page out.",
         "refused": "bad_page",
+        "next_step": "Ask for page=1, or leave page out.",
     }
 
 
@@ -892,6 +893,7 @@ def test_an_answer_that_fits_has_no_page_two(registry: Registry, eng: Engine) ->
     assert two == {
         "message": "This answer fits on one page, so there is no page 2. Leave page out, or ask for page=1.",
         "refused": "no_such_page",
+        "next_step": "Ask for a page the answer has, or leave page out for page 1.",
     }
 
 
@@ -905,3 +907,29 @@ def test_signing_keys_come_from_the_environment(monkeypatch: pytest.MonkeyPatch)
     assert shared != per_process
     monkeypatch.setenv("HDR_SIGNING_KEY", "another secret")
     assert paging.sign("pin", "x") != shared
+
+
+# ------------------------------------------------------------- after merging main: declines and named parts
+
+
+def test_pages_keep_named_parts_and_declines_keep_their_fields(registry: Registry, eng: Engine) -> None:
+    def body(e: Engine) -> Any:
+        res = tools.get_series.__wrapped__(registry, e, condition="legionellosis", fmt="json")
+        res.extra = {"presentation_rules": ["Never add up rates."]}
+        return res
+
+    page = paging.respond("get_series", {"condition": "legionellosis", "fmt": "json"}, eng, body,
+                          page=None, pin=None, fmt="json", budget=30_000)  # fmt: skip
+    assert page["page"]["page"] == 1 and page["presentation_rules"] == ["Never add up rates."]
+    assert any(n.startswith("Provenance for toy_cases:") for n in page["notes"])
+    text = paging.respond("get_series", {"condition": "legionellosis"}, eng, body, page=None, pin=None,
+                          fmt="csv", budget=30_000)  # fmt: skip
+    assert "# presentation_rules: Never add up rates." in text
+    # A decline from the tool body passes through unpaged, with every structured field.
+    declined = tools.get_series(registry, eng, condition="no such thing", fmt="json")
+    assert declined["refused"] and declined["next_step"]
+    # Paging's own refusals carry a next step too.
+    for out in (series(registry, eng, page=2, pin="nonsense", fmt="json"),
+                series(registry, eng, page=0, fmt="json"),
+                series(registry, eng, page=2, pin=signed("other_source:s"), fmt="json")):  # fmt: skip
+        assert out["refused"] in ("bad_pin", "bad_page", "page_data_changed") and out["next_step"], out

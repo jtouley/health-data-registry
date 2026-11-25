@@ -278,7 +278,7 @@ def _render_page(res: Result, lo: int, hi: int, page: int, bounds: Sequence[tupl
     )
     guidance = [PAGING_GUIDANCE.format(pages=pages, total=f"{total:,}")]
     notes = [*nxt, *guidance, *res.notes, *extra]
-    body = Result(res.columns, res.rows[lo:hi], notes).render(fmt)
+    body = Result(res.columns, res.rows[lo:hi], notes, dict(res.extra)).render(fmt)
     if isinstance(body, dict):
         info = {
             "page": page,

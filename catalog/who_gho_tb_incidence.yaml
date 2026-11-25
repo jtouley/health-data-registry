@@ -37,6 +37,14 @@ gbd:
   location_column: spatial_dim
   causes:
     - {condition: "MDG_0000000020", cause: "Tuberculosis", pathogen: null}
+conditions:
+  dimension: null
+  # Provenance: WHO GHO indicator list (https://ghoapi.azureedge.net/api/Indicator), IndicatorCode
+  # MDG_0000000020, IndicatorName as published (read 2026-11-24).
+  source: "WHO's own name for its one measure here, estimated tuberculosis incidence, exactly as published in the Global Health Observatory (checked 24 Nov 2026)."
+  labels:
+    - "Incidence of tuberculosis (per 100 000 population per year)"
+  aliases: []
 contract: contracts/who_gho_tb_incidence.odcs.yaml
 semantic_model: semantic/who_gho_tb_incidence.yaml
 status: draft

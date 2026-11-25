@@ -339,7 +339,11 @@ def test_guard_statuses_reach_the_counters(tmp_path: Path) -> None:
     small = CallGuard(cfg(tmp_path, max_result_chars=10), metrics)
     assert small("x", lambda: "12345", "csv") == "12345"  # 10 characters on the wire: exactly the cap
     too = small("x", lambda: "123456", "json")
-    assert too == {"message": hosted.too_large_message(12, 10), "refused": "too_large"}
+    assert too == {
+        "message": hosted.too_large_message(12, 10),
+        "refused": "too_large",
+        "next_step": hosted.tools.next_step_for("too_large"),
+    }
     assert metrics.counts[("x", "too_large", "<1s")] == 1 and metrics.counts[("x", "ok", "<1s")] == 1
 
 
@@ -348,7 +352,11 @@ def test_guard_waits_its_budget_for_the_engine_then_says_busy(tmp_path: Path) ->
     guard._lock.acquire()
     try:
         start = time.monotonic()
-        assert guard("q", lambda: "x", "json") == {"message": BUSY, "refused": "busy"}
+        assert guard("q", lambda: "x", "json") == {
+            "message": BUSY,
+            "refused": "busy",
+            "next_step": "Try again in a minute.",
+        }
         assert time.monotonic() - start >= 0.2
     finally:
         guard._lock.release()
@@ -541,7 +549,11 @@ def test_only_a_few_calls_queue_for_the_engine(tmp_path: Path, monkeypatch: pyte
     monkeypatch.setattr(hosted, "MAX_WAITING", 0)
     guard = CallGuard(cfg(tmp_path, tool_timeout_s=5), Metrics())
     start = time.monotonic()
-    assert guard("q", lambda: "x", "json") == {"message": BUSY, "refused": "busy"}
+    assert guard("q", lambda: "x", "json") == {
+        "message": BUSY,
+        "refused": "busy",
+        "next_step": "Try again in a minute.",
+    }
     assert time.monotonic() - start < 1  # BUSY at once, not after the 5 s budget
     assert guard._waiting == 0
 
