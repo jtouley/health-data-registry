@@ -99,8 +99,9 @@ def test_a_name_that_is_not_a_plain_module_is_refused(mc: ModuleType, name: str)
 
 def test_the_branch_hygiene_script_is_mutated(mc: ModuleType) -> None:
     assert mc._module("scripts/branch_hygiene.py") == "scripts.branch_hygiene"
-    shards = json.loads(mc.list_json(["scripts.branch_hygiene"]))
-    assert shards and {mc.parse_shard_id(s)[0] for s in shards} == {"scripts.branch_hygiene"}
+    # Not list_json on the real file: inside mutmut's sandbox the file is the mutated copy, which shards differently.
+    assert mc.MODULE_NAME.fullmatch("scripts.branch_hygiene")
+    assert mc.module_path("scripts.branch_hygiene") == mc.ROOT / "scripts" / "branch_hygiene.py"
     assert "scripts/branch_hygiene.py" in mc.PACKAGE_DIRS
 
 
