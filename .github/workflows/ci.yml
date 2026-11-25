@@ -10,7 +10,8 @@ name: CI
 #   start from.
 # Every PR job fits the pre-PR budget (ci/budgets.yml: 3 minutes, push to every check done). What cannot fit is
 # deferred, by name, to the merge queue, never cut short or skipped: a change of more than 6 shards, a shard with no
-# mutmut stats from main, or one that runs past its budget.
+# mutmut stats from main, or one that runs past its budget. Only while main's ruleset has a merge queue
+# (scripts/merge_queue.py): without one, nothing defers and every shard runs on the PR, slower but tested.
 # The one required check is "CI result": it passes only when every job the changes job selected passed and every
 # other job was skipped for a reason it knows.
 on:
@@ -56,6 +57,7 @@ jobs:
       modules: ${{ steps.mutation.outputs.modules }}
       mutation_base: ${{ steps.mutation.outputs.base }}
       mutation_deferred: ${{ steps.mutation.outputs.deferred }}
+      queue: ${{ steps.queue.outputs.queue }}
       merge_base: ${{ steps.impact.outputs.merge_base }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -128,6 +130,18 @@ jobs:
             echo "merge_base=" >> "$GITHUB_OUTPUT"
             echo 'pythons=["3.12","3.13"]' >> "$GITHUB_OUTPUT"
           fi
+      # Deferral is safe only while a merge queue runs the deferred shards before the merge. Any doubt (no rule, an
+      # API error) answers false, and then every shard runs on the PR.
+      - name: Does main have a merge queue?
+        id: queue
+        if: steps.reuse.outputs.run_id == ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          queue="$(uv run --no-project python scripts/merge_queue.py --repo "${REPO}" --branch main)" || queue=false
+          if [ "${queue}" != "true" ]; then queue=false; fi
+          echo "queue=${queue}" >> "$GITHUB_OUTPUT"
       # Only the functions this change touches (spec: mutation tests on changed functions), compared with the merge
       # base (in the merge queue, the queue's base commit), as shard ids `<module>#<k>of<n>@<split hash>`; the hash
       # covers exactly which functions each shard mutates. On a PR, more than 6 shards (more than one wave at
@@ -140,6 +154,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           MERGE_BASE: ${{ steps.impact.outputs.merge_base }}
           QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+          QUEUE: ${{ steps.queue.outputs.queue }}
         run: |
           base="${MERGE_BASE}"
           if [ "${EVENT}" = "merge_group" ]; then base="${QUEUE_BASE}"; fi
@@ -154,7 +169,7 @@ jobs:
           modules="$(uv run --no-project python scripts/mutate_changed.py --list --base "${base}")"
           echo "Shards of the changed functions since ${base}: ${modules}"
           count="$(python3 -c 'import json, sys; print(len(json.loads(sys.argv[1])))' "${modules}")"
-          if [ "${EVENT}" != "merge_group" ] && [ "${count}" -gt 6 ]; then
+          if [ "${EVENT}" != "merge_group" ] && [ "${QUEUE}" = "true" ] && [ "${count}" -gt 6 ]; then
             echo "deferred=${count} mutation shards are more than one wave (6), so they cannot fit the pre-PR budget; the merge queue mutates them before the merge." >> "$GITHUB_OUTPUT"
             modules="[]"
           fi
@@ -284,10 +299,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.reused_run == '' && needs.changes.outputs.modules != '[]' && needs.changes.outputs.modules != ''
     runs-on: ubuntu-latest
-    # On a PR, mutmut gets 100 s (--budget) and needs main's stats (--require-stats); past either it reports itself
-    # deferred, and the merge queue mutates it. The job limit is the backstop for a hung step. In the merge queue a
-    # shard runs to the end, cold stats included.
-    timeout-minutes: ${{ github.event_name == 'merge_group' && 20 || 3 }}
+    # On a PR with a merge queue on main, mutmut gets 100 s (--budget) and needs main's stats (--require-stats); past
+    # either it reports itself deferred, and the merge queue mutates it. The job limit is the backstop for a hung
+    # step. In the merge queue, or on a PR while main has no queue, a shard runs to the end, cold stats included.
+    timeout-minutes: ${{ (github.event_name == 'merge_group' || needs.changes.outputs.queue != 'true') && 20 || 3 }}
     strategy:
       fail-fast: false
       # At most 6 shards of one run at a time: the account has about 20 runners, so one run never takes more than
@@ -318,6 +333,7 @@ jobs:
       - name: Mutation tests on one shard
         env:
           EVENT: ${{ github.event_name }}
+          QUEUE: ${{ needs.changes.outputs.queue }}
           MODULE: ${{ matrix.module }}
           MERGE_BASE: ${{ needs.changes.outputs.mutation_base }}
         run: |
@@ -326,7 +342,7 @@ jobs:
             exit 1
           fi
           limits=(--require-stats --budget 100)
-          if [ "${EVENT}" = "merge_group" ]; then limits=(); fi
+          if [ "${EVENT}" = "merge_group" ] || [ "${QUEUE}" != "true" ]; then limits=(); fi
           uv run python scripts/mutate_changed.py --module "${MODULE}" --base "${MERGE_BASE}" \
             --stats .mutmut-cache/stats.json "${limits[@]}" --report "mutation-report/${MODULE}.json"
       # Uploaded even when the shard failed, so "CI result" shows its counts; a missing report fails there.
@@ -424,16 +440,18 @@ jobs:
           pattern: mutation-*
           path: mutation-reports/
           merge-multiple: true
-      # A PR's run accepts a shard that deferred itself (named in the log); the merge queue's never does.
+      # A PR's run accepts a shard that deferred itself (named in the log) only while main has a merge queue; the
+      # merge queue's own run never does.
       - name: Mutation floor on the total
         if: env.REUSED_RUN == '' && env.MODULES != '[]' && env.MODULES != ''
         env:
           EVENT: ${{ github.event_name }}
+          QUEUE: ${{ needs.changes.outputs.queue }}
           MUTATION_FLOOR: "70"
         run: |
           mkdir -p mutation-reports
           allow=(--allow-deferred)
-          if [ "${EVENT}" = "merge_group" ]; then allow=(); fi
+          if [ "${EVENT}" = "merge_group" ] || [ "${QUEUE}" != "true" ]; then allow=(); fi
           python3 scripts/mutate_changed.py --aggregate mutation-reports --expect "${MODULES}" --floor "${MUTATION_FLOOR}" "${allow[@]}"
       # Every job of this run against its budget (ci/budgets.yml), slow jobs listed. Runs even when a step above
       # failed, so a slow run is reported either way. Not this job (still running), nor the stats job, which is no

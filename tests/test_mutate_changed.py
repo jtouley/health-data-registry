@@ -794,7 +794,10 @@ def test_shards_scope_to_the_lists_merge_base_and_stay_small() -> None:
     assert '--base "${MERGE_BASE}"' in shard_job and "fetch-depth: 0" in shard_job
     assert "max-parallel: 6\n" in shard_job
     # A PR's shard: 3 minutes at most, and deferred (never cold, never long) past its budget or without stats.
-    assert "timeout-minutes: ${{ github.event_name == 'merge_group' && 20 || 3 }}" in shard_job
+    assert (
+        "timeout-minutes: ${{ (github.event_name == 'merge_group' || needs.changes.outputs.queue != 'true') && 20 || 3 }}"
+        in shard_job
+    )
     assert "limits=(--require-stats --budget 100)" in shard_job
     # Main's stats, read only: shards restore, and only the main-only job saves.
     assert "actions/cache/restore@" in shard_job and "actions/cache/save@" not in shard_job

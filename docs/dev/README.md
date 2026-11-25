@@ -223,7 +223,9 @@ Actions API and fails the run when a job went over, listing the slow jobs (queue
 Budgets only tighten: the Checks job fails a change that loosens one, unless the change touches
 `ci/budgets.yml` alone (a pull request of its own, for the maintainer to approve).
 
-**What cannot fit is deferred to the merge queue, by name, never skipped.** On a pull request a mutation shard needs
+**What cannot fit is deferred to the merge queue, by name, never skipped, and only while main has one.** The
+changes job reads main's rules (`scripts/merge_queue.py`); with no `merge_queue` rule, or on any doubt, nothing
+defers and every shard runs on the pull request, slower but tested. With a queue, on a pull request a mutation shard needs
 main's mutmut stats and gets 100 seconds; without the stats, or past the time, it reports itself deferred. A change
 of more than 6 shards lists none on the PR. "CI result" names each deferral, and the merge queue runs every shard
 of the PR's changed functions with no budget, applying the 70% floor before the merge. Hard rule 13 holds: every
