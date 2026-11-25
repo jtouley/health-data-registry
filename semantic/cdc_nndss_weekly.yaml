@@ -1,7 +1,7 @@
 dataset: cdc_nndss_weekly
 version: 0.1.0
 dimensions:
-  - {name: reporting_area, column: states, type: categorical, description: "State, New York City, territory, census division or US summary area where the cases were reported (by residence)."}
+  - {name: reporting_area, column: states, type: categorical, description: "The jurisdiction that reported the cases (a state, New York City or a territory), a regional or US summary area, or non-US residents. A case is counted where it is submitted, by its country of usual residence; whether the regions are census divisions or HHS regions is an open question in the contract."}
   - {name: mmwr_year, column: year, type: time, description: "MMWR (epidemiological) year."}
   - {name: mmwr_week, column: week, type: time, description: "MMWR week within the year (1-52 or 53)."}
   - {name: condition, column: label, type: categorical, description: "Nationally notifiable condition, e.g. Legionellosis or Candida auris, clinical."}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import re
 
 import pytest
@@ -83,13 +84,15 @@ def quarterly_report(draw: st.DrawFn) -> SynthReport:
     groups = []
     for name in draw(st.lists(st.sampled_from(GROUPS), min_size=1, max_size=4, unique=True)):
         rows = []
-        for _ in range(draw(st.integers(1, 6))):
+        # A report prints each disease once per group (the parser refuses a repeat).
+        labels = draw(st.lists(label_lines(), min_size=1, max_size=6, unique_by=" ".join))
+        for label in labels:
             counts = draw(st.lists(st.integers(0, 20_000), min_size=4, max_size=4))
             suppress = draw(st.lists(st.booleans(), min_size=4, max_size=4))
             printed = tuple(
                 "*" if s and 1 <= v <= 5 else fmt(v) for v, s in zip(counts, suppress, strict=True)
             )
-            rows.append(SynthRow(label_lines=draw(label_lines()), values=(*printed, fmt(sum(counts)))))
+            rows.append(SynthRow(label_lines=label, values=(*printed, fmt(sum(counts)))))
         groups.append(SynthGroup(name=name, rows=tuple(rows)))
     return SynthReport(
         title=f"Select Reportable Disease Case Counts for {year}",
@@ -131,7 +134,17 @@ def test_parse_report_syntheticReport_roundTripsEveryRow(report: SynthReport) ->
 def test_parse_report_tableSpansPages_keepsGroupAcrossBreak(report: SynthReport, style: str) -> None:
     # Arrange: one long group forces a page break inside it
     base = report.groups[0].rows
-    rows = tuple(base[i % len(base)] for i in range(70))
+    # (each disease once: the names are made unique, without digits that could read as values)
+    rows = tuple(
+        dataclasses.replace(
+            base[i % len(base)],
+            label_lines=(
+                f"Condition {chr(65 + i // 26)}{chr(65 + i % 26)}",
+                *base[i % len(base)].label_lines[1:],
+            ),
+        )
+        for i in range(70)
+    )
     long = dataclasses.replace(report, groups=(SynthGroup("Other", rows),), group_style=style)  # type: ignore[arg-type]
 
     # Act
@@ -479,17 +492,26 @@ def test_records_multiYearReport_everyFieldAsPrinted() -> None:
     content = render(_five_year_report())
 
     # Act
-    recs = list(wc.records(content, report_url="https://www.waynecountymi.gov/r.pdf"))
+    recs = list(
+        wc.records(
+            content, report_url="https://www.waynecountymi.gov/r.pdf", retrieved_at="2026-11-24T12:00:00"
+        )
+    )
 
     # Assert
     common = {
         "report_url": "https://www.waynecountymi.gov/r.pdf",
+        "report_sha256": hashlib.sha256(content).hexdigest(),
+        "report_retrieved_at": "2026-11-24T12:00:00",
         "area": "Wayne County, Michigan, excluding the City of Detroit (Out-Wayne)",
         "excludes_detroit": True,
         "data_retrieved_on": "07/21/2026",
+        "data_retrieved_date": "2026-07-21",
         "page": 1,
         "disease_group": "Other",
         "suppressed": False,
+        "printed_total_line": False,
+        "total_label": False,
         "is_total_row": False,
     }
     assert recs[0] == {
@@ -498,6 +520,7 @@ def test_records_multiYearReport_everyFieldAsPrinted() -> None:
         "column": "2021",
         "period_kind": "year",
         "period_year": 2021,
+        "calendar_year": 2021,
         "period_quarter": None,
         "period_end_year": None,
         "printed": "3",
@@ -511,6 +534,7 @@ def test_records_multiYearReport_everyFieldAsPrinted() -> None:
         "column": "2-Year Average",
         "period_kind": "multi_year_average",
         "period_year": 2021,
+        "calendar_year": None,
         "period_quarter": None,
         "period_end_year": 2022,
         "printed": "3.5",
@@ -1093,3 +1117,183 @@ def test_parse_tables_grandTotalLast_accepted() -> None:
 
     # Assert: exactly one total, and it is the last row
     assert [r.trailing_total for r in got] == [False, False, False, True]
+
+
+# --- review round fixes (PR #27) -----------------------------------------------------------------------
+
+
+def test_records_reportSilentOnDetroit_areaNotLabelledOutWayne() -> None:
+    # Arrange: the 5-year report doesn't say it excludes Detroit (hard rule 1: never assumed)
+    report = dataclasses.replace(_five_year_report(), title="Case Counts 2021-2022")
+
+    # Act
+    recs = list(wc.records(render(report), report_url="https://www.waynecountymi.gov/r.pdf"))
+
+    # Assert
+    assert {(r["area"], r["excludes_detroit"]) for r in recs} == {(wc.AREA_UNSTATED, None)}
+    assert "excluding" not in wc.AREA_UNSTATED
+
+
+def test_parse_report_rowFailingTwoChecks_countsAsOneRow() -> None:
+    # Arrange: MAX_FAILED_ROWS rows, each failing both its total and its average check (4 checks, 2 rows)
+    rows = tuple(SynthRow((f"Condition {c}",), ("3", "4", "8", "4.5")) for c in "AB")
+    ok = (SynthRow(("Condition C",), ("1", "2", "3", "1.5")),)
+    report = dataclasses.replace(_five_year_report(), groups=(SynthGroup("Other", rows + ok),))
+
+    # Act
+    got, periods, _ = wc.parse_report(render(report))
+
+    # Assert
+    assert sum(len(wc.failed_checks(r, periods)) for r in got) == 4 > wc.MAX_FAILED_ROWS
+
+
+def test_parse_report_sameDiseaseTwiceInAGroup_refused() -> None:
+    rows = (SynthRow(("Pertussis",), ("1", "2", "3", "4", "10")),) * 2
+    report = dataclasses.replace(_report([]), groups=(SynthGroup("VPD", rows),))
+    with pytest.raises(pt.LayoutError, match="appears twice"):
+        wc.parse_report(render(report))
+
+
+@pytest.mark.parametrize(
+    ("values", "problems"),
+    [
+        (["2", "3", "5", "3"], 0),
+        (["2", "3", "5", "2"], 1),
+        (["1", "2", "3", "1.5"], 0),
+        (["1", "2", "3", "1.6"], 1),
+    ],
+)
+def test_reconcile_average_roundsHalfUpAsWordPrintsIt(values: list[str], problems: int) -> None:
+    periods = wc.resolve_periods(["2021", "2022", "2021- 2022 Total", "2-Year Average"])
+    assert len(wc.reconcile([_row(*values)], periods)) == problems
+
+
+def test_records_totalRowDisagreeingWithItsRows_keepsFailedChecksNote() -> None:
+    # Arrange: the grand total's Q4 and total don't equal the rows above it
+    rows = (
+        SynthRow(("Candida auris",), ("1", "2", "3", "4", "10")),
+        SynthRow(("Legionellosis",), ("5", "6", "7", "8", "26")),
+    )
+    report = SynthReport(
+        title="Select Reportable Disease Case Counts for 2023",
+        headers=(("Q1",), ("Q2",), ("Q3",), ("Q4",), ("Totals",)),
+        groups=(SynthGroup("Other", rows),),
+        group_style="repeat",
+        repeat_header=True,
+        trailing_total=("6", "8", "10", "13", "37"),
+    )
+
+    # Act
+    recs = list(wc.records(render(report), report_url="https://www.waynecountymi.gov/r.pdf"))
+
+    # Assert
+    total = [r for r in recs if r["printed_total_line"]]
+    assert len(total) == 5 and all(r["is_total_row"] for r in total)
+    assert {r["failed_checks"] for r in total} == {
+        "TOTAL (does not include subtotals): Q4 13.0 != sum of rows = 12.0; "
+        "TOTAL (does not include subtotals): Totals 37.0 != sum of rows = 36.0"
+    }
+    assert {r["failed_checks"] for r in recs if not r["is_total_row"]} == {None}
+
+
+@pytest.mark.parametrize(
+    ("label", "want"),
+    [
+        ("Subtotal", True),
+        ("Totals", True),
+        ("TOTAL (does not include subtotals)", True),
+        ("Hepatitis B, total", False),
+        ("Sub-total", False),
+    ],
+)
+def test_is_total_label_onlyALabelThatStartsAsATotal(label: str, want: bool) -> None:
+    assert wc.is_total_label(_row("1", label=label)) is want
+
+
+@pytest.mark.parametrize(
+    ("printed", "want"), [(None, None), ("07/21/2026", "2026-07-21"), ("7/1/2026", "2026-07-01")]
+)
+def test_retrieved_date_printedDate_readAsCalendarDate(printed: str | None, want: str | None) -> None:
+    assert wc.retrieved_date(printed) == want
+
+
+def test_retrieved_date_notARealDate_refused() -> None:
+    with pytest.raises(pt.LayoutError, match="not a real"):
+        wc.retrieved_date("13/45/2026")
+
+
+def test_read_pdf_tooManyBytes_refusedUnread() -> None:
+    with pytest.raises(pt.LayoutError, match="bytes"):
+        pt.read_pdf(b"x" * (pt.MAX_PDF_BYTES + 1))
+
+
+def test_read_pdf_atByteLimit_isRead(monkeypatch: pytest.MonkeyPatch) -> None:
+    content = render(_report([("1", "2", "3", "4", "10")]))
+    monkeypatch.setattr(pt, "MAX_PDF_BYTES", len(content))
+    assert len(pt.read_pdf(content)) == 1
+
+
+@pytest.mark.parametrize(("limit", "refused"), [(0, True), (1, False)])
+def test_read_pdf_pageLimit(monkeypatch: pytest.MonkeyPatch, limit: int, refused: bool) -> None:
+    content = render(_report([("1", "2", "3", "4", "10")]))
+    monkeypatch.setattr(pt, "MAX_PDF_PAGES", limit)
+    if refused:
+        with pytest.raises(pt.LayoutError, match="1 pages"):
+            pt.read_pdf(content)
+    else:
+        assert len(pt.read_pdf(content)) == 1
+
+
+@pytest.mark.parametrize(("elapsed", "refused"), [(10.0, False), (10.5, True)])
+def test_read_pdf_parseTime_refusedPastTheLimit(elapsed: float, refused: bool) -> None:
+    content = render(_report([("1", "2", "3", "4", "10")]))
+    ticks = iter([0.0, elapsed])
+    if refused:
+        with pytest.raises(pt.LayoutError, match="too long"):
+            pt.read_pdf(content, clock=lambda: next(ticks), max_parse_s=10.0)
+    else:
+        assert len(pt.read_pdf(content, clock=lambda: next(ticks), max_parse_s=10.0)) == 1
+
+
+def test_read_pdf_notAPdf_isALayoutError() -> None:
+    with pytest.raises(pt.LayoutError, match="could not be read") as e:
+        pt.read_pdf(b"%PDF-1.4 broken")
+    assert e.value.__cause__ is not None
+
+
+@pytest.mark.parametrize(
+    ("line", "years_are_header", "want"),
+    [
+        pytest.param(
+            [_w("Chlamydia", 30, 0), _w("2010", 120, 0), _w("2045", 160, 0)], True, 2, id="labelled"
+        ),
+        pytest.param(
+            [_w("Disease", 30, 0), _w("2024", 120, 0), _w("2025", 160, 0)], True, 0, id="header-word"
+        ),
+        pytest.param([_w("2024", 120, 0), _w("2025", 160, 0)], False, 2, id="below-header"),
+    ],
+)
+def test_count_in_yearLikeCounts_dataUnlessAHeaderLine(
+    line: list[pt.Word], years_are_header: bool, want: int
+) -> None:
+    assert pt._count_in(line, pt.TableSpec(), 100, years_are_header=years_are_header) == want
+
+
+@pytest.mark.parametrize("first", [True, False], ids=["first-row", "later-row"])
+def test_parse_report_rowOfYearLikeCounts_readAsData(first: bool) -> None:
+    # Arrange: counts with no thousands commas that all look like years
+    years = SynthRow(("Chlamydia",), ("2010", "2045", "1998"))
+    other = SynthRow(("Gonorrhea",), ("1", "2", "3"))
+    report = SynthReport(
+        title="Quarter 2 2026",
+        headers=(("Q2_2025",), ("Q1_2026",), ("Q2_2026",)),
+        groups=(SynthGroup("STI", (years, other) if first else (other, years)),),
+        group_style="repeat",
+        repeat_header=True,
+    )
+
+    # Act
+    rows, _, _ = wc.parse_report(render(report))
+
+    # Assert
+    assert parsed(rows) == expected(report)

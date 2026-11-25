@@ -29,13 +29,14 @@ source:
   min_interval_s: 10
 codebook_url: https://www.waynecountymi.gov/Government/Departments/Health-Human-Veterans-Services/Public-Health/Statistics-Reports
 caveats:
-  - "Excludes Detroit: every count covers Wayne County outside the City of Detroit (Out-Wayne), which has its own health department. The quarterly and annual reports say so; the 5-year report does not, and its rows carry excludes_detroit empty (see the contract's open questions). Never read these counts as all of Wayne County."
+  - "Excludes Detroit: the quarterly and annual reports count Wayne County outside the City of Detroit (Out-Wayne), which has its own health department, and say so. The 5-year report doesn't say, so its rows don't claim it either way (area says so, excludes_detroit is empty) until a maintainer confirms it. Never read these counts as all of Wayne County."
   - "Counts of 1 to 5 are printed as '*' in reports from 2025 on. A '*' is kept exactly as printed and is never filled in, guessed or counted as zero; a sum that would include one has no total."
   - "Counts include confirmed and probable cases from the Michigan Disease Surveillance System (MDSS), as the reports state, and are preliminary: newer reports print the date the data were retrieved (data_retrieved_on), and the same quarter can differ between reports."
   - "Each report is its own table. Reports overlap (rolling five quarters, year to date, annual, 5-year), so counts are never added across reports or across a report's columns: read one report and one column."
   - "A condition with 0 or suppressed counts in each of the previous five quarters is left out of a report, so a missing row is not a zero."
   - "'YTD' runs through the report's own quarter in every year shown: 'YTD 2025' in the Q1 2026 report is Q1 2025 alone."
-  - "Subtotal rows and the grand-total line are publisher totals and are left out of sums. Where a printed total disagrees with its parts, the row keeps a failed_checks note."
+  - "Subtotal rows and the grand-total line are publisher totals and are left out of sums. Where a printed total disagrees with its parts or with the rows it covers, the row keeps a failed_checks note."
+  - "A question reads at most the three newest reports live (by the year in each file name), to keep the wait short; the answer's notes name any report left unread."
   - "No terms of use are stated, so these reports are read from the county at run time, held in memory only and never stored or published."
   - "Only the 2021-onward layouts are read: the 2021-2024 annual reports, the 2025-onward quarterly reports and the 2021-2025 5-year report. Reports from 2014-2020 are listed on the page but not read."
 gbd:

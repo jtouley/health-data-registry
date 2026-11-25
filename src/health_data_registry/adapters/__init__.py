@@ -20,11 +20,18 @@ Fetcher = Callable[[str], RawFetch]
 class Page:
     fetch: RawFetch
     records: list[dict[str, Any]]
+    note: str | None = None  # what a reader should know about this page (e.g. reports left unread)
 
 
 def pages(
-    entry: CatalogEntry, fetcher: Fetcher, *, max_rows: int | None = None, fields: list[str] | None = None
+    entry: CatalogEntry,
+    fetcher: Fetcher,
+    *,
+    max_rows: int | None = None,
+    fields: list[str] | None = None,
+    max_reports: int | None = None,
 ) -> Iterator[Page]:
+    """Every page of one source. `max_reports` caps how many reports a PDF-report source reads."""
     if entry.source.portal == "socrata":
         from health_data_registry.adapters import socrata
 
@@ -40,7 +47,7 @@ def pages(
     elif entry.source.portal == "pdf_report":
         from health_data_registry.adapters import wayne_county
 
-        yield from wayne_county.pages(entry, fetcher, max_rows=max_rows)
+        yield from wayne_county.pages(entry, fetcher, max_rows=max_rows, max_reports=max_reports)
     else:  # pragma: no cover - the catalog model forbids other portals
         raise ValueError(f"no adapter for portal {entry.source.portal}")
 

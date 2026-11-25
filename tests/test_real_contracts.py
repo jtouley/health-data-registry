@@ -97,7 +97,16 @@ CAURIS = ["Candida auris, clinical", "Candida auris, screening"]
 
 
 @pytest.mark.parametrize(
-    "metric", ["weekly_cases", "year_to_date_cases", "annual_cases", "us_resident_annual_cases"]
+    "metric",
+    [
+        "weekly_cases",
+        "year_to_date_cases",
+        "prior_year_to_date_cases",
+        "annual_cases",
+        "us_resident_weekly_cases",
+        "us_resident_year_to_date_cases",
+        "us_resident_annual_cases",
+    ],
 )
 @pytest.mark.parametrize(
     ("filters", "group_by"),
