@@ -12,9 +12,12 @@ differences are listed below, so a later run can be compared with it.
 | `numbers.py` | Reads numbers as tokens (value, precision, year or count) and finds the sums the rubric allows |
 | `stats.py` | Wilson 95% interval, McNemar's test for before/after runs, the DEV−TEST gap, per-class tables |
 | `report.py` | Writes aggregate tables; prints per-question rows for DEV only |
+| `drive.py` | Asks each question through the MCP server with the Claude API and writes the transcript and answers |
+| `drive_prompt.md` | The driver's fixed system prompt (versioned; its sha256 is recorded in every run) |
 | `dev/dev.jsonl` | The DEV questions: 29 expected records, no answers |
 
-Quick start, on DEV: score a run into `run.jsonl` ([Running a report](#running-a-report)), then
+Quick start, on DEV: drive the questions through the server ([Driving a run](#driving-a-run)), score the run
+into `run.jsonl` ([Running a report](#running-a-report)), then
 
 ```sh
 uv run python -m eval.report --split dev --results run.jsonl --questions
@@ -124,28 +127,88 @@ For what the rules can't judge, pass a `JudgementGrader` to `score_question`. `L
 with one fixed prompt. The grader is off by default and can only lower a score: where two scorers disagree,
 the stricter one stands.
 
+## Driving a run
+
+`drive.py` plays the clinician's Claude. It starts the server once over stdio (`uv run --no-sync
+health-data-registry serve` in `--server-dir`). Then, for each question in file order and one at a time, it
+offers the model the server's tools, runs every tool call the model makes, and stops at the final answer.
+
+It needs three environment variables:
+
+| Variable | What it is |
+|---|---|
+| `ANTHROPIC_API_KEY` | The Claude API key |
+| `EVAL_MODEL` | The model id that answers. There is no default: the driver stops with a message when it's unset |
+| `HDR_LAKE` | The lake the server reads, as for `make serve` |
+
+`--server-dir` must be a git checkout that has been `uv sync`'d. On DEV, from the repo root:
+
+```sh
+export EVAL_MODEL=<model id> HDR_LAKE=$PWD/lake
+uv run python -m eval.drive --questions eval/dev/dev.jsonl --server-dir . --out ../run-dev
+uv run python -m eval.drive --questions eval/dev/dev.jsonl --server-dir . --out ../run-dev-b --protocol B
+```
+
+- **Inputs.** Only each line's `id` and `question` are read; the expected fields are never sent or read.
+- **Prompt.** The system prompt is `drive_prompt.md` followed by the server's own `instructions`, as an MCP
+  client hands them to the model. Changing the prompt changes its sha256: bump `PROMPT_VERSION` in `drive.py`
+  and pin the new hash in `tests/test_eval_drive.py`.
+- **Protocol B** (`--protocol B`) takes `query_sql` out of the tools offered and refuses it if the model calls
+  it anyway. A refused call never reaches the server, so it is listed in the answer's `refused_calls`, not in
+  the transcript.
+- **Limits.** 12 API requests and 25 tool calls per question, 120 seconds per tool call, 300 per API request
+  and 900 for the whole question (`--max-turns`, `--max-calls`, `--tool-timeout`, `--api-timeout`,
+  `--question-timeout`). A question that hits one ends with `status` `turn_cap` or `deadline`; a tool call over
+  its timeout returns an error to the model and the question goes on. Overload, rate limits and server errors
+  are retried 6 times with backoff (2, 4, 8 ... seconds, or the API's `retry-after`); any other API error, or
+  retries running out, stops the run.
+- **Temperature is not set.** The API rejects sampling parameters, so two runs of the same questions can
+  differ. Compare runs with McNemar's test, not by eye.
+- **Privacy.** Nothing is printed but counts (`12/55 done`) and plain error messages: no question, answer,
+  argument or tool result. Everything goes to `--out`, which must not already hold a run: `transcript.jsonl`,
+  `answers.jsonl`, the server's stderr in `server.log` and library warnings in `drive.log`. The sealed
+  workflow relies on this to run TEST.
+
+Both files start with one header record, `{"drive_header": {...}}`: the model, the prompt's version and
+sha256, the server instructions' sha256, the server commit (and whether its tree was dirty), the snapshot id
+each dataset's `LATEST` names in the lake, the protocol, the tools offered and the limits. Then:
+
+- `transcript.jsonl`: one object per tool call that reached the server: `id`, `tool`, `args`, `result` (the
+  text the tool returned), `turn`, `is_error` and `seconds`.
+- `answers.jsonl`: one object per question: `id`, `answer` (the final text), `status` (`answered`,
+  `turn_cap`, `deadline`, `refusal`, `max_tokens` or `stopped`), `turns`, `tool_calls`, `refused_calls`,
+  `stop_reason` and `usage` (tokens, for cost).
+
+### A new baseline
+
+Scores from this driver start a new baseline. The earlier runs (DEV 28/29 and TEST 46/55 at `f8f3625`) were
+produced by an agent acting as the client by hand, not by this driver, with a different prompt and no caps, so
+they are not directly comparable with a driver run. Compare driver runs with driver runs, at the same
+`EVAL_MODEL` and prompt sha256.
+
 ## Running a report
 
-Transcripts come from the eval workflow's driver (`drive.py`, which runs outside this repo): one JSON object
-per tool call, with `id`, `tool`, `args` and `result`. The final answers are one JSON object per question,
-with `id` and `answer`. To score DEV into `run.jsonl`:
+To score a driver run on DEV into `run.jsonl` (`transcript_by_question` and `answers_by_question` skip the
+header record):
 
 ```python
 import json
 from pathlib import Path
 
-from eval.scorer import load_expected, score_question, transcript_by_question
+from eval.scorer import answers_by_question, load_expected, score_question, transcript_by_question
+
+
+def jsonl(path: str) -> list[dict]:
+    return [json.loads(x) for x in Path(path).read_text().splitlines() if x]
+
 
 expected = load_expected(Path("eval/dev/dev.jsonl"), "dev")
-calls = transcript_by_question(
-    [json.loads(x) for x in Path("transcript.jsonl").read_text().splitlines() if x]
-)
-rows = [json.loads(x) for x in Path("answers.jsonl").read_text().splitlines() if x]
-answers = {r["id"]: r["answer"] for r in rows}
+calls = transcript_by_question(jsonl("../run-dev/transcript.jsonl"))
+answers = answers_by_question(jsonl("../run-dev/answers.jsonl"))
 with Path("run.jsonl").open("w") as out:
     for e in expected:
         c, r = calls.get(e.id, ([], []))
-        out.write(json.dumps(score_question(e, c, r, answers[e.id]).to_row("dev")) + "\n")
+        out.write(json.dumps(score_question(e, c, r, answers.get(e.id, "")).to_row("dev")) + "\n")
 ```
 
 Then:
