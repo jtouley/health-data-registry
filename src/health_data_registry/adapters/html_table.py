@@ -168,10 +168,12 @@ def listing_page(entry: CatalogEntry, cfg: ListingConfig, content: bytes, url: s
 
 
 def item_records(entry: CatalogEntry, cfg: ListingConfig, content: bytes, url: str) -> list[dict[str, Any]]:
-    """One item page's record: the declared fields' text (a field the page doesn't have is empty; one it has twice
-    is refused), joined by the fields each ``parse`` extension reads from the same page, in catalog order. Each
-    extension gives one record for an item page; a field named twice (by the config and an extension, or by two
-    extensions) is refused, never overwritten."""
+    """One item page's records: a ``parse`` extension's, or one record of the declared fields' text (a field the
+    page doesn't have is empty; one it has twice is refused)."""
+    parsers = resolved(entry.source.extensions, "parse")
+    if parsers:
+        ext, args = parsers[0]
+        return [dict(r) for r in ext.run(args, content, url)]
     doc = parse_html(content)
     rec: dict[str, Any] = {}
     for name, selector in cfg.fields.items():
@@ -179,16 +181,4 @@ def item_records(entry: CatalogEntry, cfg: ListingConfig, content: bytes, url: s
         if len(hits) > 1:
             raise LayoutError(f"{entry.id}: {url} has {len(hits)} elements for {name}, not one")
         rec[name] = hits[0].text() if hits else None
-    for ext, args in resolved(entry.source.extensions, "parse"):
-        out = [dict(r) for r in ext.run(args, content, url)]
-        if len(out) != 1:
-            raise LayoutError(
-                f"{entry.id}: {ext.name} read {len(out)} records from the item page {url}, not one"
-            )
-        twice = sorted(set(out[0]) & set(rec))
-        if twice:
-            raise LayoutError(
-                f"{entry.id}: {ext.name} reads {', '.join(twice)}, which another reader already reads"
-            )
-        rec.update(out[0])
     return [rec]

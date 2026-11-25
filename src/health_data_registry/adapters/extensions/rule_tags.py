@@ -1,6 +1,6 @@
 """rule_tags (hook staging): our own tags from fixed word rules over an item's text, never a model's reading.
 
-Each output column holds every tag of one rule set (research_tags.RULE_SETS: conditions, designs, data sources,
+Each output column holds every tag of one rule set (tag_rules.RULE_SETS: conditions, designs, data sources,
 geography) whose rule matches the item's ``text_fields`` (joined by line breaks), sorted and joined with '; ', or
 '' when none match. The rules are research_tags' own, the same ones the DOI harvest applies in Python, compiled
 here for RE2 so the lake, the private stores and dbt tag alike (ADR 0006: a tag is a hint, not a stored fact
@@ -15,7 +15,7 @@ from typing import Literal
 from pydantic import Field, model_validator
 
 from health_data_registry.adapters.extensions import Extension, ExtensionRefused, StagingStep, register
-from health_data_registry.research_tags import RULE_SETS, pattern
+from health_data_registry.adapters.extensions.tag_rules import RULE_SETS, pattern
 from health_data_registry.source_config import Strict
 
 RuleSet = Literal["conditions", "designs", "data_sources", "geography"]

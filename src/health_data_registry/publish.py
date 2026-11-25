@@ -114,11 +114,26 @@ def sha256_file(path: Path) -> str:
 
 
 def hf_repo_id(url: str) -> str:
-    """`hf://datasets/<owner>/<name>[@rev][/path]` -> `<owner>/<name>`."""
+    """`hf://datasets/<owner>/<name>[@rev][/path]` -> `<owner>/<name>`. A private-tier or ops dataset's name
+    (naming.py: ``...-private-<source>``, ``...-ops-<job>``) is refused: those hold private rows, crawl state and
+    the pages a crawl read (CROI's hold abstract text), and a public release is never written to one."""
     repo = "/".join(url.removeprefix(HF_PREFIX).split("@")[0].strip("/").split("/")[:2])
     if not url.startswith(HF_PREFIX) or repo.count("/") != 1 or not all(repo.split("/")):
         raise ValueError(f"{url!r} is not hf://datasets/<org>/<name>")
+    if is_private_name(repo):
+        raise ValueError(
+            f"{repo} is a private or ops dataset by its name, so a public release is never written to it"
+        )
     return repo
+
+
+def is_private_name(repo: str) -> bool:
+    """Is ``repo`` named as a private-tier or ops dataset (naming.private_dataset, naming.ops_dataset)?"""
+    from health_data_registry import naming
+
+    name = repo.split("/")[-1].lower()
+    tiers = (naming.private_dataset("zz", "o"), naming.ops_dataset("zz", "o"))
+    return any(name.startswith(t.split("/")[1][: -len("zz")]) for t in tiers)
 
 
 def release_tag(run_date: str) -> str:
@@ -901,16 +916,32 @@ def private_values(registry: Registry, lake: Path) -> set[str]:
     from health_data_registry import private
 
     values: set[str] = set()
+    rows: list[dict[str, Any]] = []
     for ds in registry:
-        if ds.entry.tier != "private":
-            continue
-        for row in private.held_rows(lake, ds):
-            values |= {
-                _collapse(v)
-                for v in row.values()
-                if isinstance(v, str) and len(_collapse(v)) >= MIN_LEAK_CHARS
-            }
+        if ds.entry.tier == "private":
+            rows += private.held_rows(lake, ds)
+    rows += crawl_records(lake)
+    for row in rows:
+        values |= {
+            _collapse(v) for v in row.values() if isinstance(v, str) and len(_collapse(v)) >= MIN_LEAK_CHARS
+        }
     return values
+
+
+def crawl_records(lake: Path) -> list[dict[str, Any]]:
+    """The item records a private listing crawl keeps in the private area (lake/private/_crawl/): the pages it
+    read, parsed, before any year is stored. They hold the same private text (CROI's abstracts), so the leak
+    check reads them too, even while no store holds a row yet."""
+    from health_data_registry.private_listing import crawl_root
+
+    out: list[dict[str, Any]] = []
+    for p in sorted(crawl_root(lake).rglob("items/*.json")):
+        try:
+            doc = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        out += [r for r in doc.get("records") or [] if isinstance(r, dict)]
+    return out
 
 
 def _collapse(text: str) -> str:

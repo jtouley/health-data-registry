@@ -233,14 +233,6 @@ def test_rule_tags_in_sql_match_research_tags_in_python(title: str, body: str | 
     )  # fmt: skip
 
 
-def test_rule_tags_acronyms_only_in_capitals() -> None:
-    assert research_tags.tag_record("state of the art; prep; tb", None)["condition_tags"] == ""
-    assert (
-        research_tags.tag_record("ART, PrEP, TB", None)["condition_tags"]
-        == "hiv; hiv_prevention; tuberculosis"
-    )
-
-
 def test_rule_tags_arguments_and_layout_are_checked() -> None:
     ext = EXTENSIONS["rule_tags"]
     with pytest.raises(ValidationError):

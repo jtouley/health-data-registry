@@ -46,7 +46,8 @@ All notable changes to this project are documented here. The format follows
   `rule_tags`; no CROI module). `health-data-registry crawl-listing croi_abstracts_index` crawls
   croiconference.org at its robots.txt pace (the five most recent years by default) into two private-tier stores,
   metadata (`croi_abstracts_index`) and abstract text (`croi_abstracts_text`), from one crawl; posters are linked,
-  never fetched. Research tags now need "ART", "PrEP", "PEP", "TB" and "STI" in capitals for DOI abstracts too. `find_prior_work` reads it, gives each row's
+  never fetched.
+  CROI's tags now use research_tags' rules (the DOI harvest's), run as SQL in staging. `find_prior_work` reads it, gives each row's
   `retrieved_at` and `page_sha256` with the contract version, and says when a year is not fully indexed instead
   of reporting no match (with no years asked, it checks the five default years). A year is complete only when
   the distinct abstracts stored equal the listing's own total; writes are atomic, data before checkpoint; one

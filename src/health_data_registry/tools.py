@@ -1324,8 +1324,8 @@ def year_range(years: str | None) -> tuple[int | None, int | None]:
 
 
 def _rule_tags(rules: dict[str, tuple[str, ...]], text: str) -> set[str]:
-    """The tags a fellow's search words name, ignoring case throughout ("prep" and "tb" count here, though the
-    stored tags need the acronyms in capitals)."""
+    """The tags a fellow's search words name, ignoring case throughout (a rule written for capitals only counts
+    here in any case)."""
     return {
         t for t, pats in rules.items() if any(re.search(p.replace("(?-i:", "(?:"), text, re.I) for p in pats)
     }

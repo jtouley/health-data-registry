@@ -38,7 +38,10 @@ source:
       years: {first: 2022, last: 2026}  # owner rule: at least the five most recent conference years
       page_size: 10
       item_link_selector: "div#abstract-search-results-list div.post-entry-content h3.entry-title a"
-      item_path_pattern: "/abstract/[a-z0-9][a-z0-9-]*-[0-9]{4}(-[a-z]+)?/"
+      item_path_pattern: "/abstract/[a-z0-9][a-z0-9-]*-([0-9]{4})(-[a-z]+)?/"
+      item_year_group: 1  # every listed abstract page is of the listing's own year
+      # The listing's link title is "<number> - <title>"; that number must be the page's own Abstract Number.
+      item_number: {source: title, pattern: "(?s)\\s*([A-Za-z0-9][A-Za-z0-9.-]*)\\s+[–—-]\\s+.+", field: "Abstract Number"}
       results_count_selector: "p.abstract-search-results-count"
       results_count_pattern: "(?i)\\s*([0-9,]+)\\s+results?\\s*"
       fields: {heading: "h1.entry-title"}

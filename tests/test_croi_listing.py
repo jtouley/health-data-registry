@@ -254,7 +254,8 @@ def test_a_failed_listing_page_stops_the_year(
     site = Site(13)
     site.pages[listing_url(2)] = status
     run = crawl(registry, tmp_path, site)[0]
-    assert not run.complete and run.code == "fetch_refused" and f"status {status}" in (run.stopped or "")
+    assert not run.complete and run.code == "crawl_incomplete" and f"status {status}" in (run.stopped or "")
+    assert "run the same command again to carry on" in run.lines()
     assert not (tmp_path / "private" / INDEX / f"year={YEAR}.jsonl").exists()
 
 
@@ -264,7 +265,31 @@ def test_a_total_that_changes_mid_crawl_stops_the_year(
     site = Site(13)
     site.pages[listing_url(2)] = listing_html([10, 11, 12], 14)
     run = crawl(registry, tmp_path, site)[0]
-    assert not run.complete and run.code == "layout_changed" and "14" in (run.stopped or "")
+    assert not run.complete and run.code == "crawl_incomplete" and "14 results, not 13" in (run.stopped or "")
+
+
+def test_a_listed_page_of_another_year_stops_the_year(
+    tmp_path: Path, registry: Registry, clock: Clock
+) -> None:
+    site = Site(13)
+    site.pages[listing_url(2)] = listing_html([10, 11, 12], 13).replace(b"5012-2025", b"5012-2024")
+    run = crawl(registry, tmp_path, site)[0]
+    assert not run.complete and run.code == "crawl_incomplete" and "another year" in (run.stopped or "")
+    assert page_url(12, 2024) not in site.calls
+    assert not (tmp_path / "private" / INDEX / f"year={YEAR}.jsonl").exists()
+
+
+def test_a_page_whose_number_differs_from_the_listing_stops_the_year(
+    tmp_path: Path, registry: Registry, clock: Clock
+) -> None:
+    site = Site(3)
+    site.pages[page_url(1)] = abstract_html(
+        1, shown_number="777"
+    )  # heading and sidebar agree, the listing doesn't
+    run = crawl(registry, tmp_path, site)[0]
+    assert not run.complete and run.code == "layout_changed"
+    assert f"listing shows number {number(1)}" in (run.stopped or "")
+    assert "a maintainer needs to look" in " ".join(run.lines())
 
 
 def test_a_listing_of_zero_is_never_complete(tmp_path: Path, registry: Registry, clock: Clock) -> None:
@@ -277,7 +302,7 @@ def test_a_heading_and_sidebar_that_disagree_stop_the_year(
     tmp_path: Path, registry: Registry, clock: Clock
 ) -> None:
     site = Site(3)
-    site.pages[page_url(1)] = abstract_html(1, sidebar_number="999")
+    site.pages[page_url(1)] = abstract_html(1, shown_number="999", sidebar_number=number(1))  # heading only
     run = crawl(registry, tmp_path, site)[0]
     assert not run.complete and run.code == "layout_changed"
     assert "differs" in (run.stopped or "")
@@ -289,6 +314,11 @@ def test_two_pages_with_one_number_keep_the_first_and_stay_incomplete(
 ) -> None:
     site = Site(3)
     site.pages[page_url(2)] = abstract_html(2, shown_number=number(1))
+    site.pages[listing_url(1)] = site.pages[
+        listing_url(1)
+    ].replace(  # the listing shows the same number twice
+        f'title="{number(2)} –'.encode(), f'title="{number(1)} –'.encode()
+    )
     run = crawl(registry, tmp_path, site)[0]
     assert (run.complete, run.code, run.collisions, run.stored) == (False, "collision", 1, 2)
     kept = {r["abstract_number"]: r["page_url"] for r in rows(tmp_path, INDEX)}
@@ -303,6 +333,9 @@ def test_an_incomplete_year_never_reads_as_no_prior_work(
 ) -> None:
     site = Site(3)
     site.pages[page_url(2)] = abstract_html(2, shown_number=number(1))
+    site.pages[listing_url(1)] = site.pages[listing_url(1)].replace(
+        f'title="{number(2)} –'.encode(), f'title="{number(1)} –'.encode()
+    )
     crawl(registry, tmp_path, site)
     out = tools.find_prior_work(registry, condition="influenza", years=str(YEAR), fmt="json", lake=tmp_path)
     assert isinstance(out, dict) and out.get("refused") == "index_incomplete"
@@ -470,3 +503,45 @@ def test_the_cli_refuses_in_plain_words(
     assert "Give a year" in capsys.readouterr().err
     assert cli.main(["crawl-listing", INDEX, "--years", "2014"]) == 1
     assert "outside" in capsys.readouterr().err
+
+
+# ------------------------------------------------------------------------------- the crawl's pages stay private
+
+
+def test_the_crawl_state_is_never_published(tmp_path: Path, registry: Registry, clock: Clock) -> None:
+    """The pages a crawl read (abstract text) live only in the private area and the private ops dataset: a staged
+    release holding any of them is refused, even before a year is stored; a release is never written to a
+    private or ops dataset."""
+    from health_data_registry import naming, publish
+
+    site = Site(13)
+    site.pages[listing_url(2)] = 503  # incomplete: nothing in the stores yet, only the crawl's own items
+    crawl(registry, tmp_path, site)
+    assert not (tmp_path / "private" / TEXT / f"year={YEAR}.jsonl").exists()
+    items = sorted((tmp_path / "private" / "_crawl").rglob("items/*.json"))
+    assert len(items) == 10
+    body = json.loads(items[0].read_text(encoding="utf-8"))["records"][0]["body"]
+    out = tmp_path / "release"
+    out.mkdir()
+    (out / "README.md").write_text(
+        "A card that quotes an abstract:\n" + body.split("\n")[1], encoding="utf-8"
+    )
+    problems = publish.private_leaks(registry, tmp_path, out)
+    assert problems == ["README.md holds text from a private-tier source; nothing private is published"]
+    (out / "README.md").write_text("A card with no private text.", encoding="utf-8")
+    (out / "item.json").symlink_to(items[0])
+    assert publish.private_leaks(registry, tmp_path, out) == [
+        "item.json points into the private area of the lake"
+    ]
+    for repo in (naming.ops_dataset("croi-crawl", "o"), naming.private_dataset(TEXT, "o"),
+                 naming.private_dataset(INDEX, "o")):  # fmt: skip
+        with pytest.raises(ValueError, match="never written to it"):
+            publish.hf_repo_id(f"hf://datasets/{repo}")
+    assert publish.hf_repo_id("hf://datasets/o/health-data-registry") == "o/health-data-registry"
+    with pytest.raises(ValueError, match="never written to it"):
+        publish.export_public(
+            registry,
+            tmp_path,
+            f"hf://datasets/{naming.ops_dataset('croi-crawl', 'o')}",
+            run_date="2026-11-25",
+        )

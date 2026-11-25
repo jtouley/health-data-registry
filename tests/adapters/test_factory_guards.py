@@ -146,10 +146,7 @@ def test_every_real_catalog_entry_loads_through_its_type() -> None:
 
 ALLOWED_IMPORTS = {"__future__", "collections", "collections.abc", "dataclasses", "typing", "re", "pydantic",
                    "health_data_registry.source_config", "health_data_registry.adapters.extensions", "math",
-                   "decimal", "unicodedata", "string", "itertools", "functools", "html", "json",
-                   # pure modules: the standard-library HTML reader with CSS selectors (no network, no files),
-                   # and the fixed word rules of the research index
-                   "health_data_registry.adapters.html", "health_data_registry.research_tags"}  # fmt: skip
+                   "decimal", "unicodedata", "string", "itertools", "functools", "html", "json"}  # fmt: skip
 FORBIDDEN_CALLS = {"open", "eval", "exec", "__import__", "input"}
 
 
