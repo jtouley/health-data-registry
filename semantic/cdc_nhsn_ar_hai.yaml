@@ -116,3 +116,9 @@ series:
     filters: {phenotype: "Carbapenem-resistant Pseudomonas aeruginosa"}
     location_dimension: geography
     time_dimension: year
+# Any phenotype in the catalog (conditions.labels): the overall percent resistant, as published, never added.
+generic_series:
+  - metric: percent_resistant_overall
+    measure: percent
+    location_dimension: geography
+    time_dimension: year
