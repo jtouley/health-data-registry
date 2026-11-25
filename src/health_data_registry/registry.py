@@ -1153,6 +1153,7 @@ def unpinned_non_additive(semantic: SemanticModel, metric: Metric, pinned: Itera
     `pinned` (the dimensions a question filters to one value or groups by). Empty for any other aggregation."""
     if metric.aggregation != "sum":
         return []
+    # probe: timing only (not for merge)
     fixed = set(pinned) | filter_pins(metric.filters, semantic.dimensions)
     return [d.name for d in semantic.dimensions if d.non_additive and d.name not in fixed]
 
