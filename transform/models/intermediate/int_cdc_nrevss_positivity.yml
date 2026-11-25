@@ -49,16 +49,20 @@ models:
         condition: measured = 0
         nothing_to_judge: true
       config:
-        severity: error
+        severity: warn
         meta:
           dimension: conformity
           rule: pathogen_codes
           contract: contracts/cdc_nrevss_positivity.odcs.yaml
-          checks: 'Column description: pathogen is one of [Influenza, COVID-19, RSV].'
+          checks: 'Column description: pathogen is one of [Influenza, COVID-19, RSV]. A warning, not an error: a
+            new or renamed virus must reach the flag_unmapped_labels review queue for a maintainer, as other sources''
+            condition labels do, rather than stop the build before that queue runs. The three listed viruses'' percents
+            are not made wrong by a new one.'
   - odcs_check:
       name: cdc_nrevss_positivity_every_virus_published
       arguments:
-        measure_sql: SELECT COUNT(DISTINCT pathogen) FROM {object} WHERE percent_test_positivity IS NOT NULL
+        measure_sql: SELECT COUNT(DISTINCT pathogen) FROM {object} WHERE percent_test_positivity IS NOT NULL AND
+          pathogen IN ('Influenza', 'COVID-19', 'RSV')
         condition: measured = 3
       config:
         severity: warn
@@ -95,7 +99,8 @@ models:
           rule: some_percents_present
           contract: contracts/cdc_nrevss_positivity.odcs.yaml
           checks: 'Fill rate: an all-empty percent column would pass the range check, so at least one row must carry
-            a percent (all 648 did on 2026-11-25).'
+            a percent (all 648 did on 2026-11-25). The error-severity version of the generated fill-rate warning
+            on this column, so an all-empty column is reported by both and blocks the load.'
   - odcs_check:
       name: cdc_nrevss_positivity_fill_rate_percent_test_positivity
       arguments:
@@ -113,8 +118,10 @@ models:
   columns:
   - name: week_end
     data_type: date
-    description: 'The Saturday that ends the MMWR week the tests were counted in (column description: ''Date of
-      Saturday of the MMWR week'').'
+    description: 'The Saturday that ends the MMWR week (column description: ''Date of Saturday of the MMWR week'').
+      For COVID-19 and RSV, the week the tests were performed (dataset description: laboratories report ''the total
+      number of SARS-CoV-2 and RSV tests performed that week''); which date puts an influenza test in a week is
+      not stated (see openQuestions).'
     meta:
       logical_type: date
       physical_type: DATE
@@ -136,8 +143,8 @@ models:
   - name: percent_test_positivity
     data_type: double
     description: 'Percent of laboratory tests for the virus that were positive in the week, nationally: positive
-      tests divided by all tests, times 100 (dataset description). Counts tests, not people. Empty would mean no
-      figure for that week, never zero.'
+      tests divided by all tests, times 100 (dataset description). Counts tests, not people (dataset description).
+      An empty value is kept empty, never read as zero; what CDC means by an empty value is not stated (see openQuestions).'
     meta:
       logical_type: number
       physical_type: DOUBLE

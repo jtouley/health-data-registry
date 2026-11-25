@@ -1,9 +1,11 @@
 # Hand-written dbt unit test of the generated stg_cdc_nrevss_positivity typing (staging.typed_select): Socrata's
-# calendar_date text becomes a DATE, the percent becomes a number as sent (never rescaled), and an empty percent
-# stays empty rather than reading as zero. Inputs are SQL so the raw source needn't be loaded first.
+# calendar_date text (or a bare date) reads as its Saturday, the percent becomes a number as sent (never
+# rescaled), and an empty or blank percent stays empty rather than reading as zero. A dbt unit test compares
+# values, not types: the DATE type itself is held by the model's enforced contract (data_type: date). Inputs are
+# SQL so the raw source needn't be loaded first. One file per source, as staging_typing.yml's header says.
 version: 2
 unit_tests:
-- name: stg_cdc_nrevss_positivity_week_becomes_a_date_and_an_empty_percent_stays_empty
+- name: stg_cdc_nrevss_positivity_week_reads_as_its_saturday_and_an_empty_percent_stays_empty
   model: stg_cdc_nrevss_positivity
   given:
   - input: source('raw', 'cdc_nrevss_positivity')
@@ -14,6 +16,8 @@ unit_tests:
       select '2024-01-13T00:00:00.000' as "week_end", 'Influenza' as "pathogen", '' as "percent_test_positivity", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
       union all
       select '2024-01-13T00:00:00.000' as "week_end", 'COVID-19' as "pathogen", '0.0' as "percent_test_positivity", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select '2024-01-20' as "week_end", 'RSV' as "pathogen", ' ' as "percent_test_positivity", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
   expect:
     rows:
     - week_end: 2024-01-06
@@ -29,5 +33,10 @@ unit_tests:
     - week_end: 2024-01-13
       pathogen: COVID-19
       percent_test_positivity: 0.0
+      _snapshot_id: s1
+      _raw_sha256: h1
+    - week_end: 2024-01-20
+      pathogen: RSV
+      percent_test_positivity: null
       _snapshot_id: s1
       _raw_sha256: h1

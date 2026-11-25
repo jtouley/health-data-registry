@@ -6,7 +6,7 @@ version: 0.1.0
 status: draft
 domain: infectious_disease
 description:
-  purpose: "The weekly national percent of laboratory tests positive for COVID-19 (SARS-CoV-2), influenza and RSV, from the National Respiratory and Enteric Virus Surveillance System and, for influenza, influenza collaborating laboratories (dataset description, https://data.cdc.gov/api/views/seuz-s2cv.json)."
+  purpose: "The weekly national percent of laboratory tests positive for COVID-19 (SARS-CoV-2), influenza and RSV. COVID-19 and RSV come from the National Respiratory and Enteric Virus Surveillance System (NREVSS); influenza results are clinical laboratory test results from NREVSS and influenza collaborating laboratories (dataset description, https://data.cdc.gov/api/views/seuz-s2cv.json)."
   usage: "Read one virus and week as published, or follow one virus over the weeks. Never add percents across viruses or weeks; the number of tests behind each percent is not published, so nothing can be pooled."
   limitations: "National only (no state or region); a percent of tests, not of people; each virus has its own set of laboratories and test types; all data provisional."
   authoritativeDefinitions:
@@ -49,7 +49,7 @@ schema:
         required: true
         primaryKey: true
         primaryKeyPosition: 1
-        description: "The Saturday that ends the MMWR week the tests were counted in (column description: 'Date of Saturday of the MMWR week')."
+        description: "The Saturday that ends the MMWR week (column description: 'Date of Saturday of the MMWR week'). For COVID-19 and RSV, the week the tests were performed (dataset description: laboratories report 'the total number of SARS-CoV-2 and RSV tests performed that week'); which date puts an influenza test in a week is not stated (see openQuestions)."
         examples: ["2026-11-14"]
         customProperties:
           - {property: role, value: dimension}
@@ -76,24 +76,24 @@ schema:
         quality:
           - id: pathogen_codes
             dimension: conformity
-            severity: error
+            severity: warn
             type: library
             metric: invalidValues
             arguments: {validValues: ["Influenza", "COVID-19", "RSV"]}
             mustBe: 0
-            description: "Column description: pathogen is one of [Influenza, COVID-19, RSV]."
+            description: "Column description: pathogen is one of [Influenza, COVID-19, RSV]. A warning, not an error: a new or renamed virus must reach the flag_unmapped_labels review queue for a maintainer, as other sources' condition labels do, rather than stop the build before that queue runs. The three listed viruses' percents are not made wrong by a new one."
           - id: every_virus_published
             dimension: completeness
             severity: warn
             type: sql
             description: "Fill rate by virus: each of the three viruses the column description lists has at least one week with a percent. A virus with none would leave its questions unanswered while every value check still passes."
-            query: "SELECT COUNT(DISTINCT pathogen) FROM {object} WHERE percent_test_positivity IS NOT NULL"
+            query: "SELECT COUNT(DISTINCT pathogen) FROM {object} WHERE percent_test_positivity IS NOT NULL AND pathogen IN ('Influenza', 'COVID-19', 'RSV')"
             mustBe: 3
       - name: percent_test_positivity
         physicalType: DOUBLE
         logicalType: number
         required: false
-        description: "Percent of laboratory tests for the virus that were positive in the week, nationally: positive tests divided by all tests, times 100 (dataset description). Counts tests, not people. Empty would mean no figure for that week, never zero."
+        description: "Percent of laboratory tests for the virus that were positive in the week, nationally: positive tests divided by all tests, times 100 (dataset description). Counts tests, not people (dataset description). An empty value is kept empty, never read as zero; what CDC means by an empty value is not stated (see openQuestions)."
         customProperties:
           - {property: role, value: measure}
           - {property: sourceField, value: percent_test_positivity}
@@ -110,7 +110,7 @@ schema:
             dimension: completeness
             severity: error
             type: sql
-            description: "Fill rate: an all-empty percent column would pass the range check, so at least one row must carry a percent (all 648 did on 2026-11-25)."
+            description: "Fill rate: an all-empty percent column would pass the range check, so at least one row must carry a percent (all 648 did on 2026-11-25). The error-severity version of the generated fill-rate warning on this column, so an all-empty column is reported by both and blocks the load."
             query: "SELECT COUNT(*) FROM {object} WHERE percent_test_positivity IS NOT NULL"
             mustBeGreaterThan: 0
 customProperties:
@@ -127,7 +127,9 @@ customProperties:
     value:
       - "Licence: the Socrata metadata has no licence field (2026-11-25). public-domain-us-federal is assumed from its being a CDC work; a maintainer confirms the wording."
       - "How many tests and laboratories stand behind each week's percent, and has the set of reporting laboratories changed over time? Not in the table; the NREVSS page was not fetched."
-      - "Influenza: the description says results come from NREVSS clinical laboratories and influenza collaborating laboratories. Does it include public health laboratory results, and which test types (the RSV and COVID-19 rows are NAAT only)?"
+      - "Influenza: the dataset description says NREVSS 'includes clinical, public health and commercial laboratories', but that 'Influenza results include clinical laboratory test results from NREVSS and influenza collaborating laboratories'. Does the influenza percent include public health or commercial laboratory results, and which test types (the RSV and COVID-19 rows are NAAT only)?"
+      - "Which date puts an influenza test in a week (the date the test was performed, as for COVID-19 and RSV, or another date)? The metadata states the week of testing for SARS-CoV-2 and RSV only."
+      - "What does an empty percent mean (no laboratory reported, too few tests, or not yet available)? No empty value was seen on 2026-11-25, and the metadata does not say."
       - "How far back are weeks revised in a later load ('All data are provisional and subject to change')? Each load is kept so an answer can name the load it came from."
       - "Is the percent rounded to one decimal place by CDC (every value seen on 2026-11-25 had one decimal)? Not stated."
       - "Does CDC publish a regional (HHS region) or state version of this percent elsewhere? This table is national only, so a question by region or state is declined here."

@@ -1,3 +1,6 @@
 {"week_end": "2024-01-06T00:00:00.000", "pathogen": "COVID-19", "percent_test_positivity": "1.5"}
 {"week_end": "2024-01-06T00:00:00.000", "pathogen": "Influenza", "percent_test_positivity": "2.5"}
 {"week_end": "2024-01-06T00:00:00.000", "pathogen": "RSV", "percent_test_positivity": "3.5"}
+{"week_end": "2024-01-13T00:00:00.000", "pathogen": "COVID-19", "percent_test_positivity": "1.0"}
+{"week_end": "2024-01-13T00:00:00.000", "pathogen": "Influenza"}
+{"week_end": "2024-01-13T00:00:00.000", "pathogen": "RSV", "percent_test_positivity": "4.0"}

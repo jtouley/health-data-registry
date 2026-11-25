@@ -38,7 +38,10 @@ def test_codebook_facts_the_contract_quotes_still_hold(live):
     assert {r["pathogen"] for r in rows} <= {"Influenza", "COVID-19", "RSV"}
     for r in rows:
         assert dt.date.fromisoformat(r["week_end"][:10]).weekday() == 5  # Saturday
-        assert 0 <= float(r["percent_test_positivity"]) <= 100
+        # Socrata leaves an empty field out of the row; the contract allows an empty percent, so skip it.
+        v = r.get("percent_test_positivity")
+        if v not in (None, ""):
+            assert 0 <= float(v) <= 100
 
 
 def test_latest_rsv_percent_two_ways(live):

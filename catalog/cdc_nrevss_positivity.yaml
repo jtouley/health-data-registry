@@ -30,7 +30,7 @@ codebook_url: https://www.cdc.gov/surveillance/nrevss/index.html
 caveats:
   - "One figure for the whole United States each week: this table has no state, HHS region or laboratory breakdown."
   - "A percent of laboratory tests, not of people: one person tested twice counts twice (dataset description)."
-  - "Each virus comes from its own set of tests. RSV and COVID-19 are nucleic acid amplification (PCR) tests reported by NREVSS laboratories; influenza adds clinical laboratories from influenza virologic surveillance (dataset description). The three percents are never added or pooled."
+  - "Each virus comes from its own set of tests. RSV and COVID-19 are nucleic acid amplification (PCR) tests reported by NREVSS laboratories; influenza results are clinical laboratory results from NREVSS and influenza collaborating laboratories (dataset description). The three percents are never added or pooled."
   - "The number of tests behind each percent is not in this table, so weeks or viruses can't be weighted or combined."
   - "CDC says all data are provisional and subject to change; a later load can revise earlier weeks."
   - "Percents are never added, across viruses or across weeks."

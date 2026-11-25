@@ -96,7 +96,7 @@ _STOP = frozenset(
 _GEO_WORDS = {
     "county": "county", "counties": "county", "city": "city", "zip": "zip", "state": "state", "states": "state",
     "national": "nation", "nationally": "nation", "country": "country", "countries": "country",
-    "global": "country", "worldwide": "country",
+    "global": "country", "worldwide": "country", "region": "region", "regions": "region", "regional": "region",
 }  # fmt: skip
 
 NO_PATIENT_DATA = "Never put patient information in the chat."
@@ -729,6 +729,9 @@ def suggest_datasets(
         }
     )
     levels = {lvl for w, lvl in _GEO_WORDS.items() if re.search(rf"\b{w}\b", q)}
+    if re.search(r"\bwho regions?\b", q):  # a WHO region is its own level, not a US (HHS) region
+        levels.discard("region")
+        levels.add("who_region")
     if states:
         levels.add("state")
     years = [int(y) for y in re.findall(r"\b(19[5-9]\d|20[0-4]\d)\b", q)]

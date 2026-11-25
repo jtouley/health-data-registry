@@ -25,8 +25,10 @@ models:
   columns:
   - name: week_end
     data_type: date
-    description: 'The Saturday that ends the MMWR week the tests were counted in (column description: ''Date of
-      Saturday of the MMWR week'').'
+    description: 'The Saturday that ends the MMWR week (column description: ''Date of Saturday of the MMWR week'').
+      For COVID-19 and RSV, the week the tests were performed (dataset description: laboratories report ''the total
+      number of SARS-CoV-2 and RSV tests performed that week''); which date puts an influenza test in a week is
+      not stated (see openQuestions).'
     meta:
       logical_type: date
       physical_type: DATE
@@ -52,8 +54,8 @@ models:
   - name: percent_test_positivity
     data_type: double
     description: 'Percent of laboratory tests for the virus that were positive in the week, nationally: positive
-      tests divided by all tests, times 100 (dataset description). Counts tests, not people. Empty would mean no
-      figure for that week, never zero.'
+      tests divided by all tests, times 100 (dataset description). Counts tests, not people (dataset description).
+      An empty value is kept empty, never read as zero; what CDC means by an empty value is not stated (see openQuestions).'
     meta:
       logical_type: number
       physical_type: DOUBLE

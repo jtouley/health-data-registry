@@ -4,7 +4,7 @@ dataset: cdc_nrevss_positivity
 version: 0.1.0
 dimensions:
   - {name: virus, column: pathogen, type: categorical, non_additive: true, non_additive_reason: "each virus's percent comes from its own set of tests, so two viruses' percents can't be added", description: "The virus tested for: COVID-19, Influenza or RSV, as CDC names it."}
-  - {name: week_ending, column: week_end, type: time, non_additive: true, non_additive_reason: "a percent for one week can't be added to the next week's", description: "The Saturday that ends the MMWR week the tests were counted in."}
+  - {name: week_ending, column: week_end, type: time, non_additive: true, non_additive_reason: "a percent for one week can't be added to the next week's", description: "The Saturday that ends the MMWR week; for COVID-19 and RSV, the week the tests were performed."}
 measures:
   - {name: test_positivity, column: percent_test_positivity, kind: percent, unit: "% of laboratory tests", description: "Percent of laboratory tests for the virus that were positive in the week, nationally."}
 metrics:
@@ -26,7 +26,7 @@ series:
     place_coverage: "the United States as a whole (this table has no state or regional breakdown)"
     time_dimension: week_ending
   - condition: "Influenza"
-    label: "Influenza percent of tests positive (clinical laboratories, national)"
+    label: "Influenza percent of tests positive (NREVSS and influenza collaborating laboratories, national)"
     metric: weekly_percent_tests_positive
     measure: percent
     filters: {virus: "Influenza"}

@@ -11,9 +11,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import pytest
 
-from health_data_registry import tools
+from health_data_registry import quality, tools
 from health_data_registry.query import Engine
 from health_data_registry.registry import Registry, load_registry
 from health_data_registry.store import build_snapshot, write_ndjson
@@ -49,9 +50,27 @@ def _rows(out: Any) -> list[dict[str, str]]:
 
 def test_a_plain_question_about_rsv_test_positivity_routes_here() -> None:
     reg = load_registry(ROOT)
-    rows = _rows(tools.suggest_datasets(reg, "RSV test positivity by region"))
+    rows = _rows(tools.suggest_datasets(reg, "RSV test positivity nationally"))
     assert rows[0]["source_id"] == DS
     assert rows[0]["can_answer"] == "yes"
+
+
+@pytest.mark.parametrize("question", ["RSV test positivity by region", "regional RSV test positivity"])
+def test_a_region_question_is_told_the_table_is_national_only(question: str) -> None:
+    reg = load_registry(ROOT)
+    row = next(r for r in _rows(tools.suggest_datasets(reg, question)) if r["source_id"] == DS)
+    assert row["can_answer"] == "no"
+    assert "nation only, not region" in row["why"]
+
+
+def test_a_who_region_question_is_not_read_as_a_us_region() -> None:
+    reg = load_registry(ROOT)
+    row = next(
+        r
+        for r in _rows(tools.suggest_datasets(reg, "tuberculosis incidence by WHO region"))
+        if r["source_id"] == "who_gho_tb_incidence"
+    )
+    assert "region" not in row["why"], row
 
 
 def test_a_state_question_is_told_the_table_is_national_only() -> None:
@@ -91,3 +110,39 @@ def test_raw_layer_keeps_the_publisher_values_as_sent(real: tuple[Registry, Engi
     kept = [json.loads(line) for line in files[0].read_text(encoding="utf-8").splitlines()]
     for sent, row in zip(RECORDS, kept, strict=True):
         assert {k: row[k] for k in sent} == sent
+
+
+GOOD = [
+    ("2024-01-06", "COVID-19", 4.2),
+    ("2024-01-06", "Influenza", 11.0),
+    ("2024-01-06", "RSV", 7.3),
+]
+
+
+@pytest.mark.parametrize(
+    ("rows", "rule", "status"),
+    [
+        ([*GOOD, ("2024-01-12", "RSV", 6.8)], "week_end_is_a_saturday", "fail"),  # a Friday
+        ([*GOOD, ("2024-01-13", "RSV", 100.1)], "percent_between_0_and_100", "fail"),
+        ([*GOOD, ("2024-01-13", "RSV", -0.1)], "percent_between_0_and_100", "fail"),
+        ([*GOOD, ("2024-01-06", "hMPV", 2.0)], "pathogen_codes", "warn"),  # to the review queue, not a stop
+        ([(w, p, None) for w, p, _ in GOOD], "some_percents_present", "fail"),
+        # A renamed code with percents still leaves COVID-19 with none: counted against the codebook list only.
+        ([*GOOD[1:], ("2024-01-06", "SARS-CoV-2", 4.2)], "every_virus_published", "warn"),
+    ],
+)
+def test_each_contract_rule_catches_the_case_it_names(
+    rows: list[tuple[str, str, float | None]], rule: str, status: str
+) -> None:
+    """Each rule is shown failing on its own bad case, and passing on good rows, not only ever passing."""
+    con = duckdb.connect()
+    con.execute("CREATE TABLE t (week_end DATE, pathogen VARCHAR, percent_test_positivity DOUBLE)")
+    rules = quality.rules_for(load_registry(ROOT).get(DS).contract)
+    con.executemany("INSERT INTO t VALUES (?, ?, ?)", GOOD)
+    good = quality.run_rules(con, "t", rules)
+    assert not good.rule_errors and {r["status"] for r in good.results} == {"pass"}, good.results
+    con.execute("DELETE FROM t")
+    con.executemany("INSERT INTO t VALUES (?, ?, ?)", rows)
+    report = quality.run_rules(con, "t", rules)
+    assert not report.rule_errors
+    assert {r["test"]: r["status"] for r in report.results}[rule] == status

@@ -312,12 +312,14 @@ sources:
       data_type: varchar
       description: 'Publisher field percent_test_positivity, as text; read into percent_test_positivity (Percent
         of laboratory tests for the virus that were positive in the week, nationally: positive tests divided by
-        all tests, times 100 (dataset description). Counts tests, not people. Empty would mean no figure for that
-        week, never zero.)'
+        all tests, times 100 (dataset description). Counts tests, not people (dataset description). An empty value
+        is kept empty, never read as zero; what CDC means by an empty value is not stated (see openQuestions).)'
     - name: week_end
       data_type: varchar
       description: 'Publisher field week_end, as text; read into week_end (The Saturday that ends the MMWR week
-        the tests were counted in (column description: ''Date of Saturday of the MMWR week'').)'
+        (column description: ''Date of Saturday of the MMWR week''). For COVID-19 and RSV, the week the tests were
+        performed (dataset description: laboratories report ''the total number of SARS-CoV-2 and RSV tests performed
+        that week''); which date puts an influenza test in a week is not stated (see openQuestions).)'
     - name: _snapshot_id
       data_type: varchar
       description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
