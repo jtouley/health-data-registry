@@ -16,6 +16,8 @@ What staging applies, and the contract property each comes from:
     types                 physicalType, which must agree with logicalType (registry.LOGICAL_TYPES); a count with a
                           fraction stops the load instead of becoming a different count
     missing-value codes   customProperties.missingCodes become NULL (never on a flag column: hard rule 4)
+    packed fields         customProperties.splitPart reads one part of a field that packs several values into one
+                          text (NIS's 95% CI "60.3 to 68.3"); a value that doesn't split as declared stops the load
     required columns      required: true; an empty value stops the load, on the lake and the live path alike
                           (a row with no place or year can't be placed, and hard rule 1 forbids a guess)
     declared fields       every customProperties.sourceField must appear in a full load, unless the contract
@@ -63,6 +65,7 @@ class ContractLayoutRefused(StagingRefused):
 
 
 FRACTION_MARK = "has a fraction, so it isn't a whole count"
+SPLIT_MARK = "doesn't split, as the contract says it does, into"
 
 
 @dataclass(frozen=True)
@@ -136,6 +139,14 @@ def typed_select(contract: Contract) -> str:
         if c.missing_codes:
             codes = ", ".join(_lit(m) for m in c.missing_codes)
             src = f"CASE WHEN trim({src}) IN ({codes}) THEN NULL ELSE {src} END"
+        if c.split_part:
+            sep, part, parts = c.split_part
+            msg = _lit(f"the publisher's data has a value in {c.source_field} that {SPLIT_MARK} {parts} parts")
+            src = (
+                f"CASE WHEN NULLIF(trim({src}), '') IS NULL THEN NULL "
+                f"WHEN len(string_split({src}, {_lit(sep)})) = {parts} THEN split_part({src}, {_lit(sep)}, {part}) "
+                f"ELSE error({msg}) END"
+            )
         if c.physical_type == "BOOLEAN":
             expr = f"CASE lower(trim({src})) WHEN 'true' THEN true WHEN 'false' THEN false ELSE NULL END"
         elif c.physical_type == "VARCHAR":
@@ -187,7 +198,7 @@ def stage(
         try:
             con.execute(f"CREATE {kind} {_q(table)} AS SELECT\n  {typed_select(contract)}\nFROM {source}")  # noqa: S608 - quoted contract identifiers
         except duckdb.Error as e:
-            if FRACTION_MARK in str(e):
+            if FRACTION_MARK in str(e) or SPLIT_MARK in str(e):
                 raise PublisherDataRefused(f"{contract.id}: {str(e).split('Error: ', 1)[-1].strip()}") from e
             raise
         for c in contract.columns:
