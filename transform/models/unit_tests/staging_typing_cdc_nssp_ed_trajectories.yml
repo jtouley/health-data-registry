@@ -1,0 +1,33 @@
+# Hand-written dbt unit test of the generated stg_cdc_nssp_ed_trajectories typing (staging.typed_select): the week
+# becomes a DATE, the publisher's field names percent_visits_smoothed and percent_visits_smoothed_1 land in the
+# contract's columns for combined and influenza, FIPS stays text exactly as CDC sends it (no zero padding), and an
+# empty percent stays empty rather than reading as zero. Inputs are SQL so the raw source needn't be loaded first.
+version: 2
+unit_tests:
+- name: stg_cdc_nssp_ed_trajectories_renames_smoothed_fields_and_keeps_fips_as_sent
+  model: stg_cdc_nssp_ed_trajectories
+  given:
+  - input: source('raw', 'cdc_nssp_ed_trajectories')
+    format: sql
+    rows: |
+      select '2026-01-08' as "buildnumber", 'Autauga' as "county", cast(null as varchar) as "ed_covid_level", cast(null as varchar) as "ed_flu_level", cast(null as varchar) as "ed_rsv_level", 'No Change' as "ed_trends_covid", cast(null as varchar) as "ed_trends_influenza", cast(null as varchar) as "ed_trends_rsv", '1001' as "fips", 'Alabama' as "geography", cast(null as varchar) as "hsa", cast(null as varchar) as "hsa_counties", cast(null as varchar) as "hsa_nci_id", cast(null as varchar) as "percent_visits_combined", '1.58' as "percent_visits_covid", cast(null as varchar) as "percent_visits_influenza", cast(null as varchar) as "percent_visits_rsv", '4.0' as "percent_visits_smoothed", '2.25' as "percent_visits_smoothed_1", cast(null as varchar) as "percent_visits_smoothed_covid", cast(null as varchar) as "percent_visits_smoothed_rsv", 'HSA' as "trend_source", '2024-01-06T00:00:00.000' as "week_end", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select '2026-01-08' as "buildnumber", 'All' as "county", cast(null as varchar) as "ed_covid_level", cast(null as varchar) as "ed_flu_level", cast(null as varchar) as "ed_rsv_level", 'Data Unavailable' as "ed_trends_covid", cast(null as varchar) as "ed_trends_influenza", cast(null as varchar) as "ed_trends_rsv", '0' as "fips", 'United States' as "geography", cast(null as varchar) as "hsa", cast(null as varchar) as "hsa_counties", cast(null as varchar) as "hsa_nci_id", cast(null as varchar) as "percent_visits_combined", '' as "percent_visits_covid", cast(null as varchar) as "percent_visits_influenza", cast(null as varchar) as "percent_visits_rsv", cast(null as varchar) as "percent_visits_smoothed", ' ' as "percent_visits_smoothed_1", cast(null as varchar) as "percent_visits_smoothed_covid", cast(null as varchar) as "percent_visits_smoothed_rsv", 'United States' as "trend_source", '2024-01-13T00:00:00.000' as "week_end", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+  expect:
+    rows:
+    - week_end: 2024-01-06
+      fips: '1001'
+      county: Autauga
+      percent_visits_covid: 1.58
+      percent_visits_smoothed_influenza: 2.25
+      percent_visits_smoothed_combined: 4.0
+      ed_trends_covid: No Change
+      buildnumber: '2026-01-08'
+    - week_end: 2024-01-13
+      fips: '0'
+      county: All
+      percent_visits_covid: null
+      percent_visits_smoothed_influenza: null
+      percent_visits_smoothed_combined: null
+      ed_trends_covid: Data Unavailable
+      buildnumber: '2026-01-08'

@@ -41,6 +41,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- New source, draft and not yet hosted: `cdc_nssp_ed_trajectories`, CDC's weekly percent of emergency department
+  visits for COVID-19, influenza and RSV with CDC's trend and activity level (NSSP, data.cdc.gov rdmq-nq56), on
+  the existing Socrata adapter. State and national answers read CDC's own state and United States rows; county rows
+  carry their Health Service Area's shared figure and are never added up.
 - The Trusted gate (`.github/workflows/trusted-gate.yml`, `python -m health_data_registry.ratchet`, `make
   ratchet`): a check a pull request cannot edit, run from main's copy on `pull_request_target` with a read-only
   token, reading the pull request as data only (a required check once the `main` ruleset lists it, #138). It fails

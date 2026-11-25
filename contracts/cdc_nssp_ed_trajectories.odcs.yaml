@@ -1,0 +1,323 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: cdc_nssp_ed_trajectories
+name: NSSP Emergency Department Visit Trajectories by State and Sub-State Regions (COVID-19, Influenza, RSV, Combined)
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "The weekly percent of emergency department visits for COVID-19, influenza, RSV and the three combined, with CDC's trend and activity level for each, for the United States, each state and each county (as its Health Service Area), from data submitted to the National Syndromic Surveillance Program (dataset description, https://data.cdc.gov/api/views/rdmq-nq56.json)."
+  usage: "Read one virus, place and week as published, or follow one virus at one place over the weeks. Never add percents across viruses, places or weeks; never add county rows (counties of one Health Service Area share one value). Each load keeps the build number of the table it was read from."
+  limitations: "A percent of visits, not a count of cases; county rows carry their Health Service Area's value; the table is rebuilt weekly and earlier weeks can change; the activity-level cut-points, the share of emergency departments reporting and the meaning of 'Data Unavailable' are not in the data."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://data.cdc.gov/d/rdmq-nq56", description: "Publisher dataset page"}
+    - {type: businessDefinition, url: "https://data.cdc.gov/api/views/rdmq-nq56.json", description: "Socrata metadata (dataset description, column names and display names, licence, update frequency, suggested citation), read 2026-11-25"}
+    - {type: businessDefinition, url: "https://www.cdc.gov/ncird/surveillance/respiratory-illnesses/index.html#companion-guide", description: "Companion Guide: NSSP Emergency Department Data on Respiratory Illness, linked from the dataset description (not fetched; see openQuestions)"}
+    - {type: businessDefinition, url: "https://seer.cancer.gov/seerstat/variables/countyattribs/hsa.html", description: "Health Service Area definition, linked from the dataset description (not fetched)"}
+servers:
+  - id: data_cdc_gov
+    server: data.cdc.gov
+    type: api
+    location: https://data.cdc.gov/resource/rdmq-nq56.json
+schema:
+  - name: cdc_nssp_ed_trajectories
+    physicalName: cdc_nssp_ed_trajectories
+    physicalType: table
+    logicalType: object
+    description: "Wide table: one row per week and place (the United States, a state, or a county carrying its Health Service Area's values), with one column per virus for each measure."
+    dataGranularityDescription: "week ending date x place (United States, state, or county by FIPS code)"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://data.cdc.gov/api/views/rdmq-nq56.json"}
+    customProperties:
+      - property: totalRows
+        value: "county = 'All'"
+        description: "The United States row (trend_source 'United States', fips 0) and each state row (trend_source 'State', fips <state>000) have county 'All', and hsa, hsa_counties and hsa_nci_id 'All'. Structural fact checked on the full table 2026-11-25: 217 United States rows and 11,067 state rows (51 states and DC), every other row trend_source 'HSA' with a named county. These rows are CDC's own figures for the whole place, never the sum of its counties; no percent is ever added in any case."
+      - {property: tableShape, value: surveillance_series}
+      - property: idDimensions
+        value:
+          condition: null
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: null
+          period: week_end
+          provisionalFlag: null
+        description: "Each virus has its own columns (percent_visits_covid, _influenza, _rsv, and combined), so there is no condition column. How a visit is counted as COVID-19, influenza or RSV (diagnosis codes, chief complaint) is in the NSSP Companion Guide, not in the data. No case status, organism or provisional column; the whole table is rebuilt each week (buildnumber)."
+    properties:
+      - name: week_end
+        physicalType: DATE
+        logicalType: date
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "The last day of the week the emergency department visits are counted in (a Saturday; 2022-10-01 to 2026-11-21 on 2026-11-25)."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: week_end}
+      - name: geography
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The state (or District of Columbia) the row belongs to, or United States for the national row."
+        examples: ["Michigan", "District of Columbia", "United States"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: geography}
+      - name: county
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The county the row is reported for, by name without 'County' (e.g. Wayne), or All on the state and national rows. A county row carries its Health Service Area's figures, not the county's own."
+        examples: ["Wayne", "Kent", "All"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: county}
+      - name: fips
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "The county's FIPS code, as CDC publishes it: a number, so leading zeros are dropped (Autauga County, Alabama is 1001, not 01001). State rows carry the state code followed by 000 (Michigan is 26000) and the national row carries 0. Kept as text exactly as sent; padding to five digits belongs to a later model."
+        examples: ["26163", "26000", "1001", "0"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: fips}
+      - name: trend_source
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Which area the row's figures were computed for: HSA (the county's Health Service Area), State, or United States."
+        enum: [{value: HSA}, {value: State}, {value: United States}]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: trend_source}
+      - name: hsa
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "The Health Service Area's name (e.g. 'Calhoun (Battle Creek), MI - Barry, MI'), or All on the state and national rows. Every county of one Health Service Area has the same figures."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: hsa}
+      - name: hsa_counties
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "The counties that make up the Health Service Area, as a comma-separated list (e.g. 'Barry, Calhoun'), or All on the state and national rows."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: hsa_counties}
+      - name: hsa_nci_id
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "The Health Service Area's code in the National Cancer Institute's SEER list (e.g. 381), or All on the state and national rows."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: hsa_nci_id}
+      - name: percent_visits_combined
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Percent of all emergency department visits in the week that were for COVID-19, influenza or RSV combined, as CDC computes it (not the sum of the three virus columns). Empty in more rows than the single-virus columns (245,165 of 692,881 rows filled on 2026-11-25; see openQuestions)."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: percent_visits_combined}
+          - {property: unit, value: "% of all ED visits"}
+      - name: percent_visits_covid
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Percent of all emergency department visits in the week that were for COVID-19, as observed. Empty where CDC has no figure for the area and week."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: percent_visits_covid}
+          - {property: unit, value: "% of all ED visits"}
+      - name: percent_visits_influenza
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Percent of all emergency department visits in the week that were for influenza, as observed. Empty where CDC has no figure for the area and week."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: percent_visits_influenza}
+          - {property: unit, value: "% of all ED visits"}
+      - name: percent_visits_rsv
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Percent of all emergency department visits in the week that were for RSV, as observed. Empty where CDC has no figure for the area and week."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: percent_visits_rsv}
+          - {property: unit, value: "% of all ED visits"}
+      - name: percent_visits_smoothed_combined
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "The smoothed percent of emergency department visits for COVID-19, influenza and RSV combined. What the smoothing averages over is not in the data (see openQuestions). Published under the field name percent_visits_smoothed; CDC's column label is percent_visits_smoothed_combined."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: percent_visits_smoothed}
+          - {property: unit, value: "% of all ED visits"}
+      - name: percent_visits_smoothed_covid
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "The smoothed percent of emergency department visits for COVID-19. What the smoothing averages over is not in the data (see openQuestions)."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: percent_visits_smoothed_covid}
+          - {property: unit, value: "% of all ED visits"}
+      - name: percent_visits_smoothed_influenza
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "The smoothed percent of emergency department visits for influenza. What the smoothing averages over is not in the data (see openQuestions). Published under the field name percent_visits_smoothed_1; CDC's column label is percent_visits_smoothed_influenza."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: percent_visits_smoothed_1}
+          - {property: unit, value: "% of all ED visits"}
+      - name: percent_visits_smoothed_rsv
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "The smoothed percent of emergency department visits for RSV. What the smoothing averages over is not in the data (see openQuestions)."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: percent_visits_smoothed_rsv}
+          - {property: unit, value: "% of all ED visits"}
+      - name: ed_trends_covid
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "CDC's trend for COVID-19 emergency department visits in the week, exactly as written: Increasing, Decreasing, No Change, Sparse, Limited Data or Data Unavailable. The dataset description says a week is increasing or decreasing when the 95% interval of the smoothed slope excludes zero, stable when it includes zero, and sparse when too many weeks are 0% to fit a model."
+        examples: ["Increasing", "Decreasing", "No Change", "Sparse", "Limited Data", "Data Unavailable"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: ed_trends_covid}
+      - name: ed_trends_influenza
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "CDC's trend for influenza emergency department visits in the week, exactly as written (same categories as the COVID-19 trend)."
+        examples: ["Increasing", "Decreasing", "No Change", "Sparse", "Limited Data", "Data Unavailable"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: ed_trends_influenza}
+      - name: ed_trends_rsv
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "CDC's trend for RSV emergency department visits in the week, exactly as written (same categories as the COVID-19 trend)."
+        examples: ["Increasing", "Decreasing", "No Change", "Sparse", "Limited Data", "Data Unavailable"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: ed_trends_rsv}
+      - name: ed_covid_level
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "CDC's activity level for COVID-19 emergency department visits, exactly as written: Very Low, Low, Moderate, High, Very High, Limited Data or Data Unavailable. The cut-points are CDC's and are not in the data; they are never worked out here."
+        examples: ["Very Low", "Low", "Moderate", "High", "Very High", "Limited Data", "Data Unavailable"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: ed_covid_level}
+      - name: ed_flu_level
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "CDC's activity level for influenza emergency department visits, exactly as written (same categories as the COVID-19 level)."
+        examples: ["Very Low", "Low", "Moderate", "High", "Very High", "Limited Data", "Data Unavailable"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: ed_flu_level}
+      - name: ed_rsv_level
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "CDC's activity level for RSV emergency department visits, exactly as written (same categories as the COVID-19 level)."
+        examples: ["Very Low", "Low", "Moderate", "High", "Very High", "Limited Data", "Data Unavailable"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: ed_rsv_level}
+      - name: buildnumber
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The weekly build of the whole table this row came from, as CDC labels it (BuildNumber; 2026-11-25 on every row on 2026-11-25). Each rebuild can change earlier weeks, so each load keeps it. Kept as text exactly as sent."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: buildnumber}
+    quality:
+      - id: percents_between_0_and_100
+        dimension: conformity
+        severity: error
+        type: sql
+        description: "Dataset description: each value is the percentage of all emergency department visits in the area and week that were for the pathogen, so it lies between 0 and 100. Checked on every observed and smoothed percent column."
+        query: "SELECT COUNT(*) FROM {object} WHERE percent_visits_combined < 0 OR percent_visits_combined > 100 OR percent_visits_covid < 0 OR percent_visits_covid > 100 OR percent_visits_influenza < 0 OR percent_visits_influenza > 100 OR percent_visits_rsv < 0 OR percent_visits_rsv > 100 OR percent_visits_smoothed_combined < 0 OR percent_visits_smoothed_combined > 100 OR percent_visits_smoothed_covid < 0 OR percent_visits_smoothed_covid > 100 OR percent_visits_smoothed_influenza < 0 OR percent_visits_smoothed_influenza > 100 OR percent_visits_smoothed_rsv < 0 OR percent_visits_smoothed_rsv > 100"
+        mustBe: 0
+      - id: counties_of_one_hsa_share_its_values
+        dimension: consistency
+        severity: error
+        type: sql
+        description: "Dataset description: sub-state figures are the Health Service Area's, 'reported for each county in the HSA'. So in one week every county row of one HSA carries the same observed percents and trends; a difference means a county's own figure, which the contract doesn't describe. (True on the full table on 2026-11-25.)"
+        query: "SELECT COUNT(*) FROM (SELECT week_end, hsa_nci_id FROM {object} WHERE trend_source = 'HSA' GROUP BY week_end, hsa_nci_id HAVING COUNT(DISTINCT percent_visits_covid) > 1 OR COUNT(DISTINCT percent_visits_influenza) > 1 OR COUNT(DISTINCT percent_visits_rsv) > 1 OR COUNT(DISTINCT percent_visits_combined) > 1 OR COUNT(DISTINCT ed_trends_covid) > 1 OR COUNT(DISTINCT ed_trends_influenza) > 1 OR COUNT(DISTINCT ed_trends_rsv) > 1)"
+        mustBe: 0
+      - id: some_covid_percents_present
+        dimension: completeness
+        severity: error
+        type: sql
+        description: "Fill rate: an all-empty column passes every range check, so the state and national rows must carry at least one COVID-19 percent (all 11,284 did on 2026-11-25)."
+        query: "SELECT COUNT(*) FROM {object} WHERE county = 'All' AND percent_visits_covid IS NOT NULL"
+        mustBeGreaterThan: 0
+      - id: some_influenza_percents_present
+        dimension: completeness
+        severity: error
+        type: sql
+        description: "Fill rate: the state and national rows must carry at least one influenza percent (all 11,284 did on 2026-11-25)."
+        query: "SELECT COUNT(*) FROM {object} WHERE county = 'All' AND percent_visits_influenza IS NOT NULL"
+        mustBeGreaterThan: 0
+      - id: some_rsv_percents_present
+        dimension: completeness
+        severity: error
+        type: sql
+        description: "Fill rate: the state and national rows must carry at least one RSV percent (all 11,284 did on 2026-11-25)."
+        query: "SELECT COUNT(*) FROM {object} WHERE county = 'All' AND percent_visits_rsv IS NOT NULL"
+        mustBeGreaterThan: 0
+      - id: some_combined_percents_present
+        dimension: completeness
+        severity: warn
+        type: sql
+        description: "Fill rate: the combined percent is empty in more rows than the single-virus percents (see openQuestions), but the state and national rows should carry at least one (5,135 of 11,284 did on 2026-11-25)."
+        query: "SELECT COUNT(*) FROM {object} WHERE county = 'All' AND percent_visits_combined IS NOT NULL"
+        mustBeGreaterThan: 0
+      - id: one_build_per_load
+        dimension: consistency
+        severity: warn
+        type: sql
+        description: "Observed, not from a codebook: every row of the full table carried one build number on 2026-11-25. Two builds in one load would mix two versions of history, so a maintainer looks before the load is used."
+        query: "SELECT COUNT(DISTINCT buildnumber) FROM {object}"
+        mustBe: 1
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: licenceSource, value: "Socrata metadata licence 'Public Domain U.S. Government', https://www.usa.gov/government-works (read 2026-11-25)"}
+  - {property: citation, value: "Centers for Disease Control and Prevention, National Syndromic Surveillance Program. NSSP Emergency Department Visit Trajectories by State and Sub State Regions - COVID-19, Flu, RSV, Combined. https://data.cdc.gov/d/rdmq-nq56. Accessed on <date>."}
+  - {property: refresh, value: weekly}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "CDC rebuilds the whole table each week (buildnumber), and a rebuild can change earlier weeks, so each refresh stores the complete table as a dated, append-only load that keeps its build number. Older loads are never overwritten, so the build behind any number can be looked up."
+  - {property: geographyBasis, value: "unresolved: whether a visit is placed by the emergency department's location or the patient's residence is not stated in the data (see openQuestions); county rows carry their Health Service Area's figures"}
+  - {property: unreliableRule, value: {kind: none, description: "None with a threshold: the dataset description says an area whose series has many weeks at 0% gets no model and is classed 'Sparse'; 'Limited Data' and 'Data Unavailable' are written in the trend and level columns but not defined in the data. Kept as written (see openQuestions)."}}
+  - property: openQuestions
+    value:
+      - "trend_source is HSA on every county row (681,597 rows on 2026-11-25). Does any county row ever carry the county's own data rather than its Health Service Area's? The dataset description says HSA values are reported for each county in the HSA, so several counties share one value and are never added; confirm there is no county-level case."
+      - "What do the smoothed columns average over (how many weeks, centred or trailing, or the GAM fit the description names for trends)? Not in the data; the Companion Guide was not fetched."
+      - "The cut-points behind ed_covid_level, ed_flu_level and ed_rsv_level (Very Low to Very High) and what they are computed from. Needed from CDC's methods page; never derived here."
+      - "'Data Unavailable', 'Limited Data' and an empty value: which means suppression, which means no reporting facilities, and which means too few visits? Kept as CDC writes them until a maintainer reads the Companion Guide. None of them is read as zero."
+      - "percent_visits_combined is empty in many more rows than the single-virus columns (240,030 combined vs 511,035 COVID-19 of 681,597 HSA rows filled on 2026-11-25). When and why does CDC leave the combined figure empty?"
+      - "Each weekly rebuild can revise history. How far back does a rebuild change earlier weeks? Every load keeps its buildnumber; the revision window is not stated."
+      - "The share of emergency departments reporting to NSSP in each state (facility coverage), which belongs in the caveats. Not in this table; whether CDC publishes it elsewhere was not checked."
+      - "Is a visit placed in an area by the facility's location or the patient's residence? Not stated in the data."
+      - "Case definition: how a visit is counted as COVID-19, influenza or RSV (discharge diagnosis codes, chief complaint terms) and since when. In the NSSP Companion Guide, not the data; add as caseDefinitions after a maintainer reads it."
+      - "Proposed GBD keys (catalog gbd.causes): COVID-19 to the cause COVID-19; influenza and RSV to Lower respiratory infections with pathogens Influenza and Respiratory syncytial virus; states to their GBD state names. A visit percent is not a GBD measure, so the keys align by cause and place only. A maintainer reviews the mapping."
