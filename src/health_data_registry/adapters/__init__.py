@@ -14,7 +14,6 @@ and every table a page was read from, whatever the type, with no way to switch i
 from __future__ import annotations
 
 import hashlib
-import importlib
 import json
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -269,4 +268,11 @@ def capabilities(entry: CatalogEntry) -> AdapterType:
     return adapter_type(entry)
 
 
-importlib.import_module("health_data_registry.adapters._types")  # registers every type in TYPES
+def _register_types() -> None:
+    """Import the module that registers every type in TYPES (a static import, so a frozen build bundles it)."""
+    from health_data_registry.adapters import _types
+
+    del _types  # imported only so each type registers itself
+
+
+_register_types()
