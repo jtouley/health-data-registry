@@ -24,3 +24,20 @@ updates:
       python-major:
         applies-to: version-updates
         update-types: ["major"]
+
+  # The ClusterFuzzLite build image, pinned by digest in .clusterfuzzlite/Dockerfile.
+  - package-ecosystem: "docker"
+    directory: "/.clusterfuzzlite"
+    schedule:
+      interval: "weekly"
+
+  # The fuzz build's hash-pinned dependencies (fuzz/requirements.txt, resolved for the image's Python 3.11).
+  # Keep them at uv.lock's versions: regenerate with the command in fuzz/requirements.in after a lock change.
+  - package-ecosystem: "pip"
+    directory: "/fuzz"
+    schedule:
+      interval: "weekly"
+    groups:
+      fuzz-deps:
+        applies-to: version-updates
+        patterns: ["*"]

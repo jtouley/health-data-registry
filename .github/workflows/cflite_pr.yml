@@ -1,0 +1,51 @@
+# ClusterFuzzLite on pull requests: builds the Atheris harnesses in fuzz/ (.clusterfuzzlite/) and fuzzes the
+# ones the change can reach for a short budget. A crash fails the job; its reproducer is in the run's artifacts.
+# https://google.github.io/clusterfuzzlite/running-clusterfuzzlite/github-actions/
+name: ClusterFuzzLite PR fuzzing
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "fuzz/**"
+      - ".clusterfuzzlite/**"
+      - ".github/workflows/cflite_pr.yml"
+
+# Read-only token. No repository secret is used: github.token is the run's own short-lived token, which
+# ClusterFuzzLite needs only to read earlier runs' corpus artifacts.
+permissions:
+  contents: read
+
+concurrency:
+  group: cflite-pr-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: Fuzz (code-change, ${{ matrix.sanitizer }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      # Download the batch run's corpus artifacts.
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # Atheris runs Python under AddressSanitizer, which also checks the native wheels (DuckDB, pydantic-core).
+        sanitizer: [address]
+    steps:
+      - name: Build fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          language: python
+          github-token: ${{ github.token }}
+          sanitizer: ${{ matrix.sanitizer }}
+      - name: Run fuzzers
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          github-token: ${{ github.token }}
+          # Shared across the targets: about 5 minutes each for the four harnesses.
+          fuzz-seconds: 1200
+          mode: code-change
+          sanitizer: ${{ matrix.sanitizer }}

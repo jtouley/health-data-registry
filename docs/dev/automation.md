@@ -12,12 +12,16 @@ our own.
 | [`sitemaps.yml`](../../.github/workflows/sitemaps.yml) | Takes a weekly copy of the michigan.gov and kentcountymi.gov seed sitemaps, with the week's diff | Monday 04:43 | Private dataset `jtouley/health-data-registry-ops-sitemaps`; an issue when refused |
 | [`deploy-space.yml`](../../.github/workflows/deploy-space.yml) | Syncs `space/` to the Space that hosts the MCP server | Only on a release tag `vX.Y.Z` on main that passed CI | Space `jtouley/health-data-registry-mcp` |
 | [`drift-check.yml`](../../.github/workflows/drift-check.yml) | `check-contracts` against every publisher, opening or updating an issue on failure; re-enables the scheduled workflows | Friday 05:37 | Issues; workflow enabled state |
+| [`cflite_pr.yml`](../../.github/workflows/cflite_pr.yml) | ClusterFuzzLite: builds the Atheris harnesses in `fuzz/` and fuzzes what the change reaches, about 5 minutes per harness | On pull requests that touch `src/`, `fuzz/` or `.clusterfuzzlite/` | Run artifacts only |
+| [`cflite_batch.yml`](../../.github/workflows/cflite_batch.yml) | ClusterFuzzLite: fuzzes every harness for about 30 minutes each and keeps the grown corpus | Thursday 02:53 | Run artifacts only (the corpus) |
 
 CI, CodeQL, Scorecard, release and npm-publish are unchanged and described in their own files.
 
 Every action is pinned to a full commit SHA. Every workflow's top-level token is `contents: read`; `issues:
 write` is granted only to the jobs that open an issue, `actions: write` only to the keep-alive job and
-`actions: read` only to the deploy's verify job. Every checkout drops its credentials, and no workflow pushes to
+`actions: read` only to the deploy's verify job and the two fuzzing jobs (to read earlier runs' corpus
+artifacts). The ClusterFuzzLite actions are pinned by SHA too, but they pull OSS-Fuzz's runner images by their
+`v1` tag inside the action, which a workflow can't pin. Every checkout drops its credentials, and no workflow pushes to
 git. Each source has its own concurrency group, and no group cancels a running job. `HF_TOKEN` is set only on
 the steps that talk to Hugging Face, never job-wide, so dependency installs, the browser and the crawlers'
 parsers never see it. Before every upload to a private or ops dataset, `python -m health_data_registry.naming
@@ -166,6 +170,31 @@ The keep-alive job re-enables each scheduled workflow through the API every week
 only). GitHub disables scheduled workflows in a public repository after 60 days with no repository activity.
 A workflow the maintainer disabled by hand is left alone. If the drift-check workflow itself has been disabled,
 re-enable it once in the Actions tab.
+
+### Fuzzing (`cflite_pr.yml`, `cflite_batch.yml`)
+
+ClusterFuzzLite builds `.clusterfuzzlite/Dockerfile` (OSS-Fuzz's Python builder, pinned by digest) and runs
+`.clusterfuzzlite/build.sh`, which bundles each `fuzz/fuzz_*.py` harness with PyInstaller, plus its seed corpus
+(`fuzz/corpus/<harness>/`, tiny hand-written inputs only), dictionary and libFuzzer options (10 s and 2 GB per
+input). The image runs Python 3.11, so the build installs the hash-pinned `fuzz/requirements.txt` (uv.lock's
+versions) and bundles `src/` directly; a harness may import only modules that run on 3.11.
+
+| Harness | Code under test | Property |
+|---|---|---|
+| `fuzz_sql_guard` | `sql_guard.guard_sql` | Refuses with `SqlRefused`, or what it accepts is, by DuckDB's own parse of the generated SQL, one SELECT reading catalogued tables or its CTEs, calling only allowlisted functions, joining only declared pairs, with a LIMIT no larger than the cap |
+| `fuzz_sitemap_parse` | `sitemaps.parse` | Pages or child sitemaps, or `SitemapError` |
+| `fuzz_https_csv` | `adapters/https_csv.records`, with and without the wide-to-long pivot | Text records, or `ValueError` |
+| `fuzz_json_adapters` | `adapters/socrata` and `adapters/who_gho` pages and field lists | Flat records, or `ValueError` |
+
+Any other exception, a timeout or running out of memory is a finding. File it as an issue with a minimal
+reproducer. A harness may skip a filed finding behind a `KNOWN_*` flag that names its issue, so it keeps finding
+new ones; remove the flag with the fix. Run a harness locally with Atheris installed (`pip install atheris`, on
+Python 3.11 to match the image): `PYTHONPATH=src python fuzz/fuzz_sql_guard.py -max_total_time=60
+fuzz/corpus/fuzz_sql_guard`. Point libFuzzer at an empty scratch directory first if you don't want it to add
+inputs to the seed corpus.
+
+Harnesses still to write when their code reaches main: the PDF table parser (`pdf_tables`, the Wayne County
+adapter, #27), the Tableau bootstrapSession parser (#19), and the HTML and DOCX parsers.
 
 ## Free-tier limits (checked against GitHub's docs, 24 Nov 2026)
 

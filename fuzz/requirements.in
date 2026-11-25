@@ -1,0 +1,8 @@
+# Runtime dependencies of the modules the fuzz harnesses import, at the versions in uv.lock.
+# The ClusterFuzzLite image runs Python 3.11, so requirements.txt is resolved for 3.11. After a lock change:
+#   uv pip compile --python-version 3.11 --python-platform x86_64-manylinux_2_28 --generate-hashes \
+#     fuzz/requirements.in -o fuzz/requirements.txt
+duckdb==2.0.1
+pydantic==2.14.4
+pyyaml==6.0.4
+sqlglot==30.34.0
