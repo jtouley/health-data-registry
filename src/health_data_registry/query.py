@@ -521,6 +521,7 @@ class Engine:
     _hub_files: dict[str, tuple[Path, Manifest]] = field(default_factory=dict)
     _live: dict[str, Any] = field(default_factory=dict)  # dataset id -> live.LiveTable (memory only)
     _live_failed: set[str] = field(default_factory=set)  # live tables that could not be loaded (refused once)
+    _private: dict[str, Any] = field(default_factory=dict)  # dataset id -> (records, Manifest), memory only
     # Lake snapshots to read instead of LATEST (dataset id -> snapshot id): a later page pinned to older data.
     lake_pins: dict[str, str] = field(default_factory=dict)
     # The sources the current call has read, in order (paging.respond clears it per call and reads it after).
@@ -540,7 +541,17 @@ class Engine:
         con = duckdb.connect(":memory:")
         parquet: list[str] = []
         for ds in self.registry:
-            if not ds.entry.licence.redistribution:
+            if ds.entry.tier == "private":
+                held = self._private.get(ds.id)
+                if held is None:
+                    continue  # read from its private store (private.read_rows) when first asked
+                try:
+                    load_live(con, ds, held[0])  # in memory only, like a live table
+                except Exception:  # noqa: BLE001 - one bad store must not break the other sources
+                    del self._private[ds.id]
+                    continue
+                manifest = held[1]
+            elif not ds.entry.licence.redistribution:
                 table = self._live.get(ds.id)
                 if table is None:
                     continue  # restricted sources are never read from disk, even a maintainer's lake
@@ -596,6 +607,9 @@ class Engine:
         from health_data_registry.deadline import DeadlineExceeded
         from health_data_registry.hub import HubError
 
+        if ds.entry.tier == "private":
+            self._private[ds.id] = self._read_private(ds)
+            return True
         if ds.entry.licence.redistribution:
             if self.hub is None:
                 return False
@@ -622,6 +636,64 @@ class Engine:
                 "publisher because its terms don't allow us to keep a copy. Try again in a few minutes.",
             ) from e
         return True
+
+    def _read_private(self, ds: Dataset) -> tuple[list[dict[str, Any]], Manifest]:
+        """A private-tier source's rows from its own store (local, then its private hub dataset), with a manifest
+        that carries its version and provenance; plain-words refusals when it can't be read."""
+        from health_data_registry import private
+
+        e = ds.entry
+        try:
+            got = private.read_rows(self.lake, ds)
+        except private.PrivateRefused as err:
+            raise QueryRefused(
+                "private_store_refused",
+                f"{e.title} is kept in a private store, and that store isn't set up safely right now, so "
+                f"nothing was read from it. Open the abstracts on {e.source.landing_url} instead, and tell the "
+                "maintainer so they can fix the store's settings.",
+            ) from err
+        if got is None:
+            raise QueryRefused(
+                "private_store_unavailable",
+                f"{e.title} is kept in a private store because its terms don't allow a public copy, and this "
+                f"setup can't reach that store, so no rows are shown. Open the abstracts on {e.source.landing_url} "
+                "instead, or ask the maintainer to connect the private store.",
+            )
+        records = [{k: (None if v is None else str(v)) for k, v in r.items()} for r in got.rows]
+        urls: list[str] = []
+        shas: list[str] = []
+        cols = [("source_url", "raw_sha256")] + [
+            (f"{api}_source_url", f"{api}_raw_sha256") for api in ("openalex", "europepmc")
+        ]
+        for r in got.rows:
+            for u, h in cols:
+                if r.get(u) and r.get(h) and r[h] not in shas:
+                    urls.append(str(r[u]))
+                    shas.append(str(r[h]))
+        when = max((str(r.get("retrieved_at") or "") for r in got.rows), default="")
+        notes = private.notes(ds)
+        if not got.complete:
+            notes.insert(
+                0, "These rows come from a sample harvest, not the whole supplement, so some are missing."
+            )
+        m = Manifest(
+            dataset=ds.id,
+            snapshot_id=f"private-{got.version}",
+            contract_version=ds.contract.version,
+            semantic_version=ds.semantic.version,
+            catalog_status=e.status,
+            retrieved_at=when,
+            source_urls=urls,
+            raw_sha256=shas,
+            row_count=len(records),
+            licence=e.licence.id,
+            redistribution=False,
+            partial=not got.complete,
+            origin="private",
+            release_ref=got.revision,
+            notes=notes,
+        )
+        return records, m
 
     def manifest(self, dataset_id: str) -> Manifest:
         self.connect()
@@ -741,7 +813,10 @@ class Engine:
                 "lake": "the local lake (a maintainer's copy)",
                 "hub": f"the open data hub, release {m.release_ref} ({m.release_id})",
                 "publisher": f"{ds.entry.publisher}, read live at {m.retrieved_at[:16]} UTC and not stored",
+                "private": f"the source's private store, version {m.snapshot_id} (never published)",
             }.get(m.origin, m.origin)
+        elif ds.entry.tier == "private":
+            origin = "not loaded yet: the source's private store, read when asked (never published)"
         elif ds.entry.licence.redistribution:
             origin = (
                 f"not loaded yet: the open data hub ({self.hub.url}) on first use"
@@ -805,7 +880,9 @@ class Engine:
                 "This figure is published separately for each group and is never added up, so one figure "
                 "can't be given for all of them together.",
             )
-        method = f"{manifest.notes[0]} {cm.method}" if manifest.origin == "publisher" else cm.method
+        method = (
+            f"{manifest.notes[0]} {cm.method}" if manifest.origin in ("publisher", "private") else cm.method
+        )
         return envelope(ds, manifest, cm.columns, rows, sql=cm.sql, params=cm.params, method=method)
 
     def distinct_values(self, dataset_id: str, column: str) -> list[Any]:
@@ -861,7 +938,12 @@ class Engine:
         con = self.connect()
         cols, rows = run_guarded(con, q)
         ids = sorted(t for t in q.tables if t in self.manifests)
-        notices = [n for i in ids if self.manifests[i].origin == "publisher" for n in self.manifests[i].notes]
+        notices = [
+            n
+            for i in ids
+            if self.manifests[i].origin in ("publisher", "private")
+            for n in self.manifests[i].notes
+        ]
         if len(ids) == 1:
             ds = self.registry.get(ids[0])
             out = envelope(
