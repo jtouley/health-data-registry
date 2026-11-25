@@ -333,8 +333,8 @@ sources:
     - name: county
       data_type: varchar
       description: Publisher field county, as text; read into county (The county the row is reported for, by name
-        without 'County' (e.g. Wayne), or All on the state and national rows. A county row carries its Health Service
-        Area's figures, not the county's own.)
+        without 'County', such as Wayne, or All on the state and national rows. A county row carries its Health
+        Service Area's figures, not the county's own.)
     - name: ed_covid_level
       data_type: varchar
       description: 'Publisher field ed_covid_level, as text; read into ed_covid_level (CDC''s activity level for
@@ -352,17 +352,20 @@ sources:
       data_type: varchar
       description: 'Publisher field ed_trends_covid, as text; read into ed_trends_covid (CDC''s trend for COVID-19
         emergency department visits in the week, exactly as written: Increasing, Decreasing, No Change, Sparse,
-        Limited Data or Data Unavailable. The dataset description says a week is increasing or decreasing when the
-        95% interval of the smoothed slope excludes zero, stable when it includes zero, and sparse when too many
-        weeks are 0% to fit a model.)'
+        Limited Data or Data Unavailable, or empty (see openQuestions). For Health Service Area (county) rows, the
+        dataset description says a week is increasing or decreasing when the 95% interval of the smoothed slope
+        excludes zero, stable (written No Change) when it includes zero, and sparse when too many weeks are 0% to
+        fit a model. How the state and national trends are set is not stated (see openQuestions).)'
     - name: ed_trends_influenza
       data_type: varchar
       description: Publisher field ed_trends_influenza, as text; read into ed_trends_influenza (CDC's trend for
-        influenza emergency department visits in the week, exactly as written (same categories as the COVID-19 trend).)
+        influenza emergency department visits in the week, exactly as written (same categories as the COVID-19 trend),
+        or empty (see openQuestions).)
     - name: ed_trends_rsv
       data_type: varchar
       description: Publisher field ed_trends_rsv, as text; read into ed_trends_rsv (CDC's trend for RSV emergency
-        department visits in the week, exactly as written (same categories as the COVID-19 trend).)
+        department visits in the week, exactly as written (same categories as the COVID-19 trend), or empty (see
+        openQuestions).)
     - name: fips
       data_type: varchar
       description: 'Publisher field fips, as text; read into fips (The county''s FIPS code, as CDC publishes it:
@@ -375,24 +378,25 @@ sources:
         the row belongs to, or United States for the national row.)
     - name: hsa
       data_type: varchar
-      description: Publisher field hsa, as text; read into hsa (The Health Service Area's name (e.g. 'Calhoun (Battle
-        Creek), MI - Barry, MI'), or All on the state and national rows. Every county of one Health Service Area
-        has the same figures.)
+      description: Publisher field hsa, as text; read into hsa (The Health Service Area's name, such as 'Calhoun
+        (Battle Creek), MI - Barry, MI', or All on the state and national rows. Every county of one Health Service
+        Area has the same figures.)
     - name: hsa_counties
       data_type: varchar
       description: Publisher field hsa_counties, as text; read into hsa_counties (The counties that make up the
-        Health Service Area, as a comma-separated list (e.g. 'Barry, Calhoun'), or All on the state and national
+        Health Service Area, as a comma-separated list such as 'Barry, Calhoun', or All on the state and national
         rows.)
     - name: hsa_nci_id
       data_type: varchar
       description: Publisher field hsa_nci_id, as text; read into hsa_nci_id (The Health Service Area's code in
-        the National Cancer Institute's SEER list (e.g. 381), or All on the state and national rows.)
+        the National Cancer Institute's SEER list, such as 381, or All on the state and national rows.)
     - name: percent_visits_combined
       data_type: varchar
-      description: Publisher field percent_visits_combined, as text; read into percent_visits_combined (Percent
-        of all emergency department visits in the week that were for COVID-19, influenza or RSV combined, as CDC
-        computes it (not the sum of the three virus columns). Empty in more rows than the single-virus columns (245,165
-        of 692,881 rows filled on 2026-11-25; see openQuestions).)
+      description: 'Publisher field percent_visits_combined, as text; read into percent_visits_combined (Percent
+        of all emergency department visits in the week that were for COVID-19, influenza or RSV combined: CDC''s
+        published combined figure. How CDC builds it is in the NSSP Companion Guide, not in the data (see openQuestions);
+        it is never computed here by adding the three virus columns. Empty in more rows than the single-virus columns
+        (245,165 of 692,881 rows filled on 2026-11-25; see openQuestions).)'
     - name: percent_visits_covid
       data_type: varchar
       description: Publisher field percent_visits_covid, as text; read into percent_visits_covid (Percent of all

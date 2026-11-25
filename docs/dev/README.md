@@ -478,7 +478,10 @@ uv run health-data-registry refresh <id> --max-rows 500
 make check
 ```
 
-Add `tests/integration/test_live_<id>.py` for the live check. A contract merges only after a maintainer reviews it
+Add `tests/integration/test_live_<id>.py` for the live check. Hand-written dbt unit tests for a new source go in
+their own files under `transform/models/unit_tests/`, one per model they test (`staging_typing_<id>.yml`,
+`total_rows_<id>.yml`), so source pull requests running side by side don't edit one shared file;
+`staging_typing.yml` keeps the tests written before this layout. A contract merges only after a maintainer reviews it
 against the publisher's documentation. Sources whose terms forbid redistribution are "listed, not hosted": they get a
 catalog entry and a contract, are fetched from the publisher at run time, and are never published as snapshots
 ([ADR 0009](../adr/0009-licences-decide-mirroring.md)).

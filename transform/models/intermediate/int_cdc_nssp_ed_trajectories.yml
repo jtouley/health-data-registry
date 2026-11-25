@@ -29,31 +29,84 @@ models:
           contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
           checks: This copy of the source has no rows, so there is nothing to answer from.
   - odcs_check:
-      name: cdc_nssp_ed_trajectories_percents_between_0_and_100
+      name: cdc_nssp_ed_trajectories_covid_percents_between_0_and_100
       arguments:
-        measure_sql: SELECT COUNT(*) FROM {object} WHERE percent_visits_combined < 0 OR percent_visits_combined
-          > 100 OR percent_visits_covid < 0 OR percent_visits_covid > 100 OR percent_visits_influenza < 0 OR percent_visits_influenza
-          > 100 OR percent_visits_rsv < 0 OR percent_visits_rsv > 100 OR percent_visits_smoothed_combined < 0 OR
-          percent_visits_smoothed_combined > 100 OR percent_visits_smoothed_covid < 0 OR percent_visits_smoothed_covid
-          > 100 OR percent_visits_smoothed_influenza < 0 OR percent_visits_smoothed_influenza > 100 OR percent_visits_smoothed_rsv
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE percent_visits_covid < 0 OR percent_visits_covid > 100
+          OR percent_visits_smoothed_covid < 0 OR percent_visits_smoothed_covid > 100
+        condition: measured = 0
+      config:
+        severity: error
+        meta:
+          dimension: conformity
+          rule: covid_percents_between_0_and_100
+          contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
+          checks: 'Dataset description: each value is the percentage of all emergency department visits in the area
+            and week that were for the pathogen, so it lies between 0 and 100. Checked on the observed and the smoothed
+            COVID-19 percent (percent_visits_covid, percent_visits_smoothed_covid), one rule per virus so a failure
+            names the column group.'
+  - odcs_check:
+      name: cdc_nssp_ed_trajectories_influenza_percents_between_0_and_100
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE percent_visits_influenza < 0 OR percent_visits_influenza
+          > 100 OR percent_visits_smoothed_influenza < 0 OR percent_visits_smoothed_influenza > 100
+        condition: measured = 0
+      config:
+        severity: error
+        meta:
+          dimension: conformity
+          rule: influenza_percents_between_0_and_100
+          contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
+          checks: 'Dataset description: each value is the percentage of all emergency department visits in the area
+            and week that were for the pathogen, so it lies between 0 and 100. Checked on the observed and the smoothed
+            influenza percent (percent_visits_influenza, percent_visits_smoothed_influenza), one rule per virus
+            so a failure names the column group.'
+  - odcs_check:
+      name: cdc_nssp_ed_trajectories_rsv_percents_between_0_and_100
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE percent_visits_rsv < 0 OR percent_visits_rsv > 100 OR percent_visits_smoothed_rsv
           < 0 OR percent_visits_smoothed_rsv > 100
         condition: measured = 0
       config:
         severity: error
         meta:
           dimension: conformity
-          rule: percents_between_0_and_100
+          rule: rsv_percents_between_0_and_100
           contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
           checks: 'Dataset description: each value is the percentage of all emergency department visits in the area
-            and week that were for the pathogen, so it lies between 0 and 100. Checked on every observed and smoothed
-            percent column.'
+            and week that were for the pathogen, so it lies between 0 and 100. Checked on the observed and the smoothed
+            RSV percent (percent_visits_rsv, percent_visits_smoothed_rsv), one rule per virus so a failure names
+            the column group.'
+  - odcs_check:
+      name: cdc_nssp_ed_trajectories_combined_percents_between_0_and_100
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE percent_visits_combined < 0 OR percent_visits_combined
+          > 100 OR percent_visits_smoothed_combined < 0 OR percent_visits_smoothed_combined > 100
+        condition: measured = 0
+      config:
+        severity: error
+        meta:
+          dimension: conformity
+          rule: combined_percents_between_0_and_100
+          contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
+          checks: 'Dataset description: each value is the percentage of all emergency department visits in the area
+            and week that were for the pathogen, so it lies between 0 and 100. Checked on the observed and the smoothed
+            combined percent (percent_visits_combined, percent_visits_smoothed_combined), one rule per virus so
+            a failure names the column group.'
   - odcs_check:
       name: cdc_nssp_ed_trajectories_counties_of_one_hsa_share_its_values
       arguments:
         measure_sql: SELECT COUNT(*) FROM (SELECT week_end, hsa_nci_id FROM {object} WHERE trend_source = 'HSA'
-          GROUP BY week_end, hsa_nci_id HAVING COUNT(DISTINCT percent_visits_covid) > 1 OR COUNT(DISTINCT percent_visits_influenza)
-          > 1 OR COUNT(DISTINCT percent_visits_rsv) > 1 OR COUNT(DISTINCT percent_visits_combined) > 1 OR COUNT(DISTINCT
-          ed_trends_covid) > 1 OR COUNT(DISTINCT ed_trends_influenza) > 1 OR COUNT(DISTINCT ed_trends_rsv) > 1)
+          AND hsa_nci_id IS NOT NULL GROUP BY week_end, hsa_nci_id HAVING COUNT(DISTINCT COALESCE(CAST(percent_visits_covid
+          AS VARCHAR), '<empty>')) > 1 OR COUNT(DISTINCT COALESCE(CAST(percent_visits_influenza AS VARCHAR), '<empty>'))
+          > 1 OR COUNT(DISTINCT COALESCE(CAST(percent_visits_rsv AS VARCHAR), '<empty>')) > 1 OR COUNT(DISTINCT
+          COALESCE(CAST(percent_visits_combined AS VARCHAR), '<empty>')) > 1 OR COUNT(DISTINCT COALESCE(CAST(percent_visits_smoothed_covid
+          AS VARCHAR), '<empty>')) > 1 OR COUNT(DISTINCT COALESCE(CAST(percent_visits_smoothed_influenza AS VARCHAR),
+          '<empty>')) > 1 OR COUNT(DISTINCT COALESCE(CAST(percent_visits_smoothed_rsv AS VARCHAR), '<empty>')) >
+          1 OR COUNT(DISTINCT COALESCE(CAST(percent_visits_smoothed_combined AS VARCHAR), '<empty>')) > 1 OR COUNT(DISTINCT
+          COALESCE(CAST(ed_trends_covid AS VARCHAR), '<empty>')) > 1 OR COUNT(DISTINCT COALESCE(CAST(ed_trends_influenza
+          AS VARCHAR), '<empty>')) > 1 OR COUNT(DISTINCT COALESCE(CAST(ed_trends_rsv AS VARCHAR), '<empty>')) >
+          1 OR COUNT(DISTINCT COALESCE(CAST(ed_covid_level AS VARCHAR), '<empty>')) > 1 OR COUNT(DISTINCT COALESCE(CAST(ed_flu_level
+          AS VARCHAR), '<empty>')) > 1 OR COUNT(DISTINCT COALESCE(CAST(ed_rsv_level AS VARCHAR), '<empty>')) > 1)
         condition: measured = 0
       config:
         severity: error
@@ -62,9 +115,68 @@ models:
           rule: counties_of_one_hsa_share_its_values
           contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
           checks: 'Dataset description: sub-state figures are the Health Service Area''s, ''reported for each county
-            in the HSA''. So in one week every county row of one HSA carries the same observed percents and trends;
-            a difference means a county''s own figure, which the contract doesn''t describe. (True on the full table
-            on 2026-11-25.)'
+            in the HSA''. So in one week every county row of one HSA carries the same observed and smoothed percents,
+            trends and activity levels, and an empty cell counts as a value of its own (one county with a figure
+            and another without is a difference). A difference means a county''s own figure, which the contract
+            doesn''t describe. Rows with no HSA code are left to hsa_rows_carry_their_hsa_code, so a missing key
+            is never reported as a mismatch. (True on the full table on 2026-11-25.)'
+  - odcs_check:
+      name: cdc_nssp_ed_trajectories_hsa_rows_carry_their_hsa_code
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE trend_source = 'HSA' AND hsa_nci_id IS NULL
+        condition: measured = 0
+      config:
+        severity: warn
+        meta:
+          dimension: completeness
+          rule: hsa_rows_carry_their_hsa_code
+          contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
+          checks: 'Observed, not from a codebook: every HSA row named its Health Service Area''s code (hsa_nci_id)
+            on 2026-11-25. A row without one can''t be grouped with its HSA, so counties_of_one_hsa_share_its_values
+            can''t check it; this rule names that gap on its own.'
+  - odcs_check:
+      name: cdc_nssp_ed_trajectories_trend_source_is_a_declared_value
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE trend_source NOT IN ('HSA', 'State', 'United States')
+        condition: measured = 0
+      config:
+        severity: error
+        meta:
+          dimension: conformity
+          rule: trend_source_is_a_declared_value
+          contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
+          checks: 'Structural: trend_source is one of the values this contract declares (HSA, State, United States;
+            all 692,881 rows on 2026-11-25). Every metric and the HSA rule select rows by these exact words, so
+            a renamed or re-cased value would silently empty the answers rather than fail.'
+  - odcs_check:
+      name: cdc_nssp_ed_trajectories_some_hsa_rows_present
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE trend_source = 'HSA'
+        condition: measured > 0
+      config:
+        severity: warn
+        meta:
+          dimension: completeness
+          rule: some_hsa_rows_present
+          contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
+          checks: 'Observed, not from a codebook: 681,597 of 692,881 rows were HSA rows on 2026-11-25. With none,
+            the HSA metrics answer nothing and counties_of_one_hsa_share_its_values passes on no groups, so their
+            absence is named here.'
+  - odcs_check:
+      name: cdc_nssp_ed_trajectories_total_rows_are_the_state_and_national_rows
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE (county = 'All') IS DISTINCT FROM (trend_source IN ('State',
+          'United States'))
+        condition: measured = 0
+      config:
+        severity: error
+        meta:
+          dimension: consistency
+          rule: total_rows_are_the_state_and_national_rows
+          contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
+          checks: 'Structural fact checked on the full table 2026-11-25: a row has county All exactly when its trend_source
+            is State or United States. The contract''s totalRows (and is_total_row) use county = ''All'' and the
+            metrics use trend_source, so the two must pick the same rows.'
   - odcs_check:
       name: cdc_nssp_ed_trajectories_some_covid_percents_present
       arguments:
@@ -118,6 +230,19 @@ models:
           checks: 'Fill rate: the combined percent is empty in more rows than the single-virus percents (see openQuestions),
             but the state and national rows should carry at least one (5,135 of 11,284 did on 2026-11-25).'
   - odcs_check:
+      name: cdc_nssp_ed_trajectories_week_end_is_a_saturday
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE DAYOFWEEK(week_end) <> 6
+        condition: measured = 0
+      config:
+        severity: warn
+        meta:
+          dimension: conformity
+          rule: week_end_is_a_saturday
+          contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
+          checks: 'Observed, not from a codebook: every week_end was a Saturday on 2026-11-25. Staging keeps only
+            the date of the publisher''s timestamp, so a shifted or mis-read week would otherwise pass unseen.'
+  - odcs_check:
       name: cdc_nssp_ed_trajectories_one_build_per_load
       arguments:
         measure_sql: SELECT COUNT(DISTINCT buildnumber) FROM {object}
@@ -129,7 +254,9 @@ models:
           rule: one_build_per_load
           contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
           checks: 'Observed, not from a codebook: every row of the full table carried one build number on 2026-11-25.
-            Two builds in one load would mix two versions of history, so a maintainer looks before the load is used.'
+            Two builds in one load would mix two versions of history. This is a warning: the load is still served,
+            and every answer from it carries the warning, so a reader sees it and a maintainer can compare the load
+            with the publisher''s table.'
   - odcs_check:
       name: cdc_nssp_ed_trajectories_fill_rate_hsa
       arguments:
@@ -142,7 +269,8 @@ models:
           dimension: completeness
           rule: fill_rate_hsa
           contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
-          checks: No row has a value for the Health Service Area's name (e.g.
+          checks: No row has a value for the Health Service Area's name, such as 'Calhoun (Battle Creek), MI - Barry,
+            MI', or All on the state and national rows.
   - odcs_check:
       name: cdc_nssp_ed_trajectories_fill_rate_hsa_counties
       arguments:
@@ -156,7 +284,7 @@ models:
           rule: fill_rate_hsa_counties
           contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
           checks: No row has a value for the counties that make up the Health Service Area, as a comma-separated
-            list (e.g.
+            list such as 'Barry, Calhoun', or All on the state and national rows.
   - odcs_check:
       name: cdc_nssp_ed_trajectories_fill_rate_hsa_nci_id
       arguments:
@@ -170,7 +298,7 @@ models:
           rule: fill_rate_hsa_nci_id
           contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
           checks: No row has a value for the Health Service Area's code in the National Cancer Institute's SEER
-            list (e.g.
+            list, such as 381, or All on the state and national rows.
   - odcs_check:
       name: cdc_nssp_ed_trajectories_fill_rate_percent_visits_combined
       arguments:
@@ -183,8 +311,8 @@ models:
           dimension: completeness
           rule: fill_rate_percent_visits_combined
           contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
-          checks: No row has a value for percent of all emergency department visits in the week that were for COVID-19,
-            influenza or RSV combined, as CDC computes it (not the sum of the three virus columns).
+          checks: 'No row has a value for percent of all emergency department visits in the week that were for COVID-19,
+            influenza or RSV combined: CDC''s published combined figure.'
   - odcs_check:
       name: cdc_nssp_ed_trajectories_fill_rate_percent_visits_covid
       arguments:
@@ -293,7 +421,8 @@ models:
           rule: fill_rate_ed_trends_covid
           contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
           checks: 'No row has a value for CDC''s trend for COVID-19 emergency department visits in the week, exactly
-            as written: Increasing, Decreasing, No Change, Sparse, Limited Data or Data Unavailable.'
+            as written: Increasing, Decreasing, No Change, Sparse, Limited Data or Data Unavailable, or empty (see
+            openQuestions).'
   - odcs_check:
       name: cdc_nssp_ed_trajectories_fill_rate_ed_trends_influenza
       arguments:
@@ -307,7 +436,7 @@ models:
           rule: fill_rate_ed_trends_influenza
           contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
           checks: No row has a value for CDC's trend for influenza emergency department visits in the week, exactly
-            as written (same categories as the COVID-19 trend).
+            as written (same categories as the COVID-19 trend), or empty (see openQuestions).
   - odcs_check:
       name: cdc_nssp_ed_trajectories_fill_rate_ed_trends_rsv
       arguments:
@@ -321,7 +450,7 @@ models:
           rule: fill_rate_ed_trends_rsv
           contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
           checks: No row has a value for CDC's trend for RSV emergency department visits in the week, exactly as
-            written (same categories as the COVID-19 trend).
+            written (same categories as the COVID-19 trend), or empty (see openQuestions).
   - odcs_check:
       name: cdc_nssp_ed_trajectories_fill_rate_ed_covid_level
       arguments:
@@ -388,7 +517,7 @@ models:
       missing_codes: []
   - name: county
     data_type: varchar
-    description: The county the row is reported for, by name without 'County' (e.g. Wayne), or All on the state
+    description: The county the row is reported for, by name without 'County', such as Wayne, or All on the state
       and national rows. A county row carries its Health Service Area's figures, not the county's own.
     meta:
       logical_type: string
@@ -422,8 +551,8 @@ models:
       missing_codes: []
   - name: hsa
     data_type: varchar
-    description: The Health Service Area's name (e.g. 'Calhoun (Battle Creek), MI - Barry, MI'), or All on the state
-      and national rows. Every county of one Health Service Area has the same figures.
+    description: The Health Service Area's name, such as 'Calhoun (Battle Creek), MI - Barry, MI', or All on the
+      state and national rows. Every county of one Health Service Area has the same figures.
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -433,7 +562,7 @@ models:
       missing_codes: []
   - name: hsa_counties
     data_type: varchar
-    description: The counties that make up the Health Service Area, as a comma-separated list (e.g. 'Barry, Calhoun'),
+    description: The counties that make up the Health Service Area, as a comma-separated list such as 'Barry, Calhoun',
       or All on the state and national rows.
     meta:
       logical_type: string
@@ -444,7 +573,7 @@ models:
       missing_codes: []
   - name: hsa_nci_id
     data_type: varchar
-    description: The Health Service Area's code in the National Cancer Institute's SEER list (e.g. 381), or All
+    description: The Health Service Area's code in the National Cancer Institute's SEER list, such as 381, or All
       on the state and national rows.
     meta:
       logical_type: string
@@ -455,9 +584,10 @@ models:
       missing_codes: []
   - name: percent_visits_combined
     data_type: double
-    description: Percent of all emergency department visits in the week that were for COVID-19, influenza or RSV
-      combined, as CDC computes it (not the sum of the three virus columns). Empty in more rows than the single-virus
-      columns (245,165 of 692,881 rows filled on 2026-11-25; see openQuestions).
+    description: 'Percent of all emergency department visits in the week that were for COVID-19, influenza or RSV
+      combined: CDC''s published combined figure. How CDC builds it is in the NSSP Companion Guide, not in the data
+      (see openQuestions); it is never computed here by adding the three virus columns. Empty in more rows than
+      the single-virus columns (245,165 of 692,881 rows filled on 2026-11-25; see openQuestions).'
     meta:
       logical_type: number
       physical_type: DOUBLE
@@ -547,9 +677,10 @@ models:
   - name: ed_trends_covid
     data_type: varchar
     description: 'CDC''s trend for COVID-19 emergency department visits in the week, exactly as written: Increasing,
-      Decreasing, No Change, Sparse, Limited Data or Data Unavailable. The dataset description says a week is increasing
-      or decreasing when the 95% interval of the smoothed slope excludes zero, stable when it includes zero, and
-      sparse when too many weeks are 0% to fit a model.'
+      Decreasing, No Change, Sparse, Limited Data or Data Unavailable, or empty (see openQuestions). For Health
+      Service Area (county) rows, the dataset description says a week is increasing or decreasing when the 95% interval
+      of the smoothed slope excludes zero, stable (written No Change) when it includes zero, and sparse when too
+      many weeks are 0% to fit a model. How the state and national trends are set is not stated (see openQuestions).'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -560,7 +691,7 @@ models:
   - name: ed_trends_influenza
     data_type: varchar
     description: CDC's trend for influenza emergency department visits in the week, exactly as written (same categories
-      as the COVID-19 trend).
+      as the COVID-19 trend), or empty (see openQuestions).
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -571,7 +702,7 @@ models:
   - name: ed_trends_rsv
     data_type: varchar
     description: CDC's trend for RSV emergency department visits in the week, exactly as written (same categories
-      as the COVID-19 trend).
+      as the COVID-19 trend), or empty (see openQuestions).
     meta:
       logical_type: string
       physical_type: VARCHAR

@@ -2,6 +2,8 @@
 # becomes a DATE, the publisher's field names percent_visits_smoothed and percent_visits_smoothed_1 land in the
 # contract's columns for combined and influenza, FIPS stays text exactly as CDC sends it (no zero padding), and an
 # empty percent stays empty rather than reading as zero. Inputs are SQL so the raw source needn't be loaded first.
+# The sql format needs every raw column in both selects: when the contract adds a raw field, add it to both here,
+# or this test fails.
 version: 2
 unit_tests:
 - name: stg_cdc_nssp_ed_trajectories_renames_smoothed_fields_and_keeps_fips_as_sent

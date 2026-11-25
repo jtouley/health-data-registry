@@ -51,7 +51,7 @@ models:
     - type: not_null
   - name: county
     data_type: varchar
-    description: The county the row is reported for, by name without 'County' (e.g. Wayne), or All on the state
+    description: The county the row is reported for, by name without 'County', such as Wayne, or All on the state
       and national rows. A county row carries its Health Service Area's figures, not the county's own.
     meta:
       logical_type: string
@@ -91,8 +91,8 @@ models:
     - type: not_null
   - name: hsa
     data_type: varchar
-    description: The Health Service Area's name (e.g. 'Calhoun (Battle Creek), MI - Barry, MI'), or All on the state
-      and national rows. Every county of one Health Service Area has the same figures.
+    description: The Health Service Area's name, such as 'Calhoun (Battle Creek), MI - Barry, MI', or All on the
+      state and national rows. Every county of one Health Service Area has the same figures.
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -107,7 +107,7 @@ models:
           severity: warn
   - name: hsa_counties
     data_type: varchar
-    description: The counties that make up the Health Service Area, as a comma-separated list (e.g. 'Barry, Calhoun'),
+    description: The counties that make up the Health Service Area, as a comma-separated list such as 'Barry, Calhoun',
       or All on the state and national rows.
     meta:
       logical_type: string
@@ -123,7 +123,7 @@ models:
           severity: warn
   - name: hsa_nci_id
     data_type: varchar
-    description: The Health Service Area's code in the National Cancer Institute's SEER list (e.g. 381), or All
+    description: The Health Service Area's code in the National Cancer Institute's SEER list, such as 381, or All
       on the state and national rows.
     meta:
       logical_type: string
@@ -139,9 +139,10 @@ models:
           severity: warn
   - name: percent_visits_combined
     data_type: double
-    description: Percent of all emergency department visits in the week that were for COVID-19, influenza or RSV
-      combined, as CDC computes it (not the sum of the three virus columns). Empty in more rows than the single-virus
-      columns (245,165 of 692,881 rows filled on 2026-11-25; see openQuestions).
+    description: 'Percent of all emergency department visits in the week that were for COVID-19, influenza or RSV
+      combined: CDC''s published combined figure. How CDC builds it is in the NSSP Companion Guide, not in the data
+      (see openQuestions); it is never computed here by adding the three virus columns. Empty in more rows than
+      the single-virus columns (245,165 of 692,881 rows filled on 2026-11-25; see openQuestions).'
     meta:
       logical_type: number
       physical_type: DOUBLE
@@ -271,9 +272,10 @@ models:
   - name: ed_trends_covid
     data_type: varchar
     description: 'CDC''s trend for COVID-19 emergency department visits in the week, exactly as written: Increasing,
-      Decreasing, No Change, Sparse, Limited Data or Data Unavailable. The dataset description says a week is increasing
-      or decreasing when the 95% interval of the smoothed slope excludes zero, stable when it includes zero, and
-      sparse when too many weeks are 0% to fit a model.'
+      Decreasing, No Change, Sparse, Limited Data or Data Unavailable, or empty (see openQuestions). For Health
+      Service Area (county) rows, the dataset description says a week is increasing or decreasing when the 95% interval
+      of the smoothed slope excludes zero, stable (written No Change) when it includes zero, and sparse when too
+      many weeks are 0% to fit a model. How the state and national trends are set is not stated (see openQuestions).'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -289,7 +291,7 @@ models:
   - name: ed_trends_influenza
     data_type: varchar
     description: CDC's trend for influenza emergency department visits in the week, exactly as written (same categories
-      as the COVID-19 trend).
+      as the COVID-19 trend), or empty (see openQuestions).
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -305,7 +307,7 @@ models:
   - name: ed_trends_rsv
     data_type: varchar
     description: CDC's trend for RSV emergency department visits in the week, exactly as written (same categories
-      as the COVID-19 trend).
+      as the COVID-19 trend), or empty (see openQuestions).
     meta:
       logical_type: string
       physical_type: VARCHAR

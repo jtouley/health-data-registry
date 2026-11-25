@@ -11,9 +11,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import pytest
 
-from health_data_registry import tools
+from health_data_registry import quality, tools
 from health_data_registry.query import Engine
 from health_data_registry.registry import Registry, load_registry
 from health_data_registry.store import build_snapshot, write_ndjson
@@ -105,3 +106,118 @@ def test_raw_layer_keeps_the_publisher_values_as_sent(real: tuple[Registry, Engi
     kept = [json.loads(line) for line in files[0].read_text(encoding="utf-8").splitlines()]
     for sent, row in zip(RECORDS, kept, strict=True):
         assert {k: row[k] for k in sent} == sent
+
+
+def _hsa_rows(eng: Engine, metric: str) -> list[tuple[str, float]]:
+    out = eng.query_metric(DS, metric, filters={"place": "Michigan"}, group_by=["county", "week_ending"])
+    return sorted((r[0], r[2]) for r in out["rows"])
+
+
+def test_hsa_metrics_give_each_county_its_hsa_figure_never_added_or_mixed_with_the_state(
+    real: tuple[Registry, Engine, Path],
+) -> None:
+    """Kent and Ionia share one HSA figure (9.0): each county shows it once, never 18.0, and the state row stays out."""
+    _, eng, _ = real
+    for metric in (
+        "covid_percent_of_ed_visits_hsa",
+        "influenza_percent_of_ed_visits_hsa",
+        "rsv_percent_of_ed_visits_hsa",
+    ):
+        assert _hsa_rows(eng, metric) == [("Ionia", 9.0), ("Kent", 9.0)], metric
+    assert _hsa_rows(eng, "combined_percent_of_ed_visits_hsa") == [("Ionia", 6.0), ("Kent", 6.0)]
+
+
+def test_combined_metric_reads_cdcs_combined_column_never_the_sum_of_the_three(
+    real: tuple[Registry, Engine, Path],
+) -> None:
+    """The fixture's combined (6.0) differs from the sum of the three viruses (7.4 and 6.1) and the smoothed (5.5)."""
+    _, eng, _ = real
+    out = eng.query_metric(DS, "combined_percent_of_ed_visits", group_by=["place", "week_ending"])
+    assert sorted((r[0], r[2]) for r in out["rows"]) == [("Michigan", 6.0), ("United States", 6.0)]
+
+
+# The contract's quality rules on hand-made staged tables: each rule is shown failing on the case it names.
+_GOOD = {
+    "week_end": "2024-01-06", "geography": "Michigan", "county": "Kent", "fips": "26081",
+    "trend_source": "HSA", "hsa": "Kent - Ionia", "hsa_counties": "Ionia, Kent", "hsa_nci_id": "1",
+    "percent_visits_combined": 6.0, "percent_visits_covid": 2.0, "percent_visits_influenza": 3.0,
+    "percent_visits_rsv": 1.0, "percent_visits_smoothed_combined": 5.5, "percent_visits_smoothed_covid": 2.0,
+    "percent_visits_smoothed_influenza": 3.0, "percent_visits_smoothed_rsv": 1.0,
+    "ed_trends_covid": "No Change", "ed_trends_influenza": "Decreasing", "ed_trends_rsv": "Increasing",
+    "ed_covid_level": "Low", "ed_flu_level": "High", "ed_rsv_level": "Moderate", "buildnumber": "2024-01-10",
+}  # fmt: skip
+
+
+def _table(rows: list[dict[str, Any]]) -> duckdb.DuckDBPyConnection:
+    con = duckdb.connect()
+    cols = list(_GOOD)
+
+    def kind(c: str) -> str:
+        return "DATE" if c == "week_end" else "DOUBLE" if c.startswith("percent_") else "VARCHAR"
+
+    con.execute(f"CREATE TABLE t ({', '.join(f'{c} {kind(c)}' for c in cols)})")
+    for r in rows:
+        con.execute(f"INSERT INTO t VALUES ({', '.join('?' for _ in cols)})", [r[c] for c in cols])
+    return con
+
+
+def _status(rows: list[dict[str, Any]], rule_id: str) -> str:
+    reg = load_registry(ROOT)
+    rules = [r for r in quality.rules_for(reg.get(DS).contract) if r.id == rule_id]
+    assert len(rules) == 1, rule_id
+    return str(quality.run_rules(_table(rows), "t", rules).results[0]["status"])
+
+
+def _state(**kw: Any) -> dict[str, Any]:
+    return {**_GOOD, "county": "All", "fips": "26000", "trend_source": "State", "hsa": "All",
+            "hsa_counties": "All", "hsa_nci_id": "All", **kw}  # fmt: skip
+
+
+def test_hsa_rule_fails_when_one_county_has_a_figure_and_another_is_empty() -> None:
+    kent, ionia = dict(_GOOD), {**_GOOD, "county": "Ionia", "fips": "26067"}
+    assert _status([kent, ionia], "counties_of_one_hsa_share_its_values") == "pass"
+    assert (
+        _status([kent, {**ionia, "percent_visits_covid": None}], "counties_of_one_hsa_share_its_values")
+        == "fail"
+    )
+    for col, other in (("percent_visits_smoothed_rsv", 4.0), ("ed_covid_level", "Very High")):
+        assert _status([kent, {**ionia, col: other}], "counties_of_one_hsa_share_its_values") == "fail", col
+
+
+def test_hsa_rule_leaves_rows_without_an_hsa_code_to_their_own_rule() -> None:
+    """Two unrelated HSAs with no code must not be reported as one HSA whose counties disagree."""
+    a = {**_GOOD, "hsa_nci_id": None}
+    b = {**_GOOD, "county": "Wayne", "fips": "26163", "hsa_nci_id": None, "percent_visits_covid": 7.0}
+    assert _status([a, b], "counties_of_one_hsa_share_its_values") == "pass"
+    assert _status([a, b], "hsa_rows_carry_their_hsa_code") == "warn"
+
+
+def test_a_renamed_trend_source_fails_rather_than_emptying_the_answers() -> None:
+    assert _status([_GOOD, _state()], "trend_source_is_a_declared_value") == "pass"
+    assert (
+        _status([{**_GOOD, "trend_source": "Health Service Area"}], "trend_source_is_a_declared_value")
+        == "fail"
+    )
+    assert _status([_state()], "some_hsa_rows_present") == "warn"
+
+
+def test_total_rows_and_the_metrics_filter_pick_the_same_rows() -> None:
+    rule = "total_rows_are_the_state_and_national_rows"
+    assert _status([_GOOD, _state()], rule) == "pass"
+    assert _status([{**_GOOD, "trend_source": "State"}], rule) == "fail"  # a named county marked State
+    assert _status([_state(trend_source="HSA")], rule) == "fail"  # an All row marked HSA
+
+
+def test_each_virus_range_rule_names_its_own_columns() -> None:
+    assert (
+        _status([{**_GOOD, "percent_visits_smoothed_rsv": 101.0}], "rsv_percents_between_0_and_100") == "fail"
+    )
+    assert (
+        _status([{**_GOOD, "percent_visits_smoothed_rsv": 101.0}], "covid_percents_between_0_and_100")
+        == "pass"
+    )
+
+
+def test_a_week_that_does_not_end_on_saturday_is_named() -> None:
+    assert _status([_GOOD], "week_end_is_a_saturday") == "pass"
+    assert _status([{**_GOOD, "week_end": "2024-01-07"}], "week_end_is_a_saturday") == "warn"
