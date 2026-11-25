@@ -85,9 +85,11 @@ SEP = "ǁ"
 # mutants at the slowest ordinary rate, and 150 does the same for registry.py. Add a module here when its shards
 # run long. quality.py and store.py ran at 18 and 15 a minute on PR #86 (CI run 45572465486; the registry runs
 # every contract's rules when it loads, and most tests build a snapshot), so both 40-minute shards timed out.
+# registry.py's shards of 150 ran past 20 minutes on the same PR, once the registry parsed and guarded every
+# contract quality rule, so its target is 100.
 SHARD_TARGET = 500
 SHARD_TARGET_BY_MODULE = {
-    "health_data_registry.registry": 150,
+    "health_data_registry.registry": 100,
     "health_data_registry.quality": 150,
     "health_data_registry.store": 150,
 }
