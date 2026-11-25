@@ -1,6 +1,6 @@
 # Developer and CI entry points. `make help` lists the targets.
 .DEFAULT_GOAL := help
-.PHONY: help install lint fmt typecheck test test-network smoke mutate docs kit check precheck refresh serve check-contracts eval hooks
+.PHONY: help install lint fmt typecheck test test-network smoke mutate docs kit fuzz-requirements check precheck refresh serve check-contracts eval hooks
 
 UV ?= uv
 COV_FLOOR ?= 85
@@ -45,6 +45,9 @@ docs: ## Regenerate docs/helpers.md, the template's skills, the plugin and the t
 
 kit: ## Build the Claude Projects kit into KIT_DIR (default dist/projects-kit, not committed)
 	$(UV) run python scripts/write_template.py --kit $(KIT_DIR)
+
+fuzz-requirements: ## Regenerate fuzz/requirements.txt from uv.lock (hash-pinned, for the fuzz image's Python 3.11); needs PyPI
+	$(UV) run python scripts/fuzz_requirements.py write
 
 check: lint typecheck test mutate ## The quick local loop (not all of CI): lint, typecheck, test, mutation tests on changed modules
 

@@ -31,13 +31,5 @@ updates:
     schedule:
       interval: "weekly"
 
-  # The fuzz build's hash-pinned dependencies (fuzz/requirements.txt, resolved for the image's Python 3.11).
-  # Keep them at uv.lock's versions: regenerate with the command in fuzz/requirements.in after a lock change.
-  - package-ecosystem: "pip"
-    directory: "/fuzz"
-    schedule:
-      interval: "weekly"
-    groups:
-      fuzz-deps:
-        applies-to: version-updates
-        patterns: ["*"]
+  # No pip entry for fuzz/requirements.txt: it is generated from uv.lock (make fuzz-requirements), so the fuzzer
+  # runs the DuckDB and sqlglot that production runs. A test fails when a uv bump above leaves it behind.
