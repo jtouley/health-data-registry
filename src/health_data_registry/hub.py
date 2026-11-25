@@ -38,6 +38,7 @@ from typing import Any
 from health_data_registry import deadline
 from health_data_registry.publish import HF_PREFIX, data_path, hf_repo_id, sha256_file
 from health_data_registry.registry import Dataset
+from health_data_registry.staging import StagingReport
 from health_data_registry.store import Manifest
 
 # The project's public hub. Until its first release-<run date> tag exists, reading from it is refused plainly.
@@ -131,6 +132,19 @@ def newest_release(tags: list[str]) -> str | None:
     """The newest release tag: latest run date, then the latest correction of that date."""
     found = [t for t in tags if RELEASE_TAG.fullmatch(t)]
     return max(found, key=_release_order) if found else None
+
+
+def hub_notes(snapshot: dict[str, Any]) -> list[str]:
+    """The snapshot's plain-words notes, so a hosted answer carries the same caveats as a lake answer.
+
+    The staging notes (a flag code the contract doesn't list) are rebuilt from the snapshot's silver section too,
+    for a release whose snapshot notes leave them out.
+    """
+    notes = [str(n) for n in snapshot.get("notes") or []]
+    silver = snapshot.get("silver") or {}
+    unlisted = {str(k): tuple(str(c) for c in v) for k, v in (silver.get("unlisted_codes") or {}).items()}
+    report = StagingReport(row_count=int(silver.get("row_count") or 0), unlisted_codes=unlisted)
+    return notes + [n for n in report.notes() if n not in notes]
 
 
 def contract_compatible(dataset_id: str, release_version: str, installed_version: str) -> bool:
@@ -372,7 +386,7 @@ class Hub:
                 "run_date": str(rel.get("run_date", "")),
                 "release_contract_version": release_cv,
                 "release_files": files,
-                "notes": [],
+                "notes": hub_notes(snap),
                 "quality": dict(sm.get("quality") or {}),
             }
         )
