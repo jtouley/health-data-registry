@@ -38,16 +38,16 @@ publishers and are left out of `make test`; run them with `make test-network`.
 
 ## Review
 
-Every change, including the maintainer's, lands through a pull request; nothing is pushed straight to main. Each
-pull request gets one review round, then one round of fixes, and then it is merged. The review is always posted on
-the pull request. If your change touches data (catalog entries, contracts, semantic models, adapters, storage or
-export code), data-quality rules and tests, the README and user docs, or anything security-sensitive (fetchers,
-the SQL sandbox, workflows, tokens, the hosted server: a sharp-edges review), you'll also see a separate posted
-review for each matching skill in [CLAUDE.md](CLAUDE.md#skills-and-how-to-use-them), in the same round. The fix round
-addresses every posted finding. Anything the fix round doesn't
-cover becomes a follow-up issue or a later pull request, which goes through the same cycle. There is no second
-review round, so expect a short, predictable path to merge rather than repeated back-and-forth. Every pull request is
-squash-merged into `main`, and its branch is deleted afterwards.
+Every change, including the maintainer's, lands through a pull request; nothing is pushed straight to main. Each pull
+request gets one review round, then one round of fixes, and then it is merged. Each review comes from a fresh agent
+and is posted on the pull request in full, by that agent, unedited. If your change touches data (catalog entries,
+contracts, semantic models, adapters, storage or export code), data-quality rules and tests, the README and user docs,
+or anything security-sensitive (fetchers, the SQL sandbox, workflows, tokens, the hosted server: a sharp-edges
+review), you'll also see a separate posted review for each matching skill in
+[CLAUDE.md](CLAUDE.md#skills-and-how-to-use-them), in the same round. The fix round addresses every posted finding.
+Anything the fix round doesn't cover becomes a follow-up issue or a later pull request, which goes through the same
+cycle. There is no second review round, so expect a short, predictable path to merge rather than repeated
+back-and-forth. Every pull request is squash-merged into `main`, and its branch is deleted afterwards.
 
 ## Adding a dataset
 
