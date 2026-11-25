@@ -17,3 +17,10 @@
 # A mutation job: <workflow> :: job <id> | needs <job> -> <mutation job> | schedule <cron> | <job>: <command>
 # A removed pre-commit hook: .pre-commit-config.yaml :: hook <id>
 # Say why in a comment above each entry.
+
+# eval/drive.py records the server checkout's commit with git and fixed arguments, no shell (as eval/label_check.py).
+eval/drive.py :: proc = subprocess.run(  # noqa: S603 - fixed arguments, no shell
+# The same call: git from PATH, as every script here runs it.
+eval/drive.py :: ["git", "-C", str(server_dir), *args],  # noqa: S607 - git from PATH, as every script here
+# The test builds a throwaway git checkout in tmp_path with fixed git arguments, as the other git-using tests do.
+tests/test_eval_drive.py :: proc = subprocess.run(["git", "-C", str(path), *args], check=True, capture_output=True, text=True)  # noqa: S603, S607
