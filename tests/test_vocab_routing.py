@@ -245,6 +245,8 @@ def test_real_nndss_generic_label_reads_running_total_at_one_week(tmp_path: Path
         nndss("KANSAS", "2", m3="9", week=51, label="Tularemia"),
         nndss("KANSAS", "1", m3="10", week=52, label="Tularemia"),
         nndss("US RESIDENTS", "1", summary=True, m3="10", week=52, label="Tularemia"),
+        # A full load has flag codes; with none, the codebook rule would have nothing to judge and block LATEST.
+        nndss("DISTRICT OF COLUMBIA", None, flag="-", week=52),
     ]
     reg = load_registry(ROOT)
     lake = tmp_path / "lake"
@@ -573,6 +575,9 @@ def test_nearest_served_skips_a_state_row_that_leaves_out_part_of_the_state(tmp_
     rows = [
         nndss("NEW YORK", "2", m3="9", label="Tularemia"),
         nndss("KANSAS", "1", m3="5", label="Tularemia"),
+        nndss(
+            "DISTRICT OF COLUMBIA", None, flag="-"
+        ),  # a flag code, so the codebook rule has a value to judge
     ]
     reg = load_registry(ROOT)
     lake = tmp_path / "lake"

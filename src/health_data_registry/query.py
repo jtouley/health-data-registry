@@ -26,6 +26,7 @@ from health_data_registry.registry import (
     label_key,
     unpinned_non_additive,
 )
+from health_data_registry.registry import label_key_sql as registry_label_key_sql
 from health_data_registry.sql_guard import GuardedQuery, guard_sql, harden, run_guarded
 from health_data_registry.store import Manifest, latest_snapshot, snapshot_dir
 
@@ -309,7 +310,7 @@ def _lit(value: str) -> str:
 
 def label_key_sql(expr: str, renamed: Sequence[tuple[str, str]] = ()) -> str:
     """SQL for registry.label_key, then the contract's renamed labels mapped onto the label they continue."""
-    key = f"regexp_replace(upper(trim(CAST({expr} AS VARCHAR))), '[.]', '', 'g')"
+    key = registry_label_key_sql(expr)
     if not renamed:
         return key
     whens = " ".join(f"WHEN {_lit(label_key(a))} THEN {_lit(label_key(b))}" for a, b in renamed)
@@ -552,11 +553,16 @@ class Engine:
                 if held is None:
                     continue  # read from its private store (private.read_rows) when first asked
                 try:
-                    load_live(con, ds, held[0])  # in memory only, like a live table
+                    staged = load_live(con, ds, held[0])  # in memory only, like a live table
                 except Exception:  # noqa: BLE001 - one bad store must not break the other sources
                     del self._private[ds.id]
                     continue
-                manifest = held[1]
+                manifest = replace(  # its data checks reach answers as caveats, as a live table's do
+                    held[1],
+                    notes=[*held[1].notes, *staged.notes()],
+                    silver=staged.staging.as_dict(),
+                    quality=staged.quality.as_dict(),
+                )
             elif not ds.entry.licence.redistribution:
                 table = self._live.get(ds.id)
                 if table is None:
@@ -570,7 +576,8 @@ class Engine:
                 manifest = replace(
                     table.manifest,
                     notes=[*table.manifest.notes, *report.notes()],
-                    silver=report.as_dict(),
+                    silver=report.staging.as_dict(),
+                    quality=report.quality.as_dict(),
                 )
                 sources.append(Source("live", ds.id, ds=ds, records=table.records))
             elif (found := self._lake_snapshot(ds.id)) is not None:
