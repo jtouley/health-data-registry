@@ -32,6 +32,7 @@ The README's images (`assets/readme/*.svg`, light and dark) come from one token 
 | `make install` | `uv sync` |
 | `make check` | `lint`, `typecheck`, `test` and `mutate`: the quick local loop, not all of CI |
 | `make precheck` | The pre-PR gate's local half: the CI checks plus a docs-drift check, stopping at the first failure ([below](#the-pre-pr-gate)) |
+| `make ratchet` | The Trusted gate's ratchet on `HEAD` against `BASE` (default `origin/main`), as the PR check will run it, without the required-check rule ([below](#the-trusted-gate)) |
 | `make lint` / `make fmt` | Ruff lint and format check / fix |
 | `make typecheck` | mypy, strict |
 | `make test` | Offline tests with coverage; fails under 85% (`COV_FLOOR`) |
@@ -131,9 +132,66 @@ any new commit on the PR branch has no pre-pr verdict and runs the shards.
 Red on the pre-pr branch? Fix it there, run `make precheck` again, and push again. Fix-round commits and merges
 of main take the same path.
 
+**The gate can't be skipped.** Two things enforce step 3, and the server rule is the one that counts:
+
+- **On GitHub (what counts):** a ruleset on the PR branches (`feat/**`, `fix/**`, `ci/**`, `docs/**`,
+  `transform/**`; not `main`, not `pre-pr/**`) requires the "CI result" check. For a branch that isn't the
+  default branch, GitHub then refuses any push that moves the branch to a commit whose "CI result" hasn't already
+  passed. Checks belong to the commit, not the branch, so the commit that went green on `pre-pr/<branch>` pushes
+  through and any other commit is refused. `do_not_enforce_on_create` is off, so creating a PR branch is a push
+  like any other: create it at the green commit (`git push origin <green sha>:refs/heads/<branch>`). "Update
+  branch" on GitHub makes a new, unchecked commit and is refused too; merge main locally and go through pre-pr.
+- **Locally (fast feedback):** the `pre-push` hook (`make hooks` installs it; `scripts/pre_push_gate.py`) refuses
+  a push to a PR branch unless that exact commit has a completed, all-green CI run from a push to `pre-pr/**`
+  (asked with `gh api`; any error refuses the push), and runs ruff, mypy and the changed modules' tests before a
+  push to `pre-pr/**`. It is a convenience: `--no-verify` is never used, and the server refuses the same push
+  anyway.
+
 The actionlint and shellcheck hooks need `uv sync` first: both tools come from the locked dev environment
 (`actionlint-py` and `shellcheck-py`, pinned in `uv.lock`), and the `shellcheck-present` hook fails if shellcheck
 is missing, because actionlint would otherwise skip its shell checks silently.
+
+## The trusted gate
+
+A pull request's own CI runs the pull request's copy of `ci.yml`, the Makefile, `scripts/` and `pyproject.toml`,
+so a pull request can edit the checks it is judged by. No person reviews pull requests here, so one required
+check runs code the pull request cannot change: **Trusted gate**
+([`.github/workflows/trusted-gate.yml`](../../.github/workflows/trusted-gate.yml)).
+
+**How it stays trusted.** It runs on `pull_request_target`, so GitHub takes the workflow file from `main`, and it
+checks out `main`'s commit, never the pull request's. It fetches the pull request's commit as git objects and reads
+it as text (`git cat-file`, `git diff`), parsing Python with `ast`, workflows with `yaml.safe_load` and TOML with
+`tomllib`: nothing from the pull request is imported, installed or run. The token is `contents: read`, no secret is
+used, the uv cache is off, and only SHAs from the event payload reach a shell. A ruleset "required workflows" rule
+would pin a workflow to `main` too, but GitHub offers it only to organisation rulesets, and this repository belongs
+to a user account.
+
+**What it fails.** `python -m health_data_registry.ratchet` compares the pull request with its merge base and fails
+when the change:
+
+| Rule | Fails when the change | Allowlist? |
+|---|---|---|
+| threshold | lowers or removes a floor, fail-under or threshold in `pyproject.toml`, the Makefile, `scripts/`, the workflows or another tool config, or sets the coverage floor under 85 or the mutation floor under 70 anywhere there | no |
+| escape hatch | adds a skip, skipif or xfail mark, a test deselection, a no-cover or no-mutate pragma, a type-ignore or noqa comment, an inline mypy setting, a ruff, mypy, coverage or mutmut relaxation in TOML, a relaxing ruff or mypy flag, or a command whose failure is ignored | yes |
+| tests | leaves fewer collected tests (parametrized cases counted) in the test modules it touches; moving or renaming a test is fine | yes, per removed test |
+| required check | removes or renames a check the ruleset requires; changes the `if:` of a required job or a job it needs; drops a job from what a required job waits for; adds continue-on-error to one of them or their steps; adds an `if:` to one of their steps | `if:` only |
+| sealed sets | touches `eval/sealed/` | no |
+| hooks | adds the no-verify flag, the short commit flag or a hooks-path override (prose in Markdown may be allowlisted) | docs only |
+| allowlist, gate files | changes the allowlist with anything else; changes the gate's own files with anything but docs | no |
+
+Each failure names the file and line, says what weakened, and for an allowlistable one prints the exact entry.
+The required checks come from the ruleset itself (`GET /repos/{owner}/{repo}/rules/branches/main`); if that call
+fails, the gate fails. `make ratchet` runs every rule but that one locally.
+
+**The allowlist** is [`.github/ratchet-allowlist.txt`](../../.github/ratchet-allowlist.txt): one
+`path :: exact stripped line` per entry. The gate reads it from `main`, and it changes only in a pull request that
+changes nothing else, so an entry takes effect only after its own pull request went through the review round and
+merged. Add the entry first, then the change that needs it.
+
+**What it cannot stop.** A pull request that changes the gate's own files is judged by `main`'s gate, but once it
+merges, the next pull request is judged by the changed gate; the gate only makes such a change stand alone. It reads
+text, so it doesn't see a check weakened by logic (a test that asserts nothing, a step whose command is changed to
+`true`, a comparison flipped inside a script), and an allowlist entry needs no person, only its own pull request.
 
 ## Architecture
 
