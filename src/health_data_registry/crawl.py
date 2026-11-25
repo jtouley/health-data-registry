@@ -407,4 +407,5 @@ def refresh_dataset(ds: Dataset, lake: Path, get: Getter, *, max_rows: int | Non
             partial=max_rows is not None,
             layouts=layouts,
             notes=override_notes(get),
+            robots_overrides=list(getattr(get, "overridden", []) or []),
         )

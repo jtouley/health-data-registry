@@ -33,7 +33,7 @@ import os
 import re
 import shutil
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -202,6 +202,7 @@ def build_snapshot(
     partial: bool = False,
     layouts: dict[str, str] | None = None,
     notes: Sequence[str] = (),
+    robots_overrides: Sequence[str] = (),
 ) -> Manifest:
     """Normalise newline-delimited JSON record files (publisher field names, raw values) into a snapshot."""
     if not fetches:
@@ -252,17 +253,63 @@ def build_snapshot(
         if tmp.exists():
             shutil.rmtree(tmp, ignore_errors=True)
     if not partial:
-        keep_raw_records(lake, ds.id, snapshot_id, records_files)
+        keep_raw_records(
+            lake,
+            ds.id,
+            snapshot_id,
+            records_files,
+            load_metadata(ds, snapshot_id, fetches, robots_overrides=robots_overrides),
+        )
     _point_latest(lake, ds.id, snapshot_id)
     return manifest
 
 
-def keep_raw_records(lake: Path, dataset_id: str, snapshot_id: str, records_files: Sequence[Path]) -> Path:
-    """Keep one load's parsed records where the dbt staging models read them; written once, never rewritten."""
+def load_metadata(
+    ds: Dataset, snapshot_id: str, fetches: Sequence[RawFetch], *, robots_overrides: Sequence[str] = ()
+) -> dict[str, Any]:
+    """What one raw load carries beside its records: how it was loaded and every fetch behind it."""
+    return {
+        "dataset": ds.id,
+        "snapshot_id": snapshot_id,
+        "load": ds.contract.raw_load.mode,
+        "raw_contract_version": ds.contract.version,
+        "fetches": [
+            {
+                "url": f.url,
+                # direct: the publisher's own address; browser: captured from a dashboard's data request.
+                "route": "browser" if f.capture_url else "direct",
+                "capture_url": f.capture_url,
+                "retrieved_at": f.retrieved_at.astimezone(UTC).isoformat(),
+                "sha256": f.sha256,
+                "status": "ok",
+                "archive_captured_at": None,  # no catalogued source is read from a web archive yet
+            }
+            for f in fetches
+        ],
+        "robots_overrides": list(dict.fromkeys(robots_overrides)),
+    }
+
+
+def keep_raw_records(
+    lake: Path,
+    dataset_id: str,
+    snapshot_id: str,
+    records_files: Sequence[Path],
+    metadata: Mapping[str, Any] | None = None,
+) -> Path:
+    """Keep one load's parsed records where the dbt staging models read them, with its metadata beside them.
+
+    Raw is append-only: a load is written once under its snapshot id and never rewritten or deleted.
+    """
     target = lake / "raw_records" / dataset_id / f"{snapshot_id}.ndjson"
     if target.is_file():
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
+    if metadata is not None:
+        meta = target.with_name(f"{snapshot_id}.meta.json")
+        tmp_meta = meta.with_name(f".{meta.name}.{os.getpid()}.tmp")
+        tmp_meta.write_text(json.dumps(dict(metadata), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(tmp_meta, meta)
     tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
     with tmp.open("wb") as out:
         for p in records_files:

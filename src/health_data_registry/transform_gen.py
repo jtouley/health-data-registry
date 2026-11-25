@@ -114,6 +114,9 @@ def raw_sources(registry: Registry) -> str:
                 "meta": {
                     "raw_contract_version": ds.contract.version,
                     "contract": ds.entry.contract,
+                    "load": ds.contract.raw_load.mode,
+                    "load_key": list(ds.contract.raw_load.key),
+                    "updated_field": ds.contract.raw_load.updated_field,
                     "external_location": location,
                 },
                 "columns": [{"name": f, "data_type": "varchar"} for f in fields],

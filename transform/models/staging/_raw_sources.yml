@@ -10,6 +10,9 @@ sources:
     meta:
       raw_contract_version: 0.1.0
       contract: contracts/cdc_haicviz_cdi.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
       external_location: 'read_json(''{{ env_var(''HDR_RAW_RECORDS'', ''../lake/raw_records'') }}/cdc_haicviz_cdi/*.ndjson'',
         format=''newline_delimited'', filename=true, columns={{ ''{{'' }}''grouping'': ''VARCHAR'', ''series'':
         ''VARCHAR'', ''topic'': ''VARCHAR'', ''value'': ''VARCHAR'', ''viewby'': ''VARCHAR'', ''yearname'': ''VARCHAR''{{
@@ -34,6 +37,9 @@ sources:
     meta:
       raw_contract_version: 0.1.0
       contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
       external_location: 'read_json(''{{ env_var(''HDR_RAW_RECORDS'', ''../lake/raw_records'') }}/cdc_nhsn_ar_hai/*.ndjson'',
         format=''newline_delimited'', filename=true, columns={{ ''{{'' }}''age_category'': ''VARCHAR'', ''display_tested'':
         ''VARCHAR'', ''event_type'': ''VARCHAR'', ''facility'': ''VARCHAR'', ''geography'': ''VARCHAR'', ''hospital_size'':
@@ -87,6 +93,9 @@ sources:
     meta:
       raw_contract_version: 0.1.0
       contract: contracts/cdc_nndss_weekly.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
       external_location: 'read_json(''{{ env_var(''HDR_RAW_RECORDS'', ''../lake/raw_records'') }}/cdc_nndss_weekly/*.ndjson'',
         format=''newline_delimited'', filename=true, columns={{ ''{{'' }}''label'': ''VARCHAR'', ''location1'':
         ''VARCHAR'', ''location2'': ''VARCHAR'', ''m1'': ''VARCHAR'', ''m1_flag'': ''VARCHAR'', ''m2'': ''VARCHAR'',
@@ -130,6 +139,9 @@ sources:
     meta:
       raw_contract_version: 0.1.0
       contract: contracts/cdc_respnet.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
       external_location: 'read_json(''{{ env_var(''HDR_RAW_RECORDS'', ''../lake/raw_records'') }}/cdc_respnet/*.ndjson'',
         format=''newline_delimited'', filename=true, columns={{ ''{{'' }}''age_category'': ''VARCHAR'', ''data_type'':
         ''VARCHAR'', ''date'': ''VARCHAR'', ''date_type'': ''VARCHAR'', ''estimate'': ''VARCHAR'', ''estimate_type'':
@@ -167,6 +179,9 @@ sources:
     meta:
       raw_contract_version: 0.1.0
       contract: contracts/census_county_pop.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
       external_location: 'read_json(''{{ env_var(''HDR_RAW_RECORDS'', ''../lake/raw_records'') }}/census_county_pop/*.ndjson'',
         format=''newline_delimited'', filename=true, columns={{ ''{{'' }}''COUNTY'': ''VARCHAR'', ''CTYNAME'': ''VARCHAR'',
         ''DIVISION'': ''VARCHAR'', ''POPESTIMATE'': ''VARCHAR'', ''REGION'': ''VARCHAR'', ''STATE'': ''VARCHAR'',
