@@ -12,10 +12,12 @@ The steps, in the order the workflow runs them:
 - `fetch-hf`: download that path with the eval environment's `EVAL_HF_TOKEN`.
 - `expect`: the plaintext sha256 the labels must have. With `reaudited_labels` blank, the frozen TEST v1
   (`scorer.TEST_SHA256`). Otherwise the input must be the sha256 of the ciphertext just fetched and be listed in
-  `REAUDITED_TEST` below, which only a reviewed pull request changes: a dispatch input alone can't point the run
+  `scorer.REAUDITED_TEST`, which only a reviewed pull request changes: a dispatch input alone can't point the run
   at labels nobody reviewed.
 - `decrypt`: `age --decrypt` with the identity on standard input (never on disk or a command line). The
   plaintext is checked against the expected sha256 in memory and written, mode 0600, only when it matches.
+- `questions`: write the questions alone (`id` and `question`, mode 0600) for the driver, so no label reaches the
+  model under test or the API it calls; the labels file is kept for `score` only.
 - `score`: score the driver's transcript and answers into per-question rows, kept in the temporary directory;
   `eval.report --split test` turns them into the aggregate tables, which are all the run prints.
 - `prior-uses`: the uses of a label set before this workflow existed, added to the count the use log keeps.
@@ -36,11 +38,9 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
 
+from . import scorer
 from .scorer import TEST_SHA256, load_expected, score_question, transcript_by_question
 
-# Re-audited TEST label sets: sha256 of the ciphertext -> sha256 of its plaintext. Each entry is added by a reviewed
-# pull request after a label re-audit (see `eval.label_check`); the frozen TEST v1 needs none.
-REAUDITED_TEST: Mapping[str, str] = MappingProxyType({})
 # Runs of a label set before the workflow kept a use log, by plaintext sha256 (TEST v1 was run once).
 PRIOR_USES: Mapping[str, int] = MappingProxyType({TEST_SHA256: 1})
 
@@ -104,12 +104,12 @@ def expected_plaintext_sha(ciphertext_sha: str, reaudited: str) -> str:
             f"The ciphertext fetched has sha256 {ciphertext_sha}, not the reaudited_labels hash {reaudited}. "
             "Check the source and the hash."
         )
-    if reaudited not in REAUDITED_TEST:
+    if reaudited not in scorer.REAUDITED_TEST:
         raise SealedRunError(
-            f"The re-audited ciphertext {reaudited} is not listed in REAUDITED_TEST in eval/sealed_run.py. "
+            f"The re-audited ciphertext {reaudited} is not listed in REAUDITED_TEST in eval/scorer.py. "
             "Add it there in a reviewed pull request, then run again from main."
         )
-    return REAUDITED_TEST[reaudited]
+    return scorer.REAUDITED_TEST[reaudited]
 
 
 def _write_private(path: Path, data: bytes) -> None:
@@ -152,6 +152,19 @@ def _jsonl(path: Path) -> list[dict[str, object]]:
     if not all(isinstance(r, dict) for r in rows):
         raise SealedRunError(f"{path.name} must hold one JSON object per line.")
     return rows
+
+
+def write_questions(labels: Path, out: Path, *, expect_sha: str) -> int:
+    """Write each record's `id` and `question` only (0600, one JSON object per line) for the driver; return how
+    many. The labels' hash is checked first, and a record with no question text stops the run."""
+    rows = []
+    for e in load_expected(labels, "test", sha256=expect_sha):
+        question = (e.model_extra or {}).get("question")
+        if not isinstance(question, str) or not question.strip():
+            raise SealedRunError("A TEST record has no question text, so the driver can't ask it.")
+        rows.append(json.dumps({"id": e.id, "question": question}))
+    _write_private(out, ("\n".join(rows) + "\n").encode("utf-8"))
+    return len(rows)
 
 
 def score_run(labels: Path, transcript: Path, answers: Path, results: Path, *, expect_sha: str) -> int:
@@ -237,6 +250,8 @@ def _run(a: argparse.Namespace) -> int:
             identity = os.environ.get("EVAL_TEST_KEY", "")
             decrypt(a.ciphertext, a.out, identity, expect_sha=a.expect_sha, age=a.age)
             _out("decrypted=true")
+        case "questions":
+            _out(f"questions={write_questions(a.labels, a.out, expect_sha=a.expect_sha)}")
         case "score":
             n = score_run(a.labels, a.transcript, a.answers, a.results, expect_sha=a.expect_sha)
             _out(f"scored={n}")
@@ -260,6 +275,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     de.add_argument("--out", required=True, type=Path)
     de.add_argument("--expect-sha", required=True)
     de.add_argument("--age", default="age")
+    qu = sub.add_parser("questions", help="write the questions alone (id and question) for the driver")
+    qu.add_argument("--labels", required=True, type=Path)
+    qu.add_argument("--out", required=True, type=Path)
+    qu.add_argument("--expect-sha", required=True)
     sc = sub.add_parser("score", help="score a driver run into per-question rows (kept off the log)")
     for flag in ("--labels", "--transcript", "--answers", "--results"):
         sc.add_argument(flag, required=True, type=Path)

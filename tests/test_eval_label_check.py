@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from eval import label_check
+from eval import label_check, scorer
 from eval.label_check import (
     L1,
     L2,
@@ -145,6 +145,19 @@ def test_a_rename_is_a_removal_and_an_addition(repo: Path) -> None:
     assert affected(RECORDS[:1], changes) == [Affected("syn-1", (L2, L3))]
 
 
+def test_an_id_changed_in_place_is_a_removal_and_an_addition(repo: Path) -> None:
+    text = entry("toy_weekly", "Toy weekly", "Toy fever")
+    base = commit(repo, {"catalog/toy_weekly.yaml": text})
+    head = commit(repo, {"catalog/toy_weekly.yaml": text.replace("id: toy_weekly", "id: toy_weekly_v2")})
+    changes = catalog_changes(repo, base, head)
+    assert [(c.dataset_id, c.status) for c in changes] == [
+        ("toy_weekly_v2", "added"),
+        ("toy_weekly", "removed"),
+    ]
+    assert "id: toy_weekly\n" in changes[1].text  # the removed id is read from the older commit
+    assert affected(RECORDS[:1], changes) == [Affected("syn-1", (L2, L3))]
+
+
 def test_l3_skips_an_entry_the_item_expects_and_reads_coverage_fields_only() -> None:
     weekly = CatalogChange("toy_weekly", "added", entry("toy_weekly", "Toy weekly", "Toy fever"))
     assert affected(RECORDS[:1], [weekly]) == []  # an added entry the item already expects is not L3
@@ -191,7 +204,7 @@ def test_only_full_commit_shas_are_accepted(repo: Path) -> None:
     for bad in (head[:12], "HEAD", "main", f"--output={head}"[:40], head.upper()):
         with pytest.raises(LabelCheckError, match="full 40-character"):
             resolve_commit(repo, bad)
-    with pytest.raises(LabelCheckError, match="git rev-parse failed"):
+    with pytest.raises(LabelCheckError, match=f"Commit {'0' * 40} is not in this checkout's history"):
         resolve_commit(repo, "0" * 40)
 
 
@@ -211,18 +224,22 @@ def test_report_names_ids_and_fixed_reasons_only() -> None:
     assert "| item id |" not in report_md(changes, [], 5, "a" * 40, "b" * 40)
 
 
-def labels_file(tmp_path: Path) -> tuple[Path, str]:
+@pytest.fixture
+def labels_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, str]:
+    """Synthetic labels, standing in for a reviewed re-audited TEST set so `load_expected` accepts their hash."""
     path = tmp_path / "labels.jsonl"
     path.write_text("".join(r.model_dump_json() + "\n" for r in RECORDS))
-    return path, hashlib.sha256(path.read_bytes()).hexdigest()
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    monkeypatch.setattr(scorer, "REAUDITED_TEST", {"ab" * 32: digest})
+    return path, digest
 
 
 def test_main_prints_the_report_without_questions_or_labels(
-    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    repo: Path, labels_file: tuple[Path, str], capsys: pytest.CaptureFixture[str]
 ) -> None:
     base = commit(repo, {"catalog/toy_weekly.yaml": entry("toy_weekly", "Toy weekly", "Toy fever")})
     head = commit(repo, {"catalog/toy_weekly.yaml": entry("toy_weekly", "Toy weekly", "Toy fever", "Chill")})
-    labels, digest = labels_file(tmp_path)
+    labels, digest = labels_file
     argv = [
         "--labels",
         str(labels),
@@ -242,10 +259,14 @@ def test_main_prints_the_report_without_questions_or_labels(
 
 
 def test_main_reports_errors_without_quoting_labels(
-    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    repo: Path,
+    tmp_path: Path,
+    labels_file: tuple[Path, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     head = commit(repo, {"catalog/a.yaml": "id: a\n"})
-    labels, digest = labels_file(tmp_path)
+    labels, digest = labels_file
     argv = [
         "--labels",
         str(labels),
@@ -263,7 +284,9 @@ def test_main_reports_errors_without_quoting_labels(
     bad = tmp_path / "bad.jsonl"
     bad.write_text(json.dumps({"id": "x", "question": MARKER, "expected_class": "NOPE"}) + "\n")
     argv = ["--labels", str(bad), "--split", "test", "--base", head, "--head", head, "--repo", str(repo)]
-    argv += ["--expect-sha", hashlib.sha256(bad.read_bytes()).hexdigest()]
+    bad_sha = hashlib.sha256(bad.read_bytes()).hexdigest()
+    monkeypatch.setattr(scorer, "REAUDITED_TEST", {"cd" * 32: bad_sha})
+    argv += ["--expect-sha", bad_sha]
     assert label_check.main(argv) == 1
     captured = capsys.readouterr()
     assert captured.out == "::error::label check failed (ValidationError); details are withheld.\n"

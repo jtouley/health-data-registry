@@ -13,7 +13,8 @@ locally on DEV.
 Rules, each a reason:
 
 - L1 an expected dataset's catalog entry changed (in the diff and in the item's `expected_datasets`);
-- L2 an expected dataset's catalog entry was removed (a rename counts as a removal and an addition);
+- L2 an expected dataset's catalog entry was removed (a rename counts as a removal and an addition, whether the
+  file is renamed or its `id:` changes in place);
 - L3 the item's condition is named in an added or changed entry it does not expect: the entry may now serve,
   or stop serving, a question labelled as a decline, a hand-off, out of scope or another dataset. A condition is
   matched by its words (three letters or more, generic words such as "disease" left out) against the fields that
@@ -96,7 +97,14 @@ def resolve_commit(repo: Path, commit: str) -> str:
     """The commit's full sha; only a full 40-character sha is accepted, so a branch name can't move under a run."""
     if not COMMIT_RE.fullmatch(commit):
         raise LabelCheckError(f"{commit!r} is not a full 40-character commit sha.")
-    return _git(repo, "rev-parse", "--verify", "--quiet", "--end-of-options", f"{commit}^{{commit}}").strip()
+    try:
+        return _git(
+            repo, "rev-parse", "--verify", "--quiet", "--end-of-options", f"{commit}^{{commit}}"
+        ).strip()
+    except LabelCheckError:
+        raise LabelCheckError(
+            f"Commit {commit} is not in this checkout's history. Pick base_commit and commit from main."
+        ) from None
 
 
 def _dataset_id(path: str, text: str) -> str:
@@ -128,7 +136,14 @@ def catalog_changes(repo: Path, base: str, head: str) -> list[CatalogChange]:
     changes = []
     for status, path in parse_name_status(out):
         text = _git(repo, "show", f"{old if status == 'removed' else new}:{path}")
-        changes.append(CatalogChange(_dataset_id(path, text), status, text))
+        dataset_id = _dataset_id(path, text)
+        if status == "modified":
+            old_text = _git(repo, "show", f"{old}:{path}")
+            old_id = _dataset_id(path, old_text)
+            if old_id != dataset_id:  # `id:` changed in place: the old id is gone and the new one is added
+                changes.append(CatalogChange(old_id, "removed", old_text))
+                status = "added"
+        changes.append(CatalogChange(dataset_id, status, text))
     return sorted(changes, key=lambda c: (c.status, c.dataset_id))
 
 

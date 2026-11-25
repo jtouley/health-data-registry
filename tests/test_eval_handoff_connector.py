@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from eval import scorer
 from eval.report import read_results, tables_md
 from eval.scorer import (
     CLASSES,
@@ -118,6 +119,28 @@ CASES = [
         (1, 0),
     ),  # cites a dataset
     ("gbd|Toyland", [], "", "Ask the PubMed connector about Toyland.", (2, 0)),
+    # A mention that is not a hand-off: negated, or with no hand-off wording.
+    (
+        "openalex|pubmed",
+        [],
+        "",
+        "This server has no PubMed data, so I can't say whether it was published.",
+        (0, 0),
+    ),
+    ("openalex|pubmed", [], "", "I can't search PubMed or OpenAlex from here.", (0, 0)),
+    ("gbd|Toyland", [], "", "These rows are keyed to GBD location names for Toyland.", (0, 0)),
+    ("openalex|pubmed", [], "", "Nothing here covers it; ask the PubMed connector.", (2, 2)),
+    # OpenAlex or PubMed: listing this server's data is optional, so a plain hand-off keeps Target 2.
+    ("openalex|pubmed", [DS], "", "Ask the PubMed connector for later papers.", (2, 2)),
+    ("openalex|pubmed", [DS, "toy_posters"], "", f"Ask the PubMed connector; {DS} has the abstract.", (2, 2)),
+    # GBD among the targets, but the reply hands off to OpenAlex: abstracts, years and DOIs are allowed.
+    (
+        "gbd|openalex",
+        [DS],
+        ROWS,
+        f"One {DS} abstract from 2023 (doi 10.5555/toy.2023.77); ask the OpenAlex connector.\n{PROV}",
+        (2, 2),
+    ),
 ]
 
 
@@ -175,13 +198,31 @@ def test_the_report_tables_a_handoff_connector_row(tmp_path: Path) -> None:
     assert "| HANDOFF_CONNECTOR | 1 | 1 |" in table
 
 
-def test_load_expected_takes_a_reviewed_hash_in_place_of_the_frozen_one(tmp_path: Path) -> None:
+def test_load_expected_takes_a_reviewed_hash_in_place_of_the_frozen_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     path = tmp_path / "labels.jsonl"
     path.write_text('{"id": "syn-1", "expected_class": "HANDOFF_CONNECTOR", "expected_nearest": "pubmed"}\n')
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     with pytest.raises(ScorerError, match="frozen test sha256"):
         load_expected(path, "test")
+    with pytest.raises(ScorerError, match="not a reviewed re-audited test label set"):
+        load_expected(path, "test", sha256=digest)  # a hash nobody listed is refused, even when it matches
+    monkeypatch.setattr(scorer, "REAUDITED_TEST", {"ab" * 32: digest})
     got = load_expected(path, "test", sha256=digest)
     assert [r.connector_targets for r in got] == [{"pubmed"}]
+    with pytest.raises(ScorerError, match="not a reviewed re-audited dev label set"):
+        load_expected(path, "dev", sha256=digest)  # DEV has no re-audited sets
     with pytest.raises(ScorerError, match="frozen dev sha256"):
-        load_expected(path, "dev", sha256="0" * 64)
+        load_expected(path, "dev", sha256=scorer.DEV_SHA256)
+
+
+def test_the_grader_is_told_places_and_connectors_apart() -> None:
+    from eval.scorer import Case, Criterion, LLMGrader
+
+    r = rec("HANDOFF_CONNECTOR", "openalex_connector|pubmed_connector|Toyland")
+    prompt = LLMGrader(lambda _: "").prompt(Criterion.TARGET, Case(r, (), (), "Ask PubMed."))
+    assert "expected nearest place ['Toyland']" in prompt
+    assert "expected connectors ['openalex', 'pubmed']" in prompt
+    assert "openalex_connector" not in prompt
+    assert "HANDOFF_CONNECTOR means handing the question off" in prompt

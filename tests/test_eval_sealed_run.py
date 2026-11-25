@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from eval import report, sealed_run
+from eval import report, scorer, sealed_run
 from eval.scorer import TEST_SHA256
 from eval.sealed_run import (
     SealedRunError,
@@ -120,7 +120,7 @@ def test_a_reaudited_hash_must_be_the_ciphertext_and_listed(monkeypatch: pytest.
         expected_plaintext_sha(CIPHER, "cd" * 32)
     with pytest.raises(SealedRunError, match="not listed in REAUDITED_TEST"):
         expected_plaintext_sha(CIPHER, CIPHER)
-    monkeypatch.setattr(sealed_run, "REAUDITED_TEST", {CIPHER: "ef" * 32})
+    monkeypatch.setattr(scorer, "REAUDITED_TEST", {CIPHER: "ef" * 32})
     assert expected_plaintext_sha(CIPHER, CIPHER.upper()) == "ef" * 32
 
 
@@ -196,6 +196,12 @@ def test_decrypt_says_when_age_is_missing(tmp_path: Path) -> None:
 
 
 # ------------------------------------------------------------------------------------------ score
+
+
+@pytest.fixture(autouse=True)
+def reviewed_synthetic_labels(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The synthetic label set stands in for a reviewed re-audited one, so `load_expected` accepts its hash."""
+    monkeypatch.setattr(scorer, "REAUDITED_TEST", {"0f" * 32: hashlib.sha256(labels_bytes()).hexdigest()})
 
 
 def scored_inputs(tmp_path: Path) -> tuple[Path, Path, Path, str]:
@@ -295,6 +301,36 @@ def test_fetch_hf_reports_a_failed_download_plainly(tmp_path: Path) -> None:
     assert "hf_x" not in str(exc.value)
 
 
+# ------------------------------------------------------------------------------------------ questions
+
+
+def test_questions_gives_the_driver_ids_and_question_text_only(tmp_path: Path) -> None:
+    labels = tmp_path / "labels.jsonl"
+    labels.write_bytes(labels_bytes())
+    out = tmp_path / "questions.jsonl"
+    digest = hashlib.sha256(labels_bytes()).hexdigest()
+    assert (
+        sealed_run.main(["questions", "--labels", str(labels), "--out", str(out), "--expect-sha", digest])
+        == 0
+    )
+    rows = [json.loads(x) for x in out.read_text().splitlines()]
+    assert rows == [{"id": i, "question": MARKER} for i in ("syn-a", "syn-b", "syn-c")]
+    assert stat.S_IMODE(out.stat().st_mode) == 0o600
+    for label in ("expected_class", "OUT_OF_SCOPE", "Toyland", "pubmed"):
+        assert label not in out.read_text()
+
+
+def test_questions_refuses_a_record_with_no_question(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    bare = (json.dumps({"id": "syn-q", "expected_class": "OUT_OF_SCOPE"}) + "\n").encode()
+    labels = tmp_path / "labels.jsonl"
+    labels.write_bytes(bare)
+    digest = hashlib.sha256(bare).hexdigest()
+    monkeypatch.setattr(scorer, "REAUDITED_TEST", {"0f" * 32: digest})
+    with pytest.raises(SealedRunError, match="no question text"):
+        sealed_run.write_questions(labels, tmp_path / "q.jsonl", expect_sha=digest)
+    assert not (tmp_path / "q.jsonl").exists()
+
+
 # ------------------------------------------------------------------------------------------ the command line
 
 
@@ -312,9 +348,12 @@ def test_main_reports_its_own_errors_as_annotations(capsys: pytest.CaptureFixtur
     assert capsys.readouterr().out.startswith("::error::The ciphertext source must be")
 
 
-def test_main_withholds_any_other_error_message(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_main_withholds_any_other_error_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     # A label line that fails validation: pydantic's message would quote it, question text included.
     bad = (json.dumps({"id": "syn-x", "question": MARKER, "expected_class": "NOT_A_CLASS"}) + "\n").encode()
+    monkeypatch.setattr(scorer, "REAUDITED_TEST", {"0f" * 32: hashlib.sha256(bad).hexdigest()})
     labels = tmp_path / "labels.jsonl"
     labels.write_bytes(bad)
     empty = write_jsonl(tmp_path / "empty.jsonl", [])
@@ -382,7 +421,7 @@ def test_round_trip_with_a_throwaway_key_prints_aggregates_only(
     )
     assert MARKER.encode() not in cipher.read_bytes()
     digest = hashlib.sha256(labels_bytes()).hexdigest()
-    monkeypatch.setattr(sealed_run, "REAUDITED_TEST", {sealed_run.sha256_file(cipher): digest})
+    monkeypatch.setattr(scorer, "REAUDITED_TEST", {sealed_run.sha256_file(cipher): digest})
     monkeypatch.setenv("EVAL_TEST_KEY", identity)
     cipher_sha = sealed_run.sha256_file(cipher)
     plain = tmp_path / "test.jsonl"

@@ -79,8 +79,11 @@ Each question carries one of six expected classes:
 by `|` when more than one will do (`"openalex_connector|pubmed_connector"`); any other item there is a place.
 Only the hand-off itself is scored, never what the other connector returns, so a result doesn't depend on a third
 party being up: Class asks whether the reply hands off to any connector, and Target whether it names one the record
-expects. With a `gbd` target the reply must show no numbers and no verdict, as for `HANDOFF_GBD`; with OpenAlex or
-PubMed it may list what this server holds (abstracts, years, DOIs) beside the hand-off. `HANDOFF_GBD` stays as an
+expects. A connector counts as handed off to only in a sentence with hand-off wording ("ask", "use", "search",
+"connector") and with no negation before it in its clause, so "I can't search PubMed" is not a hand-off. When the
+reply hands off to GBD alone it must show no numbers and no verdict, as for `HANDOFF_GBD`. Beside an OpenAlex or
+PubMed hand-off it may list what this server holds (abstracts, years, DOIs), and naming those datasets is optional:
+a plain hand-off and one that also names an expected dataset both score Target 2. `HANDOFF_GBD` stays as an
 alias: its records keep their class name and score exactly as before, so the frozen DEV and TEST labels need no
 change (rule C1 in `scorer.py`).
 
@@ -215,35 +218,53 @@ environment `eval`, which allows main only ([automation.md](../docs/dev/automati
 | `mode` | `evaluate` runs and scores TEST; `label-check` lists the items a catalog change touches, with no server run |
 | `ciphertext` | A path in the private ops dataset `<owner>/health-data-registry-ops-eval`, or `release:<tag>/<asset>` for an asset of one of this repository's releases |
 | `commit` | The full sha of the commit on main to evaluate (for `label-check`, the newer catalog) |
-| `base_commit` | `label-check` only: the full sha of the older catalog, such as the commit the labels were audited against |
+| `base_commit` | `label-check` only: the full sha of the older catalog on main, such as the commit the labels were audited against |
 | `wave` | A short name for the run, logged with it |
-| `reaudited_labels` | Blank for TEST v1 (frozen sha256 above). For a re-audited set, the sha256 of its ciphertext, which must already be listed in `REAUDITED_TEST` in `sealed_run.py` |
+| `reaudited_labels` | Blank for TEST v1 (frozen sha256 above). For a re-audited set, the sha256 of its ciphertext, which must already be listed in `REAUDITED_TEST` in `scorer.py` |
 
-**evaluate** checks that the commit is on main, builds the server there (locked dependencies and a fresh lake of
-the public sources), then fetches and decrypts the labels. It asks every question through the server with the
-driver and scores the run. Only the aggregate tables of `report.py --split test` reach the job summary, with the
-commit, the wave and the two sha256s. The plaintext stays in memory or in the runner's temporary directory (mode
+Before any job reads a secret, the workflow checks that the `eval` environment still allows main only, and stops
+with the owner step if it doesn't. That environment setting is what keeps `EVAL_TEST_KEY` off other branches: a
+branch copy of the workflow can drop every check in the file. So anyone who can push a branch is trusted with TEST
+unless the environment allows main only and has a required reviewer; set both.
+
+**evaluate** checks that the commit is on main and the driver is present, builds the server there with locked
+dependencies, fetches the ciphertext and checks its hash, then builds a fresh lake of the public sources. It
+checks that the driver can ask one DEV question through the server, and only then decrypts the labels, so a
+publisher outage, a bad API key or a server that doesn't start costs a re-run, not a use. The driver gets the
+questions alone, and the run is scored. Only the aggregate tables of `report.py --split test` reach the job
+summary, with the server commit, the harness commit (`github.sha`, which decides the scorer), the wave, the two
+sha256s, the age version and the lake's snapshot ids. The plaintext stays in memory or in the runner's temporary directory (mode
 0600), and the last step deletes it. No artifact, cache or log line holds a question, a label, an answer or a
 per-question row. Error messages from parsers are withheld, because they can quote a record.
 
 **The driver** is the evaluator's and is not in this repository yet. Until `eval/drive.py` is on main, `evaluate`
-stops before it fetches or decrypts anything, so no use of TEST is spent. The workflow calls it as
+stops before it fetches or decrypts anything, so no use of TEST is spent. The workflow calls it twice, with
+`HDR_LAKE` and `ANTHROPIC_API_KEY` set:
 
 ```sh
-python -m eval.drive --questions <labels.jsonl> --server-dir <server checkout> --out <dir>
+python -m eval.drive --check --server-dir <server checkout> --out <dir>
+python -m eval.drive --questions <questions.jsonl> --server-dir <server checkout> --out <dir>
 ```
 
-with `HDR_LAKE` and `ANTHROPIC_API_KEY` set. It must write `<dir>/transcript.jsonl` and `<dir>/answers.jsonl` in
-the formats under [Running a report](#running-a-report) and exit 0. Its output goes to a file that is never
-printed, since it can quote the questions.
+`--check` asks one DEV question through the server and exits 0 if it got an answer; it runs before the labels
+are decrypted. `--questions` is a file of `{"id", "question"}` objects, one per line, written by
+`sealed_run.py questions`: the driver never sees a label, so no expected answer can reach the model or its API.
+The second call must write `<dir>/transcript.jsonl` and `<dir>/answers.jsonl` in the formats under
+[Running a report](#running-a-report) and exit 0. Its output goes to a file that is never printed, since it can
+quote the questions.
 
-**label-check** decrypts the labels and lists the ids of the items that depend on a catalog entry changed between
+**label-check** checks that both commits are on main, with `base_commit` before `commit`, then decrypts the
+labels and lists the ids of the items that depend on a catalog entry changed between
 `base_commit` and `commit` (`label_check.py`: L1 an expected dataset's entry changed, L2 it was removed, L3 the
 item's condition is named in an added or changed entry it doesn't expect). Each id comes with a fixed reason
-that never names a dataset, a condition or a class. Nothing from either commit is run. After a re-audit, list
-the new ciphertext's sha256 and its plaintext sha256 in `REAUDITED_TEST` in a reviewed pull request, then run
-with `reaudited_labels`.
+that never names a dataset, a condition or a class. Nothing from either commit is run. The list of ids and their
+reasons goes to the job summary, which is public on this repository; that is why both commits must be on main,
+so only a reviewed diff can be compared. After a re-audit, list the new ciphertext's sha256 and its plaintext
+sha256 in `REAUDITED_TEST` in `scorer.py` in a reviewed pull request, then run with `reaudited_labels`;
+`load_expected` accepts no other hash in place of the frozen one.
 
-**The use log.** Every run that decrypted the labels adds one comment to the issue "Sealed TEST use log": date,
-mode, wave, commit, actor, the ciphertext and label sha256s, and the run's link. The use-log job's summary gives the
-number of evaluation runs of those labels, counting the run of TEST v1 before the log existed (`PRIOR_USES`).
+**The use log.** Every run that reached the decrypt step, even one whose decrypt then failed, adds one comment to
+the issue "Sealed TEST use log": date, mode, wave, server and harness commits, actor, the ciphertext and label
+sha256s, and the link to the run attempt. So the count can run high, never low. The use-log job's summary gives
+the number of evaluation runs of those labels, counting the run of TEST v1 before the log existed (`PRIOR_USES`),
+and, apart, the number of label-check decryptions.

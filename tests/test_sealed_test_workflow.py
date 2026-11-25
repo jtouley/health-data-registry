@@ -22,6 +22,7 @@ SECRET_STEPS = {
     },
     "ANTHROPIC_API_KEY": {
         "Check the eval environment's secrets are set",
+        "Check the driver can ask one DEV question through the server",
         "Ask every question through the server",
     },
     "EVAL_HF_TOKEN": {"Check the eval environment's secrets are set", "Fetch the ciphertext"},
@@ -55,7 +56,7 @@ def test_manual_dispatch_only_with_the_agreed_inputs(wf: dict[Any, Any]) -> None
 def test_no_token_by_default_and_least_privilege_per_job(wf: dict[Any, Any]) -> None:
     assert wf["permissions"] == {}
     assert {job: j.get("permissions") for job, j in wf["jobs"].items()} == {
-        "inputs": {},
+        "inputs": {"actions": "read"},
         "evaluate": {"contents": "read"},
         "label-check": {"contents": "read"},
         "use-log": {"issues": "write"},
@@ -113,21 +114,63 @@ def test_the_plaintext_is_removed_whatever_happens(wf: dict[Any, Any]) -> None:
         assert last["run"].strip() == 'rm -rf "$RUNNER_TEMP/sealed"'
 
 
-def test_nothing_is_fetched_or_decrypted_before_the_commit_and_driver_checks(wf: dict[Any, Any]) -> None:
-    names = [s.get("name", s.get("uses", "")) for s in wf["jobs"]["evaluate"]["steps"]]
-    check = names.index("Check the commit is on main and the driver is here")
+DECRYPT = "Decrypt the labels into the runner's temporary directory"
+MARK = "Record that the labels are about to be decrypted"
+
+
+def names(wf: dict[Any, Any], job: str) -> list[str]:
+    return [s.get("name", s.get("uses", "")) for s in wf["jobs"][job]["steps"]]
+
+
+def test_every_cheap_check_comes_before_the_decrypt(wf: dict[Any, Any]) -> None:
+    n = names(wf, "evaluate")
     assert (
-        check
-        < names.index("Fetch the ciphertext")
-        < names.index("Decrypt the labels into the runner's temporary directory")
+        n.index("Check the commit is on main and the driver is here")
+        < n.index("Fetch the ciphertext")
+        < n.index("Check which labels the ciphertext must hold")
+        < n.index("Build a fresh lake of the public sources at the commit")
+        < n.index("Check the driver can ask one DEV question through the server")
+        < n.index(MARK)
+        == n.index(DECRYPT) - 1
     )
-    assert names.index("Build a fresh lake of the public sources at the commit") < names.index(
-        "Fetch the ciphertext"
+    n = names(wf, "label-check")
+    assert (
+        n.index("Check both commits are on main, base before commit")
+        < n.index("Fetch the ciphertext")
+        < n.index(MARK)
+        == n.index(DECRYPT) - 1
     )
 
 
-def test_use_log_runs_whenever_labels_were_decrypted(wf: dict[Any, Any]) -> None:
+def test_label_check_takes_commits_from_main_only(wf: dict[Any, Any]) -> None:
+    step = next(
+        s for s in wf["jobs"]["label-check"]["steps"] if s.get("name", "").startswith("Check both commits")
+    )
+    assert 'git merge-base --is-ancestor "$c" HEAD' in step["run"]
+    assert 'git merge-base --is-ancestor "$BASE" "$HEAD_COMMIT"' in step["run"]
+
+
+def test_the_driver_gets_the_questions_alone(wf: dict[Any, Any]) -> None:
+    ask = next(
+        s for s in wf["jobs"]["evaluate"]["steps"] if s.get("name") == "Ask every question through the server"
+    )
+    assert '--questions "$RUNNER_TEMP/sealed/questions.jsonl"' in ask["run"]
+    assert "test.jsonl" not in ask["run"]
+
+
+def test_the_inputs_job_checks_the_environment_is_main_only(wf: dict[Any, Any]) -> None:
+    run = wf["jobs"]["inputs"]["steps"][-1]["run"]
+    assert "custom_branch_policies" in run and '"branch:main"' in run
+
+
+def test_use_log_runs_whenever_a_decrypt_was_started(wf: dict[Any, Any]) -> None:
     j = wf["jobs"]["use-log"]
     assert j["needs"] == ["evaluate", "label-check"]
     assert j["if"].startswith("always() && (")
-    assert "decrypted == 'true'" in j["if"]
+    for job in ("evaluate", "label-check"):
+        assert f"needs.{job}.outputs.decrypt_started == 'true'" in j["if"]
+        assert wf["jobs"][job]["outputs"]["decrypt_started"] == "${{ steps.mark.outputs.decrypt_started }}"
+    run = j["steps"][0]["run"]
+    assert "| head" not in run
+    assert run.index('issues/$issue/comments" -f body') < run.index("/lock")
+    assert "run_attempt" in j["steps"][0]["env"]["RUN_URL"]

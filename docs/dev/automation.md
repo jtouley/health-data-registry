@@ -21,7 +21,8 @@ CI, CodeQL, Scorecard, release and npm-publish are unchanged and described in th
 
 Every action is pinned to a full commit SHA. Every workflow's top-level token is `contents: read` or narrower
 (`check-crawl-keys.yml` and `sealed-test.yml` have `permissions: {}`); `issues: write` is granted only to the jobs that open an issue or write the sealed TEST use log,
-`actions: write` only to the keep-alive job and `actions: read` only to the deploy's verify job, the two
+`actions: write` only to the keep-alive job and `actions: read` only to the deploy's verify job, the sealed TEST
+workflow's inputs job (to check the `eval` environment allows main only), the two
 fuzzing jobs (to read earlier runs' corpus artifacts) and CI's mutation list job (to find a green pre-pr verdict for the same commit, [the pre-PR
 gate](README.md#the-pre-pr-gate)). The ClusterFuzzLite actions are pinned by SHA too, but they pull OSS-Fuzz's runner images by their
 `v1` tag inside the action, which a workflow can't pin. Every checkout drops its credentials, and no workflow pushes to
@@ -240,7 +241,7 @@ maintainer creates:
 | `space` | `deploy-space.yml` deploy | Selected tags only: `v*.*.*` | `HF_TOKEN` (or `HF_SPACE_TOKEN`) |
 | `hub-publish` | `refresh.yml` publish | Selected branches only: `main` | `HF_TOKEN` (or `HF_PUBLISH_TOKEN`) |
 | `crawl` | `check-crawl-keys.yml` check | Selected branches only: `main` (required: the workflow's own main-only check is only an early refusal) | `CENSUS_API_KEY`, `SOCRATA_APP_TOKEN`, `OPENALEX_API_KEY` |
-| `eval` | `sealed-test.yml` evaluate and label-check | Selected branches only: `main` (required, as for `crawl`) | `EVAL_TEST_KEY` (the age identity: one `AGE-SECRET-KEY-1...` line), `ANTHROPIC_API_KEY` (for the driver), and `EVAL_HF_TOKEN` (read access to `<owner>/health-data-registry-ops-eval`) when the ciphertext is in the ops dataset |
+| `eval` | `sealed-test.yml` evaluate and label-check | Selected branches only: `main` (required: the workflow refuses to start without it). Add the maintainer as a required reviewer too, so each decryption of TEST waits for a deliberate approval | `EVAL_TEST_KEY` (the age identity: one `AGE-SECRET-KEY-1...` line), `ANTHROPIC_API_KEY` (for the driver), and `EVAL_HF_TOKEN` (read access to `<owner>/health-data-registry-ops-eval`) when the ciphertext is in the ops dataset |
 
 Required reviewers can be added to any of them; a run then waits for approval, so it may look stuck until
 someone approves it. Until the environments exist, GitHub creates them on the first run
