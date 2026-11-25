@@ -102,8 +102,9 @@ step "smoke" "${MAKE}" --no-print-directory smoke
 step "Projects kit" "${MAKE}" --no-print-directory kit
 step "docs drift (make docs, then git diff --exit-code)" docs_drift
 
-# Mutation tests as CI shards them: list the shards of the changed modules (a module, or `<module>#<k>of<n>` for a
-# big one), one step per shard, then the floor on the total.
+# Mutation tests as CI shards them: list the shards of the changed modules (a module, or `<module>#<k>of<n>@<split>`
+# for a big one), one step per shard, then the floor on the total. Each shard refuses a split hash that differs
+# from its own split, so editing a module while its shards run fails the shard instead of miscounting it.
 echo
 echo "==> mutation: list changed modules since ${BASE}"
 if ! modules_json="$("${UV}" run python scripts/mutate_changed.py --list --base "${BASE}")"; then

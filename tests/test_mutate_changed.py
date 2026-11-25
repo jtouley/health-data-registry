@@ -62,7 +62,8 @@ def test_list_json_is_one_sorted_line_without_init_files(mc: ModuleType) -> None
     assert ids[0] == "health_data_registry.adapters.socrata"
     tools = ids[1:]
     assert len(tools) >= 2
-    assert tools == [f"health_data_registry.tools#{k}of{len(tools)}" for k in range(1, len(tools) + 1)]
+    h = mc.split_hash("health_data_registry.tools", mc.module_shards("health_data_registry.tools"))
+    assert tools == [f"health_data_registry.tools#{k}of{len(tools)}@{h}" for k in range(1, len(tools) + 1)]
 
 
 def test_list_json_of_nothing_is_an_empty_array(mc: ModuleType) -> None:
@@ -411,8 +412,11 @@ def test_each_shard_stays_within_the_target(mc: ModuleType) -> None:
 def test_a_module_that_fits_is_one_shard_named_after_it(mc: ModuleType) -> None:
     src = _source(3, 10)
     assert len(mc.split_module(src, 500)) == 1
-    assert mc.shard_ids(A, 1) == [A]
-    assert mc.shard_ids(A, 3) == [f"{A}#1of3", f"{A}#2of3", f"{A}#3of3"]
+    assert mc.shard_ids(A, mc.split_module(src, 500)) == [A]
+    bins = mc.split_module(_source(3, 40), 50)
+    h = mc.split_hash(A, bins)
+    assert len(h) == 12
+    assert mc.shard_ids(A, bins) == [f"{A}#{k}of{len(bins)}@{h}" for k in range(1, len(bins) + 1)]
 
 
 def test_a_function_bigger_than_a_shard_is_split_by_last_digit(mc: ModuleType) -> None:
@@ -489,10 +493,13 @@ def test_a_malformed_shard_id_is_refused(mc: ModuleType, shard: str) -> None:
 
 @reads_real_sources
 def test_a_shard_id_from_another_version_of_the_source_is_refused(mc: ModuleType) -> None:
-    n = len(mc.module_shards("health_data_registry.tools"))
-    assert mc.shard_globs(f"health_data_registry.tools#1of{n}")
+    bins = mc.module_shards("health_data_registry.tools")
+    n, h = len(bins), mc.split_hash("health_data_registry.tools", bins)
+    assert mc.shard_globs(f"health_data_registry.tools#1of{n}@{h}")
     with pytest.raises(ValueError, match="now splits into"):
-        mc.shard_globs(f"health_data_registry.tools#1of{n + 1}")
+        mc.shard_globs(f"health_data_registry.tools#1of{n + 1}@{h}")
+    with pytest.raises(ValueError, match="needs its split hash"):
+        mc.shard_globs(f"health_data_registry.tools#1of{n}")
 
 
 @reads_real_sources
@@ -522,8 +529,8 @@ def test_a_shard_runs_and_counts_only_its_own_mutants(
 ) -> None:
     src = _source(6, 40)
     bins = mc.split_module(src, 100)
-    n = len(bins)
     monkeypatch.setattr(mc, "module_shards", lambda module: mc.split_module(src, 100))
+    first = mc.shard_ids(A, bins)[0]
     names = _names(A, src, mc, 23)
     mine = [x for x in names if _shard_of(x, A, bins) == [0]]
     # Other shards' mutants are `not checked` in this run: they are not this shard's, so they never count.
@@ -532,10 +539,12 @@ def test_a_shard_runs_and_counts_only_its_own_mutants(
 
     def fake_run(cmd: list[str], **kwargs: Any) -> Any:
         calls.append(cmd)
-        return SimpleNamespace(returncode=0, stdout="\n".join(lines) if cmd[1] == "results" else "")
+        return SimpleNamespace(
+            returncode=0, stdout="\n".join(lines) if cmd[1] == "results" else "", stderr=""
+        )
 
     monkeypatch.setattr(mc.subprocess, "run", fake_run)
-    r = mc.run_mutmut([f"{A}#1of{n}"])
+    r = mc.run_mutmut([first])
     assert calls[0][:2] == ["mutmut", "run"]
     assert calls[0][2:] == [u.glob(A) for u in bins[0]]
     assert (r.killed, r.survived, r.incomplete, r.unassigned) == (len(mine), 0, 0, [])
@@ -543,7 +552,7 @@ def test_a_shard_runs_and_counts_only_its_own_mutants(
 
     # A mutant of the module that no shard covers fails the shard, whatever its score.
     lines.append(f"    {A}.x_unknown__mutmut_1: not checked")
-    r = mc.run_mutmut([f"{A}#1of{n}"])
+    r = mc.run_mutmut([first])
     assert r.unassigned == [f"{A}.x_unknown__mutmut_1: matches 0 shards"]
     assert "in no shard" in mc.shard_failure(r)
 
@@ -592,9 +601,17 @@ def test_aggregate_mode_reads_shard_reports_with_hash_names(mc: ModuleType, tmp_
     assert mc.main(["--aggregate", str(tmp_path), "--expect", json.dumps([*ids, f"{A}#3of3"])]) == 1
 
 
-def test_aggregate_mode_refuses_a_malformed_expect(mc: ModuleType, tmp_path: Path) -> None:
-    with pytest.raises(ValueError):
-        mc.main(["--aggregate", str(tmp_path), "--expect", json.dumps([f"{A}#1of2;id"])])
+@pytest.mark.parametrize("expect", [json.dumps([f"{A}#1of2;id"]), "[1]", "not json"])
+def test_aggregate_mode_refuses_a_malformed_expect(
+    mc: ModuleType, tmp_path: Path, expect: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A one-line usage error, as --module gives, never a traceback.
+    with pytest.raises(SystemExit) as exc:
+        mc.main(["--aggregate", str(tmp_path), "--expect", expect])
+    assert exc.value.code == 2
+    err = capsys.readouterr().err.strip().splitlines()
+    assert err[-1].startswith("pytest: error: --expect: ") or "error: --expect: " in err[-1]
+    assert "Traceback" not in "\n".join(err)
 
 
 def test_a_report_without_the_unassigned_field_is_an_error(mc: ModuleType, tmp_path: Path) -> None:
@@ -604,3 +621,148 @@ def test_a_report_without_the_unassigned_field_is_an_error(mc: ModuleType, tmp_p
     )
     with pytest.raises(KeyError):
         mc.load_reports(tmp_path)
+
+
+# Findings of the review round on PR #83 ---------------------------------------------------------------------
+
+
+def _one_function(size: int, name: str = "big") -> str:
+    body = "\n".join(f"    x = {i}" for i in range(size))
+    return f"def {name}():\n{body}\n    return x\n"
+
+
+def test_one_very_big_function_never_makes_an_empty_shard(mc: ModuleType) -> None:
+    # About 1,200 estimated mutants with a target of 100: twelve shards' worth, but only ten digit parts.
+    src = _one_function(600)
+    bins = mc.split_module(src, 100)
+    assert 1 < len(bins) <= 10
+    assert all(b for b in bins)
+    assert all([u.glob(A) for u in b] for b in bins)
+    assert mc.unassigned_mutants([f"{A}.x_big__mutmut_{n}" for n in range(1, 1300)], A, bins) == []
+
+
+def test_mutmut_is_never_run_with_no_names(
+    mc: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(mc, "shard_globs", lambda shard: [])
+    monkeypatch.setattr(mc.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+    with pytest.raises(ValueError, match="no mutant names"):
+        mc.run_mutmut([f"{A}#1of2@{'0' * 12}"])
+    report = tmp_path / "r.json"
+    assert mc.main(["--module", f"{A}#1of2@{'0' * 12}", "--report", str(report)]) == 1
+    assert json.loads(report.read_text(encoding="utf-8"))["baseline_ok"] is False
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "def f():  # pragma: no mutate block\n    x = 1\n    return x + 2\n",
+        "def f():\n    # pragma: no mutate block\n    x = 1\n    return x + 2\n",
+        "def f():\n    # pragma: no mutate start\n    x = 1\n    return x + 2\n    # pragma: no mutate end\n",
+        "def f():\n    x = 1  # pragma: no mutate\n    return x + 2  # pragma: no mutate\n",
+        "def f():  # pragma: no cover\n    x = 1\n    return x + 2\n",
+        "class C:\n    def __new__(cls):\n        return 1 + 2\n",
+        "class C(Enum):\n    def __init__(self):\n        self.x = 1 + 2\n",
+        "class C(enum.Enum):\n    def _generate_next_value_(name):\n        return 1 + 2\n",
+        "def f(xs):\n    return len(xs[1:2])\n",
+        "def f(xs):\n    return isinstance(xs, (1, 2))\n",
+    ],
+)
+def test_a_function_mutmut_never_mutates_weighs_nothing(mc: ModuleType, src: str) -> None:
+    assert [w for _, w in mc.mutated_functions(src)] == [0]
+
+
+def test_a_pragma_on_one_line_leaves_the_rest_of_the_function_weighed(mc: ModuleType) -> None:
+    funcs = dict(mc.mutated_functions("def f():\n    x = 1  # pragma: no mutate\n    return x + 2\n"))
+    assert funcs["x_f"] == 2  # x + 2: the operator and the constant, not the assignment
+
+
+def test_functions_never_mutated_do_not_make_a_shard_of_their_own(mc: ModuleType) -> None:
+    skipped = "\n\n".join(
+        f"def s{i}():  # pragma: no mutate block\n{_one_function(60)[10:]}" for i in range(6)
+    )
+    src = "\n\n".join([_one_function(40, "a"), _one_function(40, "b"), skipped])
+    bins = mc.split_module(src, 100)
+    assert len(bins) == 2
+    assert all(any(u.weight > 0 for u in b) for b in bins)
+
+
+def test_a_shard_whose_names_match_no_mutant_has_nothing_to_mutate(
+    mc: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    src = _source(6, 40)
+    bins = mc.split_module(src, 100)
+    monkeypatch.setattr(mc, "module_shards", lambda module: mc.split_module(src, 100))
+    ids = mc.shard_ids(A, bins)
+    others = [x for x in _names(A, src, mc, 23) if _shard_of(x, A, bins) != [0]]
+    results = "\n".join(f"    {x}: not checked" for x in others)
+
+    def fake_run(cmd: list[str], **kwargs: Any) -> Any:
+        if cmd[1] == "results":
+            return SimpleNamespace(returncode=0, stdout=results, stderr="")
+        return SimpleNamespace(returncode=1, stdout="", stderr=f"AssertionError: {mc.NOTHING_MATCHES}\n")
+
+    monkeypatch.setattr(mc.subprocess, "run", fake_run)
+    report = tmp_path / "r.json"
+    assert mc.main(["--module", ids[0], "--report", str(report)]) == 0
+    out = capsys.readouterr().out
+    assert "nothing to mutate" in out
+    assert "baseline" not in out
+    assert json.loads(report.read_text(encoding="utf-8"))["baseline_ok"] is True
+
+    # Any other failure of the run is still a failed baseline.
+    monkeypatch.setattr(
+        mc.subprocess,
+        "run",
+        lambda cmd, **kw: SimpleNamespace(returncode=1, stdout="", stderr="tests failed"),
+    )
+    assert mc.main(["--module", ids[0], "--report", str(report)]) == 1
+    assert json.loads(report.read_text(encoding="utf-8"))["baseline_ok"] is False
+
+
+def test_overload_stubs_and_their_function_are_one_unit(mc: ModuleType) -> None:
+    stubs = "@overload\ndef big(x: int) -> int: ...\n\n\n@overload\ndef big(x: str) -> str: ...\n"
+    src = "\n\n".join(
+        [stubs, _one_function(150), _one_function(40, "small"), "@overload\ndef small(): ...\n"]
+    )
+    keys = [k for k, _ in mc.mutated_functions(src)]
+    assert keys == ["x_big", "x_small"]
+    bins = mc.split_module(src, 100)
+    assert len(bins) > 1
+    names = [f"{A}.x_{f}__mutmut_{n}" for f in ("big", "small") for n in range(1, 400)]
+    assert all(len(_shard_of(n, A, bins)) == 1 for n in names)
+    assert mc.unassigned_mutants(names, A, bins) == []
+
+
+def test_a_split_that_moved_functions_is_refused_even_with_the_same_count(
+    mc: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    before = "\n\n".join(_one_function(n, f"f{n}") for n in (30, 25, 20, 15))
+    after = "\n\n".join(_one_function(n, f"f{n}") for n in (30, 25, 20, 16, 2))
+    old, new = mc.split_module(before, 60), mc.split_module(after, 60)
+    assert len(old) == len(new)
+    assert mc.split_hash(A, old) != mc.split_hash(A, new)
+    listed = mc.shard_ids(A, old)
+    monkeypatch.setattr(mc, "module_shards", lambda module: new)
+    with pytest.raises(ValueError, match="splits differently"):
+        mc.shard_globs(listed[0])
+    monkeypatch.setattr(mc, "module_shards", lambda module: old)
+    assert mc.shard_globs(listed[0]) == [u.glob(A) for u in old[0]]
+
+
+def test_an_expect_list_mixing_two_splits_of_a_module_fails(mc: ModuleType) -> None:
+    ids = [f"{A}#1of2@{'a' * 12}", f"{A}#2of2@{'b' * 12}"]
+    assert mc.split_gaps(ids) == [f"{A}: the expected shards [1, 2] are not one complete split of it"]
+    assert mc.split_gaps([f"{A}#1of2@{'a' * 12}", f"{A}#2of2@{'a' * 12}"]) == []
+
+
+def test_the_list_job_splits_with_the_shards_python() -> None:
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    list_job = ci.split("  mutation-list:", 1)[1].split("\n  mutation:", 1)[0]
+    shard_job = ci.split("\n  mutation:", 1)[1].split("\n  mutation-aggregate:", 1)[0]
+    pin = 'python-version: "3.12"'
+    assert pin in list_job and pin in shard_job
+    assert "python3 scripts/mutate_changed.py" not in list_job
+    assert "uv run --no-project python scripts/mutate_changed.py --list" in list_job

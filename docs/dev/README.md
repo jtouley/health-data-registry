@@ -159,12 +159,17 @@ Everything a clinician reads (tool descriptions, helpers, refusals) follows the 
   check on every PR in shards: `--list` names the shards of the changed modules, one job per shard runs mutmut,
   and the aggregate job applies the 70% floor to the summed counts and lists every mutant not killed. A module
   is one shard, or, when its estimated mutants exceed a shard's size (`SHARD_TARGET`, smaller for
-  `registry.py`), several named `<module>#<k>of<n>`: split by function, and a big function by the last digit of
-  its mutant numbers, so each shard takes about 10 to 20 minutes (the job's limit is 75). The split comes from
-  the module's source alone, so `--list` and every shard agree, and each shard checks that every mutant of its
-  module falls in exactly one shard. It fails if any shard failed its baseline, left mutants not checked,
-  interrupted or crashed, found a mutant in no shard, or left no report, or if only some shards of a module were
-  expected. A module with no mutable function has nothing to mutate and passes, locally and in CI.
+  `registry.py`), several named `<module>#<k>of<n>@<split>`: split by function, and a big function by the last
+  digit of its mutant numbers, so each shard takes about 10 to 20 minutes (the job's limit is 40). The split
+  comes from the module's source alone, read with the same Python 3.12 in `--list` and in every shard; `<split>`
+  is a hash of it, and a shard refuses an id whose hash differs from its own split, so an edit made after
+  `--list` (in CI or during precheck) fails the shard instead of running the wrong mutants. Each shard also
+  checks that every mutant of its module falls in exactly one shard. Functions mutmut never mutates (under
+  `# pragma: no mutate`, for instance) carry no weight, and `@overload` stubs count with their function. It
+  fails if any shard failed its baseline, left mutants not checked, interrupted or crashed, found a mutant in no
+  shard, or left no report, or if only some shards of a module were expected. A module with no mutable
+  function, or a shard none of whose names matches a mutant, has nothing to mutate and passes, locally and in
+  CI.
 - **New features and fixes add tests.** A bug fix includes a test that fails without it.
 
 ## Smoke journey
