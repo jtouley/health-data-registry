@@ -33,6 +33,7 @@ import argparse
 import ast
 import itertools
 import json
+import os
 import re
 import subprocess
 import sys
@@ -1025,8 +1026,14 @@ class GitError(RuntimeError):
     """git failed; the gate fails closed."""
 
 
+def git_env() -> dict[str, str]:
+    """The environment without git's own variables: inside a git hook GIT_DIR, GIT_INDEX_FILE and the like point at
+    the repository being pushed, and would override `git -C <repo>`."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
 def _git(repo: Path, *args: str) -> bytes:
-    proc = subprocess.run(["git", "-C", str(repo), *args], capture_output=True)
+    proc = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, env=git_env())
     if proc.returncode != 0:
         raise GitError(f"git {args[0]} failed: {proc.stderr.decode('utf-8', 'replace').strip()[:300]}")
     return proc.stdout
@@ -1040,7 +1047,9 @@ def _commit(repo: Path, ref: str) -> str:
 def git_snapshot(repo: Path, commit: str) -> Snapshot:
     def read(path: str) -> str | None:
         proc = subprocess.run(
-            ["git", "-C", str(repo), "cat-file", "blob", f"{commit}:{path}"], capture_output=True, check=False
+            ["git", "-C", str(repo), "cat-file", "blob", f"{commit}:{path}"],
+            capture_output=True,
+            env=git_env(),
         )
         return proc.stdout.decode("utf-8", "replace") if proc.returncode == 0 else None
 

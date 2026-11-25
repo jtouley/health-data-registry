@@ -156,7 +156,10 @@ def _git(args: Sequence[str]) -> str:
 
 
 def _run(cmd: Sequence[str]) -> int:
-    return subprocess.run(list(cmd), cwd=ROOT, check=False).returncode
+    # Without git's hook variables (GIT_DIR, GIT_INDEX_FILE, ...): a test that builds a throwaway repository must
+    # not reach the repository being pushed.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    return subprocess.run(list(cmd), cwd=ROOT, check=False, env=env).returncode
 
 
 def main(

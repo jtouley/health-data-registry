@@ -1098,6 +1098,18 @@ def test_commit_refuses_what_is_not_a_commit(repo: Path) -> None:
         r._commit(repo, "--output=x")
 
 
+def test_git_ignores_hook_variables(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    other = tmp_path / "other"
+    other.mkdir()
+    git(other, "init", "-q", "-b", "main")
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(other / ".git" / "index"))
+    monkeypatch.setenv("PATH_KEPT", "1")
+    assert "PATH_KEPT" in r.git_env()
+    assert not any(k.startswith("GIT_") for k in r.git_env())
+    assert r.git_snapshot(repo, "HEAD").read("Makefile") == MAKEFILE
+
+
 def test_read_required() -> None:
     assert r.read_required(None) is None
 
