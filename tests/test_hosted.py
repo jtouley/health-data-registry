@@ -348,3 +348,34 @@ def test_main_checks_the_limits_before_serving(monkeypatch: pytest.MonkeyPatch) 
     )
     with pytest.raises(ValueError, match="above HDR_MAX_RESULT_CHARS"):
         hosted.main()
+
+
+def test_uvicorn_speaks_asgi3_without_guessing() -> None:
+    app = object()
+    c = uvicorn_config(app, "127.0.0.1", 1)
+    assert (c.interface, c.factory, c.access_log, c.log_config, c.server_header, c.proxy_headers) == (
+        "asgi3", True, False, None, False, False
+    )  # fmt: skip
+    assert c.app() is app
+    assert (c.host, c.port) == ("127.0.0.1", 1)
+
+
+def test_deadline_words_and_edges(monkeypatch: pytest.MonkeyPatch) -> None:
+    tail = (
+        ", so it was stopped and no numbers are shown. The publisher or the data hub may be slow right now. Try "
+        "again in a few minutes, or narrow the question: one condition, fewer places or fewer years."
+    )
+    head = "This question needed more time than the hosted server allows for one answer"
+    assert str(DeadlineExceeded(200)) == head + " (200 seconds)" + tail
+    assert str(DeadlineExceeded()) == head + tail
+    assert DeadlineExceeded.code == "too_slow" and isinstance(DeadlineExceeded(), TimeoutError)
+    now = [100.0]
+    monkeypatch.setattr(deadline.time, "monotonic", lambda: now[0])
+    with call_deadline(10.0):
+        assert deadline.cap(30.0) == 10.0 and deadline.cap(4.0) == 4.0
+        now[0] = 109.5  # half a second left: still worth one short attempt
+        assert deadline.cap(30.0) == 0.5
+        now[0] = 110.0  # exactly nothing left
+        with pytest.raises(DeadlineExceeded):
+            deadline.cap(30.0)
+    assert deadline.cap(30.0) == 30.0

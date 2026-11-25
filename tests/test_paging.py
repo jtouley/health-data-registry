@@ -747,3 +747,12 @@ def test_page_budget_reads_the_environment(monkeypatch: pytest.MonkeyPatch) -> N
     assert paging.page_budget() == 2000
     monkeypatch.setenv("HDR_PAGE_CHARS", " 50000 ")
     assert paging.page_budget() == 50_000
+
+
+@pytest.mark.parametrize("fmt", ["csv", "json"])
+def test_an_answer_exactly_at_the_budget_is_one_page(registry: Registry, eng: Engine, fmt: str) -> None:
+    whole = _respond(registry, eng, fmt, 1, None, 10**9)
+    size = paging.wire_size(whole)
+    assert _respond(registry, eng, fmt, 1, None, size) == whole  # exactly the budget: sent whole, unpaged
+    cut_short = _respond(registry, eng, fmt, 1, None, size - 1)
+    assert cut_short != whole and paging.wire_size(cut_short) <= size - 1

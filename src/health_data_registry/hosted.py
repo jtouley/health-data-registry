@@ -315,7 +315,9 @@ class HostedMiddleware:
         if isinstance(msg, dict) and msg.get("method") == "tools/call":
             params = msg.get("params")
             name = params.get("name") if isinstance(params, dict) else None
-            tool = name if name in self.tool_names else "other"
+            # A client sends any JSON here: only a known tool name is a label; anything else (a list, an
+            # object) is "other" and still counts against the limit, never a crash before it.
+            tool = name if isinstance(name, str) and name in self.tool_names else "other"
             limited = self.limiter.check(session)
             if limited is not None:
                 which, wait = limited
@@ -469,12 +471,18 @@ def build_hosted(
 
 
 def uvicorn_config(app: Any, host: str, port: int) -> Any:
-    """uvicorn with no access log and no logging setup of its own (so the privacy filter sees everything)."""
+    """uvicorn with no access log and no logging setup of its own (so the privacy filter sees everything).
+
+    Nothing is left for uvicorn to guess: the interface is named (ASGI 3), and the app is handed over as a factory,
+    so uvicorn never probes it by calling it with no arguments. A wrapper around the middleware (a profiler, a
+    mutation-testing trampoline) can then never be mistaken for a factory or for an ASGI 2 app.
+    """
     import uvicorn
 
     return uvicorn.Config(
-        app, host=host, port=port, access_log=False, log_config=None, server_header=False, proxy_headers=False
-    )
+        lambda: app, factory=True, interface="asgi3", host=host, port=port, access_log=False, log_config=None,
+        server_header=False, proxy_headers=False,
+    )  # fmt: skip
 
 
 def main(host: str = "0.0.0.0", port: int = 7860) -> None:  # noqa: S104 - the Space routes its public port here
