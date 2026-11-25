@@ -84,6 +84,8 @@ reading the pinned release, or attaching the downloaded file by hand.
 The scheduled refresh, crawls, sitemap snapshots, publishing and Space deploy run on GitHub Actions;
 [automation.md](automation.md) lists each workflow, its schedule and limits, and the secrets and variables it
 needs. Every Hugging Face repository is named by one convention, built in `naming.py`: see [naming.md](naming.md).
+[crawler-audit.md](crawler-audit.md) lists every ingestion path and what each hard-codes for one source;
+[ADR 0016](../adr/0016-crawler-factory.md) proposes how to move that into config.
 
 To run the server in Claude Code from a checkout:
 
