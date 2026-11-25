@@ -11,7 +11,7 @@ import pytest
 
 from health_data_registry import hub, store, tools
 from health_data_registry.hub import Hub
-from health_data_registry.query import NEXT_STEPS, Engine, QueryRefused
+from health_data_registry.query import SQL_NEXT_STEPS, Engine, QueryRefused
 from health_data_registry.registry import Registry
 from health_data_registry.sql_guard import (
     MAX_GROWTH,
@@ -232,7 +232,7 @@ def test_audit74_bypassSiblings_refused(sql: str) -> None:
 )
 def test_audit74_querySql_keepsSpecificNextStep(lake: Path, registry: Registry, sql: str, code: str) -> None:
     out = tools.query_sql(Engine(registry=registry, lake=lake, hub=None), sql, fmt="json")
-    assert out["refused"] == code and out["next_step"] == NEXT_STEPS[code]
+    assert out["refused"] == code and out["next_step"] == SQL_NEXT_STEPS[code]
 
 
 def test_audit74_querySql_lakeUnverified_nextStep(lake: Path, registry: Registry) -> None:
@@ -462,6 +462,22 @@ def test_audit74_hubStillIntact_unreadable_treatedAsChanged(
 
     monkeypatch.setattr(hub, "fingerprint", unreadable)
     assert h.still_intact(f) is False and not f.exists()
+
+
+def test_audit74_hubStillIntact_changed_givesBackSharedHold(tmp_path: Path) -> None:
+    """The hosted server shares one cache between engines: a file that fails its re-check is no longer held."""
+    h = Hub(url=str(tmp_path), cache=tmp_path / "cache")
+    other = Hub(url=str(tmp_path), cache=tmp_path / "cache")
+    f = tmp_path / "cached.parquet"
+    f.write_bytes(b"x")
+    key = f.resolve()
+    h._hold(key)
+    other._hold(key)
+    h._verified[key] = "0" * 64
+    assert h.still_intact(f) is False
+    assert key not in h._in_use and key in other.in_use()  # the other engine still holds it
+    other.release_files()
+    assert key not in h.in_use()
 
 
 def test_audit74_engine_hubIntactError_isNotACrash(lake: Path, registry: Registry) -> None:
