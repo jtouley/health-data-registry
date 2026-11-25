@@ -115,10 +115,15 @@ def known_adapter_error(adapter: str, data: bytes, e: Exception) -> bool:
     named = [f for f in frames if f.filename == frames[-1].filename and not f.name.startswith("<")]
     if not named or _json_shape(data) != "json":
         return False
+    # Under mutation testing (mutmut) a function `f` runs as `x_f__mutmut_orig` or `x_f__mutmut_<n>`.
+    raised = _MUTMUT_NAME.sub(r"\1", named[-1].name)
     return any(
-        filename == f and named[-1].name == fn and type(e) is kind and pattern.fullmatch(str(e))
+        filename == f and raised == fn and type(e) is kind and pattern.fullmatch(str(e))
         for f, fn, kind, pattern in _WRONG_SHAPE
     )
+
+
+_MUTMUT_NAME = re.compile(r"\Ax_(.+)__mutmut_(?:orig|\d+)\Z")
 
 
 def TestOneInput(data: bytes) -> None:
