@@ -8,9 +8,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
-- The README is rewritten for clinicians: four setup steps that each say what you'll see, a C. auris in
-  Michigan example checked against CDC, and light and dark images from `tools/readme_svg/gen.py`. The setup
-  guide and the Something's wrong helper no longer say the hosted preview can't answer CDC questions.
+- The README is rewritten for clinicians: five setup steps that each say what you'll see (the Start here
+  helper is the check step), a C. auris in Michigan example checked against CDC with every year provisional and
+  CDC's later count beside each, a short GBD and PubMed section, and light and dark images from
+  `tools/readme_svg/gen.py`. The setup guide no longer says the hosted preview can't answer CDC questions (the hub
+  has published releases since `release-2026-11-24`).
+- The Something's wrong helper, the setup guide and `docs/tools.md` now tell "the hub could not be reached" (try
+  again) apart from "the hub has no published release yet" (retrying won't help).
+- `tools/` is linted and type-checked with the rest of the code, and a test fails if the committed README images
+  differ from what the generator draws.
 
 ### Added
 

@@ -9,7 +9,7 @@ its source.
 </picture>
 
 It's free, for infectious-disease fellows and physicians who already use Claude, and needs no technical skills.
-[Setting it up](#start-in-claude) takes four steps. It's still early: when it can't answer yet, it says so.
+[Setting it up](#start-in-claude) takes five steps. It's still early: when it can't answer yet, it says so.
 
 <!-- screenshot: a Claude chat with a question, the answer, and the source lines under it -->
 
@@ -23,7 +23,7 @@ For example:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/coverage-dark.svg">
-  <img src="assets/readme/coverage-light.svg" width="440" alt="What it covers. Covered now, from CDC: reportable infections by US state, antibiotic resistance in hospital infections, COVID-19, flu and RSV hospital admissions, and C. difficile infections; from WHO: tuberculosis by country. Coming next: measles cases by Michigan county, and Detroit Health Department figures. Not covered yet: HIV.">
+  <img src="assets/readme/coverage-light.svg" width="440" alt="What it covers. Covered now, from CDC: notifiable infections by US state, from C. auris to syphilis; antibiotic resistance in hospital infections, by state; COVID-19, flu and RSV hospitalization rates at CDC surveillance sites; and C. difficile infections, national, from CDC surveillance sites. From WHO: tuberculosis by country. Coming next: measles cases by Michigan county, and Detroit Health Department figures. Not covered yet: HIV.">
 </picture>
 
 ## Start in Claude
@@ -44,8 +44,14 @@ You set this up once. There's nothing to download, and no account or password.
 3. Start a new chat: health-data-registry only appears in chats you start after adding it. Click **+** at the
    bottom left of the message box, then **Connectors**, and check that health-data-registry is switched on.
    <!-- screenshot: the + menu in a new chat, with health-data-registry switched on under Connectors -->
-4. Start your question with "Use health-data-registry:", then ask one of the questions above. If Claude asks
-   before using it, allow it: it only reads public data.
+4. Check it works: in the message box, open the menu of ready-made starters, choose health-data-registry, then
+   **Start here: check my tools work**. You'll see one line per tool saying whether it works, and steps for any
+   that are missing. If the menu doesn't show it, copy [Start
+   here](docs/helpers.md#start-here-check-my-tools-work) and paste it as your message.
+5. Start your question with "Use health-data-registry:", then ask one of the questions above. If Claude asks
+   before using it, allow it: it only reads public data. You'll see a table of yearly figures, then lines saying
+   where the numbers came from and when. If Claude answers without those source lines, it didn't use
+   health-data-registry: go back to step 3.
 
 Stuck? The [setup guide](docs/setup.md) walks through every click, including what to do if your work account
 blocks step 2.
@@ -58,20 +64,32 @@ Claude replies with the yearly counts, drawn here as a chart, and notes like the
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/example-c-auris-michigan-dark.svg">
-  <img src="assets/readme/example-c-auris-michigan-light.svg" width="440" alt="Bar chart of clinical C. auris cases reported in Michigan, CDC year-end counts, checked 25 November 2026: 2022, 27; 2023, 103; 2024, 174, provisional; 2025, 178, provisional.">
+  <img src="assets/readme/example-c-auris-michigan-light.svg" width="440" alt="Bar chart of clinical C. auris cases reported in Michigan, from CDC, checked 25 November 2026. All figures are provisional. Count at year end, then CDC's later count: 2022, 27 then 33; 2023, 103 then 110; 2024, 174 then 184; 2025, 178 then 217 by week 45 of 2026.">
 </picture>
 
 - **Source:** CDC's National Notifiable Diseases Surveillance System, with a link and a citation you can paste
   into a paper.
-- **Checked:** 25 November 2026. Each bar is CDC's count at the last week of that year, as CDC published it
-  then. CDC marks 2024 and 2025 provisional and can still revise them. CDC's 2025 table restates 2024 as 184; the
-  answer shows that figure beside 174, and calls neither final.
+- **Checked:** 25 November 2026. Each solid bar is the total CDC reported at the end of that year.
+- **Still changing:** CDC adds late reports for a year after it ends, so every figure here is provisional. Its
+  later count is 33 for 2022, 110 for 2023 and 184 for 2024. For 2025 it is already 217 by week 45 of 2026,
+  and still rising. The answer shows both figures for each year and calls neither final.
 - **What it can't tell you:** where patients were treated, because each case counts in the patient's home state.
   Clinical and screening cases are separate counts, never added together.
 
 Every answer links to the publisher's page; for this one, [CDC's weekly notifiable disease
 data](https://data.cdc.gov/d/x9gk-5huc). If it works something out itself, like a rate per 100,000, it says so
 and shows how.
+
+## Use it with GBD and PubMed
+
+Each tool has its own job: IHME's GBD connector for modelled burden, this tool for reported and local numbers, and
+PubMed for papers. This tool labels its numbers with GBD's place and cause names and tells Claude which GBD
+question to ask next, so you can set the two side by side. It never says which number is "right".
+
+- **Add the other two:** the [setup guide](docs/setup.md#ihme-gbd-connector) covers the IHME GBD and PubMed
+  connectors.
+- **Keep them in their lanes:** run the [Set up my Claude Project](docs/helpers.md#set-up-my-claude-project)
+  helper, and it writes the rules into your Claude Project.
 
 ## What it won't do
 
@@ -83,7 +101,8 @@ and shows how.
 
 If Claude gives a number with no source beside it, ask: "Where did that number come from?"
 
-A reviewer hasn't yet signed off on how each source is read, and every answer says so.
+One thing isn't done yet: no second person has checked the rules this tool uses to read each source. Every
+answer says so. Until that check is done, compare important figures with the publisher's page.
 
 ## Who made it, and getting help
 
