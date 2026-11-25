@@ -1,0 +1,48 @@
+# ClusterFuzzLite weekly batch run: fuzzes every harness in fuzz/ for longer than a pull request can, and keeps
+# the grown corpus as an artifact that the next runs (batch and PR) start from. A crash fails the job; its
+# reproducer is in the run's artifacts. File it as an issue with a minimal reproducer.
+# https://google.github.io/clusterfuzzlite/running-clusterfuzzlite/github-actions/
+name: ClusterFuzzLite batch fuzzing
+
+on:
+  schedule:
+    - cron: "53 2 * * 4"
+  workflow_dispatch:
+
+# Read-only token. No repository secret is used: github.token is the run's own short-lived token, which
+# ClusterFuzzLite needs only to read earlier runs' corpus artifacts.
+permissions:
+  contents: read
+
+concurrency:
+  group: cflite-batch
+  cancel-in-progress: false
+
+jobs:
+  fuzz:
+    name: Fuzz (batch, ${{ matrix.sanitizer }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      # Download the previous batch run's corpus artifacts.
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address]
+    steps:
+      - name: Build fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          language: python
+          github-token: ${{ github.token }}
+          sanitizer: ${{ matrix.sanitizer }}
+      - name: Run fuzzers
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          github-token: ${{ github.token }}
+          # Shared across the targets: about 30 minutes each for the four harnesses.
+          fuzz-seconds: 7200
+          mode: batch
+          sanitizer: ${{ matrix.sanitizer }}

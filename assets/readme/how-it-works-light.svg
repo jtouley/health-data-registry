@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 416" width="660" height="416" role="img" aria-labelledby="t d" font-family="-apple-system, BlinkMacSystemFont, &apos;Segoe UI&apos;, &apos;Noto Sans&apos;, Helvetica, Arial, sans-serif">
+<title id="t">How it works, in three steps</title>
+<desc id="d">You ask Claude a question in plain words. It checks official public data: CDC and WHO today, state health departments next. You get the number with its source and the date it was checked.</desc>
+<path d="M44 96V140M44 244V288" stroke="#d1d9e0" stroke-width="3" stroke-linecap="round"/>
+<g transform="translate(0 0)"><rect x="18" y="8" width="52" height="72" rx="4" stroke="#59636e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M30 24h28M30 34h20" stroke="#59636e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/><text x="44" y="70" font-size="28" font-weight="600" fill="#0b6b69" text-anchor="middle">?</text></g>
+<text x="112" y="32" font-size="32" font-weight="600" fill="#1f2328">You ask Claude a question</text>
+<text x="112" y="72" font-size="28" fill="#59636e">In plain words, as you would</text>
+<text x="112" y="108" font-size="28" fill="#59636e">ask a colleague</text>
+<g transform="translate(0 148)"><rect x="8" y="8" width="52" height="72" rx="4" stroke="#59636e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M20 22h28M20 32h28M20 42h18M20 52h12" stroke="#59636e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/><circle cx="54" cy="56" r="16" fill="#ffffff" stroke="#0b6b69" stroke-width="4"/><path d="M66 68l12 12" stroke="#0b6b69" stroke-width="5" stroke-linecap="round"/></g>
+<text x="112" y="180" font-size="32" font-weight="600" fill="#1f2328">It checks official public data</text>
+<text x="112" y="220" font-size="28" fill="#59636e">CDC and WHO today, state</text>
+<text x="112" y="256" font-size="28" fill="#59636e">health departments next</text>
+<g transform="translate(0 296)"><rect x="12" y="8" width="52" height="72" rx="4" stroke="#59636e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M24 20h28M24 28h16" stroke="#59636e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/><text x="22" y="54" font-size="22" font-weight="600" fill="#1f2328">174</text><circle cx="66" cy="72" r="13" fill="#ffffff" stroke="#0b6b69" stroke-width="3"/><path d="M60 72l4 4 8-9" stroke="#0b6b69" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/></g>
+<text x="112" y="328" font-size="32" font-weight="600" fill="#1f2328">You get the number</text>
+<text x="112" y="368" font-size="28" fill="#59636e">With its source and the date</text>
+<text x="112" y="404" font-size="28" fill="#59636e">it was checked</text>
+</svg>
