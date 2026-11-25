@@ -2,7 +2,7 @@ apiVersion: v3.2.0
 kind: DataContract
 id: apic_abstracts
 name: APIC Annual Conference abstracts (AJIC supplement)
-version: 0.1.0
+version: 0.1.1
 status: draft
 domain: research_landscape
 description:
@@ -321,10 +321,23 @@ schema:
     physicalType: VARCHAR
     logicalType: string
     required: true
-    description: When that Crossref response was received (ISO 8601 text in UTC with its offset, e.g. 2026-11-24T12:00:00+00:00).
+    description: Date and time (UTC) this registry read the abstract's listing from Crossref; the 'accessed' date to cite.
+      Always filled, stored as text such as 2026-11-24T12:00:00+00:00.
     customProperties:
     - property: role
       value: attribute
+    quality:
+    - id: retrieved_at_filled
+      type: sql
+      description: Every row has the time its Crossref listing was read (doi_harvest writes it on every row).
+      query: "SELECT COUNT(*) FROM {object} WHERE retrieved_at IS NULL OR trim(retrieved_at) = ''"
+      mustBe: 0
+    - id: retrieved_at_format
+      type: sql
+      description: The harvester writes this time in UTC to the second, as YYYY-MM-DDTHH:MM:SS+00:00
+        (doi_harvest, isoformat with timespec seconds); any other form is a data failure.
+      query: "SELECT COUNT(*) FROM {object} WHERE retrieved_at IS NOT NULL AND NOT regexp_full_match(retrieved_at, '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+]00:00')"
+      mustBe: 0
   - name: openalex_source_url
     physicalType: VARCHAR
     logicalType: string
@@ -345,10 +358,18 @@ schema:
     physicalType: VARCHAR
     logicalType: string
     required: false
-    description: When that OpenAlex response was received (ISO 8601 text in UTC with its offset, e.g. 2026-11-24T12:00:00+00:00).
+    description: Date and time (UTC) this registry read the abstract's record from OpenAlex, stored as text like
+      retrieved_at; empty when OpenAlex had no record for this abstract.
     customProperties:
     - property: role
       value: attribute
+    quality:
+    - id: openalex_retrieved_at_format
+      type: sql
+      description: The harvester writes this time in UTC to the second, as YYYY-MM-DDTHH:MM:SS+00:00
+        (doi_harvest, isoformat with timespec seconds); any other form is a data failure.
+      query: "SELECT COUNT(*) FROM {object} WHERE openalex_retrieved_at IS NOT NULL AND NOT regexp_full_match(openalex_retrieved_at, '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+]00:00')"
+      mustBe: 0
   - name: europepmc_source_url
     physicalType: VARCHAR
     logicalType: string
@@ -369,10 +390,18 @@ schema:
     physicalType: VARCHAR
     logicalType: string
     required: false
-    description: When that Europe PMC response was received (ISO 8601 text in UTC with its offset, e.g. 2026-11-24T12:00:00+00:00).
+    description: Date and time (UTC) this registry read the abstract's record from Europe PMC, stored as text like
+      retrieved_at; empty when Europe PMC had no record for this abstract.
     customProperties:
     - property: role
       value: attribute
+    quality:
+    - id: europepmc_retrieved_at_format
+      type: sql
+      description: The harvester writes this time in UTC to the second, as YYYY-MM-DDTHH:MM:SS+00:00
+        (doi_harvest, isoformat with timespec seconds); any other form is a data failure.
+      query: "SELECT COUNT(*) FROM {object} WHERE europepmc_retrieved_at IS NOT NULL AND NOT regexp_full_match(europepmc_retrieved_at, '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+]00:00')"
+      mustBe: 0
 customProperties:
 - property: licence
   value: doi-abstracts-mixed
