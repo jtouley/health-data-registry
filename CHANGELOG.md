@@ -41,6 +41,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- SchoolVaxView kindergarten coverage and exemptions (`cdc_schoolvaxview_kindergarten`, CDC data.cdc.gov
+  ijqb-a7ye): the percent of kindergartners vaccinated, or with an exemption, by vaccine and dose or exemption
+  type, state and school year, as each state reported it, read as published and never added up. Draft contract.
+  CDC publishes no confidence intervals here. NA, NReq and the undefined NR and Nreq are no value, never zero, and
+  the published text is kept beside the number.
 - The Trusted gate (`.github/workflows/trusted-gate.yml`, `python -m health_data_registry.ratchet`, `make
   ratchet`): a check a pull request cannot edit, run from main's copy on `pull_request_target` with a read-only
   token, reading the pull request as data only (a required check once the `main` ruleset lists it, #138). It fails
