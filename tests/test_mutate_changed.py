@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import fnmatch
 import importlib.util
 import json
 import sys
 from dataclasses import asdict
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -44,8 +45,13 @@ def test_list_json_is_one_sorted_line_without_init_files(mc: ModuleType) -> None
             "health_data_registry.tools",
         ]
     )
-    assert out == '["health_data_registry.adapters.socrata","health_data_registry.tools"]'
     assert "\n" not in out
+    ids = json.loads(out)
+    # socrata fits one shard, named after the module; tools.py is big enough to split into shards k of n.
+    assert ids[0] == "health_data_registry.adapters.socrata"
+    tools = ids[1:]
+    assert len(tools) >= 2
+    assert tools == [f"health_data_registry.tools#{k}of{len(tools)}" for k in range(1, len(tools) + 1)]
 
 
 def test_list_json_of_nothing_is_an_empty_array(mc: ModuleType) -> None:
@@ -73,10 +79,12 @@ def test_a_name_that_is_not_a_plain_module_is_refused(mc: ModuleType, name: str)
 def test_list_all_prints_every_module_as_json(mc: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:
     assert mc.main(["--list", "--all"]) == 0
     mods = json.loads(capsys.readouterr().out)
-    assert "health_data_registry.tools" in mods
+    modules = [mc.parse_shard_id(m)[0] for m in mods]
+    assert "health_data_registry.tools" in modules
     assert "health_data_registry.adapters.socrata" in mods
-    assert mods == sorted(mods)
-    assert not [m for m in mods if m.endswith("__init__")]
+    assert modules == sorted(modules)
+    assert not [m for m in modules if m.endswith("__init__")]
+    assert mc.split_gaps(mods) == []
 
 
 def test_module_mode_needs_a_report_path(mc: ModuleType) -> None:
@@ -287,7 +295,16 @@ def test_local_mode_applies_the_same_rule(mc: ModuleType, monkeypatch: pytest.Mo
 
 def test_a_report_must_say_its_baseline_passed(mc: ModuleType, tmp_path: Path) -> None:
     (tmp_path / "a.json").write_text(
-        json.dumps({"modules": [A], "killed": 10, "survived": 0, "baseline_ok": "yes", "incomplete": 0}),
+        json.dumps(
+            {
+                "modules": [A],
+                "killed": 10,
+                "survived": 0,
+                "baseline_ok": "yes",
+                "incomplete": 0,
+                "unassigned": [],
+            }
+        ),
         encoding="utf-8",
     )
     [shard] = mc.load_reports(tmp_path)
@@ -304,14 +321,13 @@ def test_an_unreadable_report_is_an_error_not_a_zero(mc: ModuleType, tmp_path: P
 
 
 def test_an_eval_module_is_listed_and_accepted(mc: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:
-    assert mc.list_json(["eval.scorer", "eval.__init__", "health_data_registry.tools"]) == (
-        '["eval.scorer","health_data_registry.tools"]'
-    )
+    ids = json.loads(mc.list_json(["eval.stats", "eval.__init__", "health_data_registry.geo"]))
+    assert ids == ["eval.stats", "health_data_registry.geo"]
     assert mc._module("eval/numbers.py") == "eval.numbers"
     assert mc._module("src/health_data_registry/tools.py") == "health_data_registry.tools"
     assert mc.main(["--list", "--all"]) == 0
-    mods = json.loads(capsys.readouterr().out)
-    assert {"eval.scorer", "eval.numbers", "eval.report", "eval.stats"} <= set(mods)
+    mods = {mc.parse_shard_id(s)[0] for s in json.loads(capsys.readouterr().out)}
+    assert {"eval.scorer", "eval.numbers", "eval.report", "eval.stats"} <= mods
     r = mc.parse_results(
         "eval.scorer.x_f__mutmut_1: killed\neval.scorerx.y__mutmut_1: killed", ["eval.scorer"]
     )
@@ -322,3 +338,252 @@ def test_an_eval_module_is_listed_and_accepted(mc: ModuleType, capsys: pytest.Ca
 def test_an_eval_name_that_is_not_a_plain_module_is_refused(mc: ModuleType, name: str) -> None:
     with pytest.raises(ValueError, match="not a plain module name"):
         mc.list_json([name])
+
+
+# Splitting a big module into shards ------------------------------------------------------------------------
+
+SEP = "\u01c1"
+
+
+def _source(n_funcs: int, size: int) -> str:
+    """A synthetic module: n_funcs top-level functions and one class, each with about `size` mutants, and one
+    decorated function mutmut leaves alone."""
+    body = "\n".join(f"    x = {i}" for i in range(size))
+    funcs = [f"def f{i}():\n{body}\n    return x\n" for i in range(n_funcs)]
+    method_body = "\n".join(f"        x = {i}" for i in range(size))
+    cls = f"class C:\n    def m(self):\n{method_body}\n        return x\n"
+    deco = "@decorator\ndef skipped():\n    return 1\n"
+    return "\n\n".join([*funcs, cls, deco])
+
+
+def _names(module: str, source: str, mc: ModuleType, per_function: int) -> list[str]:
+    """Mutant names as mutmut makes them: <module>.<key>__mutmut_<n>, n from 1."""
+    return [
+        f"{module}.{key}__mutmut_{n}"
+        for key, _ in mc.mutated_functions(source)
+        for n in range(1, per_function + 1)
+    ]
+
+
+def _shard_of(name: str, module: str, bins: list[Any]) -> list[int]:
+    return [i for i, b in enumerate(bins) if any(fnmatch.fnmatchcase(name, u.glob(module)) for u in b)]
+
+
+def test_the_split_covers_every_mutant_exactly_once(mc: ModuleType) -> None:
+    src = _source(12, 40)
+    bins = mc.split_module(src, 100)
+    assert len(bins) > 1
+    names = _names(A, src, mc, 137)  # 137: numbers ending in every digit, and past 100
+    assert all(len(_shard_of(n, A, bins)) == 1 for n in names)
+    assert mc.unassigned_mutants(names, A, bins) == []
+
+
+def test_the_split_is_deterministic_and_ignores_function_order(mc: ModuleType) -> None:
+    src = _source(9, 30)
+    first = mc.split_module(src, 80)
+    assert mc.split_module(src, 80) == first
+    reordered = "\n\n".join(reversed(src.split("\n\n")))
+    assert mc.split_module(reordered, 80) == first
+
+
+def test_each_shard_stays_within_the_target(mc: ModuleType) -> None:
+    bins = mc.split_module(_source(20, 25), 120)
+    loads = [sum(u.weight for u in b) for b in bins]
+    assert max(loads) <= 120
+    # the fewest shards that fit: packed into one fewer, some shard would be over the target
+    weighted = [u for b in bins for u in b if u.weight > 0]
+    assert max(sum(u.weight for u in b) for b in mc._pack(weighted, len(bins) - 1)) > 120
+
+
+def test_a_module_that_fits_is_one_shard_named_after_it(mc: ModuleType) -> None:
+    src = _source(3, 10)
+    assert len(mc.split_module(src, 500)) == 1
+    assert mc.shard_ids(A, 1) == [A]
+    assert mc.shard_ids(A, 3) == [f"{A}#1of3", f"{A}#2of3", f"{A}#3of3"]
+
+
+def test_a_function_bigger_than_a_shard_is_split_by_last_digit(mc: ModuleType) -> None:
+    src = _source(1, 150)  # about 300 mutants: three parts of a 100-mutant shard
+    bins = mc.split_module(src, 100)
+    parts = [u for b in bins for u in b if u.key == "x_f0"]
+    assert sorted(u.digits for u in parts) == ["0123", "456", "789"]
+    assert len({i for i, b in enumerate(bins) for u in b if u.key == "x_f0"}) == 3
+    assert mc.unassigned_mutants(_names(A, src, mc, 250), A, bins) == []
+
+
+@pytest.mark.parametrize("parts", range(1, 11))
+def test_digit_groups_partition_the_ten_digits(mc: ModuleType, parts: int) -> None:
+    groups = mc.digit_groups(parts)
+    assert len(groups) == parts
+    assert "".join(groups) == "0123456789"
+    assert max(map(len, groups)) - min(map(len, groups)) <= 1
+
+
+def test_methods_use_mutmut_keys_and_decorated_functions_carry_no_weight(mc: ModuleType) -> None:
+    funcs = dict(mc.mutated_functions(_source(1, 5)))
+    assert f"x{SEP}C{SEP}m" in funcs
+    assert funcs["x_skipped"] == 0
+    assert funcs["x_f0"] >= 5
+
+
+def test_a_mutant_outside_the_split_is_reported(mc: ModuleType) -> None:
+    bins = mc.split_module(_source(6, 40), 100)
+    stray = [f"{A}.x_new_function__mutmut_1", f"{B}.x_f__mutmut_1"]
+    assert mc.unassigned_mutants(stray, A, bins) == [f"{A}.x_new_function__mutmut_1: matches 0 shards"]
+
+
+@pytest.mark.parametrize("module", ["health_data_registry.registry", "health_data_registry.query"])
+def test_the_real_split_covers_mutmuts_own_mutants_once(mc: ModuleType, module: str) -> None:
+    # mutmut's own generator, no test run: every mutant it makes of the module is in exactly one shard.
+    from mutmut.mutation.file_mutation import mutate_file_contents
+
+    path = mc.module_path(module)
+    made = mutate_file_contents(str(path), path.read_text(encoding="utf-8")).mutant_names
+    names = [f"{module}.{n}" for n in made]
+    bins = mc.module_shards(module)
+    assert len(bins) > 1
+    assert names
+    assert mc.unassigned_mutants(names, module, bins) == []
+
+
+# Shard ids -------------------------------------------------------------------------------------------------
+
+
+def test_shard_ids_parse(mc: ModuleType) -> None:
+    assert mc.parse_shard_id("health_data_registry.registry#3of4") == ("health_data_registry.registry", 3, 4)
+    assert mc.parse_shard_id("eval.scorer") == ("eval.scorer", 1, 1)
+
+
+@pytest.mark.parametrize(
+    "shard",
+    [
+        "health_data_registry.tools#0of2",
+        "health_data_registry.tools#3of2",
+        "health_data_registry.tools#1of1",
+        "health_data_registry.tools#01of2",
+        "health_data_registry.tools#1of2;id",
+        "health_data_registry.tools#1of2 ",
+        "health_data_registry.tools#1",
+        "health_data_registry.$(id)#1of2",
+        "other_pkg.tools#1of2",
+    ],
+)
+def test_a_malformed_shard_id_is_refused(mc: ModuleType, shard: str) -> None:
+    with pytest.raises(ValueError):
+        mc.parse_shard_id(shard)
+
+
+def test_a_shard_id_from_another_version_of_the_source_is_refused(mc: ModuleType) -> None:
+    n = len(mc.module_shards("health_data_registry.tools"))
+    assert mc.shard_globs(f"health_data_registry.tools#1of{n}")
+    with pytest.raises(ValueError, match="now splits into"):
+        mc.shard_globs(f"health_data_registry.tools#1of{n + 1}")
+
+
+def test_too_many_shards_for_one_matrix_is_an_error(mc: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mc, "MAX_SHARDS", 3)
+    with pytest.raises(ValueError, match="more than one CI matrix"):
+        mc.list_shards(["health_data_registry.tools"])
+
+
+def test_module_mode_fails_closed_on_a_stale_shard_id(mc: ModuleType, tmp_path: Path) -> None:
+    report = tmp_path / "r.json"
+    assert mc.main(["--module", "health_data_registry.tools#1of99", "--report", str(report)]) == 1
+    assert json.loads(report.read_text(encoding="utf-8"))["baseline_ok"] is False
+
+
+def test_module_mode_refuses_a_malformed_shard_id(mc: ModuleType, tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        mc.main(["--module", "health_data_registry.tools#2of1", "--report", str(tmp_path / "r.json")])
+
+
+# One shard of a split module, end to end (mutmut replaced) -------------------------------------------------
+
+
+def test_a_shard_runs_and_counts_only_its_own_mutants(
+    mc: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = _source(6, 40)
+    bins = mc.split_module(src, 100)
+    n = len(bins)
+    monkeypatch.setattr(mc, "module_shards", lambda module: mc.split_module(src, 100))
+    names = _names(A, src, mc, 23)
+    mine = [x for x in names if _shard_of(x, A, bins) == [0]]
+    # Other shards' mutants are `not checked` in this run: they are not this shard's, so they never count.
+    lines = [f"    {x}: {'killed' if x in mine else 'not checked'}" for x in names]
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **kwargs: Any) -> Any:
+        calls.append(cmd)
+        return SimpleNamespace(returncode=0, stdout="\n".join(lines) if cmd[1] == "results" else "")
+
+    monkeypatch.setattr(mc.subprocess, "run", fake_run)
+    r = mc.run_mutmut([f"{A}#1of{n}"])
+    assert calls[0][:2] == ["mutmut", "run"]
+    assert calls[0][2:] == [u.glob(A) for u in bins[0]]
+    assert (r.killed, r.survived, r.incomplete, r.unassigned) == (len(mine), 0, 0, [])
+    assert mc.shard_failure(r) is None
+
+    # A mutant of the module that no shard covers fails the shard, whatever its score.
+    lines.append(f"    {A}.x_unknown__mutmut_1: not checked")
+    r = mc.run_mutmut([f"{A}#1of{n}"])
+    assert r.unassigned == [f"{A}.x_unknown__mutmut_1: matches 0 shards"]
+    assert "in no shard" in mc.shard_failure(r)
+
+
+# Aggregating split modules ---------------------------------------------------------------------------------
+
+
+def test_every_shard_of_a_split_module_must_report(mc: ModuleType) -> None:
+    ids = [f"{A}#1of3", f"{A}#2of3", f"{A}#3of3", B]
+    shards = [Shard([s], killed=10) for s in ids]
+    assert mc.aggregate(shards, 70.0, ids)[0]
+    ok, lines = mc.aggregate([s for s in shards if s.modules != [f"{A}#2of3"]], 70.0, ids)
+    assert not ok
+    assert f"FAILED {A}#2of3: no shard report (the shard was cancelled, timed out or never ran)" in lines
+
+
+@pytest.mark.parametrize(
+    "expected",
+    [
+        [f"{A}#1of3", f"{A}#3of3"],
+        [f"{A}#1of2", f"{A}#2of3", f"{A}#3of3"],
+        [A, f"{A}#1of2", f"{A}#2of2"],
+    ],
+)
+def test_an_expect_list_with_part_of_a_split_fails(mc: ModuleType, expected: list[str]) -> None:
+    shards = [Shard([s], killed=10) for s in expected]
+    ok, lines = mc.aggregate(shards, 70.0, expected)
+    assert not ok
+    assert any("not one complete split" in line for line in lines)
+
+
+def test_a_shard_with_an_unassigned_mutant_fails_the_aggregate(mc: ModuleType) -> None:
+    ids = [f"{A}#1of2", f"{A}#2of2"]
+    shards = [Shard([ids[0]], killed=10), Shard([ids[1]], killed=10, unassigned=["x: matches 0 shards"])]
+    ok, lines = mc.aggregate(shards, 70.0, ids)
+    assert not ok
+    assert any("in no shard, or in several" in line for line in lines)
+
+
+def test_aggregate_mode_reads_shard_reports_with_hash_names(mc: ModuleType, tmp_path: Path) -> None:
+    ids = [f"{A}#1of2", f"{A}#2of2"]
+    for s in ids:
+        _write(tmp_path, Shard([s], killed=9, survived=1))
+    assert (tmp_path / f"{A}#1of2.json").exists()
+    assert mc.main(["--aggregate", str(tmp_path), "--expect", json.dumps(ids)]) == 0
+    assert mc.main(["--aggregate", str(tmp_path), "--expect", json.dumps([*ids, f"{A}#3of3"])]) == 1
+
+
+def test_aggregate_mode_refuses_a_malformed_expect(mc: ModuleType, tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        mc.main(["--aggregate", str(tmp_path), "--expect", json.dumps([f"{A}#1of2;id"])])
+
+
+def test_a_report_without_the_unassigned_field_is_an_error(mc: ModuleType, tmp_path: Path) -> None:
+    (tmp_path / "a.json").write_text(
+        json.dumps({"modules": [A], "killed": 1, "survived": 0, "baseline_ok": True, "incomplete": 0}),
+        encoding="utf-8",
+    )
+    with pytest.raises(KeyError):
+        mc.load_reports(tmp_path)
