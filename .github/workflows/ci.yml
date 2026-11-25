@@ -88,6 +88,29 @@ jobs:
       - name: Tests with coverage
         run: make test
 
+  # The spec's reference journey (C. auris in Michigan) through the built MCP server on a synthetic lake, with the
+  # DEV trial questions scored by eval/scorer.py. Offline: no publisher, hub or secret is read.
+  smoke:
+    name: "Smoke: C. auris journey"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+      - name: Run the smoke journey
+        env:
+          HDR_HUB: "off"
+          HDR_FETCH_AT_RUN_TIME: "0"
+        run: make smoke
+
   kit:
     name: Claude Projects kit
     runs-on: ubuntu-latest

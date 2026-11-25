@@ -32,6 +32,7 @@ work is not committed to the PR branch: it stays uncommitted or goes on a separa
 | `make typecheck` | mypy, strict |
 | `make test` | Offline tests with coverage; fails under 85% (`COV_FLOOR`) |
 | `make test-network` | Live publisher tests in `tests/integration` (marker `network`) |
+| `make smoke` | The C. auris in Michigan reference journey on a synthetic lake (marker `smoke`; see [Smoke journey](#smoke-journey)) |
 | `make mutate` | Mutation tests on modules changed since `BASE` (default `origin/main`); fails under 70% killed (`MUTATION_FLOOR`) |
 | `make docs` | Regenerate `docs/helpers.md` from `src/health_data_registry/helpers.py` |
 | `make refresh` | `health-data-registry refresh --all` into the local lake |
@@ -128,6 +129,34 @@ Everything a clinician reads (tool descriptions, helpers, refusals) follows the 
   or crashed, or left no report. A module with no mutable function has nothing to mutate and passes, locally and
   in CI.
 - **New features and fixes add tests.** A bug fix includes a test that fails without it.
+
+## Smoke journey
+
+`make smoke` runs the reference journey from the spec: a clinician asks about C. auris in Michigan in 2024.
+CI runs it on every pull request as the job "Smoke: C. auris journey". It is offline and also part of `make test`.
+
+- **What it drives.** The real MCP server (`server.build_server`) over the real `catalog/`, `contracts/` and
+  `semantic/`, reading a lake built at test time from hand-written rows in `tests/smoke/fixtures.py`. The
+  numbers are made up and unlike the published ones; nothing is written to the repo.
+- **The steps** (`tests/smoke/test_c_auris_journey.py`): `suggest_datasets` routes to `cdc_nndss_weekly`;
+  `describe_dataset` names both C. auris series and the flag codes; `get_series` returns clinical and screening
+  as separate series, each with its year-end running total and next year's unverified restatement, never summed
+  and with total rows left out; a flagged place stays empty with its flag, never a zero; `get_rate` divides by
+  the Census population and never adds the two rates; `list_caveats` keeps NNDSS, CDC's tracking page and the
+  AR Lab Network apart; an uncatalogued source shows no number; `get_provenance` names the exact fetch. Every
+  table's provenance line must be complete and carry the sha256 of the raw bytes.
+- **The four DEV trial questions** (`eval/dev/dev.jsonl`, tag `source: trial`) are scored with
+  `eval/scorer.py`: a scripted client (`tests/smoke/client.py`) writes a reply from the tool responses only,
+  and the reply must pass Class, Target, Provenance and the fabrication gate. Replies that add clinical to
+  screening, add two rates, or give a number no tool returned must fail. The smoke test never reads TEST or
+  `eval/sealed/`.
+- **Only NNDSS is catalogued for C. auris.** CDC's tracking page and the AR Lab Network have no catalog entry
+  yet, so their steps check that the server shows no number for them. When one is catalogued, add its series
+  to the journey.
+- **Steps waiting on PR #28** (condition vocabulary, routing and structured declines) are
+  `xfail(strict=True)`: measles as a generic NNDSS label, HIV care declined rather than routed to RESP-NET,
+  structured decline fields, provenance in discovery tools, and a structured refusal for an unknown source.
+  When #28 lands they fail as XPASS; remove the marks in the same pull request.
 
 ## Adding a dataset
 
