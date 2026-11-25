@@ -51,13 +51,15 @@ All notable changes to this project are documented here. The format follows
   (one record per printed cell, for column headers that change from report to report), and can check a table against
   its own printed totals, recording each row's `failed_checks` as metadata and refusing a document with more failing
   rows than the catalog allows. Every row a document type reads (`pdf_table`, `https_file`, `html_table`) carries its
-  document's URL with any key stripped, sha256 and fetch time. One fetch core: a source reaches only its own hosts and
-  declared paths (catalogued patterns matched whole, on the linear-time RE2 engine), config can only slow the pace,
-  robots.txt is reread after 24 hours and its Request-rate honoured, keys never reach provenance, and a source stops
-  being crawled only after 8 weeks of continuous failure. The row-level guard (hard rule 4) runs on every page of
-  every type, with no way to switch it off. A snapshot's identity now includes how its records were read (the type,
-  its config and extensions), so a config-only change builds a new snapshot; existing snapshots are rebuilt once on
-  their next refresh.
+  document's URL with any key stripped, sha256 and fetch time. A listing crawl checks that each item is of the year
+  asked for and carries the number the listing gives it, combines several `parse` extensions on one item page in their
+  declared order, and reports a listing that runs out before its own total as incomplete, to resume next run. One
+  fetch core: a source reaches only its own hosts and declared paths (catalogued patterns matched whole, on the
+  linear-time RE2 engine), config can only slow the pace, robots.txt is reread after 24 hours and its Request-rate
+  honoured, keys never reach provenance, and a source stops being crawled only after 8 weeks of continuous failure.
+  The row-level guard (hard rule 4) runs on every page of every type, with no way to switch it off. A snapshot's
+  identity now includes how its records were read (the type, its config and extensions), so a config-only change
+  builds a new snapshot; existing snapshots are rebuilt once on their next refresh.
 - `serve --http`: the hosted, read-only connector over stateless Streamable HTTP (hub releases and live reads
   only), with one deadline per tool call, a result-size cap, rate limits per MCP session and overall, and no
   request content in any log; `space/` for a Hugging Face Docker Space and `docs/dev/hosting.md`.

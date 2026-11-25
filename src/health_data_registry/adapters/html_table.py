@@ -14,6 +14,7 @@ by selector, or a ``parse`` extension). Every record carries the provenance of t
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
@@ -146,7 +147,18 @@ def publisher_fields(entry: CatalogEntry, get: Fetcher) -> set[str]:
 # ------------------------------------------------------------------------------------------------- listing
 
 
-def listing_page(entry: CatalogEntry, cfg: ListingConfig, content: bytes, url: str) -> tuple[int, list[str]]:
+@dataclass(frozen=True)
+class ListingItem:
+    """One item link on a listing page: its normalised URL, the link's text and the year its path names."""
+
+    url: str
+    text: str
+    year: int | None = None
+
+
+def listing_page(
+    entry: CatalogEntry, cfg: ListingConfig, content: bytes, url: str
+) -> tuple[int, list[ListingItem]]:
     """A listing page's own total and its item links (absolute, normalised), each one checked whole against the
     item path pattern. A total that can't be read, or a link outside the pattern, is refused."""
     doc = parse_html(content)
@@ -155,26 +167,49 @@ def listing_page(entry: CatalogEntry, cfg: ListingConfig, content: bytes, url: s
     if len(totals) != 1:
         raise LayoutError(f"{entry.id}: the listing at {url} does not show its number of results")
     total = int(totals[0].group(1).replace(",", ""))
-    links = []
+    items: list[ListingItem] = []
     for a in select(doc, cfg.item_link_selector):
         try:
-            item = normalise(a.attrs.get("href", ""), url)
+            link = normalise(a.attrs.get("href", ""), url)
         except ScopeRefused as e:
             raise LayoutError(f"{entry.id}: the listing at {url} links an item it can't read ({e})") from e
-        if match_whole(cfg.item_path_pattern, unquote(urlsplit(item).path)) is None:
-            raise LayoutError(f"{entry.id}: the listing at {url} links {item}, which is not an item page")
-        if item not in links:
-            links.append(item)
-    return total, links
+        m = match_whole(cfg.item_path_pattern, unquote(urlsplit(link).path))
+        if m is None:
+            raise LayoutError(f"{entry.id}: the listing at {url} links {link}, which is not an item page")
+        year = int(m.group(cfg.item_year_group)) if cfg.item_year_group is not None else None
+        if link not in [i.url for i in items]:
+            items.append(ListingItem(link, a.text(), year))
+    return total, items
+
+
+def check_item(entry: CatalogEntry, cfg: ListingConfig, item: ListingItem, year: int,
+               records: list[dict[str, Any]]) -> None:  # fmt: skip
+    """Listing consistency: the item's year is the year asked for, and the listing's number for it is the number
+    its own page prints. Either disagreement is refused: the listing and its pages don't describe the same item."""
+    if item.year is not None and item.year != year:
+        raise LayoutError(
+            f"{entry.id}: the {year} listing links {item.url}, an item of {item.year}; the listing ignored its year"
+        )
+    rule = cfg.item_number
+    if rule is None:
+        return
+    listed = match_whole(rule.link_text_pattern, item.text.strip())
+    values = [r.get(rule.field) for r in records]
+    printed = [match_whole(rule.field_pattern, str(v).strip()) for v in values if v is not None]
+    page_numbers = {p.group(1) for p in printed if p is not None}
+    listed_number = listed.group(1) if listed is not None else None
+    if page_numbers != ({listed_number} if listed_number is not None else set()):
+        shown = ", ".join(sorted(page_numbers)) or "none"
+        raise LayoutError(
+            f"{entry.id}: the listing numbers {item.url} {listed_number or 'not at all'}, but the page itself "
+            f"prints {shown}; the listing and its pages disagree"
+        )
 
 
 def item_records(entry: CatalogEntry, cfg: ListingConfig, content: bytes, url: str) -> list[dict[str, Any]]:
-    """One item page's records: a ``parse`` extension's, or one record of the declared fields' text (a field the
-    page doesn't have is empty; one it has twice is refused)."""
-    parsers = resolved(entry.source.extensions, "parse")
-    if parsers:
-        ext, args = parsers[0]
-        return [dict(r) for r in ext.run(args, content, url)]
+    """One item page's record: the declared fields' text (a field the page doesn't have is empty; one it has
+    twice is refused), then each ``parse`` extension's fields, in the catalog's order. Each extension reads one
+    record from the page; a field two of them, or one and a selector, both read is refused."""
     doc = parse_html(content)
     rec: dict[str, Any] = {}
     for name, selector in cfg.fields.items():
@@ -182,4 +217,14 @@ def item_records(entry: CatalogEntry, cfg: ListingConfig, content: bytes, url: s
         if len(hits) > 1:
             raise LayoutError(f"{entry.id}: {url} has {len(hits)} elements for {name}, not one")
         rec[name] = hits[0].text() if hits else None
+    for ext, args in resolved(entry.source.extensions, "parse"):
+        got = [dict(r) for r in ext.run(args, content, url)]
+        if len(got) != 1:
+            raise LayoutError(f"{entry.id}: extension {ext.name} read {len(got)} records from {url}, not one")
+        twice = sorted(set(got[0]) & set(rec))
+        if twice:
+            raise LayoutError(
+                f"{entry.id}: extension {ext.name} reads {', '.join(twice)}, which is already read"
+            )
+        rec.update(got[0])
     return [rec]

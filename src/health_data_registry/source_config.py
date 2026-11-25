@@ -214,6 +214,23 @@ class ListingYears(Strict):
 _TEMPLATE_FIELDS: Final = frozenset({"host", "year", "page", "session"})
 
 
+class ItemNumber(Strict):
+    """The number the listing prints for an item must be the number its own page prints (listing consistency).
+
+    ``link_text_pattern`` matches the item link's text on the listing whole, and ``field_pattern`` the item record's
+    ``field`` whole; each has one group, the number. A number on one side only, or two different numbers, means
+    the listing and its item pages disagree, and the crawl is refused rather than pairing the wrong pages."""
+
+    link_text_pattern: str
+    field: str
+    field_pattern: str
+
+    @field_validator("link_text_pattern", "field_pattern")
+    @classmethod
+    def _pattern(cls, v: str) -> str:
+        return safe_pattern(v, groups=1)
+
+
 class ListingConfig(Strict):
     """A paginated search listing, then one page per item, read by declared selectors (html_table, listing)."""
 
@@ -230,6 +247,10 @@ class ListingConfig(Strict):
     results_count_selector: str
     results_count_pattern: str  # one group: the listing's own total, digits with optional thousands commas
     fields: dict[str, str]  # field name -> selector on the item page; each value is the element's text
+    # Listing consistency: the group of item_path_pattern that holds the item's year, which must be the year the
+    # listing was asked for (1-based; unset: not checked), and the item number the listing and the page share.
+    item_year_group: int | None = Field(default=None, ge=1, le=9)
+    item_number: ItemNumber | None = None
 
     @field_validator("url_template")
     @classmethod
@@ -270,6 +291,15 @@ class ListingConfig(Strict):
     @classmethod
     def _selectors(cls, v: str) -> str:
         return check_selector(v)
+
+    @model_validator(mode="after")
+    def _year_group(self) -> ListingConfig:
+        groups = compile_pattern(self.item_path_pattern).groups
+        if self.item_year_group is not None and self.item_year_group > groups:
+            raise ValueError(
+                f"item_year_group {self.item_year_group} names a group item_path_pattern doesn't have"
+            )
+        return self
 
     @model_validator(mode="after")
     def _sessions(self) -> ListingConfig:
