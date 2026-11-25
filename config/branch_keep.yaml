@@ -1,0 +1,15 @@
+# Branch hygiene (.github/workflows/branch-hygiene.yml, scripts/branch_hygiene.py). Reviewed in pull requests:
+# a change here changes which branches the daily run may delete. See docs/dev/branch-hygiene.md.
+#
+# keep:  branches the run never touches, whatever their age. `name` is an exact branch name or a glob
+#        (fnmatch: `*` matches across `/` too). Every entry gives its reason.
+# purge: branches deleted WITHOUT an archive tag, because their content must not stay in the repo. Each one is
+#        still skipped while it is the default branch, is protected, has an open pull request or is kept.
+#
+# Never touched, and not listed here: the default branch, protected branches, branches with an open pull
+# request (as head or base) and dependabot/*.
+keep: []
+
+purge:
+  - name: claude/mi-sitemap-seeds
+    reason: contains sitemap data that must not stay in the repo (issue #67)

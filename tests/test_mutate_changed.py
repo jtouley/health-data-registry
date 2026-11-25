@@ -63,11 +63,19 @@ def test_list_json_of_nothing_is_an_empty_array(mc: ModuleType) -> None:
         "health_data_registry",
         "health_data_registry..tools",
         "health_data_registry.tools ",
+        "scripts.mutate_changed",
+        "scripts.branch_hygiene.x",
     ],
 )
 def test_a_name_that_is_not_a_plain_module_is_refused(mc: ModuleType, name: str) -> None:
     with pytest.raises(ValueError, match="not a plain module name"):
         mc.list_json([name])
+
+
+def test_the_branch_hygiene_script_is_mutated(mc: ModuleType) -> None:
+    assert mc._module("scripts/branch_hygiene.py") == "scripts.branch_hygiene"
+    assert mc.list_json(["scripts.branch_hygiene"]) == '["scripts.branch_hygiene"]'
+    assert "scripts/branch_hygiene.py" in mc.PACKAGE_DIRS
 
 
 def test_list_all_prints_every_module_as_json(mc: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:

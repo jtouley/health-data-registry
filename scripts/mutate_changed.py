@@ -6,7 +6,7 @@ Usage:
   python scripts/mutate_changed.py --module M --report out.json                # CI: one shard
   python scripts/mutate_changed.py --aggregate DIR --expect '["m", ...]'       # CI: floor on the total
 
-Finds the Python modules under src/ and eval/ changed since --base (merge-base), runs mutmut on just those modules,
+Finds the Python modules under src/ and eval/ (and the scripts in MUTATED_SCRIPTS) changed since --base (merge-base), runs mutmut on just those modules,
 prints each mutant it did not kill, and fails when the share of killed mutants among all of them is below
 --floor. Every status but `killed` and `caught by type check` counts against the score: `no tests`, `skipped`
 and `timeout` are mutants nothing noticed.
@@ -35,13 +35,15 @@ PKG = ROOT / "src" / "health_data_registry"
 # Mutated packages: the server, and the eval scorer that decides release gates. Keep in step with
 # [tool.mutmut] source_paths in pyproject.toml.
 PACKAGES = (PKG, ROOT / "eval")
-PACKAGE_DIRS = ("src/health_data_registry", "eval")
+# Scripts that decide something on their own (which branches get deleted) are mutated too, one file each.
+MUTATED_SCRIPTS = ("scripts/branch_hygiene.py",)
+PACKAGE_DIRS = ("src/health_data_registry", "eval", *MUTATED_SCRIPTS)
 # Module names reach CI job names, artifact names and the mutmut command line: allow nothing else.
 # mutmut statuses (mutmut/stats.py). Killed ones raise the score; every other status lowers it.
 KILLED_STATUSES = frozenset({"killed", "caught by type check"})
 # A run that leaves any of these did not finish checking its mutants: the shard fails, whatever its score.
 INCOMPLETE_STATUSES = frozenset({"not checked", "check was interrupted by user", "segfault"})
-MODULE_NAME = re.compile(r"^(?:health_data_registry|eval)(\.[a-z_][a-z0-9_]*)+$")
+MODULE_NAME = re.compile(r"^(?:(?:health_data_registry|eval)(\.[a-z_][a-z0-9_]*)+|scripts\.branch_hygiene)$")
 
 
 @dataclass
@@ -249,6 +251,7 @@ def main(argv: list[str] | None = None) -> int:
 
     mods = select_modules(
         [_module(str(p.relative_to(ROOT))) for pkg in PACKAGES for p in pkg.rglob("*.py")]
+        + [_module(s) for s in MUTATED_SCRIPTS]
         if a.all
         else changed_modules(a.base)
     )

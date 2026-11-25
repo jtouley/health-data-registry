@@ -12,13 +12,14 @@ our own.
 | [`sitemaps.yml`](../../.github/workflows/sitemaps.yml) | Takes a weekly copy of the michigan.gov and kentcountymi.gov seed sitemaps, with the week's diff | Monday 04:43 | Private dataset `jtouley/health-data-registry-ops-sitemaps`; an issue when refused |
 | [`deploy-space.yml`](../../.github/workflows/deploy-space.yml) | Syncs `space/` to the Space that hosts the MCP server | Only on a release tag `vX.Y.Z` on main that passed CI | Space `jtouley/health-data-registry-mcp` |
 | [`drift-check.yml`](../../.github/workflows/drift-check.yml) | `check-contracts` against every publisher, opening or updating an issue on failure; re-enables the scheduled workflows | Friday 05:37 | Issues; workflow enabled state |
+| [`branch-hygiene.yml`](../../.github/workflows/branch-hygiene.yml) | Archive-tags, verifies, then deletes branches inactive for 7 days and `wip/*` backups of merged PRs; purges the `purge` list; tags each merged PR's branch ([branch-hygiene.md](branch-hygiene.md)) | 03:41 daily; on PR merge | Tags `archive/<branch>/<date>`; branch deletes; the tracking issue |
 
 CI, CodeQL, Scorecard, release and npm-publish are unchanged and described in their own files.
 
-Every action is pinned to a full commit SHA. Every workflow's top-level token is `contents: read`; `issues:
+Every action is pinned to a full commit SHA. Every workflow's top-level token is `contents: read` (none at all in `branch-hygiene.yml`); `issues:
 write` is granted only to the jobs that open an issue, `actions: write` only to the keep-alive job and
 `actions: read` only to the deploy's verify job. Every checkout drops its credentials, and no workflow pushes to
-git. Each source has its own concurrency group, and no group cancels a running job. `HF_TOKEN` is set only on
+git; only `branch-hygiene.yml` writes refs, through the API (`contents: write` on its `sweep` and `tag-merged` jobs). Each source has its own concurrency group, and no group cancels a running job. `HF_TOKEN` is set only on
 the steps that talk to Hugging Face, never job-wide, so dependency installs, the browser and the crawlers'
 parsers never see it. Before every upload to a private or ops dataset, `python -m health_data_registry.naming
 assert-private <repo>` checks that the repo is a private or ops dataset of `HDR_PRIVATE_HF_OWNER`, creates it
@@ -244,6 +245,7 @@ gh workflow run crawl-doi.yml                                # every conference
 gh workflow run sitemaps.yml                                 # this week's sitemap snapshots
 gh workflow run deploy-space.yml --ref v0.1.0                # redeploy a release tag; any other ref is refused
 gh workflow run drift-check.yml
+gh workflow run branch-hygiene.yml -f dry_run=true          # preview the branch sweep, change nothing
 gh run watch                                                 # follow the run you started
 ```
 

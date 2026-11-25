@@ -78,7 +78,8 @@ reading the pinned release, or attaching the downloaded file by hand.
 
 The scheduled refresh, crawls, sitemap snapshots, publishing and Space deploy run on GitHub Actions;
 [automation.md](automation.md) lists each workflow, its schedule and limits, and the secrets and variables it
-needs. Every Hugging Face repository is named by one convention, built in `naming.py`: see [naming.md](naming.md).
+needs. Branches are archived and pruned daily by `branch-hygiene.yml`;
+[branch-hygiene.md](branch-hygiene.md) explains it and how to restore a branch. Every Hugging Face repository is named by one convention, built in `naming.py`: see [naming.md](naming.md).
 
 To run the server in Claude Code from a checkout:
 
