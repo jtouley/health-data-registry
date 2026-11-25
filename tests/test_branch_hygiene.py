@@ -522,6 +522,12 @@ def test_a_pull_request_opened_after_the_plan_keeps_the_branch(gh: FakeGitHub) -
     assert outcome(outcomes, "pre-pr/feat-done").detail == "its pull request is open again"
     assert outcome(outcomes, "ci/fast-ci-probe-base").action == "archived"
     assert {"feat/stale", "wip/feat-merged", "pre-pr/feat-done"} <= set(gh.branches)
+    gh.open_pulls = [("feat/mid", "main")]
+    assert bh.open_pull(gh, REPO, "feat/mid") == "an open pull request uses it now"
+    assert bh.open_pull(gh, REPO, "pre-pr/feat/mid") == "its pull request is open again"
+    assert bh.open_pull(gh, REPO, "main") == "it is now the base of an open pull request"
+    assert bh.open_pull(gh, REPO, "feat/other") is None
+    assert bh.open_pull(gh, REPO, "pre-pr/feat/other") is None
     gh.fail[("GET", f"/repos/{REPO}/pulls")] = 500
     d = bh.Decision("feat/mid", sha(4), "archive", "r")
     assert bh.check_deletable(gh, REPO, d.branch, d.sha).startswith("could not read its open pull requests")
@@ -664,6 +670,77 @@ def test_paging_reads_every_branch() -> None:
     g.branch("main", 1, OLD)
     assert len(bh.get_all(g, f"/repos/{REPO}/branches")) == 251
     assert len(bh.get_all(g, f"/repos/{REPO}/pulls?state=open")) == 0
+
+
+def test_paging_stops_after_max_pages(monkeypatch: pytest.MonkeyPatch) -> None:
+    g = FakeGitHub()
+    for i in range(250):
+        g.branch(f"b/{i:03d}", 100 + i, FRESH)
+    monkeypatch.setattr(bh, "MAX_PAGES", 2)
+    with pytest.raises(bh.ApiError, match="more than 2 pages"):
+        bh.get_all(g, f"/repos/{REPO}/branches")
+    monkeypatch.setattr(bh, "MAX_PAGES", 3)
+    assert len(bh.get_all(g, f"/repos/{REPO}/branches")) == 250
+
+
+def test_apply_records_every_outcome_in_order_and_logs_each(
+    gh: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bh, "MAX_DELETES", 3)
+    decisions = [
+        bh.Decision("feat/stale", sha(3), "archive", "old"),
+        bh.Decision("feat/mid", sha(4), "keep", "active"),
+        bh.Decision("wip/feat-merged", sha(10), "archive", "merged"),
+        bh.Decision("x/held", sha(5), "hold", "fork base"),
+        bh.Decision("claude/mi-sitemap-seeds", sha(9), "purge", "purge list: sitemap data"),
+        bh.Decision("pre-pr/feat-done", sha(13), "archive", "done"),
+        bh.Decision("ci/fast-ci-probe-base", sha(15), "archive", "probe"),
+    ]
+    out: list[bh.Outcome] = []
+    logged: list[bh.Outcome] = []
+    paused: list[float] = []
+    got = bh.apply(gh, REPO, decisions, DAY, False, out=out, log=logged.append, pause=paused.append)
+    assert got is out and logged == out
+    assert out == [
+        bh.Outcome("x/held", "failed", "fork base"),
+        bh.Outcome("claude/mi-sitemap-seeds", "purged", "purge list: sitemap data"),
+        bh.Outcome("feat/stale", "archived", "old", "archive/feat/stale/2026-11-25"),
+        bh.Outcome("wip/feat-merged", "archived", "merged", "archive/wip/feat-merged/2026-11-25"),
+        bh.Outcome("pre-pr/feat-done", "deferred", "left for the next run (at most 3 a run): done"),
+        bh.Outcome("ci/fast-ci-probe-base", "deferred", "left for the next run (at most 3 a run): probe"),
+    ]
+    assert paused == [bh.PAUSE, bh.PAUSE]
+    assert gh.deleted() == ["claude/mi-sitemap-seeds", "feat/stale", "wip/feat-merged"]
+    preview = bh.apply(gh, REPO, decisions[:5], DAY, True)
+    assert preview == [
+        bh.Outcome("x/held", "failed", "fork base"),
+        bh.Outcome("claude/mi-sitemap-seeds", "would-purge", "purge list: sitemap data"),
+        bh.Outcome("feat/stale", "would-archive", "old", "archive/feat/stale/2026-11-25"),
+        bh.Outcome("wip/feat-merged", "would-archive", "merged", "archive/wip/feat-merged/2026-11-25"),
+    ]
+
+
+def test_a_fork_base_holds_with_the_commit_details(gh: FakeGitHub) -> None:
+    gh.open_pulls += [("x", "feat/stale", "eve/registry"), ("y", "feat/mid", "eve/registry")]
+    decisions = {d.branch: d for d in bh.plan(gh, REPO, CFG, NOW)}
+    assert decisions["feat/stale"] == bh.Decision(
+        "feat/stale",
+        sha(3),
+        "hold",
+        "base of open pull request #102 from a fork; a maintainer decides (no push or commit since 2026-11-01)",
+        "2026-11-01",
+        "A. Researcher",
+        "subject line",
+    )
+    assert decisions["feat/mid"].action == "keep"  # held only when it would otherwise be deleted
+
+
+def test_log_outcome_prints_one_line_and_a_warning_for_a_failure(capsys: Any) -> None:
+    bh.log_outcome(bh.Outcome("a/b", "archived", "old"))
+    bh.log_outcome(bh.Outcome("c`d", "failed", "x@y"))
+    assert capsys.readouterr().out == (
+        "archived: a/b: old\nfailed: c?d: x y\n::warning::c?d was not deleted: x y\n"
+    )
 
 
 def test_closed_pr_needs_every_pull_request_closed() -> None:

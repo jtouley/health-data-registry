@@ -145,17 +145,20 @@ def q(name: str) -> str:
     return urllib.parse.quote(name, safe="/")
 
 
+MAX_PAGES = 50  # 5,000 items: far more branches or pull requests than this repository has
+
+
 def get_all(api: Api, path: str) -> list[Any]:
-    """Every item of a paged list endpoint, 100 per page."""
+    """Every item of a paged list endpoint, 100 per page. A list longer than MAX_PAGES pages is an error, so a
+    misbehaving API can't keep a run paging forever."""
     items: list[Any] = []
     sep = "&" if "?" in path else "?"
-    page = 1
-    while True:
+    for page in range(1, MAX_PAGES + 1):
         batch = api.request("GET", f"{path}{sep}per_page=100&page={page}")
         items.extend(batch)
         if len(batch) < 100:
             return items
-        page += 1
+    raise ApiError(0, f"GET {path}: more than {MAX_PAGES} pages")
 
 
 def safe_name(name: str) -> bool:
