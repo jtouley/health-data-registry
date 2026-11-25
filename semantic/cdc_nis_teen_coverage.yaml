@@ -1,13 +1,13 @@
 dataset: cdc_nis_teen_coverage
 version: 0.1.0
 # Every metric reads one published survey estimate (aggregation none): nothing is added up.
-# Survey years are separate periods (non_additive: false); each other dimension says why it can't be added.
+# The pooled 2018-2022 estimates overlap the single survey years, so the period is non-additive too.
 dimensions:
   - {name: vaccine, column: vaccine, type: categorical, non_additive: true, non_additive_reason: "each is a different vaccine, and coverage percentages are never added", description: "The vaccine, as CDC names it; some names carry the dose (e.g. '≥1 Dose MenACWY')."}
   - {name: dose, column: dose, type: categorical, non_additive: true, non_additive_reason: "dose levels overlap (teens with 3 doses also have 1), and up to date is a different measure", description: "Dose or definition counted, e.g. '≥1 Dose Tdap' or 'Up-to-Date, Males and Females'; empty when the vaccine name carries it."}
   - {name: place_type, column: geography_type, type: categorical, non_additive: true, non_additive_reason: "national and regional estimates include the states", description: "HHS Regions/National or States/Local Areas."}
   - {name: place, column: geography, type: categorical, non_additive: true, non_additive_reason: "the United States and HHS regions include the states, and cities and counties sit inside their states", description: "United States, HHS region, state, territory or selected local area (e.g. IL-City of Chicago)."}
-  - {name: survey_year, column: year_season, type: time, non_additive: false, description: "Survey year, or pooled survey years such as 2018-2022."}
+  - {name: survey_year, column: year_season, type: time, non_additive: true, non_additive_reason: "the pooled five-year estimates (2018-2022) include the single survey years beside them", description: "Survey year, or pooled survey years such as 2018-2022."}
   - {name: group_type, column: dimension_type, type: categorical, non_additive: true, non_additive_reason: "each kind of group splits the same teens a different way", description: "What the population group is defined by: age, overall, insurance, poverty, race and ethnicity, or urbanicity."}
   - {name: group, column: dimension, type: categorical, non_additive: true, non_additive_reason: "groups overlap, e.g. 13-17 years contains 13-15 years, and percentages are never added", description: "The population group, e.g. 13-17 Years (all teens surveyed), 13-15 Years, Any Medicaid."}
 measures:
@@ -51,6 +51,13 @@ series:
     metric: vaccination_coverage
     measure: percent
     filters: {vaccine: "Tetanus", dose: "≥1 Dose Tdap", group_type: "Age", group: "13-17 Years"}
+    location_dimension: place
+    time_dimension: survey_year
+  - condition: "Varicella"
+    label: "Varicella, two doses or history of disease, teens 13-17"
+    metric: vaccination_coverage
+    measure: percent
+    filters: {vaccine: "Varicella", dose: "≥2 Doses or history of disease", group_type: "Age", group: "13-17 Years"}
     location_dimension: place
     time_dimension: survey_year
   - condition: "≥2 Doses MMR"

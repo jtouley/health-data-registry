@@ -32,7 +32,7 @@ schema:
     customProperties:
       - property: totalRows
         value: none
-        description: "Nothing in this table is ever added up: every metric reads one published estimate (aggregation none), so no row is excluded as a total. Which population-group row is the overall estimate is an open question (overall_row), and the United States and HHS-region rows sit beside the states they include."
+        description: "Nothing in this table is ever added up: every metric reads one published estimate (aggregation none), so no row is excluded as a total. Which population-group row is the overall estimate is an open question ('Overall row'), and the United States and HHS-region rows sit beside the states they include."
       - {property: tableShape, value: estimate_table}
       - property: idDimensions
         value:
