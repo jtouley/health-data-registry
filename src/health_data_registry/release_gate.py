@@ -11,7 +11,15 @@ for each node's resource type, severity and dimension) and sorts every result in
     warning         a warn-severity test failed: served, and the warning travels with the answers
     incomplete      the run record has no results, or no test or unit test ran: nothing was judged
 
-The gate fails closed: any result type it does not know, with any status but success, holds the build too.
+The gate fails closed. Any result type it does not know, with any status but success, holds the build. So does a
+run record and manifest from different dbt runs (their invocation_id must match), and so does a missing model or
+test: the expected set comes from the contracts (expected_from: every staging, intermediate and model-contract
+model, and one named test per contract quality rule), and each expected test must pass, or warn when its rule is
+warn-severity. A missing or unreadable artifact holds it too.
+
+The build id is a content hash of the build's inputs (build_inputs: each stored dataset's sorted raw sha256s,
+each contract's version and file hash, the dbt vars and the code commit), never of a snapshot id, dbt's run id,
+its thread count or the clock, so the same inputs always give the same id.
 
 Two steps, so "served" is only ever recorded for a release that was uploaded:
 
@@ -53,6 +61,71 @@ class GateInputMissing(FileNotFoundError):
 
 class GateStateUnreadable(ValueError):
     """An ops file (SERVING or a log) can't be read; the gate holds rather than guess what is served."""
+
+
+@dataclass(frozen=True)
+class Expected:
+    """What a complete build has: model names, and test name -> the severity its contract rule declares."""
+
+    models: frozenset[str]
+    tests: Mapping[str, str]
+
+
+def expected_from(registry: Any) -> Expected:
+    """The models and named tests the contracts say a build must have (transform_gen names them)."""
+    from health_data_registry.quality import rules_for
+    from health_data_registry.transform_gen import generate, model_contracts, stored
+
+    models = {p.stem for p in generate(registry) if p.suffix == ".sql"}
+    models |= {c.id for _path, c in model_contracts(registry.root)}
+    tests = {f"{ds.id}_{r.id}": r.severity for ds in stored(registry) for r in rules_for(ds.contract)}
+    return Expected(frozenset(models), tests)
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+DBT_PROJECT = Path("transform/dbt_project.yml")
+
+
+def build_inputs(registry: Any, lake: Path, commit: str) -> dict[str, Any]:
+    """Everything a build is made from, and nothing about how it ran, for its content-hash id: the code commit;
+    for each stored dataset the sorted sha256s of the raw bytes its LATEST snapshot was made from (an empty list
+    when the lake has none) and its contract's version and file hash; each model contract's file hash; and the dbt
+    project's vars. Not the snapshot id or retrieval time: fetching identical bytes again gives the same id (the
+    snapshot id stays in each row and manifest as provenance). Not dbt's run id, thread count or the clock.
+    Raises GateInputMissing when a snapshot, contract or the dbt project can't be read."""
+    import yaml
+
+    from health_data_registry.store import latest_snapshot
+    from health_data_registry.transform_gen import model_contracts, stored
+
+    datasets: dict[str, Any] = {}
+    try:
+        for ds in stored(registry):
+            found = latest_snapshot(lake, ds.id)
+            datasets[ds.id] = {
+                "raw_sha256": sorted(found[1].raw_sha256) if found else [],
+                "contract_version": ds.contract.version,
+                "contract_sha256": _sha256(registry.root / ds.entry.contract),
+            }
+        models = {c.id: _sha256(registry.root / p) for p, c in model_contracts(registry.root)}
+        project = registry.root / DBT_PROJECT
+        dbt_vars = (
+            (yaml.safe_load(project.read_text(encoding="utf-8")) or {}).get("vars") or {}
+            if project.is_file()
+            else {}
+        )
+    except (OSError, ValueError, yaml.YAMLError) as e:
+        raise GateInputMissing(f"the build's inputs could not be read ({e}); the release is held") from e
+    return {"commit": commit, "datasets": datasets, "model_contracts": models, "dbt_vars": dbt_vars}
+
+
+def build_id_of(inputs: Mapping[str, Any]) -> str:
+    """The same inputs always give the same id."""
+    canonical = json.dumps(inputs, sort_keys=True, separators=(",", ":"))
+    return "build-" + hashlib.sha256(canonical.encode()).hexdigest()[:12]
 
 
 @dataclass(frozen=True)
@@ -109,8 +182,15 @@ def _kind(uid: str, node: Mapping[str, Any]) -> str:
     return str(node.get("resource_type") or uid.split(".", 1)[0])
 
 
-def read_build(target: Path) -> Build:
-    """Sort one dbt build (target/run_results.json and target/manifest.json) into the gate's outcomes."""
+def read_build(
+    target: Path, *, expected: Expected | None = None, inputs: Mapping[str, Any] | None = None
+) -> Build:
+    """Sort one dbt build (target/run_results.json and target/manifest.json) into the gate's outcomes.
+
+    With `expected`, every expected model must have built and every expected test must have passed (or warned,
+    for a warn-severity rule). With `inputs`, the build id is their content hash (build_id_of); without, it is a
+    hash of the run record (tests only).
+    """
     results = _read(target / "run_results.json")
     manifest = _read(target / "manifest.json")
     nodes: dict[str, Any] = {**(manifest.get("nodes") or {}), **(manifest.get("unit_tests") or {})}
@@ -169,10 +249,21 @@ def read_build(target: Path) -> Build:
     elif not (passed or warnings or failures or rule_errors or any(s["type"] in TEST_TYPES for s in skipped)):
         incomplete.append("no test ran")
     invocation = str(meta.get("invocation_id") or "")
+    built_by = str((manifest.get("metadata") or {}).get("invocation_id") or "")
+    if not invocation or invocation != built_by:
+        incomplete.append(
+            "dbt's run record and its manifest come from different runs (or name none), so they don't describe "
+            "one build"
+        )
+    if expected is not None:
+        _check_expected(expected, rows, nodes, model_errors, rule_errors, failures)
     generated = str(meta.get("generated_at") or "")
-    digest = hashlib.sha256(f"{invocation}|{generated}".encode()).hexdigest()[:12]
+    if inputs is not None:
+        build_id = build_id_of(inputs)
+    else:
+        build_id = "build-" + hashlib.sha256(f"{invocation}|{generated}".encode()).hexdigest()[:12]
     return Build(
-        build_id=f"build-{digest}",
+        build_id=build_id,
         generated_at=generated,
         dbt_version=str(meta.get("dbt_version") or ""),
         invocation_id=invocation,
@@ -185,6 +276,36 @@ def read_build(target: Path) -> Build:
         incomplete=incomplete,
         tests_passed=passed,
     )
+
+
+def _check_expected(
+    expected: Expected,
+    rows: list[Any],
+    nodes: Mapping[str, Any],
+    model_errors: list[dict[str, str]],
+    rule_errors: list[dict[str, str]],
+    failures: list[dict[str, Any]],
+) -> None:
+    """Every model and test the contracts expect must be in the run record with an acceptable status."""
+    status: dict[str, str] = {}
+    for r in rows:
+        uid = str(r.get("unique_id", ""))
+        status[str((nodes.get(uid) or {}).get("name") or uid.split(".")[-1])] = str(r.get("status", ""))
+    for name in sorted(expected.models):
+        if name not in status:
+            model_errors.append(
+                {"model": name, "type": "model", "error": "expected by the contracts, not built"}
+            )
+    for name, severity in sorted(expected.tests.items()):
+        got = status.get(name)
+        if got is None:
+            rule_errors.append(
+                {"test": name, "type": "test", "error": "expected by the contracts, did not run"}
+            )
+        elif got == "warn" and severity != "warn":  # the run downgraded an error-severity rule
+            failures.append(
+                {"test": name, "type": "test", "severity": severity, "dimension": None, "failures": None}
+            )
 
 
 def _append(path: Path, row: Mapping[str, Any]) -> None:
@@ -226,9 +347,12 @@ def _now(now: datetime | None) -> str:
     return (now or datetime.now(UTC)).astimezone(UTC).isoformat()
 
 
-def decide(ops: Path, build: Build, *, now: datetime | None = None) -> dict[str, Any]:
+def decide(
+    ops: Path, build: Build, *, now: datetime | None = None, run_date: str | None = None
+) -> dict[str, Any]:
     """Record the build and its verdict (pass or hold); returns the serving-log row written. SERVING is untouched:
-    a passed build is served only once its upload is confirmed (confirm)."""
+    a passed build is served only once its upload is confirmed (confirm). A pass records the dbt run it judged
+    and the run date its release must carry, so confirm promotes exactly that build and release."""
     at = _now(now)
     previous = serving(ops)
     read_log(ops, BUILDS)  # an unreadable log holds the release before anything is appended to it
@@ -237,7 +361,8 @@ def decide(ops: Path, build: Build, *, now: datetime | None = None) -> dict[str,
     kept = previous["release_ref"] if previous else None
     if build.servable:
         row = {"at": at, "action": "pass", "build_id": build.build_id, "serving": kept,
-               "warnings": len(build.warnings)}  # fmt: skip
+               "warnings": len(build.warnings), "invocation_id": build.invocation_id,
+               "run_date": run_date}  # fmt: skip
     else:
         row = {"at": at, "action": "hold", "build_id": build.build_id, "kept": kept, "reason": build.reason()}
     _append(ops / SERVING_LOG, row)
@@ -261,6 +386,17 @@ def confirm(ops: Path, build: Build, release_ref: str, *, now: datetime | None =
     ]
     if not passed:
         raise ValueError(f"build {build.build_id} has no recorded pass; run the gate check first")
+    last = passed[-1]
+    if last.get("invocation_id") != build.invocation_id:
+        raise ValueError(
+            f"build {build.build_id} passed in dbt run {last.get('invocation_id')}, but this run record is from "
+            f"{build.invocation_id}; only the run that was judged can be served"
+        )
+    run_date = last.get("run_date")
+    if run_date and not release_ref.startswith(f"release-{run_date}"):
+        raise ValueError(
+            f"{release_ref} is not a release of run date {run_date}, the run build {build.build_id} passed for"
+        )
     at = _now(now)
     previous = serving(ops)
     row = {"at": at, "action": "serve", "release_ref": release_ref, "build_id": build.build_id,
@@ -289,15 +425,22 @@ def _hold(ops: Path, reason: str) -> None:
     )
 
 
-def run(target: Path, ops: Path) -> tuple[bool, str]:
+def run(
+    target: Path,
+    ops: Path,
+    *,
+    expected: Expected | None = None,
+    inputs: Mapping[str, Any] | None = None,
+    run_date: str | None = None,
+) -> tuple[bool, str]:
     """The CLI's check: (passed, plain-words message). Anything unreadable holds the release."""
     try:
-        build = read_build(target)
+        build = read_build(target, expected=expected, inputs=inputs)
     except GateInputMissing as e:
         _hold(ops, str(e))
         return False, str(e)
     try:
-        row = decide(ops, build)
+        row = decide(ops, build, run_date=run_date)
     except GateStateUnreadable as e:
         return False, f"The release is held: {e}. Restore the file from the ops dataset, then run again."
     if row["action"] == "pass":
@@ -310,10 +453,18 @@ def run(target: Path, ops: Path) -> tuple[bool, str]:
     return False, f"Build {build.build_id} is held: {row['reason']}. Still serving {kept}."
 
 
-def run_confirm(target: Path, ops: Path, release_ref: str) -> tuple[bool, str]:
+def run_confirm(
+    target: Path,
+    ops: Path,
+    release_ref: str,
+    *,
+    expected: Expected | None = None,
+    inputs: Mapping[str, Any] | None = None,
+) -> tuple[bool, str]:
     """The CLI's confirm, after the upload: (recorded, plain-words message)."""
     try:
-        build = read_build(target)
+        build = read_build(target, expected=expected, inputs=inputs)
+
         row = confirm(ops, build, release_ref)
     except (GateInputMissing, GateStateUnreadable, ValueError) as e:
         return False, f"{release_ref} was not recorded as served: {e}."
