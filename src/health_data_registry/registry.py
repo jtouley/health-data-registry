@@ -396,6 +396,10 @@ class Column:
     # load (e.g. a field the publisher leaves empty in every row). Every other declared field must appear, and
     # it gets no fill-rate check (quality.fill_rate_rules).
     may_be_empty: bool = False
+    # customProperties.splitPart: the column is one part of a publisher field that packs several values into one
+    # text, e.g. NIS's 95% CI "60.3 to 68.3": (separator, part, parts). A structural fact read from the published
+    # text, never a computed value: a non-empty field that doesn't split into exactly `parts` parts stops the load.
+    split_part: tuple[str, int, int] | None = None
 
     def partial_note(self, label: str) -> str | None:
         """The contract's note when this place label covers only part of the place it is named after."""
@@ -595,6 +599,28 @@ def _pairs(value: Any, where: str) -> tuple[tuple[str, str], ...]:
     return tuple((str(k), str(v)) for k, v in value.items())
 
 
+def _split_part(value: Any, where: str, *, flag: bool) -> tuple[str, int, int] | None:
+    """customProperties.splitPart as (separator, part, parts), or None when the column reads its field whole."""
+    if value is None:
+        return None
+    if flag:
+        # Hard rule 4: a flag column keeps the publisher's code exactly as published.
+        raise RegistryError(f"{where}: a flag column keeps its codes whole; it can't have splitPart")
+    if not isinstance(value, Mapping) or set(value) != {"separator", "part", "parts"}:
+        raise RegistryError(f"{where}: splitPart must be {{separator, part, parts}}")
+    sep, part, parts = value["separator"], value["part"], value["parts"]
+    if not isinstance(sep, str) or not sep.strip() or _UNSAFE_FIELD.search(sep):
+        raise RegistryError(
+            f"{where}: splitPart separator must be visible text with no brace, quote, backslash or control "
+            "character"
+        )
+    if not all(isinstance(n, int) and not isinstance(n, bool) for n in (part, parts)):
+        raise RegistryError(f"{where}: splitPart part and parts must be whole numbers")
+    if parts < 2 or not 1 <= part <= parts:
+        raise RegistryError(f"{where}: splitPart needs parts of at least 2 and a part from 1 to parts")
+    return (sep, part, parts)
+
+
 def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
     if doc.get("kind") != "DataContract":
         raise RegistryError(f"{expected_id}: contract kind must be DataContract")
@@ -661,6 +687,7 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
         if not isinstance(may_be_empty, bool):
             raise RegistryError(f"{expected_id}.{name}: mayBeEmpty must be true or false")
         pairs = {k: _pairs(cp.get(k), f"{expected_id}.{name}.{k}") for k in _PAIR_PROPS}
+        split = _split_part(cp.get("splitPart"), f"{expected_id}.{name}", flag=cp.get("flagFor") is not None)
         zero = cp.get("noCasesCode")
         if zero is not None and (cp.get("flagFor") is None or str(zero) not in dict(pairs["flagCodes"])):
             raise RegistryError(
@@ -684,6 +711,7 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
                 renamed_labels=pairs["renamedLabels"],
                 no_cases_code=None if zero is None else str(zero),
                 may_be_empty=may_be_empty,
+                split_part=split,
             )
         )
     if not cols:
@@ -701,7 +729,7 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
         columns=tuple(cols),
         total_rows=None if total_s.lower() == "none" else total_s,
         table_shape=str(obj_custom.get("tableShape", "")),
-        open_questions=tuple(str(q) for q in oq),
+        open_questions=_open_questions(oq, expected_id, frozenset(names)),
         raw=doc,
         unreliable=_unreliable(top_custom.get("unreliableRule"), expected_id),
         geography_basis=_text(top_custom.get("geographyBasis")),
@@ -714,6 +742,48 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
             frozenset(c.name for c in cols if c.required),
         ),
     )
+
+
+OPEN_QUESTION_KEYS = frozenset({"id", "question", "columns", "answeredBy"})
+ANSWERED_BY = ("publisher_codebook", "maintainer_review")
+
+
+def _open_questions(value: Any, where: str, columns: frozenset[str]) -> tuple[str, ...]:
+    """customProperties.openQuestions as the plain-words questions every answer shows.
+
+    An entry is a question in plain words, or a structured one: {id, question, columns, answeredBy}. `columns`
+    names the contract columns whose reading waits on the answer; `answeredBy` says who can settle it, the
+    publisher's codebook or a maintainer's reviewed declaration (hard rule 1). Only the question is shown.
+    """
+    if not isinstance(value, list):
+        raise RegistryError(f"{where}: openQuestions must be a list")
+    out: list[str] = []
+    ids: set[str] = set()
+    for q in value:
+        if not isinstance(q, Mapping):
+            out.append(str(q))
+            continue
+        qid, text = str(q.get("id") or ""), str(q.get("question") or "").strip()
+        if set(q) - OPEN_QUESTION_KEYS or not _ID.fullmatch(qid) or not text:
+            raise RegistryError(
+                f"{where}: a structured open question needs an id (snake_case) and a question, and may name "
+                "columns and answeredBy, nothing else"
+            )
+        if qid in ids:
+            raise RegistryError(f"{where}: open question id {qid} is used twice")
+        ids.add(qid)
+        cols = q.get("columns") or []
+        if not isinstance(cols, list) or (unknown := sorted({str(c) for c in cols} - columns)):
+            raise RegistryError(
+                f"{where}: open question {qid} needs columns as a list of the contract's columns"
+                + (f"; it doesn't have {', '.join(unknown)}" if isinstance(cols, list) else "")
+            )
+        if q.get("answeredBy") is not None and q.get("answeredBy") not in ANSWERED_BY:
+            raise RegistryError(
+                f"{where}: open question {qid} answeredBy must be one of {', '.join(ANSWERED_BY)}"
+            )
+        out.append(text)
+    return tuple(out)
 
 
 def _quality(doc: Mapping[str, Any], where: str) -> tuple[Any, ...]:

@@ -196,6 +196,9 @@ def _columns(contract: Contract, model: str) -> list[dict[str, Any]]:
                 "missing_codes": list(c.missing_codes),
             },
         }
+        if column.split_part:
+            sep, part, parts = column.split_part
+            col["meta"]["split_part"] = {"separator": sep, "part": part, "parts": parts}
         tests: list[dict[str, Any]] = []
         if column.required:
             col["constraints"] = [{"type": "not_null"}]
