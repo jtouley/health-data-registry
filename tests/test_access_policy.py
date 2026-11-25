@@ -266,6 +266,35 @@ def test_a_manifest_from_a_tableau_source_cites_the_view(
     assert fetch_live(reg.get("toy_dash"), get).manifest.source_urls == [VIEW]
 
 
+def test_a_dashboard_read_is_kept_in_memory_for_a_stated_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from health_data_registry import adapters, live
+
+    reg = write_registry(tmp_path / "reg")
+    data = result(f"https://{GOV}/vizql/bootstrapSession/sessions/1", b"2;{}")
+    get = crawl.fetcher(reg, None, sleep=lambda s: None, robots=False, browser=FakeBrowser([data]))
+
+    def one_page(entry: Any, fetcher: Any, **kw: Any) -> Any:
+        yield adapters.Page(fetch=fetcher(VIEW), records=[])
+
+    monkeypatch.setattr(adapters, "pages", one_page)
+    table = live.fetch_live(reg.get("toy_dash"), get)
+    assert table.dashboard and live.ttl_s(reg.get("toy_dash")) == live.DASHBOARD_TTL_S == 3600.0
+    note = table.manifest.notes[1]
+    assert note.startswith(
+        "Read live from the publisher at 2026-11-24 00:00 UTC; a dashboard takes a few minutes"
+    )
+    assert "never on disk) for up to 60 minutes" in note
+    assert table.fresh(table.fetched + 3599) and not table.fresh(table.fetched + 3600)
+    plain = live.LiveTable(records=[], manifest=table.manifest, fetched=0.0)
+    assert plain.fresh(599) and not plain.fresh(600)  # other live sources keep the 10-minute limit
+    assert "several lookups read the publisher once" in live.kept_note(
+        reg.get("toy_cases"), "2026-11-24T00:00"
+    )
+    assert "up to 10 minutes" in live.kept_note(reg.get("toy_cases"), "2026-11-24T00:00")
+
+
 def test_the_browser_gets_the_policys_robots_check(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     reg = write_registry(tmp_path / "reg")
     fake(monkeypatch, {})

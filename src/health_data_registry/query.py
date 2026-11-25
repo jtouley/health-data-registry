@@ -416,7 +416,8 @@ class Engine:
     A redistributable source comes from the local lake when it holds a snapshot (maintainers, CI), else from the
     published hub release (downloaded on first use, checked against its sha256, bounded cache). A restricted
     source (e.g. WHO GHO) is served live: fetched from the publisher per request, held in memory for at most
-    live.LIVE_TTL_S, and never written to disk (see live.py).
+    live.LIVE_TTL_S (live.DASHBOARD_TTL_S for a dashboard read with the browser, stated in its provenance), and
+    never written to disk (see live.py).
     """
 
     registry: Registry
