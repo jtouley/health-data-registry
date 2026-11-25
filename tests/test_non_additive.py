@@ -51,6 +51,8 @@ ROWS = [
     nndss("KANSAS", "7", m3="70", label="Rabies, Animal"),
     # A summary row: the contract's totalRows drops it from every sum that excludes totals.
     nndss("US RESIDENTS", "99", summary=True, m3="990", label="Coccidioidomycosis, Confirmed"),
+    # Another week and condition, with a flag code: a full load has some, so the codebook rule has a value to judge.
+    nndss("DISTRICT OF COLUMBIA", None, flag="-", week=51),
 ]
 WEEK = {"mmwr_year": 2024, "mmwr_week": 52}
 JARGON = ("Traceback", "Error", "SQL", "non_additive", "weekly_cases", "reporting_area", "stratum", "mmwr")

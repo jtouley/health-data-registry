@@ -18,8 +18,9 @@ import pytest
 
 from health_data_registry import crawl
 from health_data_registry import fetch as fetch_mod
+from health_data_registry.quality import QualityBlocked
 from health_data_registry.registry import is_government_host, load_registry
-from health_data_registry.store import FetchLog, read_fetch_log
+from health_data_registry.store import FetchLog, Manifest, read_fetch_log
 from tests.conftest import CATALOG, write_registry
 
 GOV, OTHER = "data.cdc.gov", "api.example.org"
@@ -141,8 +142,17 @@ def test_a_refresh_records_the_override_in_the_fetch_log_and_the_manifest(
     fake(monkeypatch, {GOV: 403})
     lake = tmp_path / "lake"
     get = crawl.fetcher(reg, FetchLog(lake, "toy_cases"), sleep=lambda s: None)
-    m = crawl.refresh_dataset(reg.get("toy_cases"), lake, get)
-    assert m.notes == get.robots_overrides == crawl.override_notes(get)
+    # The fake publisher serves no rows, so the generated has_rows check (error severity) blocks the copy: it is
+    # kept for inspection with the override in its manifest, but LATEST is never pointed at it.
+    with pytest.raises(QualityBlocked, match="toy_cases: the error-severity check has_rows failed"):
+        crawl.refresh_dataset(reg.get("toy_cases"), lake, get)
+    assert not (lake / "datasets" / "toy_cases" / "LATEST").exists()
+    (manifest,) = (lake / "datasets" / "toy_cases").rglob("manifest.json")
+    m = Manifest.read(manifest)
+    overrides = crawl.override_notes(get)
+    assert get.robots_overrides == overrides and m.notes[: len(overrides)] == overrides
+    assert [n.split(":")[0] for n in m.notes[len(overrides) :]] == ["A data check on this source failed"]
+
     assert m.notes[0].startswith("robots_overridden (robots.txt 403): data.cdc.gov")
     log = read_fetch_log(lake, "toy_cases")
     assert log[0]["url"] == "https://data.cdc.gov/robots.txt" and log[0]["error"].startswith(

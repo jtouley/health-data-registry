@@ -33,16 +33,17 @@ import os
 import re
 import shutil
 import tempfile
-from collections.abc import Sequence
-from dataclasses import asdict, dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import duckdb
 
+from health_data_registry.quality import QualityBlocked, QualityReport, blocked_message
 from health_data_registry.registry import Dataset
-from health_data_registry.staging import stage, write_parquet
+from health_data_registry.staging import Staged, check_snapshot, stage, write_parquet
 
 _SNAPSHOT_ID = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{12}$")
 
@@ -202,6 +203,7 @@ def build_snapshot(
     partial: bool = False,
     layouts: dict[str, str] | None = None,
     notes: Sequence[str] = (),
+    robots_overrides: Sequence[str] = (),
 ) -> Manifest:
     """Normalise newline-delimited JSON record files (publisher field names, raw values) into a snapshot."""
     if not fetches:
@@ -212,13 +214,19 @@ def build_snapshot(
     digest = hashlib.sha256(inputs.encode()).hexdigest()[:12]
     snapshot_id = f"{retrieved:%Y%m%dT%H%M%SZ}-{digest}"
     out = snapshot_dir(lake, ds.id, snapshot_id)
-    if (out / "manifest.json").is_file():  # the same inputs were snapshotted already: never overwrite
+
+    def keep() -> None:
         if not partial and ds.entry.licence.redistribution:
-            keep_raw_records(
-                lake, ds, snapshot_id, records_files
-            )  # a lake from before raw_records gets them now
-        _point_latest(lake, ds.id, snapshot_id)
-        return Manifest.read(out / "manifest.json")
+            meta = load_metadata(ds, snapshot_id, fetches, robots_overrides=robots_overrides)
+            keep_raw_records(lake, ds, snapshot_id, records_files, meta)
+
+    if (out / "manifest.json").is_file():  # the same inputs were snapshotted already: never overwrite
+        keep()  # a load kept before its metadata was recorded gets it now
+        existing = Manifest.read(out / "manifest.json")
+        # The stored verdict may be missing (a snapshot from before the rules) or stale (rules edited since):
+        # the contract's current rules run again on the kept file, which is never rewritten.
+        _promote(lake, ds.id, replace(existing, quality=judge_snapshot(out, ds)))
+        return existing
     tmp = Path(tempfile.mkdtemp(prefix=f".{ds.id}-", dir=lake))
     try:
         sources = sorted({c.source_field for c in ds.contract.columns})
@@ -235,6 +243,8 @@ def build_snapshot(
             write_parquet(con, ds.contract, ds.id, str(tmp / "data.parquet"))
         finally:
             con.close()
+        # The contract's rules run only after the file is closed for writing, on a read-only connection.
+        staged = Staged(report, check_snapshot(str(tmp / "data.duckdb"), ds.contract, ds.id))
         manifest = Manifest(
             dataset=ds.id,
             snapshot_id=snapshot_id,
@@ -244,13 +254,14 @@ def build_snapshot(
             retrieved_at=retrieved.isoformat(),
             source_urls=[f.url for f in fetches],
             raw_sha256=[f.sha256 for f in fetches],
-            row_count=report.row_count,
+            row_count=staged.staging.row_count,
             licence=ds.entry.licence.id,
             redistribution=ds.entry.licence.redistribution,
             partial=partial,
             layouts=dict(layouts or {}),
-            notes=[*notes, *report.notes()],
-            silver=report.as_dict(),
+            notes=[*notes, *staged.notes()],
+            quality=staged.quality.as_dict(),
+            silver=staged.staging.as_dict(),
         )
         (tmp / "manifest.json").write_text(json.dumps(asdict(manifest), indent=2) + "\n", encoding="utf-8")
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -258,10 +269,34 @@ def build_snapshot(
     finally:
         if tmp.exists():
             shutil.rmtree(tmp, ignore_errors=True)
-    if not partial and ds.entry.licence.redistribution:
-        keep_raw_records(lake, ds, snapshot_id, records_files)
-    _point_latest(lake, ds.id, snapshot_id)
+    keep()
+    _promote(lake, ds.id, manifest)
+
     return manifest
+
+
+def load_metadata(
+    ds: Dataset, snapshot_id: str, fetches: Sequence[RawFetch], *, robots_overrides: Sequence[str] = ()
+) -> dict[str, Any]:
+    """What one raw load carries beside its records: how it was loaded and every fetch behind it."""
+    return {
+        "dataset": ds.id,
+        "snapshot_id": snapshot_id,
+        "load": ds.contract.raw_load.mode,
+        "raw_contract_version": ds.contract.version,
+        "fetches": [
+            {
+                "url": f.url,
+                # direct: the publisher's own address; browser: captured from a dashboard's data request.
+                "route": "browser" if f.capture_url else "direct",
+                "capture_url": f.capture_url,
+                "retrieved_at": f.retrieved_at.astimezone(UTC).isoformat(),
+                "sha256": f.sha256,
+            }
+            for f in fetches
+        ],
+        "robots_overrides": list(dict.fromkeys(robots_overrides)),
+    }
 
 
 def fields_in(con: duckdb.DuckDBPyConnection, files: str) -> set[str] | None:
@@ -272,9 +307,18 @@ def fields_in(con: duckdb.DuckDBPyConnection, files: str) -> set[str] | None:
     return {str(r[0]) for r in rows} or None
 
 
-def keep_raw_records(lake: Path, ds: Dataset, snapshot_id: str, records_files: Sequence[Path]) -> Path:
-    """Keep one full load's parsed records where the dbt staging models read them; written once, never rewritten.
+def keep_raw_records(
+    lake: Path,
+    ds: Dataset,
+    snapshot_id: str,
+    records_files: Sequence[Path],
+    metadata: Mapping[str, Any] | None = None,
+) -> Path:
+    """Keep one full load's parsed records where the dbt staging models read them, with its metadata beside them.
 
+    Raw is append-only: a load is written once under its snapshot id and never rewritten or deleted. The records
+    are written first and the metadata last, so metadata exists only for a complete load; a load kept before it
+    had metadata gets it on the next run with the same snapshot id (the metadata itself is never rewritten).
     Refuses a source whose licence forbids keeping a copy (ADR 0009), whatever the caller checked. A failed copy
     leaves no temporary file behind.
     """
@@ -283,19 +327,52 @@ def keep_raw_records(lake: Path, ds: Dataset, snapshot_id: str, records_files: S
             f"{ds.id}: its licence forbids keeping a copy, so its records are never kept on disk"
         )
     target = lake / "raw_records" / ds.id / f"{snapshot_id}.ndjson"
-    if target.is_file():
-        return target
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-    try:
-        with tmp.open("wb") as out:
-            for p in records_files:
-                with p.open("rb") as fh:
-                    shutil.copyfileobj(fh, out)
-        os.replace(tmp, target)
-    finally:
-        tmp.unlink(missing_ok=True)
+    if not target.is_file():
+        tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+        try:
+            with tmp.open("wb") as out:
+                for p in records_files:
+                    with p.open("rb") as fh:
+                        shutil.copyfileobj(fh, out)
+            os.replace(tmp, target)
+        finally:
+            tmp.unlink(missing_ok=True)
+    meta = target.with_name(f"{snapshot_id}.meta.json")
+    if metadata is not None and not meta.is_file():
+        tmp_meta = meta.with_name(f".{meta.name}.{os.getpid()}.tmp")
+        try:
+            tmp_meta.write_text(json.dumps(dict(metadata), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            os.replace(tmp_meta, meta)
+        finally:
+            tmp_meta.unlink(missing_ok=True)
     return target
+
+
+def judge_snapshot(snapshot: Path, ds: Dataset) -> dict[str, Any]:
+    """The contract's current quality rules, run again read-only on a kept snapshot's data.duckdb, as a manifest's
+    `quality` record. Promotion and export-public decide from this, never from the record stored at build time,
+    which a snapshot from before the rules lacks and which a later rule edit leaves stale. A file that is missing
+    or can't be opened is a check that could not run, so it blocks (fail closed)."""
+    db = snapshot / "data.duckdb"
+    try:
+        if not db.is_file():
+            raise FileNotFoundError(f"{db.name} is missing from the snapshot")
+        return check_snapshot(str(db), ds.contract, ds.id).as_dict()
+    except (OSError, duckdb.Error) as e:
+        error = {"test": "contract-rules", "error": (str(e).splitlines() or [type(e).__name__])[0]}
+        return QualityReport((), (error,)).as_dict()
+
+
+def _promote(lake: Path, dataset_id: str, manifest: Manifest) -> None:
+    """Point LATEST at a new snapshot, unless a contract rule blocks it (an error-severity failure or a rule that
+    could not run): then the snapshot and its raw records stay on disk for inspection, LATEST keeps naming the
+    copy before it, and QualityBlocked says why. A partial development sample is never published, so its rules
+    are reported as caveats only."""
+    reason = None if manifest.partial else blocked_message(dataset_id, manifest.quality)
+    if reason:
+        raise QualityBlocked(reason)
+    _point_latest(lake, dataset_id, manifest.snapshot_id)
 
 
 def _point_latest(lake: Path, dataset_id: str, snapshot_id: str) -> None:

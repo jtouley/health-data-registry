@@ -207,6 +207,7 @@ def test_raw_source_declares_fields_as_text_with_the_contract_version(tmp_path: 
     (t,) = src["tables"]
     assert t["name"] == "toy_cases"
     assert t["meta"] == {"raw_contract_version": "0.1.0", "contract": "contracts/toy_cases.odcs.yaml",
+                         "load": "snapshot", "load_key": [], "updated_field": None,
                          "plugin": "hdr_raw", "source_fields": ["label", "m1", "m2", "states", "year"]}  # fmt: skip
     assert [c["name"] for c in t["columns"]] == ["label", "m1", "m2", "states", "year", *PROVENANCE]
     assert {c["data_type"] for c in t["columns"]} == {"varchar"}
@@ -304,7 +305,7 @@ def test_write_deletes_only_its_own_stale_staging_files_and_refuses_anything_els
     marts.mkdir()
     (marts / "fct_hand.yml").write_text("version: 2\n", encoding="utf-8")
     (marts / "fct_hand.sql").write_text("select 1", encoding="utf-8")
-    (root / tg.MODELS_DIR / "intermediate").mkdir()
+    (root / tg.MODELS_DIR / "intermediate").mkdir(exist_ok=True)  # stage (b) generates int_* models here
     (root / tg.MODELS_DIR / "intermediate" / "flag_hand.yml").write_text("version: 2\n", encoding="utf-8")
     # A generated file no contract makes any more, in staging/: deleted.
     old = root / tg.STAGING_DIR / "stg_gone.sql"
@@ -389,7 +390,9 @@ def test_model_contracts_must_declare_one_known_layer(tmp_path: Path, bad: str) 
     (root / tg.MODEL_CONTRACTS / "mmwr_calendar.odcs.yaml").write_text(
         text.replace("{property: layer, value: reference}", bad).replace("      - \n", ""), encoding="utf-8"
     )
-    with pytest.raises(ValueError, match="declares its layer once, as one of reference, intermediate, marts"):
+    with pytest.raises(
+        ValueError, match="declares its layer once, as one of reference, intermediate, flag, marts"
+    ):
         tg.generate(load_registry(root))
 
 
@@ -536,7 +539,7 @@ def test_live_load_refusals_leave_nothing_in_memory(tmp_path: Path) -> None:
     con = duckdb.connect(":memory:")
     good = [dict(r) for r in RECORDS]
     report = load_live(con, ds, good)
-    assert report.row_count == len(RECORDS)
+    assert report.staging.row_count == len(RECORDS)
     assert con.execute("SELECT count(*) FROM toy_cases").fetchone() == (len(RECORDS),)
     con.execute("DROP TABLE toy_cases")
     with pytest.raises(PublisherDataRefused, match="empty value in reporting_area"):
@@ -545,7 +548,7 @@ def test_live_load_refusals_leave_nothing_in_memory(tmp_path: Path) -> None:
     with pytest.raises(ContractLayoutRefused, match="no longer have the field m2,"):
         load_live(con, ds, [{k: v for k, v in r.items() if k != "m2"} for r in good])
     assert _tables(con) == []
-    assert load_live(con, ds, []).row_count == 0  # no records: nothing to check fields against
+    assert load_live(con, ds, []).staging.row_count == 0  # no records: nothing to check fields against
 
 
 def test_full_loads_keep_their_raw_records_and_partial_loads_do_not(tmp_path: Path) -> None:
