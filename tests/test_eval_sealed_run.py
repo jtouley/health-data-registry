@@ -35,7 +35,7 @@ LABELS = [
     {"id": "syn-b", "question": MARKER, "expected_class": "HANDOFF_GBD", "expected_nearest": "Toyland"},
     {"id": "syn-c", "question": MARKER, "expected_class": "HANDOFF_CONNECTOR", "expected_nearest": "pubmed"},
 ]
-FAKE_KEY = "AGE-MARKER-KEY-1SYNTHETIC"
+FAKE_KEY = "AGE-SECRET-KEY-1SYNTHETIC"
 
 
 def labels_bytes() -> bytes:
@@ -177,7 +177,7 @@ def test_decrypt_writes_nothing_when_the_hash_differs(tmp_path: Path, fake_age: 
 
 
 @pytest.mark.parametrize(
-    ("key", "message"), [("", "EVAL_TEST_KEY is empty"), ("AGE-MARKER-KEY-1WRONG", "could not decrypt")]
+    ("key", "message"), [("", "EVAL_TEST_KEY is empty"), ("AGE-SECRET-KEY-1WRONG", "could not decrypt")]
 )
 def test_decrypt_refuses_a_missing_or_wrong_key(
     tmp_path: Path, fake_age: Path, key: str, message: str
@@ -369,7 +369,7 @@ def test_round_trip_with_a_throwaway_key_prints_aggregates_only(
     # A throwaway key and a synthetic label set, encrypted the way the maintainer encrypts TEST.
     keyfile = tmp_path / "key.txt"
     subprocess.run([AGE_KEYGEN, "-o", str(keyfile)], check=True, capture_output=True)  # noqa: S603 - fixed arguments, test-only
-    identity = next(x for x in keyfile.read_text().splitlines() if x.startswith("AGE-MARKER-KEY-1"))
+    identity = next(x for x in keyfile.read_text().splitlines() if x.startswith("AGE-SECRET-KEY-1"))
     recipient = subprocess.run(  # noqa: S603
         [AGE_KEYGEN, "-y", str(keyfile)], check=True, capture_output=True, text=True
     ).stdout
@@ -405,7 +405,7 @@ def test_round_trip_with_a_throwaway_key_prints_aggregates_only(
         assert text not in out  # no question, id or label value in what the workflow prints
 
     # A wrong key decrypts nothing.
-    monkeypatch.setenv("EVAL_TEST_KEY", "AGE-MARKER-KEY-1" + "Q" * 58)
+    monkeypatch.setenv("EVAL_TEST_KEY", "AGE-SECRET-KEY-1" + "Q" * 58)
     assert (
         sealed_run.main(
             ["decrypt", "--ciphertext", str(cipher), "--out", str(tmp_path / "x"), "--expect-sha", digest]
