@@ -182,6 +182,89 @@ sources:
       data_type: varchar
       description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
         the exact bytes the publisher sent.'
+  - name: cdc_nis_teen_coverage
+    description: 'Raw records of Vaccination Coverage among Adolescents (13-17 Years) as the adapter hands them
+      on, every value as text: the publisher''s own fields, or for a wide table the adapter''s structural reshaping
+      of them (see the staging model). Only the full load the dataset''s LATEST pointer names is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_nis_teen_coverage.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - _95_ci
+      - coverage_estimate
+      - dimension
+      - dimension_type
+      - dose
+      - geography
+      - geography_type
+      - population_sample_size
+      - vaccine
+      - year_season
+    columns:
+    - name: _95_ci
+      data_type: varchar
+      description: 'Publisher field _95_ci, as text; read into ci_95 (CDC''s 95% confidence interval for the coverage
+        estimate, in percent, exactly as CDC writes it: the lower and upper ends in one text field, ''lower to upper''
+        (column ''95% CI (%)'', e.g. ''60.3 to 68.3''). Kept as sent: splitting it into two numbers changes the
+        value, so it waits for a staging extension. Empty when CDC gives no interval.)'
+    - name: coverage_estimate
+      data_type: varchar
+      description: 'Publisher field coverage_estimate, as text; read into coverage_estimate (Estimated percent of
+        teens in the group who had the vaccine and dose (a weighted survey estimate, column ''Estimate (%)''). CDC''s
+        column description: NA means the estimate is not applicable; it is stored as no value, never as zero.)'
+    - name: dimension
+      data_type: varchar
+      description: Publisher field dimension, as text; read into dimension (The population group within dimension_type,
+        e.g. '13-17 Years' (the survey's whole age range), '13-15 Years', 'Any Medicaid', 'Hispanic', 'Below Poverty
+        Level'. Groups overlap, so estimates are never added or averaged across them.)
+    - name: dimension_type
+      data_type: varchar
+      description: 'Publisher field dimension_type, as text; read into dimension_type (What the population group
+        is defined by. CDC''s column description: in a single survey year the only kind is age; the five-survey-year
+        estimates are given overall and by insurance coverage, urbanicity, race and ethnicity, and poverty.)'
+    - name: dose
+      data_type: varchar
+      description: 'Publisher field dose, as text; read into dose (The dose or definition the coverage counts, for
+        vaccines whose name doesn''t carry it: e.g. ''≥1 Dose Tdap'', ''Up-to-Date, Males and Females'' for HPV,
+        ''≥2 Doses or history of disease'' for varicella. Empty when the dose is in the vaccine name. What up to
+        date means for each vaccine and year is an open question (up_to_date_definition).)'
+    - name: geography
+      data_type: varchar
+      description: 'Publisher field geography, as text; read into geography (The place the estimate is for: United
+        States, an HHS region (''Region 1'' to ''Region 10''), a state, DC, a territory, or a local area named with
+        its state''s postal code (''IL-City of Chicago'', ''TX-Bexar County''); ''Rest of state'' areas are the
+        state without its listed local areas.)'
+    - name: geography_type
+      data_type: varchar
+      description: 'Publisher field geography_type, as text; read into geography_type (The kind of place: ''HHS
+        Regions/National'' (the United States and the ten HHS regions) or ''States/Local Areas'' (states, DC, territories
+        and selected local areas).)'
+    - name: population_sample_size
+      data_type: varchar
+      description: Publisher field population_sample_size, as text; read into population_sample_size (Number of
+        teens in the survey sample behind the estimate (column 'Sample Size'); not the number vaccinated and not
+        a population count.)
+    - name: vaccine
+      data_type: varchar
+      description: Publisher field vaccine, as text; read into vaccine (The vaccine the coverage is for, as CDC
+        names it; for some vaccines the dose is part of the name (for example '≥1 Dose MenACWY', '≥2 Doses MMR'),
+        for others it is in dose (HPV, Tetanus, Varicella).)
+    - name: year_season
+      data_type: varchar
+      description: Publisher field year_season, as text; read into year_season (The survey year, or the range of
+        survey years pooled into one estimate ('2018-2022'), as CDC writes it (column 'Survey Year').)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
   - name: cdc_nndss_weekly
     description: 'Raw records of NNDSS Weekly Data as the adapter hands them on, every value as text: the publisher''s
       own fields, or for a wide table the adapter''s structural reshaping of them (see the staging model). Only

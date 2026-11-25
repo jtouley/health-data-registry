@@ -1,0 +1,214 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: cdc_nis_teen_coverage
+name: Vaccination Coverage among Adolescents (13-17 Years)
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Estimated vaccination coverage among US adolescents aged 13-17 years from CDC's National Immunization Survey-Teen (NIS-Teen), by vaccine and dose, for the United States, HHS regions, states, territories and selected local areas, by survey year (2006 onward) and, for some groups, pooled over five survey years."
+  usage: "Read one coverage estimate with its 95% confidence interval for one vaccine and dose, place, survey year and population group. Pin the population group (dimension_type and dimension) to one value; never add or average percentages across groups, doses, places or years."
+  limitations: "Survey estimates with sampling error; no counts of vaccinated teens; groups overlap (13-17 years contains 13-15 years); pooled five-year estimates are not single-year coverage; the definition of up to date differs by vaccine and changed over time."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://data.cdc.gov/d/ee48-w5t6", description: "Publisher dataset page"}
+    - {type: businessDefinition, url: "https://data.cdc.gov/api/views/ee48-w5t6.json", description: "Socrata metadata: column names and column descriptions (read 2026-11-25)"}
+    - {type: businessDefinition, url: "https://www.cdc.gov/vaccines/imz-managers/coverage/teenvaxview/data-sources.html", description: "TeenVaxView data sources page, cited by the coverage_estimate column description (not yet read for this contract)"}
+    - {type: businessDefinition, url: "https://www.cdc.gov/vaccines/imz-managers/coverage/teenvaxview/index.html", description: "TeenVaxView home page, cited by the dataset description"}
+servers:
+  - id: data_cdc_gov
+    server: data.cdc.gov
+    type: api
+    location: https://data.cdc.gov/resource/ee48-w5t6.json
+    description: "Socrata SODA API; the adapter keeps only the columns listed in the schema."
+schema:
+  - name: cdc_nis_teen_coverage
+    physicalName: cdc_nis_teen_coverage
+    physicalType: table
+    logicalType: object
+    description: "One row per vaccine and dose, place, survey year (or pooled survey years) and population group."
+    dataGranularityDescription: "vaccine x dose x geography x survey year x dimension_type x dimension"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://data.cdc.gov/api/views/ee48-w5t6.json"}
+    customProperties:
+      - property: totalRows
+        value: none
+        description: "Nothing in this table is ever added up: every metric reads one published estimate (aggregation none), so no row is excluded as a total. Which population-group row is the overall estimate is an open question (overall_row), and the United States and HHS-region rows sit beside the states they include."
+      - {property: tableShape, value: estimate_table}
+      - property: idDimensions
+        value:
+          condition: vaccine
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: null
+          period: year_season
+          provisionalFlag: null
+        description: "The vaccine column names the vaccine (with its dose for some vaccines, e.g. '≥1 Dose MenACWY'); the dose column gives the dose or the up-to-date definition for the others. No case definitions or case status: these are coverage estimates, not cases. Period is the survey year or a pooled range of survey years. No provisional flag is published."
+    quality:
+      - id: interval_filled_where_estimate
+        dimension: completeness
+        severity: warn
+        type: sql
+        query: "SELECT COUNT(*) FROM {object} WHERE coverage_estimate IS NOT NULL AND (ci_95 IS NULL OR trim(ci_95) = '')"
+        mustBeLessThan: 10
+        description: "Fill rate. Every published estimate should come with its 95% interval (column description: 'The 95% confidence interval of the estimate'). Live data on 2026-11-25 had 2 rows with an estimate and no interval (828 NA estimates, 830 empty intervals); more than a handful means the interval column has changed. Why those rows have none is an open question."
+    properties:
+      - name: vaccine
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The vaccine the coverage is for, as CDC names it; for some vaccines the dose is part of the name (for example '≥1 Dose MenACWY', '≥2 Doses MMR'), for others it is in dose (HPV, Tetanus, Varicella)."
+        examples: ["HPV", "≥1 Dose MenACWY", "Tetanus", "≥2 Doses MMR", "Varicella"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: vaccine}
+        quality:
+          - id: vaccine_labels
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["≥1 Dose MenACWY", "≥2 Doses Hep A", "≥2 Doses MMR", "≥3 Doses HepB", "HPV", "Tetanus", "Varicella"]}
+            mustBe: 0
+            description: "Every vaccine label published on 2026-11-25. A new label is a new series to review (catalog conditions), not an error in the data."
+      - name: dose
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "The dose or definition the coverage counts, for vaccines whose name doesn't carry it: e.g. '≥1 Dose Tdap', 'Up-to-Date, Males and Females' for HPV, '≥2 Doses or history of disease' for varicella. Empty when the dose is in the vaccine name. What up to date means for each vaccine and year is an open question (up_to_date_definition)."
+        examples: ["≥1 Dose Tdap", "Up-to-Date, Males and Females", "≥1 Dose, Females", "≥2 Doses or history of disease", ""]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: dose}
+      - name: geography_type
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The kind of place: 'HHS Regions/National' (the United States and the ten HHS regions) or 'States/Local Areas' (states, DC, territories and selected local areas)."
+        enum: [{value: "HHS Regions/National"}, {value: "States/Local Areas"}]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: geography_type}
+      - name: geography
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The place the estimate is for: United States, an HHS region ('Region 1' to 'Region 10'), a state, DC, a territory, or a local area named with its state's postal code ('IL-City of Chicago', 'TX-Bexar County'); 'Rest of state' areas are the state without its listed local areas."
+        examples: ["United States", "Michigan", "Region 5", "IL-City of Chicago", "IL-Rest of state", "TX-Bexar County"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: geography}
+      - name: year_season
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The survey year, or the range of survey years pooled into one estimate ('2018-2022'), as CDC writes it (column 'Survey Year')."
+        examples: ["2024", "2025", "2018-2022"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: year_season}
+      - name: dimension_type
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "What the population group is defined by. CDC's column description: in a single survey year the only kind is age; the five-survey-year estimates are given overall and by insurance coverage, urbanicity, race and ethnicity, and poverty."
+        examples: ["Age", "Overall", "Insurance Coverage", "Race and Ethnicity", "Poverty", "Urbanicity"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: dimension_type}
+        quality:
+          - id: dimension_type_labels
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["Age", "Insurance Coverage", "Overall", "Poverty", "Race and Ethnicity", "Urbanicity"]}
+            mustBe: 0
+            description: "The kinds named in the column description (age; overall; insurance coverage, urbanicity, race/ethnicity and poverty), as published on 2026-11-25. A new kind is a new group to review."
+      - name: dimension
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The population group within dimension_type, e.g. '13-17 Years' (the survey's whole age range), '13-15 Years', 'Any Medicaid', 'Hispanic', 'Below Poverty Level'. Groups overlap, so estimates are never added or averaged across them."
+        examples: ["13-17 Years", "13-15 Years", "Overall", "Any Medicaid", "Hispanic", "Living In a Non-MSA"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: dimension}
+      - name: coverage_estimate
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Estimated percent of teens in the group who had the vaccine and dose (a weighted survey estimate, column 'Estimate (%)'). CDC's column description: NA means the estimate is not applicable; it is stored as no value, never as zero."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: coverage_estimate}
+          - {property: unit, value: "%"}
+          - {property: missingCodes, value: ["NA"], description: "Column description, https://data.cdc.gov/api/views/ee48-w5t6.json: 'Non-numeric data are present in this column, such as \"NA.\" These data indicate if an estimate is not applicable.' NA is the only non-numeric value published on 2026-11-25."}
+        quality:
+          - id: coverage_is_a_percent
+            dimension: conformity
+            severity: error
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE coverage_estimate < 0 OR coverage_estimate > 100"
+            mustBe: 0
+            description: "The column is a percent ('Estimate (%)'), so it lies from 0 to 100."
+      - name: ci_95
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "CDC's 95% confidence interval for the coverage estimate, in percent, exactly as CDC writes it: the lower and upper ends in one text field, 'lower to upper' (column '95% CI (%)', e.g. '60.3 to 68.3'). Kept as sent: splitting it into two numbers changes the value, so it waits for a staging extension. Empty when CDC gives no interval."
+        examples: ["60.3 to 68.3", "88.5 to 95.3"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: _95_ci}
+          - {property: unit, value: "%"}
+        quality:
+          - id: interval_text_form
+            dimension: conformity
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE trim(ci_95) <> '' AND NOT regexp_full_match(ci_95, '[0-9]+([.][0-9]+)? to [0-9]+([.][0-9]+)?')"
+            mustBe: 0
+            description: "Structural: every interval published on 2026-11-25 (29,636 rows) is two numbers joined by ' to '. A value in any other form is a change to review before the interval is split into lower and upper ends."
+      - name: population_sample_size
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Number of teens in the survey sample behind the estimate (column 'Sample Size'); not the number vaccinated and not a population count."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: population_sample_size}
+          - {property: unit, value: "1"}
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: citation, value: "Centers for Disease Control and Prevention, National Center for Immunization and Respiratory Diseases. Vaccination Coverage among Adolescents (13-17 Years), National Immunization Survey-Teen. https://data.cdc.gov/d/ee48-w5t6"}
+  - {property: refresh, value: annual}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "Each refresh stores the complete table as a dated, append-only load. CDC can revise earlier years (open question revisions), so every load is kept whole."
+  - {property: geographyBasis, value: "unresolved: the dataset doesn't say how a teen is placed (state of residence is likely for a household survey, but it is not stated here), so comparisons with residence-based figures wait for a maintainer"}
+  - {property: unreliableRule, value: {kind: none, description: "None stated in the dataset metadata. Whether CDC blanks or flags estimates from small samples or with wide intervals is an open question (suppression_rule); the only non-numeric estimate published is NA, 'not applicable'."}}
+  - property: gbdCauseProposals
+    value:
+      review: pending_maintainer_review
+      source: "Dataset triage, 25 Nov 2026: names checked against the GBD 2023 cause hierarchy with the IHME connector. Proposals only; nothing is keyed to GBD until a maintainer reviews them (hard rule 1)."
+      proposals:
+        - {vaccine: "Tetanus", dose: "≥1 Dose Tdap", causes: ["Tetanus", "Diphtheria", "Pertussis"], note: "Tdap protects against all three; the Td or Tdap row also covers tetanus and diphtheria."}
+        - {vaccine: "≥1 Dose MenACWY", causes: ["Meningitis"], pathogen: "Neisseria meningitidis", note: "MenACWY covers serogroups A, C, W and Y only; GBD's meningococcal meningitis covers all serogroups."}
+        - {vaccine: "≥2 Doses MMR", causes: ["Measles"], note: "Mumps and rubella have no separate GBD 2023 cause to key to here."}
+        - {vaccine: "≥3 Doses HepB", causes: ["Acute hepatitis B"]}
+        - {vaccine: "≥2 Doses Hep A", causes: ["Acute hepatitis A"]}
+        - {vaccine: "Varicella", causes: ["Varicella and herpes zoster"]}
+        - {vaccine: "HPV", causes: [], note: "HPV has no infectious-disease cause in GBD 2023 (it sits under cervical cancer); labelled, not mapped."}
+  - property: openQuestions
+    value:
+      - "Interval (ci_95): CDC publishes the 95% confidence interval as one text field, 'lower to upper'. Splitting it into lower and upper numbers changes the value, so under hard rule 15 it belongs in a staging extension, not the load; until that extension lands (#172), the interval is kept and shown as sent, and get_series answers say it is not split yet. Which interval method does CDC use? The column description says 95%; TeenVaxView's data sources page (not yet read) should say."
+      - "Up to date: what does 'Up-to-Date' mean for HPV (and when did it change, e.g. from 2016), and what do the dose labels count for each vaccine and year? Codebook only; until read, each dose label is shown exactly as CDC writes it and series are not joined across a definition change."
+      - "Overall row: which row is the overall estimate? In a single survey year the only groups are by age, and '13-17 Years' is the survey's whole age range (the dataset title); the pooled five-year estimates have a dimension_type 'Overall' row. The series read '13-17 Years' for single years; a maintainer confirms. Groups are never added either way."
+      - "Suppression: does CDC blank or flag estimates from small samples or with wide intervals (e.g. a relative standard error rule)? NA is described only as 'not applicable'. Until the codebook says, unreliableRule is none and every estimate is shown with its interval and sample size."
+      - "Local areas: how does each local area map to a place: the cities ('IL-City of Chicago', 'NY-City of New York', 'TX-City of Houston', 'PA-Philadelphia'), the Texas counties, and the 'Rest of state' areas? None is Detroit. Until a maintainer declares the mapping, local areas are not keyed to GBD locations (GBD stops at states)."
+      - "Revisions: does CDC revise earlier survey years when weights or definitions change? Each annual load is stored whole, so a revision shows as a difference between snapshots; whether one has happened is not stated."
+      - "Empty interval: two rows published on 2026-11-25 had an estimate but no interval. Why (an interval not calculated, or a missing value)?"
+      - "Vaccine/Sample: the vaccine column is titled 'Vaccine/Sample' and coverage_estimate's description also covers 'percent of sample represented by each survey sociodemographic characteristic'. No survey-sample rows were published on 2026-11-25; if CDC adds them, they are percents of the sample, not coverage, and need their own metric."
+      - "Grain: vaccine x dose x geography x survey year x dimension_type x dimension was unique over the whole table on 2026-11-25 (30,466 rows). A maintainer confirms it as the key before one is declared."
+      - "Licence: the Socrata metadata has no licence field; public-domain-us-federal is assumed from its being a CDC work (17 USC 105). Maintainer to confirm the wording before the first public release (the catalog says hosting: public, as every catalogued CDC source does, and the contract stays draft until then)."
+      - "GBD mapping: review the GBD cause proposals in gbdCauseProposals (vaccine to cause, and MenACWY to Meningitis with Neisseria meningitidis). None is asserted until a maintainer approves it."
