@@ -66,12 +66,7 @@ metrics:
     aggregation: none
     exclude_total_rows: false
     filters: ["indicator = 'Viral suppression'"]
-  - name: prep_coverage
-    description: "People prescribed PrEP as a percentage of the estimated number with PrEP indications (aged 16 and over). CDC advises against citing specific PrEP coverage points until updated estimates are published."
-    measure: percentage
-    aggregation: none
-    exclude_total_rows: false
-    filters: ["indicator = 'PrEP coverage'"]
+  # No PrEP coverage metric: the catalog withholds AHEAD's PrEP rows until the owner confirms their terms.
   - name: indicator_denominator
     description: "The denominator AHEAD publishes for one indicator, place and year (read with the indicator filter)."
     measure: denominator
@@ -86,7 +81,6 @@ series:
   - {condition: HIV, label: "Knowledge of HIV status (%), by state (AHEAD)", metric: knowledge_of_status, measure: percent, filters: {sheet: "State totals"}, location_dimension: state, time_dimension: year}
   - {condition: HIV, label: "Linkage to HIV care within one month (%), by state (AHEAD)", metric: linkage_to_care, measure: percent, filters: {sheet: "State totals"}, location_dimension: state, time_dimension: year}
   - {condition: HIV, label: "HIV viral suppression (%), by state (AHEAD)", metric: viral_suppression, measure: percent, filters: {sheet: "State totals"}, location_dimension: state, time_dimension: year}
-  - {condition: HIV, label: "PrEP coverage (%), by state (AHEAD)", metric: prep_coverage, measure: percent, filters: {sheet: "State totals"}, location_dimension: state, time_dimension: year}
   # EHE counties and jurisdictions (Jurisdiction totals sheet), by AHEAD's county name, e.g. Wayne County.
   - {condition: HIV, label: "New HIV diagnoses, by EHE county (AHEAD)", metric: hiv_diagnoses, measure: cases, filters: {sheet: "Jurisdiction totals"}, location_dimension: county, time_dimension: year, case_definition: "Reported HIV infections among people aged 13 and over confirmed by laboratory or clinical evidence during the year (AHEAD note II.a)."}
   - {condition: HIV, label: "HIV diagnosis rate per 100,000, by EHE county (AHEAD)", metric: hiv_diagnosis_rate, measure: rate, filters: {sheet: "Jurisdiction totals"}, location_dimension: county, time_dimension: year}
@@ -95,4 +89,3 @@ series:
   - {condition: HIV, label: "Knowledge of HIV status (%), by EHE county (AHEAD)", metric: knowledge_of_status, measure: percent, filters: {sheet: "Jurisdiction totals"}, location_dimension: county, time_dimension: year}
   - {condition: HIV, label: "Linkage to HIV care within one month (%), by EHE county (AHEAD)", metric: linkage_to_care, measure: percent, filters: {sheet: "Jurisdiction totals"}, location_dimension: county, time_dimension: year}
   - {condition: HIV, label: "HIV viral suppression (%), by EHE county (AHEAD)", metric: viral_suppression, measure: percent, filters: {sheet: "Jurisdiction totals"}, location_dimension: county, time_dimension: year}
-  - {condition: HIV, label: "PrEP coverage (%), by EHE county (AHEAD)", metric: prep_coverage, measure: percent, filters: {sheet: "Jurisdiction totals"}, location_dimension: county, time_dimension: year}

@@ -173,7 +173,11 @@ def _open(entry: CatalogEntry, content: bytes) -> tuple[Workbook, zipfile.ZipFil
 
 
 def read_workbook(entry: CatalogEntry, content: bytes) -> tuple[list[str], list[dict[str, Any]]]:
-    """Every named sheet's rows, each with the sheet's name, and the union of their column names."""
+    """Every named sheet's rows, each with the sheet's name, and the union of their column names.
+
+    Rows the layout's exclude_rows names (a column's exact value) are left out; a named column that is gone
+    stops the read, so a renamed column can't let excluded rows through.
+    """
     layout, z = _open(entry, content)
     with z:
         paths, shared = _sheet_paths(z), _shared(z)
@@ -183,7 +187,13 @@ def read_workbook(entry: CatalogEntry, content: bytes) -> tuple[list[str], list[
             header, rows = read_sheet(layout, z, paths, shared, name)
             fields += [h for h in header if h not in fields]
             records += [{layout.sheet_field: name, **r} for r in rows]
-    return fields, [{f: r.get(f) for f in fields} for r in records]
+    gone = [c for c in layout.exclude_rows if c not in fields]
+    if gone:
+        raise ValueError(
+            f"{entry.id}: exclude_rows names a column the workbook no longer has: {', '.join(gone)}"
+        )
+    kept = [r for r in records if not any(r.get(c) in v for c, v in layout.exclude_rows.items())]
+    return fields, [{f: r.get(f) for f in fields} for r in kept]
 
 
 def records(entry: CatalogEntry, content: bytes) -> list[dict[str, Any]]:

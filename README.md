@@ -175,7 +175,7 @@ Each has an entry in [`catalog/`](catalog/):
 | `cdc_haicviz_cdi` | CDC (Emerging Infections Program) | C. difficile infection counts and rates in the program's surveillance areas (not by state), 2011–2022 | Hosted (US federal, public domain) |
 | `who_gho_tb_incidence` | WHO | Tuberculosis incidence per 100,000, by country, 2000 on | Fetched at run time (WHO's dataset terms); never published |
 | `census_county_pop` | US Census Bureau | Resident population estimates (July 1), nation, state and county, 2020–2025; used for `get_rate` | Hosted (US federal, public domain) |
-| `ahead_ehe_indicators` | HHS (AHEAD), from CDC data | The six Ending the HIV Epidemic indicators (diagnoses, incidence, knowledge of status, linkage to care, viral suppression, PrEP coverage) for each state and each EHE county, such as Wayne County, Michigan, 2017 on | Hosted (US federal; AHEAD states CC0) |
+| `ahead_ehe_indicators` | HHS (AHEAD), from CDC data | Ending the HIV Epidemic indicators (diagnoses, incidence, knowledge of status, linkage to care, viral suppression) for each state and each EHE county, such as Wayne County, Michigan, 2017 on; PrEP coverage withheld until its terms are confirmed | Hosted (US federal; AHEAD states CC0) |
 
 [Data conventions](docs/data-conventions.md) explains how to read them: counts, rates, percents and estimates
 (never mixed); final and provisional years; when an empty cell is a zero (only where the codebook says so) and

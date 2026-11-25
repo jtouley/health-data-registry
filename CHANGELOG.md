@@ -8,11 +8,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
-- `ahead_ehe_indicators`: AHEAD's six Ending the HIV Epidemic indicators (diagnoses, incidence, knowledge of
-  status, linkage to care, viral suppression, PrEP coverage) for every state and EHE county, such as Wayne County,
-  Michigan, read from AHEAD's "Download All Data" workbook. Draft contract; 95% intervals kept, empty cells never
-  read as zero. A new `https_xlsx` adapter reads named sheets of a published workbook with the standard library,
-  and a catalog entry may declare a larger byte cap (`max_bytes`) for a whole-file download.
+- `ahead_ehe_indicators`: AHEAD's Ending the HIV Epidemic indicators (diagnoses, incidence, knowledge of status,
+  linkage to care, viral suppression) for every state and EHE county, such as Wayne County, Michigan, read from
+  AHEAD's "Download All Data" workbook. Draft contract; 95% intervals kept, empty cells never read as zero. PrEP
+  coverage is withheld until the owner confirms the terms of its IQVIA-derived counts. A new `https_xlsx` adapter
+  reads named sheets of a published workbook with the standard library (with an optional reviewed row exclusion,
+  `exclude_rows`), and a catalog entry may declare a larger byte cap (`max_bytes`) for a whole-file download.
 - Condition vocabulary: each catalog entry lists the publisher's own condition labels (`conditions:`, with
   where they come from), and `get_series`, `get_rate` and `get_trend` accept any of them through the semantic
   model's `generic_series`, with the same aggregation rules as the named series. `validate` fails when a local

@@ -88,8 +88,7 @@ def test_one_published_cell_per_place_year_and_indicator(real: tuple[Registry, E
     assert cells(eng, "hiv_diagnosis_rate", **wayne)[0] == [2022, 15.0]
     assert cells(eng, "linkage_to_care", **wayne) == [[2022, 80.0]]
     assert cells(eng, "viral_suppression", **wayne) == [[2022, 69.2]]
-    assert cells(eng, "prep_coverage", **wayne) == [[2022, 20.0]]
-    assert cells(eng, "indicator_denominator", indicator="PrEP coverage", **wayne) == [[2022, 9000]]
+    assert cells(eng, "indicator_denominator", indicator="Linkage to care", **wayne) == [[2022, 200]]
 
 
 def test_intervals_come_back_with_their_estimates(real: tuple[Registry, Engine]) -> None:
@@ -123,6 +122,10 @@ def test_series_pin_the_sheet_and_read_one_cell() -> None:
     entry = reg.get(DS).entry
     assert entry.hosted and entry.licence.id == "public-domain-us-federal"
     assert entry.source.workbook is not None and entry.source.workbook.sheets == [S, J]
+    # PrEP is withheld until the owner confirms the IQVIA terms: no rows read, no metric, no series.
+    assert entry.source.workbook.exclude_rows == {"indicator": ["PrEP coverage"]}
+    assert not any("prep" in m.name or "PrEP" in m.description for m in sem.metrics)
+    assert not any("PrEP" in s.label for s in sem.series)
 
 
 def quality(con: duckdb.DuckDBPyConnection, table: str) -> dict[str, int]:

@@ -34,6 +34,12 @@ source:
     sheets: ["State totals", "Jurisdiction totals"]
     header_row: 2
     sheet_field: sheet
+    # PrEP coverage is withheld until the owner confirms its terms: its numerators are estimated from IQVIA
+    # pharmacy data (note XIV.b), and AHEAD's CC0 statement has not been confirmed to cover re-publishing them.
+    # The rows (count, percentage and denominator) never enter a snapshot, so never reach the hub; only the raw
+    # file in the private lake keeps them. See the contract's openQuestions.
+    exclude_rows:
+      indicator: ["PrEP coverage"]
   # A US federal host (HHS), read under the owner's government-host access policy (ADR 0013, issue #36): honest
   # user agent, at least 10 s between requests, any robots.txt override recorded in the fetch log. On 2026-11-25
   # robots.txt was 404 (no rules) on ahead-files.hiv.gov and "Allow: /" on ahead.hiv.gov, so nothing is overridden.
@@ -51,7 +57,8 @@ caveats:
   - "Years 2025 and 2026 are preliminary (note I, '2025 and 2026 data', a). 2026 is a part year: diagnoses run through June 2026 and linkage to care through March 2026 (same note), so a 2026 count is not comparable with a full year's."
   - "Data reported to the National HIV Surveillance System are preliminary until a 12-month reporting delay has passed and should not be used to assess trends or compare counts with previous years until then (note I, '2025 and 2026 data', b)."
   - "2020 figures reflect the COVID-19 pandemic's disruption of testing and care; AHEAD discourages including 2020 in trend assessments (note I, '2020 data', a and b; note II.c)."
-  - "PrEP coverage: in 2024 CDC paused PrEP coverage reporting and advises against citing specific PrEP coverage data points until updated estimates are published, as historical estimates will be updated (note XIV.a). The denominator for 2018-2023 is the 2018 estimate of people with PrEP indications, so 2019-2023 PrEP coverage is preliminary (note XIV.c)."
+  - "PrEP coverage is not available from this source for now: its rows are withheld until the owner confirms the terms of the IQVIA-derived PrEP counts."
+  - "PrEP coverage (when restored): in 2024 CDC paused PrEP coverage reporting and advises against citing specific PrEP coverage data points until updated estimates are published, as historical estimates will be updated (note XIV.a). The denominator for 2018-2023 is the 2018 estimate of people with PrEP indications, so 2019-2023 PrEP coverage is preliminary (note XIV.c)."
   - "An empty cell means 'data incomplete, not reported, or suppressed due to high level of uncertainty' (note IX.a); it is never a zero, and the three reasons can't be told apart from the file."
   - "Estimates with a relative standard error of 30-50% are shown but should be used with caution; over 50% they are not shown (note X.a)."
   - "Estimated incidence is rounded to the nearest 10 (estimates of 1,000 or less) or 100 (above 1,000) to reflect model uncertainty (note XII.b)."

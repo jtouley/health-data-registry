@@ -80,7 +80,7 @@ def test_quality_rules_and_one_row_per_cell(live) -> None:  # type: ignore[no-un
     each = db.execute(
         f"SELECT indicator, count(DISTINCT counted), count(DISTINCT denominator_description) FROM {DS} GROUP BY 1"
     ).fetchall()  # noqa: S608, E501
-    assert len(each) == 6 and all(
+    assert len(each) == 5 and all(
         a == b == 1 for _i, a, b in each
     )  # one label and one denominator per indicator
 
@@ -90,8 +90,11 @@ def test_michigan_and_wayne_county_are_there(live) -> None:  # type: ignore[no-u
     _cat, con, sem = _live.load(DS)
     records = https_xlsx.records(entry, content)
     wayne = [r for r in records if r["county"] == "Wayne County" and r["state"] == "Michigan"]
-    assert {r["indicator"] for r in wayne} >= {"Diagnoses", "Incidence", "Knowledge of status", "Linkage to care",
-                                               "Viral suppression", "PrEP coverage"}  # fmt: skip
+    assert {r["indicator"] for r in wayne} == {"Diagnoses", "Incidence", "Knowledge of status", "Linkage to care",
+                                               "Viral suppression"}  # fmt: skip
+    assert not any(
+        r["indicator"] == "PrEP coverage" for r in records
+    )  # withheld until the owner confirms terms
     sub = [r for r in records if r["state"] == "Michigan" and r["year"] == "2022"]
     state = _live.duckdb_metric(
         con, sem, sub, "hiv_diagnoses", {"sheet": "State totals", "state": "Michigan"}

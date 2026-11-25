@@ -99,6 +99,9 @@ class Workbook(_Strict):
     sheets: list[str] = Field(min_length=1)
     header_row: int = Field(default=1, ge=1)
     sheet_field: str = "sheet"
+    # Rows kept out of every snapshot (and so out of the hub), by a column's exact value, e.g. rows whose terms a
+    # maintainer has not confirmed: {indicator: ["PrEP coverage"]}. Only the raw bytes in the private lake keep them.
+    exclude_rows: dict[str, list[str]] = Field(default_factory=dict)
 
 
 # The fetcher's default byte cap (fetch.fetch) suits API pages; a whole-file download may declare a larger one.

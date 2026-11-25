@@ -6,9 +6,9 @@ version: 0.1.0
 status: draft
 domain: infectious_disease
 description:
-  purpose: "The six Ending the HIV Epidemic (EHE) indicators as AHEAD publishes them for each state and each EHE county or jurisdiction, by year: HIV diagnoses, estimated incidence, knowledge of status, linkage to care, viral suppression and PrEP coverage, each with its denominator and, where published, its 95% interval."
+  purpose: "The six Ending the HIV Epidemic (EHE) indicators as AHEAD publishes them for each state and each EHE county or jurisdiction, by year: HIV diagnoses, estimated incidence, knowledge of status, linkage to care, viral suppression and PrEP coverage, each with its denominator and, where published, its 95% interval. PrEP coverage rows are withheld for now (see limitations)."
   usage: "Read one indicator for one place and one year as published. Pin the sheet (State totals or Jurisdiction totals), the place and the indicator; counts, rates and percentages are never added across places, years or indicators."
-  limitations: "Totals only (no age, sex, race or transmission strata). 2025 and 2026 are preliminary and 2026 is a part year. Empty cells are incomplete, not reported or suppressed, never zero. CDC advises against citing specific PrEP coverage points until updated estimates are published."
+  limitations: "Totals only (no age, sex, race or transmission strata). 2025 and 2026 are preliminary and 2026 is a part year. Empty cells are incomplete, not reported or suppressed, never zero. PrEP coverage rows (count, percentage and denominator) are not read into any snapshot or published until the owner confirms the terms of their IQVIA-derived counts (catalog workbook.exclude_rows; see openQuestions); CDC also advises against citing specific PrEP coverage points until updated estimates are published."
   authoritativeDefinitions:
     - {type: canonicalUrl, url: "https://ahead.hiv.gov/", description: "AHEAD dashboard; its 'Download All Data (XLSX/Excel)' button serves the workbook"}
     - {type: businessDefinition, url: "https://ahead-files.hiv.gov/AHEAD_data_all_latest.xlsx", description: "The workbook; AHEAD's technical notes (I-XIV) are printed under the data on each sheet and are the codebook cited here"}
@@ -167,7 +167,7 @@ schema:
         quality:
           - id: prep_percent_matches_counts
             type: sql
-            description: "Note XIV.d: PrEP coverage is the number prescribed PrEP divided by the estimated number with PrEP indications. Tolerance 0.06 allows rounding to one decimal place."
+            description: "Note XIV.d: PrEP coverage is the number prescribed PrEP divided by the estimated number with PrEP indications. Tolerance 0.06 allows rounding to one decimal place. Checks nothing while PrEP rows are withheld; kept for when the owner lets them in."
             query: "SELECT COUNT(*) FROM {object} WHERE indicator = 'PrEP coverage' AND percentage IS NOT NULL AND abs(percentage - 100.0 * count / denominator) > 0.06"
             mustBe: 0
           - id: percentage_only_for_share_indicators
@@ -249,6 +249,6 @@ customProperties:
       - "Rate denominator: AHEAD labels it 'Total persons alive'; its size (Michigan 2017: 8,441,967) fits people aged 13 and over, as note V.a implies, but the source of the population estimates (Census vintage) is not named."
       - "Wayne County: does AHEAD's Wayne County include the City of Detroit? CDC's EHE jurisdiction list names Wayne County, Michigan; the workbook doesn't say. (MDHHS county figures elsewhere exclude Detroit, issue #45 item 6.)"
       - "Knowledge of status bounds above 100% (e.g. 114.1 on a county row) and bounds capped at exactly 100 on others: kept as published; maintainer to confirm whether to show them as is."
-      - "PrEP numerators come from IQVIA pharmacy data (note XIV.b). AHEAD declares CC0 for its whole dataset; maintainer to confirm that covers re-publishing the PrEP counts."
+      - "PrEP numerators come from IQVIA pharmacy data (note XIV.b). AHEAD declares CC0 for its whole dataset; owner to confirm that covers re-publishing the PrEP counts. Until then the PrEP coverage rows are withheld (catalog workbook.exclude_rows), so no PrEP number is in any snapshot or on the hub and no PrEP series is offered. If confirmed, remove the exclusion and restore the prep_coverage metric and its two series."
       - "GBD alignment: location_column is left empty because a county row's state column is not the county's own place. Maintainer to decide the place mapping for county rows (FIPS 26163 for Wayne County is in AHEAD's API, not the workbook)."
       - "Dataset stability: the file name is 'latest' and is replaced in place; earlier releases aren't kept at a stable address, so the raw bytes kept in the lake are the only record of past releases."

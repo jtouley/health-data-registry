@@ -278,3 +278,20 @@ def test_source_rules() -> None:
         Source(portal="https_xlsx", workbook={"sheets": ["S"], "header_row": 0}, **base)  # type: ignore[arg-type]
     s = Source(portal="https_xlsx", workbook=wb, **base)  # type: ignore[arg-type]
     assert s.workbook is not None and (s.workbook.header_row, s.workbook.sheet_field) == (1, "sheet")
+    assert s.workbook.exclude_rows == {}
+
+
+def test_excluded_rows_never_leave_the_adapter() -> None:
+    """A reviewed exclusion (AHEAD's PrEP rows) drops whole rows by exact value; a vanished column stops the read."""
+    content = workbook()
+    kept = https_xlsx.records(entry(exclude_rows={"indicator": ["Viral suppression"]}), content)
+    assert [r["indicator"] for r in kept] == ["Diagnoses", "Diagnoses", "Diagnoses"]
+    both = {"indicator": ["Viral suppression"], "county": ["Wayne County"]}
+    two = https_xlsx.records(entry(exclude_rows=both), content)
+    assert [(r["state"], r["indicator"]) for r in two] == [("Michigan", "Diagnoses"), ("Ohio", "Diagnoses")]
+    exact = https_xlsx.records(entry(exclude_rows={"indicator": ["viral suppression"]}), content)
+    assert len(exact) == 4  # exact match only
+    fields = https_xlsx.read_workbook(entry(exclude_rows={"indicator": ["Diagnoses"]}), content)[0]
+    assert "indicator" in fields  # the column itself stays; only the named rows go
+    with pytest.raises(ValueError, match="no longer has: indicatr"):
+        https_xlsx.records(entry(exclude_rows={"indicatr": ["Viral suppression"]}), content)
