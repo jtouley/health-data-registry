@@ -357,7 +357,7 @@ class QualityReport:
     def blocking(self) -> bool:
         """True when an error-severity rule failed or was not evaluated, or any rule could not run."""
         return any(
-            r["status"] == "fail" or (r["status"] == NOT_EVALUATED and r["severity"] == "error")
+            r.get("status") == "fail" or (r.get("status") == NOT_EVALUATED and r.get("severity") == "error")
             for r in self.results
         ) or bool(self.rule_errors)
 
@@ -375,15 +375,16 @@ def blocked_message(dataset: str, quality: Mapping[str, Any] | None) -> str | No
     """
     q = quality or {}
     results = q.get("results") or []
+    report = QualityReport(tuple(results), tuple(q.get("rule_errors") or ()))
+    if not report.blocking:  # the one definition of what blocks, for a fresh build and a rerun alike
+        return None
     failed = [str(r.get("test")) for r in results if r.get("status") == "fail"]
     unjudged = [
         str(r.get("test"))
         for r in results
         if r.get("status") == NOT_EVALUATED and r.get("severity") == "error"
     ]
-    broken = [str(e.get("test")) for e in q.get("rule_errors") or []]
-    if not failed and not unjudged and not broken:
-        return None
+    broken = [str(e.get("test")) for e in report.rule_errors]
     parts = []
     if failed:
         parts.append(f"the error-severity check{'s' if len(failed) > 1 else ''} {', '.join(failed)} failed")

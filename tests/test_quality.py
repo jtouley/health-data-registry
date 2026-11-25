@@ -395,6 +395,11 @@ def test_a_failed_error_rule_blocks_latest_and_publishing(tmp_path: Path) -> Non
     with pytest.raises(q.QualityBlocked):
         build_snapshot(lake, ds, [raw_fetch("https://data.cdc.gov/resource/a.json", RECORDS)], [page])
     assert not (lake / "datasets" / "toy_cases" / "LATEST").exists()
+    # A rerun with a good copy already in LATEST: the early-return path for a kept snapshot leaves it there.
+    (lake / "datasets" / "toy_cases" / "LATEST").write_text("20261101T000000Z-good\n")
+    with pytest.raises(q.QualityBlocked, match="cases_under_5000 failed"):
+        build_snapshot(lake, ds, [raw_fetch("https://data.cdc.gov/resource/a.json", RECORDS)], [page])
+    assert (lake / "datasets" / "toy_cases" / "LATEST").read_text() == "20261101T000000Z-good\n"
     # A LATEST that names a blocked copy (a lake from before the rule) is refused by export-public's checks.
     (lake / "datasets" / "toy_cases" / "LATEST").write_text(m.snapshot_id + "\n")
     from health_data_registry.publish import PublishCheckFailed, export_public
