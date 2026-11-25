@@ -1,8 +1,13 @@
 dataset: croi_abstracts_text
 version: 0.1.0
+entities:
+  - name: croi_abstract
+    type: foreign
+    columns: [abstract_number, year]
+    description: "The abstract in croi_abstracts_index this text belongs to (same number, same meeting year); find_prior_work joins on it to show an excerpt."
 dimensions:
-  - {name: abstract_number, column: abstract_number, type: categorical, description: "CROI's abstract or electronic poster number."}
-  - {name: year, column: year, type: time, description: "Conference year."}
+  - {name: abstract_number, column: abstract_number, type: categorical, description: "The number CROI gives the abstract or electronic poster in its programme (e.g. 957); numbers restart each meeting, so read it with the year."}
+  - {name: year, column: year, type: categorical, description: "The year of the CROI meeting where the work was presented (each CROI is held in February or March), not the year it was later published. Filter it as a number; it is not a date."}
 measures: []
 metrics: []
 series: []

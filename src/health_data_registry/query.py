@@ -80,6 +80,12 @@ def compile_metric(
             raise QueryRefused(
                 "unknown_dimension", f"{ds.id} has no dimension {name!r}. Dimensions: {', '.join(dims)}"
             )
+        if dims[name].separator is not None:
+            raise QueryRefused(
+                "multi_valued_dimension",
+                f"{name} can hold several values for one row (joined with '{dims[name].separator}'), so numbers "
+                f"can't be grouped or filtered by it as a whole. Ask about one value of {name} instead.",
+            )
         return dims[name].column
 
     where: list[str] = [f"({f})" for f in metric.filters]

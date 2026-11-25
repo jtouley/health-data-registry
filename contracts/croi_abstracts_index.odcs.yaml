@@ -6,8 +6,9 @@ version: 0.1.0
 status: draft
 domain: research_landscape
 description:
-  purpose: An index of CROI abstracts (2014 on) so a fellow can see what has been presented on a condition, place
-    or year, with each abstract's link on CROI's site.
+  purpose: An index of CROI abstracts so a fellow can see what has been presented on a condition, place or year,
+    with each abstract's link on CROI's site. By default it covers the five most recent CROI meetings (2022-2026);
+    earlier years, back to 2014 (the first CROI's search offers), can be added.
   usage: find_prior_work reads it. Each answer gives the title, year, session type and link; the abstract and poster
     are read on CROI's site.
   limitations: Metadata only. Tags are from fixed word rules. A year may be partly indexed while the crawl runs
@@ -30,6 +31,22 @@ schema:
   logicalType: object
   description: One row per abstract and conference year.
   dataGranularityDescription: abstract number x conference year
+  quality:
+  - id: one_page_per_abstract
+    type: sql
+    query: SELECT count(*) FROM (SELECT abstract_number, year FROM {object} GROUP BY abstract_number, year HAVING
+      count(DISTINCT page_url) > 1)
+    mustBe: 0
+    description: One CROI page per abstract number and year. The crawler enforces it as it writes (croi_index.py);
+      a second page with a number already stored for that year is recorded as a collision in the coverage record
+      and never written over the first, and the year stays incomplete, so a collision is reported, never
+      overwritten.
+  - id: abstract_key_is_unique
+    type: library
+    metric: duplicateValues
+    arguments: {properties: [abstract_number, year]}
+    mustBe: 0
+    description: Abstract number plus year is unique (the primary key).
   customProperties:
   - property: totalRows
     value: none
@@ -195,6 +212,7 @@ customProperties:
     not otherwise reproduce ... without prior written consent''; copyright CROI Foundation) were read during research,
     not re-read here; terms_url points at the home page until the maintainer records the exact terms page.'
   - Two pages can carry the same abstract number in a year (e.g. /abstract/1739-2025-td/ for a themed discussion
-    and the poster page). Rows are keyed on abstract number plus year, so the page read last wins; confirm whether
-    both pages should be kept.
+    and the poster page). Rows are keyed on abstract number plus year; the first page read is kept, a second is
+    recorded as a collision (quality rule one_page_per_abstract) and the year stays incomplete. Confirm whether both
+    pages should be kept, and if so how to key them (e.g. adding the page's session kind to the key).
   - Matching to PubMed (pubmed_pmid) is not built yet.

@@ -6,7 +6,7 @@ level: international
 country: null
 research_areas: [infectious_disease, research_landscape]
 id_areas: [hiv, stis, hepatitis, tb]
-years: {start: 2014, end: null}
+years: {start: 2014, end: null}  # the first year CROI's search offers; the crawl indexes 2022-2026 by default
 geography: [world]
 shape: registry
 grain: "One row is one CROI abstract in one conference year (abstract number plus year): its title, authors as published, session, links to its page and poster on CROI's site, and our own rule-based tags. No abstract text."

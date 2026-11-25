@@ -683,6 +683,25 @@ class Dimension(_Strict):
     column: str
     type: Literal["categorical", "time"]
     description: str = ""
+    # Set for a column holding several values joined by this separator (e.g. "hiv; tuberculosis"). Such a
+    # dimension is never grouped or filtered on as a whole string: the metric compiler refuses it.
+    separator: str | None = None
+
+    @model_validator(mode="after")
+    def _multi_valued_is_categorical(self) -> Dimension:
+        if self.separator is not None and (self.type != "categorical" or not self.separator.strip()):
+            raise ValueError(f"dimension {self.name}: only a categorical dimension can hold several values")
+        return self
+
+
+class Entity(_Strict):
+    """A key the model shares with other models (MetricFlow entities): ``primary`` is this model's own key,
+    ``foreign`` points at another model's primary entity of the same name. Joins between models use only these."""
+
+    name: str
+    type: Literal["primary", "foreign"]
+    columns: list[str]
+    description: str = ""
 
 
 class Measure(_Strict):
@@ -764,9 +783,13 @@ class SemanticModel(_Strict):
     measures: list[Measure]
     metrics: list[Metric]
     series: list[Series] = Field(default_factory=list)
+    entities: list[Entity] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _rules(self) -> SemanticModel:
+        if sum(e.type == "primary" for e in self.entities) > 1:
+            raise ValueError("a semantic model has at most one primary entity")
+        multi = {d.name for d in self.dimensions if d.separator is not None}
         measures = {m.name: m for m in self.measures}
         for metric in self.metrics:
             m = measures.get(metric.measure)
@@ -780,6 +803,11 @@ class SemanticModel(_Strict):
                 raise ValueError(
                     f"metric {metric.name} would sum a running total over every week; name the dimension it is "
                     "read at in single_value_of"
+                )
+            used = [*metric.single_value_of, *([metric.order_by] if metric.order_by else [])]
+            if multi.intersection(used):
+                raise ValueError(
+                    f"metric {metric.name} reads multi-valued dimension {sorted(multi & set(used))[0]}"
                 )
             unknown = [d for d in metric.single_value_of if d not in {x.name for x in self.dimensions}]
             if unknown:
@@ -820,6 +848,8 @@ class SemanticModel(_Strict):
             ]:
                 if d not in dims:
                     raise ValueError(f"series {ser.condition} names unknown dimension {d}")
+                if d in multi:
+                    raise ValueError(f"series {ser.condition} names multi-valued dimension {d}")
             if dims[ser.time_dimension].type != "time":
                 raise ValueError(f"series {ser.condition}: {ser.time_dimension} is not a time dimension")
             if ser.week_dimension is not None and (
@@ -990,6 +1020,21 @@ def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticMode
     for d in semantic.dimensions:
         if d.column not in cols:
             raise RegistryError(f"{entry.id}: dimension {d.name} uses unknown column {d.column}")
+    keys = [
+        p.get("name")
+        for obj in contract.raw.get("schema") or []
+        for p in obj.get("properties") or []
+        if p.get("primaryKey")
+    ]
+    for ent in semantic.entities:
+        missing = [c for c in ent.columns if c not in cols]
+        if missing:
+            raise RegistryError(f"{entry.id}: entity {ent.name} uses unknown column {missing[0]}")
+        if ent.type == "primary" and sorted(ent.columns) != sorted(keys):
+            raise RegistryError(
+                f"{entry.id}: primary entity {ent.name} is {', '.join(ent.columns)} but the contract's primary key "
+                f"is {', '.join(str(k) for k in keys) or 'not declared'}"
+            )
     for m in semantic.measures:
         if m.column not in cols:
             raise RegistryError(f"{entry.id}: measure {m.name} uses unknown column {m.column}")
@@ -1016,4 +1061,24 @@ def load_registry(root: Path | None = None) -> Registry:
     for path in sorted(catalog_dir.glob("*.yaml")):
         ds = load_dataset(root, path)
         datasets[ds.id] = ds
+    _check_entities(datasets)
     return Registry(root=root, datasets=datasets)
+
+
+def _check_entities(datasets: Mapping[str, Dataset]) -> None:
+    """Every foreign entity names a primary entity of another model, on the same number of key columns."""
+    primary = {
+        e.name: (ds.id, e) for ds in datasets.values() for e in ds.semantic.entities if e.type == "primary"
+    }
+    for ds in datasets.values():
+        for e in ds.semantic.entities:
+            if e.type != "foreign":
+                continue
+            owner = primary.get(e.name)
+            if owner is None or owner[0] == ds.id:
+                raise RegistryError(f"{ds.id}: foreign entity {e.name} names no other model's primary entity")
+            if len(owner[1].columns) != len(e.columns):
+                raise RegistryError(
+                    f"{ds.id}: foreign entity {e.name} has {len(e.columns)} columns but {owner[0]}'s has "
+                    f"{len(owner[1].columns)}"
+                )

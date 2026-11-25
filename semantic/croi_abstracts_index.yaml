@@ -1,14 +1,19 @@
 dataset: croi_abstracts_index
 version: 0.1.0
+entities:
+  - name: croi_abstract
+    type: primary
+    columns: [abstract_number, year]
+    description: "One CROI abstract in one meeting: its number plus the meeting year. croi_abstracts_text shares it; find_prior_work joins the two on it."
 dimensions:
-  - {name: abstract_number, column: abstract_number, type: categorical, description: "CROI's abstract or electronic poster number."}
-  - {name: year, column: year, type: time, description: "Conference year."}
-  - {name: session_type, column: session_type, type: categorical, description: "Kind of session, e.g. poster session."}
-  - {name: category, column: category, type: categorical, description: "CROI's topic category."}
-  - {name: condition, column: condition_tags, type: categorical, description: "Conditions named, by our word rules."}
-  - {name: design, column: design_tags, type: categorical, description: "Study designs named, by our word rules."}
-  - {name: data_source, column: data_source_tags, type: categorical, description: "Kinds of data named, by our word rules."}
-  - {name: geography, column: geography_tags, type: categorical, description: "Countries and regions named, by our word rules."}
+  - {name: abstract_number, column: abstract_number, type: categorical, description: "The number CROI gives the abstract or electronic poster in its programme (e.g. 957); numbers restart each meeting, so read it with the year."}
+  - {name: year, column: year, type: categorical, description: "The year of the CROI meeting where the work was presented (each CROI is held in February or March), not the year it was later published. Filter it as a number; it is not a date."}
+  - {name: session_type, column: session_type, type: categorical, description: "How the work was presented, e.g. a poster session or an oral abstract session."}
+  - {name: category, column: category, type: categorical, description: "The topic CROI filed the abstract under (e.g. HIV prevention)."}
+  - {name: condition, column: condition_tags, type: categorical, separator: "; ", description: "Conditions the title or text names (e.g. hiv; tuberculosis), from our fixed word rules, not a model's reading. One row can hold several, joined with '; '; a missing tag doesn't mean the condition is absent."}
+  - {name: design, column: design_tags, type: categorical, separator: "; ", description: "Study designs the title or text names (e.g. cohort; randomized_trial), from our fixed word rules. One row can hold several, joined with '; '; a missing tag doesn't mean the design wasn't used."}
+  - {name: data_source, column: data_source_tags, type: categorical, separator: "; ", description: "Kinds of data the title or text names (e.g. surveillance; ehr), from our fixed word rules. One row can hold several, joined with '; '; a missing tag doesn't mean the data weren't used."}
+  - {name: geography, column: geography_tags, type: categorical, separator: "; ", description: "Countries and regions the title or text names (e.g. kenya; south_africa), from our fixed word rules. One row can hold several, joined with '; '; a missing tag doesn't mean the work was not done there."}
 measures: []
 metrics: []
 series: []
