@@ -310,17 +310,25 @@ def parse_abstract(html: str | bytes, url: str) -> AbstractPage:
 
 # ------------------------------------------------------------------------------------------- tags by rules
 
-# Our own tags, from fixed word rules over the title and text: never a model's reading (ADR 0006).
+# Our own tags, from fixed word rules over the title and text: never a model's reading (ADR 0006). Rules ignore
+# case, except acronyms that are also everyday words ("art", "prep", "pep", "tb", "sti"), which match only as
+# written in capitals, inside ``(?-i:...)``; a fellow's own search words are matched without case (tools.py).
 CONDITION_RULES: dict[str, tuple[str, ...]] = {
-    "hiv": (r"\bhiv\b", r"\bpwh\b", r"\bplwh\b", r"antiretroviral", r"\bart\b"),
-    "hiv_prevention": (r"\bprep\b", r"pre-exposure prophylaxis", r"\bpep\b", r"lenacapavir", r"cab-la"),
+    "hiv": (r"\bhiv\b", r"\bpwh\b", r"\bplwh\b", r"antiretroviral", r"(?-i:\bART\b)"),
+    "hiv_prevention": (
+        r"(?-i:\bP[Rr][Ee]P\b)",
+        r"pre-exposure prophylaxis",
+        r"(?-i:\bPEP\b)",
+        r"lenacapavir",
+        r"cab-la",
+    ),
     "hepatitis_b": (r"hepatitis b", r"\bhbv\b"),
     "hepatitis_c": (r"hepatitis c", r"\bhcv\b"),
-    "tuberculosis": (r"tuberculosis", r"\btb\b", r"mycobacterium"),
+    "tuberculosis": (r"tuberculosis", r"(?-i:\bTB\b)", r"mycobacterium"),
     "covid19": (r"covid", r"sars-cov-2"),
     "mpox": (r"\bmpox\b", r"monkeypox"),
     "syphilis": (r"syphilis",),
-    "stis": (r"gonorr", r"chlamydia", r"sexually transmitted", r"\bsti\b"),
+    "stis": (r"gonorr", r"chlamydia", r"sexually transmitted", r"(?-i:\bSTIs?\b)"),
     "cryptococcal": (r"cryptococ",),
     "hpv": (r"\bhpv\b", r"papillomavirus", r"anal cancer", r"cervical cancer"),
     "cmv": (r"\bcmv\b", r"cytomegalovirus"),

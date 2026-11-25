@@ -125,3 +125,40 @@ def test_tags_come_from_fixed_rules() -> None:
     assert t["geography_tags"] == "kenya; usa"
     assert croi.tags(croi.GEOGRAPHY_RULES, "in the usa", case_sensitive=frozenset({"usa"})) == ""
     assert croi.tag_record("", "")["condition_tags"] == ""
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        "A state of the art assay for drug levels",
+        "The art of counselling in clinics",
+        "Bowel prep before colonoscopy",
+        "A pep talk for clinic staff",
+        "We used a tb of storage; sti-ff joints",
+    ],
+)
+def test_everyday_words_are_not_read_as_acronyms(words: str) -> None:
+    assert croi.tag_record(words, "")["condition_tags"] == ""
+
+
+@pytest.mark.parametrize(
+    ("words", "tag"),
+    [
+        ("Same-day ART start", "hiv"),
+        ("PrEP uptake", "hiv_prevention"),
+        ("PREP uptake", "hiv_prevention"),
+        ("PEP after exposure", "hiv_prevention"),
+        ("TB preventive therapy", "tuberculosis"),
+        ("STIs among adolescents", "stis"),
+        ("STI testing", "stis"),
+    ],
+)
+def test_acronyms_in_capitals_are_tagged(words: str, tag: str) -> None:
+    assert tag in croi.tag_record(words, "")["condition_tags"].split("; ")
+
+
+def test_search_words_still_name_acronym_tags_in_any_case() -> None:
+    from health_data_registry import tools
+
+    assert tools._rule_tags(croi.CONDITION_RULES, "prep") == {"hiv_prevention"}
+    assert tools._rule_tags(croi.CONDITION_RULES, "tb") == {"tuberculosis"}

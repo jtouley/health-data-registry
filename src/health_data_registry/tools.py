@@ -956,7 +956,11 @@ def year_range(years: str | None) -> tuple[int | None, int | None]:
 
 
 def _rule_tags(rules: dict[str, tuple[str, ...]], text: str) -> set[str]:
-    return {t for t, pats in rules.items() if any(re.search(p, text, re.I) for p in pats)}
+    """The tags a fellow's search words name, ignoring case throughout ("prep" and "tb" count here, though the
+    stored tags need the acronyms in capitals)."""
+    return {
+        t for t, pats in rules.items() if any(re.search(p.replace("(?-i:", "(?:"), text, re.I) for p in pats)
+    }
 
 
 def _matches(want: str, tags: str, *texts: str) -> bool:

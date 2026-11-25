@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -880,8 +881,10 @@ def check_release(registry: Registry, lake: Path, out: Path) -> list[str]:
     return problems
 
 
+_log = logging.getLogger(__name__)
 LISTED_FILES = frozenset({"README.md", "manifest.json"})
 MIN_LEAK_CHARS = 24  # shorter private values (numbers, years, short names) are too common to search for
+LEAK_WINDOW = 64  # a staged file holding any 64 characters of a private value, from a word start, is a leak
 
 
 def _inside(path: Path, root: Path) -> bool:
@@ -893,23 +896,47 @@ def _inside(path: Path, root: Path) -> bool:
 
 
 def private_values(registry: Registry, lake: Path) -> set[str]:
-    """Every long text value held in a private-tier source's local private store."""
+    """Every long text value of a private-tier source held on this machine (its local store and its hub cache),
+    with its whitespace collapsed. Nothing is downloaded."""
     from health_data_registry import private
 
     values: set[str] = set()
     for ds in registry:
         if ds.entry.tier != "private":
             continue
-        found = private.read_rows(lake, ds, downloader=lambda *_: None)
-        for row in found.rows if found else []:
-            values |= {v for v in row.values() if isinstance(v, str) and len(v) >= MIN_LEAK_CHARS}
+        for row in private.held_rows(lake, ds):
+            values |= {
+                _collapse(v)
+                for v in row.values()
+                if isinstance(v, str) and len(_collapse(v)) >= MIN_LEAK_CHARS
+            }
     return values
 
 
+def _collapse(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _windows(text: str) -> set[str]:
+    """Every LEAK_WINDOW-character slice of ``text`` (whitespace collapsed) that starts at a word."""
+    starts = [0] + [i + 1 for i, c in enumerate(text) if c == " "]
+    return {text[i : i + LEAK_WINDOW] for i in starts if len(text) - i >= LEAK_WINDOW}
+
+
 def private_leaks(registry: Registry, lake: Path, out: Path) -> list[str]:
-    """No file from the private area, and no private value, is in the staged release."""
+    """No file from the private area, and no private text, is in the staged release: neither a whole value nor
+    an excerpt, a paragraph or a line of one (any 64 characters from a word start, whitespace ignored)."""
     problems: list[str] = []
     values = private_values(registry, lake)
+    short = {v for v in values if len(v) < LEAK_WINDOW}
+    windows: set[str] = set()
+    for v in values - short:
+        windows |= _windows(v)
+    if not values and any(ds.entry.tier == "private" for ds in registry):
+        _log.warning(
+            "no private-tier rows are on this machine (no local store, no hub cache), so the staged release "
+            "could not be checked against private text; only links into the private area were checked"
+        )
     for p in sorted(out.rglob("*")):
         if not p.is_file():
             continue
@@ -918,8 +945,8 @@ def private_leaks(registry: Registry, lake: Path, out: Path) -> list[str]:
             continue
         if not values:
             continue
-        text = p.read_bytes().decode("utf-8", errors="ignore")
-        if any(v in text for v in values):
+        text = _collapse(p.read_bytes().decode("utf-8", errors="ignore"))
+        if any(v in text for v in short) or not windows.isdisjoint(_windows(text)):
             problems.append(
                 f"{p.relative_to(out)} holds text from a private-tier source; nothing private is published"
             )

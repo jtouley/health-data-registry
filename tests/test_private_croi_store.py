@@ -165,3 +165,65 @@ def test_every_answer_carries_the_terms(registry: Registry) -> None:
     assert any(line.startswith("Licence: croi-abstract-text") for line in lines)
     assert any(line.startswith("How to cite:") for line in lines)
     assert any(line.startswith("Suppression:") for line in lines)
+
+
+# ------------------------------------------------------------ fix round (#30): the pre-publish leak check
+
+BODY = (
+    "Background\nLong-acting cabotegravir was offered to adolescents in three clinics across the region.\n"
+    "Methods\nWe followed every participant for forty-eight weeks and recorded each missed injection visit.\n"
+    "Results\nRetention at week forty-eight was high and did not differ by clinic, age group or sex."
+)
+
+
+def _staged(tmp_path: Path, text: str) -> Path:
+    out = tmp_path / "staged"
+    (out / "toy").mkdir(parents=True)
+    (out / "toy" / "README.md").write_text(f"# A card\n\n{text}\n")
+    return out
+
+
+@pytest.mark.parametrize(
+    "copied",
+    [
+        BODY,  # the whole value
+        "Long-acting cabotegravir was offered to adolescents in three clinics across the …",
+        "We followed every participant for forty-eight weeks and recorded each missed injection visit.",  # a line
+        "We followed every   participant\nfor forty-eight weeks and recorded each missed",  # whitespace changed
+    ],
+)
+def test_a_whole_or_partial_copy_of_private_text_fails_the_check(
+    tmp_path: Path, registry: Registry, copied: str
+) -> None:
+    from health_data_registry import publish
+
+    private.write_rows(tmp_path / "lake", registry.get(TEXT), "year=2025", [text_row(body=BODY)])
+    out = _staged(tmp_path, f"Some public words. {copied} More public words.")
+    assert publish.private_leaks(registry, tmp_path / "lake", out) == [
+        "toy/README.md holds text from a private-tier source; nothing private is published"
+    ]
+
+
+def test_public_text_and_short_overlaps_pass(tmp_path: Path, registry: Registry) -> None:
+    from health_data_registry import publish
+
+    private.write_rows(tmp_path / "lake", registry.get(TEXT), "year=2025", [text_row(body=BODY)])
+    out = _staged(tmp_path, "Weekly notifiable disease counts by state. We followed every participant.")
+    assert publish.private_leaks(registry, tmp_path / "lake", out) == []
+
+
+def test_the_hub_cache_is_checked_without_a_download(
+    tmp_path: Path, registry: Registry, caplog: pytest.LogCaptureFixture
+) -> None:
+    from health_data_registry import publish
+
+    lake = tmp_path / "lake"
+    out = _staged(tmp_path, BODY)
+    assert publish.private_leaks(registry, lake, out) == []  # nothing on this machine to compare against
+    assert "could not be checked against private text" in caplog.text
+    cache = private.hub_cache(lake, TEXT)
+    cache.mkdir(parents=True)
+    (cache / "year=2025.jsonl").write_text(json.dumps(text_row(body=BODY)) + "\n")
+    private._hub_read_at.clear()
+    assert publish.private_leaks(registry, lake, out) != []
+    assert private._hub_read_at == {}  # the check never marks the hub cache fresh
