@@ -27,9 +27,9 @@ from health_data_registry import adapters
 from health_data_registry.adapters import TYPES, Page, pages
 from health_data_registry.adapters.extensions import EXTENSIONS, _load
 from health_data_registry.adapters.row_guard import RowLevelRefused
-from health_data_registry.registry import load_registry
-from health_data_registry.source_config import CONFIG_MODELS, TYPE_HOOKS, TYPE_NAMES
-from tests.adapters.helpers import entry, fetch_of
+from health_data_registry.registry import CatalogEntry, load_registry
+from health_data_registry.source_config import CONFIG_MODELS, TYPE_HOOKS, TYPE_NAMES, HtmlTableConfig
+from tests.adapters.helpers import config_of, entry, fetch_of
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "health_data_registry"
 ADAPTERS = SRC / "adapters"
@@ -245,7 +245,7 @@ def test_every_type_output_passes_the_row_guard(kind: str, monkeypatch: pytest.M
         list(pages(e, lambda u: page.fetch))
 
 
-def _entry_of(kind: str):  # type: ignore[no-untyped-def]
+def _entry_of(kind: str) -> CatalogEntry:
     blocks = {
         "https_file": {"format": "csv"},
         "html_table": {"shape": "table", "table_selector": "table"},
@@ -277,7 +277,9 @@ def test_every_record_producing_extension_passes_the_row_guard(monkeypatch: pyte
     e = listing_entry(extensions=[{"name": "probe_parse", "hook": "parse"}])
     from health_data_registry.adapters.html_table import item_records
 
-    recs = item_records(e, e.source.config().listing, item_html("a"), "https://data.example.gov/abstract/a/")  # type: ignore[attr-defined]
+    listing = config_of(e, HtmlTableConfig).listing
+    assert listing is not None
+    recs = item_records(e, listing, item_html("a"), "https://data.example.gov/abstract/a/")
     page = Page(fetch=fetch_of("https://data.example.gov/abstract/a/", b""), records=recs)
     with pytest.raises(RowLevelRefused):
         adapters.guard_page("probe", page)
@@ -286,3 +288,19 @@ def test_every_record_producing_extension_passes_the_row_guard(monkeypatch: pyte
             from tests.adapters.test_staging_extensions import row_level_staging_is_refused
 
             row_level_staging_is_refused(ext.name)
+
+
+def test_a_type_missing_from_the_registry_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    e = _entry_of("https_file")
+    monkeypatch.delitem(TYPES, "https_file")
+    with pytest.raises(ValueError, match="no adapter type is named 'https_file'"):
+        adapters.adapter_type(e)
+
+
+@pytest.mark.parametrize("kind", ["https_file", "html_table", "pdf_table"])
+def test_publisher_fields_refuses_another_types_config(kind: str) -> None:
+    import importlib
+
+    module = importlib.import_module(f"health_data_registry.adapters.{kind}")
+    with pytest.raises(TypeError, match=f"read as socrata, not {kind}"):
+        module.publisher_fields(entry("socrata"), lambda url: fetch_of(url, b""))

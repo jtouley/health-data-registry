@@ -120,7 +120,8 @@ def read_table(
     entry: CatalogEntry, cfg: HtmlTableConfig, content: bytes
 ) -> tuple[list[str], list[dict[str, str]]]:
     """The labels and records of the one table the config names."""
-    assert cfg.table_selector is not None  # noqa: S101 - the config model requires it for shape table
+    if cfg.table_selector is None:  # the config model requires one for shape table
+        raise ValueError(f"{entry.id}: an html_table table needs a table_selector")
     doc = parse_page(content)
     found = [t for t in select(doc, cfg.table_selector) if t.tag == "table"]
     if len(found) != 1:
@@ -166,7 +167,8 @@ def pages(read: Read) -> Iterator[Page]:
 
 def publisher_fields(entry: CatalogEntry, get: Fetcher) -> set[str]:
     cfg = entry.source.config()
-    assert isinstance(cfg, HtmlTableConfig)  # noqa: S101 - registered for html_table only
+    if not isinstance(cfg, HtmlTableConfig):  # registered for html_table only
+        raise TypeError(f"{entry.id}: read as {entry.source.kind}, not html_table")
     if cfg.listing is not None:
         return set(cfg.listing.fields) | set(DOCUMENT_FIELDS)
     labels, _recs = read_table(entry, cfg, get_following(entry, get, entry.source.api_url).content)

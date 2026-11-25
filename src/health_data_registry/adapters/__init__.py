@@ -14,6 +14,7 @@ and every table a page was read from, whatever the type, with no way to switch i
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -131,7 +132,7 @@ def register(t: AdapterType) -> AdapterType:
 def adapter_type(entry: CatalogEntry) -> AdapterType:
     """The registered type that reads this entry; an unknown type is refused, never read as some other type."""
     t = TYPES.get(entry.source.kind)
-    if t is None:  # pragma: no cover - the catalog model only accepts registered names
+    if t is None:  # the catalog model only accepts registered names; a type missing from TYPES is refused
         raise ValueError(f"{entry.id}: no adapter type is named {entry.source.kind!r}")
     return t
 
@@ -268,4 +269,4 @@ def capabilities(entry: CatalogEntry) -> AdapterType:
     return adapter_type(entry)
 
 
-from health_data_registry.adapters import _types  # noqa: E402, F401 - registers every type in TYPES
+importlib.import_module("health_data_registry.adapters._types")  # registers every type in TYPES

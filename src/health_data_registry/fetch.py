@@ -560,7 +560,9 @@ def fetch(
     original = url.strip()
     origin_host = validate_url(original, allowed_hosts).hostname
     current = original
-    for hop in range(max_redirects + 1):
+    hop = -1
+    while True:  # each pass returns, raises, or follows one redirect; the last allowed hop raises
+        hop += 1
         parts = validate_url(current, allowed_hosts)
         host = (parts.hostname or "").lower()
         addresses = public_addresses(host)
@@ -649,7 +651,3 @@ def fetch(
             sha256=digest,
             retrieved_at=datetime.now(UTC),
         )
-
-    raise FetchRefused(  # pragma: no cover - the last hop raises inside the loop
-        "too_many_redirects", f"The link redirected more than {max_redirects} times, so it was stopped."
-    )

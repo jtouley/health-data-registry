@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import io
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -83,10 +83,10 @@ def xlsx_bytes(
     *,
     sheet: str = "Table 1",
     state: str | None = None,
-    merged: list[str] = (),  # type: ignore[assignment]
-    shared: list[str] = (),  # type: ignore[assignment]
+    merged: Sequence[str] = (),
+    shared: Sequence[str] = (),
     custom_formats: Mapping[int, str] | None = None,
-    xf_formats: list[int] = (0,),  # type: ignore[assignment]
+    xf_formats: Sequence[int] = (0,),
     prolog: str = "",
 ) -> bytes:
     """A minimal workbook. Each cell is (kind, value, style): kind n (number), s (shared string index), str,
@@ -165,3 +165,10 @@ def published(page: Any) -> list[dict[str, Any]]:
         assert tuple(r.get(k) for k in DOCUMENT_FIELDS) == want, r
         out.append({k: v for k, v in r.items() if k not in DOCUMENT_FIELDS})
     return out
+
+
+def config_of[C](e: CatalogEntry, cls: type[C]) -> C:
+    """The entry's type block, as the config class the test expects (a different one fails the test)."""
+    cfg = e.source.config()
+    assert isinstance(cfg, cls), f"{e.id} is configured by {type(cfg).__name__}, not {cls.__name__}"
+    return cfg

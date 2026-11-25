@@ -138,4 +138,6 @@ def resolved(uses: Sequence[ExtensionUse], hook: str) -> list[tuple[Extension, A
 
 def _load() -> None:
     """Import every extension module once, so each registers itself."""
-    from health_data_registry.adapters.extensions import header_row_finder, wide_to_long  # noqa: F401
+    from health_data_registry.adapters.extensions import header_row_finder, wide_to_long
+
+    del header_row_finder, wide_to_long  # imported only so each registers itself

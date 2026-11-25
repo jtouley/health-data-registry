@@ -6,7 +6,8 @@ agree). Existing readers keep their own module functions; the entries below only
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from typing import Any
 
 from health_data_registry.adapters import DOCUMENT_FIELDS, AdapterType, Page, Read, register
 from health_data_registry.source_config import CONFIG_MODELS
@@ -37,8 +38,8 @@ def _tableau(read: Read) -> Iterator[Page]:
     return tableau.pages(read.entry, read.get, max_rows=read.max_rows, fields=read.fields)
 
 
-def _lazy(module: str, name: str):  # type: ignore[no-untyped-def]
-    def call(*args, **kwargs):  # type: ignore[no-untyped-def]
+def _lazy(module: str, name: str) -> Callable[..., Any]:
+    def call(*args: Any, **kwargs: Any) -> Any:
         import importlib
 
         return getattr(importlib.import_module(f"health_data_registry.adapters.{module}"), name)(

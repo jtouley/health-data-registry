@@ -240,7 +240,8 @@ def crawl_pages(
             f"{entry.id} is crawled page by page over hours by the maintainers' refresh, never read live for a question"
         )
     cfg = read.config.listing
-    assert cfg is not None  # noqa: S101 - shape listing requires it
+    if cfg is None:  # shape listing requires it
+        raise ValueError(f"{entry.id}: a listing crawl needs a listing block")
     state = ListingState(read.lake, entry.id)
     get = PacedGetter(read, read.lake, clock=clock or time.time, sleep=sleep or time.sleep)
     method = method_digest(entry)
@@ -284,7 +285,7 @@ def _read_item(read: Read, cfg: ListingConfig, state: ListingState, get: PacedGe
     read_from_page = item_records(entry, cfg, item.content, link)
     check_item(entry, cfg, listed, year, read_from_page)
     records = with_document(read_from_page, item)
-    write_raw(read.lake, [item])  # type: ignore[arg-type] # data first ...
+    write_raw(state.lake, [item])  # data first ...
     ck.done[link] = state.save_item(ck.partition, link, item, records)
     ck.gone.pop(link, None)
     state.save(ck)  # ... checkpoint last

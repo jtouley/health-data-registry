@@ -24,8 +24,8 @@ from health_data_registry.access import (
 )
 from health_data_registry.adapters import method_digest, pages
 from health_data_registry.fetch import FetchRefused
-from health_data_registry.source_config import match_whole, safe_pattern
-from tests.adapters.helpers import HOST, Site, entry
+from health_data_registry.source_config import ODataConfig, match_whole, safe_pattern
+from tests.adapters.helpers import HOST, Site, config_of, entry
 
 # ------------------------------------------------------------------------------------------- links and scope
 
@@ -396,7 +396,7 @@ def test_https_file_schema_refusals(block: dict[str, Any] | None, match: str) ->
 
 def test_portal_is_read_as_its_type() -> None:
     e = entry("socrata", type=None, portal="who_gho", host="ghoapi.example.org")
-    assert e.source.kind == "odata" and e.source.config().max_pages == 200  # type: ignore[attr-defined]
+    assert e.source.kind == "odata" and config_of(e, ODataConfig).max_pages == 200
 
 
 @pytest.mark.parametrize(("pattern", "ok"), [(r"/a/[a-z]+\.pdf", True), (r"(a|b)+", True), (r"(a+)+", True),

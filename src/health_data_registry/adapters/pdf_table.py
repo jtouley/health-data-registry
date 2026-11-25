@@ -232,7 +232,8 @@ def publisher_fields(entry: CatalogEntry, get: Fetcher) -> set[str]:
     """The fields the newest-listed report gives today, for the contract drift check: its printed labels (or the
     long layout's fields), plus the metadata this type adds to every row."""
     cfg = entry.source.config()
-    assert isinstance(cfg, PdfTableConfig)  # noqa: S101 - registered for pdf_table only
+    if not isinstance(cfg, PdfTableConfig):  # registered for pdf_table only
+        raise TypeError(f"{entry.id}: read as {entry.source.kind}, not pdf_table")
     urls = documents(entry, cfg, get(entry.source.api_url).content, entry.source.api_url)
     newest = get(urls[0])
     recs = records_of(cfg, newest.content, uses=entry.source.extensions, url=newest.url)

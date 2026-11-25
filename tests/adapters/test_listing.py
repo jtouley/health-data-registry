@@ -15,7 +15,8 @@ from health_data_registry.adapters import LayoutError, pages
 from health_data_registry.fetch import FetchRefused
 from health_data_registry.listing import CrawlIncomplete, ListingState, crawl_pages, partitions
 from health_data_registry.registry import CatalogEntry
-from tests.adapters.helpers import HOST, Site, entry, published
+from health_data_registry.source_config import HtmlTableConfig
+from tests.adapters.helpers import HOST, Site, config_of, entry, published
 
 LISTING = {
     "url_template": "https://{host}/search/?yr={year}&page={page}",
@@ -342,7 +343,8 @@ def test_never_read_live(tmp_path: Path) -> None:
 def test_sessions_partition_the_crawl() -> None:
     cfg = listing_entry(listing={**LISTING, "url_template": LISTING["url_template"] + "&s={session}",
                                  "sessions": ["Oral", "Poster A"]}).source.config()  # fmt: skip
-    assert partitions(cfg.listing) == [(2025, "Oral"), (2025, "Poster A")]  # type: ignore[attr-defined]
+    assert isinstance(cfg, HtmlTableConfig) and cfg.listing is not None
+    assert partitions(cfg.listing) == [(2025, "Oral"), (2025, "Poster A")]
 
 
 @pytest.mark.parametrize(
@@ -522,7 +524,8 @@ def test_parse_extensions_combine_in_declared_order(monkeypatch: pytest.MonkeyPa
     monkeypatch.setitem(EXTENSIONS, "probe_many", ext("probe_many", [{"x": "1"}, {"x": "2"}]))
     uses = [{"name": "probe_two", "hook": "parse"}, {"name": "probe_one", "hook": "parse"}]
     e = listing_entry(extensions=uses)
-    cfg = e.source.config().listing  # type: ignore[attr-defined]
+    cfg = config_of(e, HtmlTableConfig).listing
+    assert cfg is not None
     recs = item_records(e, cfg, item_html("a"), item("a"))
     assert recs == [{"title": "A", "body": "Text of a.", "track": "Clinical", "session": "Oral"}]
     assert order == ["probe_two", "probe_one"]

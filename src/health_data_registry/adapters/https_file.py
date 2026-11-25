@@ -57,7 +57,8 @@ def _grid(
             if len(rows) > cfg.max_rows + cfg.header_row + cfg.skip_footer_rows:
                 raise LayoutError(f"{entry.id}: the file has more than {cfg.max_rows:,} rows")
         return rows, [], []
-    assert cfg.sheet is not None  # noqa: S101 - the config model requires a sheet for xlsx
+    if cfg.sheet is None:  # the config model requires a sheet for xlsx
+        raise ValueError(f"{entry.id}: an xlsx file needs a sheet")
     cells, merged = read_sheet(
         data, cfg.sheet, _caps(cfg), max_rows=cfg.max_rows + cfg.header_row + cfg.skip_footer_rows
     )
@@ -146,7 +147,8 @@ def pages(read: Read) -> Iterator[Page]:
 
 def publisher_fields(entry: CatalogEntry, get: Fetcher) -> set[str]:
     cfg = entry.source.config()
-    assert isinstance(cfg, HttpsFileConfig)  # noqa: S101 - registered for https_file only
+    if not isinstance(cfg, HttpsFileConfig):  # registered for https_file only
+        raise TypeError(f"{entry.id}: read as {entry.source.kind}, not https_file")
     content, _page = _download(entry, cfg, get)
     header, _recs, _prov = read_records(entry, cfg, content)
     formats = {h + FORMAT_SUFFIX for h in header} if cfg.format == "xlsx" else set()

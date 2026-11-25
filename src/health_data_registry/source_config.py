@@ -18,14 +18,14 @@ from __future__ import annotations
 import codecs
 import functools
 import re
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # The closed set of adapter types (ADR 0016: a new type is a new ADR). adapters.TYPES registers one behaviour for
 # each, and a test checks that the two agree.
 TypeName = Literal["socrata", "odata", "https_csv", "https_file", "html_table", "pdf_table", "tableau", "doi"]
-TYPE_NAMES: Final[tuple[str, ...]] = TypeName.__args__  # type: ignore[attr-defined]
+TYPE_NAMES: Final[tuple[str, ...]] = get_args(TypeName)
 # The older ``portal:`` values, read for one release, and the type each one means.
 PORTAL_TYPES: Final[dict[str, str]] = {
     "socrata": "socrata",

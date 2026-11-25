@@ -14,7 +14,8 @@ from health_data_registry.adapters.html import SelectorError, parse_html, parse_
 # Imported by name, not only reached through adapters.TYPES' lazy loader, so mutation testing maps these tests to it.
 from health_data_registry.adapters.html_table import read_table
 from health_data_registry.adapters.row_guard import RowLevelRefused
-from tests.adapters.helpers import HOST, Site, entry, published
+from health_data_registry.source_config import HtmlTableConfig
+from tests.adapters.helpers import HOST, Site, config_of, entry, published
 
 URL = f"https://{HOST}/toy/data"
 
@@ -204,7 +205,7 @@ def test_read_table_alone_gives_the_labels_and_records() -> None:
         "html_table",
         {"shape": "table", "table_selector": "table#cases", "caption": "Reported cases by county"},
     )
-    labels, records = read_table(e, e.source.config(), SIMPLE)  # type: ignore[arg-type]
+    labels, records = read_table(e, config_of(e, HtmlTableConfig), SIMPLE)
     assert labels == list(records[0]) and records == published(list(pages(e, Site({URL: SIMPLE})))[0])
 
 
@@ -268,6 +269,7 @@ def test_an_item_page_with_none_of_its_fields_is_refused() -> None:
     from tests.adapters.test_listing import item, listing_entry
 
     e = listing_entry()
-    cfg = e.source.config().listing  # type: ignore[attr-defined]
+    cfg = config_of(e, HtmlTableConfig).listing
+    assert cfg is not None
     with pytest.raises(LayoutError, match="none of the fields the catalog names"):
         item_records(e, cfg, b"<main><h2>Redesigned</h2></main>", item("a"))
