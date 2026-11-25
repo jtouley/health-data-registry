@@ -1,9 +1,10 @@
-"""scripts/merge_queue.py and its wiring: a PR defers mutation shards only while main has a merge queue."""
+"""scripts/merge_queue.py and its wiring: a PR narrows its run, and reuses a verdict, only with a merge queue."""
 
 from __future__ import annotations
 
 import importlib.util
 import os
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -44,39 +45,88 @@ def _main(mq: ModuleType, capsys: pytest.CaptureFixture[str], answer: Any) -> st
 @pytest.mark.parametrize(
     ("answer", "expected"),
     [
-        (QUEUE, "true"),  # with a queue: a PR may defer
-        (NO_QUEUE, "false"),  # without one: every shard runs on the PR
+        (QUEUE, "true"),  # with a queue: a PR runs what its change can reach
+        (NO_QUEUE, "false"),  # without one: a PR runs everything
         ([], "false"),
         ({"message": "Not Found"}, "false"),
-        (OSError("network down"), "false"),  # any doubt: nothing defers
+        (OSError("network down"), "false"),  # any doubt: everything runs
     ],
     ids=["queue", "no-queue", "no-rules", "unexpected-answer", "api-error"],
 )
-def test_only_a_merge_queue_rule_lets_a_pr_defer(
+def test_only_a_merge_queue_rule_lets_a_pr_narrow(
     mq: ModuleType, capsys: pytest.CaptureFixture[str], answer: Any, expected: str
 ) -> None:
     assert _main(mq, capsys, answer) == expected
 
 
-def test_a_bad_repository_name_never_defers(mq: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:
+def test_a_bad_repository_name_never_narrows(mq: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:
     assert mq.main(["--repo", "../x"], lambda *a: QUEUE) == 0
     assert capsys.readouterr().out.strip() == "false"
 
 
 @reads_workflows
-def test_the_workflow_defers_only_with_a_queue() -> None:
+def test_without_a_queue_a_pr_runs_everything_and_reuses_nothing() -> None:
     jobs = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))["jobs"]
     changes = jobs["changes"]
-    assert changes["outputs"]["queue"] == "${{ steps.queue.outputs.queue }}"
-    step = next(s for s in changes["steps"] if s.get("id") == "queue")
-    assert 'if [ "${queue}" != "true" ]; then queue=false; fi' in step["run"]  # anything else: no queue
-    listing = next(s for s in changes["steps"] if s.get("id") == "mutation")
+    steps = {s.get("id"): s for s in changes["steps"]}
     assert (
-        '[ "${QUEUE}" = "true" ] && [ "${count}" -gt 6 ]' in listing["run"]
-    )  # >6 shards defer only with a queue
-    shard = jobs["mutation"]
-    run = next(s for s in shard["steps"] if s.get("name") == "Mutation tests on one shard")["run"]
-    assert 'if [ "${EVENT}" = "merge_group" ] || [ "${QUEUE}" != "true" ]; then limits=(); fi' in run
-    assert "needs.changes.outputs.queue != 'true') && 20 || 3" in str(shard["timeout-minutes"])
-    floor = next(s for s in jobs["result"]["steps"] if s.get("name") == "Mutation floor on the total")["run"]
-    assert 'if [ "${EVENT}" = "merge_group" ] || [ "${QUEUE}" != "true" ]; then allow=(); fi' in floor
+        'if [ "${queue}" != "true" ]; then queue=false; fi' in steps["queue"]["run"]
+    )  # anything else: no queue
+    order = [s.get("id") for s in changes["steps"]]
+    assert order.index("queue") < order.index("reuse") < order.index("impact")
+    assert "steps.queue.outputs.queue == 'true'" in steps["reuse"]["if"]
+    assert steps["impact"]["env"]["QUEUE"] == "${{ steps.queue.outputs.queue }}"
+
+
+def _run_impact_step(tmp_path: Path, event: str, ref: str, queue: str) -> tuple[str, str]:
+    """The impact step's script under bash -e, with fake git and uv on PATH: (step outputs, uv's arguments)."""
+    jobs = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))["jobs"]
+    run = next(s for s in jobs["changes"]["steps"] if s.get("id") == "impact")["run"]
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    for name, body in {"git": f"echo {'a' * 40}", "uv": f'echo "$@" >> {tmp_path}/uv-args'}.items():
+        (bin_ / name).write_text(f"#!/usr/bin/env bash\n{body}\n", encoding="utf-8")
+        (bin_ / name).chmod(0o755)
+    out = tmp_path / "out"
+    out.write_text("", encoding="utf-8")
+    env = {
+        **os.environ,
+        "PATH": f"{bin_}{os.pathsep}{os.environ['PATH']}",
+        "GITHUB_OUTPUT": str(out),
+        "EVENT": event,
+        "REF": ref,
+        "BASE_REF": "main",
+        "QUEUE": queue,
+    }
+    done = subprocess.run(  # noqa: S603
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", run],  # noqa: S607
+        env=env, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert done.returncode == 0, done.stdout + done.stderr
+    return out.read_text(encoding="utf-8"), (tmp_path / "uv-args").read_text(encoding="utf-8")
+
+
+@reads_workflows
+@pytest.mark.parametrize(
+    ("event", "ref", "queue", "narrowed"),
+    [
+        ("pull_request", "refs/pull/1/merge", "true", True),
+        ("push", "refs/heads/pre-pr/x", "true", True),
+        ("pull_request", "refs/pull/1/merge", "false", False),  # no queue: nothing would run the rest
+        ("push", "refs/heads/pre-pr/x", "", False),
+        ("merge_group", "refs/heads/gh-readonly-queue/main/x", "", False),
+        ("push", "refs/heads/main", "", False),
+    ],
+)
+def test_only_a_pr_or_pre_pr_run_with_a_queue_is_narrowed(
+    tmp_path: Path, event: str, ref: str, queue: str, narrowed: bool
+) -> None:
+    out, uv_args = _run_impact_step(tmp_path, event, ref, queue)
+    if narrowed:
+        assert f"--base {'a' * 40}" in uv_args and "--full" not in uv_args
+        assert 'pythons=["3.12"]\n' in out
+    else:
+        assert "--full" in uv_args and "--base" not in uv_args
+        assert 'pythons=["3.12","3.13"]\n' in out
+    is_pr = event == "pull_request" or ref.startswith("refs/heads/pre-pr/")
+    assert (f"merge_base={'a' * 40}\n" if is_pr else "merge_base=\n") in out  # the ratchet still compares

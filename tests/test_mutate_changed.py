@@ -771,9 +771,9 @@ def test_an_expect_list_mixing_two_splits_of_a_module_fails(mc: ModuleType) -> N
 
 
 def _jobs() -> tuple[str, str]:
-    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    list_job = ci.split("\n  changes:", 1)[1].split("\n  checks:", 1)[0]
-    shard_job = ci.split("\n  mutation:", 1)[1].split("\n  mutation-stats:", 1)[0]
+    wf = (ROOT / ".github" / "workflows" / "mutation.yml").read_text(encoding="utf-8")
+    list_job = wf.split("\n  plan:", 1)[1].split("\n  stats:", 1)[0]
+    shard_job = wf.split("\n  shard:", 1)[1].split("\n  result:", 1)[0]
     return list_job, shard_job
 
 
@@ -789,20 +789,17 @@ def test_the_list_job_splits_with_the_shards_python() -> None:
 @reads_real_sources  # .github/ is not copied into mutants/
 def test_shards_scope_to_the_lists_merge_base_and_stay_small() -> None:
     list_job, shard_job = _jobs()
-    assert '--list --base "${base}"' in list_job
-    assert "mutation_base: ${{ steps.mutation.outputs.base }}" in list_job
-    assert "MERGE_BASE: ${{ needs.changes.outputs.mutation_base }}" in shard_job
-    assert '--base "${MERGE_BASE}"' in shard_job and "fetch-depth: 0" in shard_job
+    assert '--list --base "${BASE}"' in list_job
+    assert "base: ${{ steps.base.outputs.base }}" in list_job
+    assert "BASE: ${{ needs.plan.outputs.base }}" in shard_job
+    assert '--base "${BASE}"' in shard_job and "fetch-depth: 0" in shard_job
     assert "max-parallel: 6\n" in shard_job
-    # A PR's shard: 3 minutes at most, and deferred (never cold, never long) past its budget or without stats.
-    assert (
-        "timeout-minutes: ${{ (github.event_name == 'merge_group' || needs.changes.outputs.queue != 'true') && 20 || 3 }}"
-        in shard_job
-    )
-    assert "limits=(--require-stats --budget 100)" in shard_job
-    # Main's stats, read only: shards restore, and only the main-only job saves.
-    assert "actions/cache/restore@" in shard_job and "actions/cache/save@" not in shard_job
+    assert "timeout-minutes: 60\n" in shard_job  # nightly: no time pressure, but a hard limit
+    # Stats from this run's own commit (the stats job), never a cache from another commit.
+    assert "needs: [plan, stats]" in shard_job and "name: mutmut-stats" in shard_job
+    assert "actions/cache" not in shard_job
     assert "--stats .mutmut-cache/stats.json" in shard_job
+    assert "--budget" not in shard_job and "--require-stats" not in shard_job  # nothing defers
 
 
 # Diff scope: only the functions a change touches -----------------------------------------------------------
@@ -1270,51 +1267,3 @@ def test_collect_stats_keeps_only_a_finished_stats_pass(
     empty = {"tests_by_mangled_function_name": {}, "duration_by_test": {}}
     monkeypatch.setattr(mc.subprocess, "run", fake_run(mc.NOTHING_MATCHES, empty))
     assert mc.collect_stats(out) == 1 and not out.exists()
-
-
-# Deferral: a pull request's shard never runs long -------------------------------------------------------------
-
-
-def test_a_pr_shard_without_main_stats_defers_and_runs_nothing(
-    mc: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    _scoped_shards(mc, monkeypatch, _source(2, 10))
-    mc.SCOPE[A] = frozenset({"x_f1"})
-    (shard,) = mc.list_shards([A])
-    calls: list[list[str]] = []
-    monkeypatch.setattr(mc.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
-    r = mc.run_mutmut([shard], tmp_path / "missing.json", "origin/main", require_stats=True, budget=120)
-    assert r.deferred and "cache miss" in r.deferred and calls == []
-    assert mc.shard_failure(r) is None
-
-
-def test_a_pr_shard_over_its_budget_defers(mc: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
-    _scoped_shards(mc, monkeypatch, _source(2, 10))
-    mc.SCOPE[A] = frozenset({"x_f1"})
-    (shard,) = mc.list_shards([A])
-
-    def slow(cmd: list[str], **kwargs: Any) -> Any:
-        assert kwargs["timeout"] == 90
-        raise mc.subprocess.TimeoutExpired(cmd, 90)
-
-    monkeypatch.setattr(mc.subprocess, "run", slow)
-    r = mc.run_mutmut([shard], budget=90)
-    assert r.deferred == "mutmut did not finish within this shard's budget (90 s)"
-
-
-def test_deferred_shards_pass_only_where_the_queue_mutates_them(mc: ModuleType) -> None:
-    ran = Shard([A], killed=8, survived=2)
-    later = Shard([B], deferred="no mutmut stats from main for this base (cache miss)")
-    ok, lines = mc.aggregate([ran, later], 70, [A, B], allow_deferred=True)
-    assert ok and any(line.startswith(f"DEFERRED to the merge queue: {B}") for line in lines)
-    assert "80.0%" in lines[-1]  # the deferred shard counts nothing
-    ok, lines = mc.aggregate([ran, later], 70, [A, B])  # the merge queue: nothing defers
-    assert not ok and "nothing defers here" in lines[0]
-    ok, lines = mc.aggregate([later], 70, [B], allow_deferred=True)
-    assert ok and lines[-1] == "No mutant scored here: every shard was deferred to the merge queue."
-
-
-def test_a_deferred_report_round_trips(mc: ModuleType, tmp_path: Path) -> None:
-    r = Shard([A], deferred="why")
-    (tmp_path / "a.json").write_text(json.dumps(asdict(r)), encoding="utf-8")
-    assert mc.load_reports(tmp_path)[0].deferred == "why"

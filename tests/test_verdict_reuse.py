@@ -259,6 +259,17 @@ def test_the_api_url_must_be_https(mr: ModuleType) -> None:
     assert callable(mr.github_get_json("https://api.github.com/", "token"))
 
 
+def test_the_token_never_follows_a_redirect(mr: ModuleType) -> None:
+    import urllib.error
+    import urllib.request
+
+    handler = mr._NoRedirect()
+    req = urllib.request.Request("https://api.github.com/x")
+    req.add_unredirected_header("Authorization", "Bearer t")
+    with pytest.raises(urllib.error.HTTPError, match="refused"):
+        handler.redirect_request(req, None, 302, "Found", {}, "http://elsewhere.example/x")
+
+
 def test_a_different_tested_tree_never_reuses_and_never_asks(mr: ModuleType) -> None:
     api = FakeApi([_run()], {RUN: [_job()]})
     assert mr.find_reusable(api, REPO, SHA, "main", TESTED, differs) is None
@@ -441,18 +452,22 @@ def test_the_workflow_wires_the_lookup_safely() -> None:
     changes = jobs["changes"]
     assert changes["permissions"] == {"contents": "read", "actions": "read"}
     reuse = next(s for s in changes["steps"] if s.get("id") == "reuse")
-    assert reuse["if"] == "github.event_name == 'pull_request' && github.base_ref == 'main'"
+    # Only while main has a merge queue: it runs everything before the merge, whatever the reused run narrowed.
+    assert reuse["if"] == (
+        "github.event_name == 'pull_request' && github.base_ref == 'main' && steps.queue.outputs.queue == 'true'"
+    )
     assert reuse["env"]["HEAD_SHA"] == "${{ github.event.pull_request.head.sha }}"
     assert reuse["env"]["REPO"] == "${{ github.repository }}"
     assert "BASE_SHA" not in reuse["env"]  # the tested tree decides, not the payload's base SHA
     assert reuse["env"]["GITHUB_TOKEN"] == "${{ github.token }}"  # noqa: S105 (an expression, not a secret)
     assert "${{" not in reuse["run"]  # values reach the shell only through env, quoted
     assert changes["outputs"]["reused_run"] == "${{ steps.reuse.outputs.run_id }}"
-    # actions: read only where the API is read: the reuse lookup (changes) and the CI budget step (result).
+    # actions: read only where the API is read: the queue and reuse lookups (changes) and the CI budget step.
     assert jobs["result"]["permissions"] == {"contents": "read", "actions": "read"}
     assert all("permissions" not in job for name, job in jobs.items() if name not in ("changes", "result"))
     # Every other job of the PR's run is skipped on reuse, and "CI result" names the reused run.
-    for name in ("checks", "test", "mutation"):
+    assert set(jobs) == {"changes", "checks", "test", "result"}  # no mutation in CI: it runs nightly
+    for name in ("checks", "test"):
         assert "needs.changes.outputs.reused_run == ''" in jobs[name]["if"], name
     result = jobs["result"]
     assert result["name"] == "CI result"

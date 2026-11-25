@@ -29,9 +29,10 @@ plus untracked files when run locally):
    checks, which always run in the Checks job (pre-commit, docs drift from `make docs`, the kit), plus
    tests/test_workflows.py when docs/helpers.md changes. No dbt, no other test.
 
-What a pull request skips here, the full suite runs on main, in the merge queue and nightly (--full), so a test
-this map misses can never reach main untested. Standard library only (with scripts/mutate_changed.py), so the
-job needs no project install.
+CI narrows a pull request's run with this map only while main has a merge queue (scripts/merge_queue.py), which
+runs the full suite (--full) on the merge before it lands; without a queue a pull request runs --full itself. So a
+test this map misses never reaches main untested through the queue. Main and nightly run --full too.
+Standard library only (with scripts/mutate_changed.py), so the job needs no project install.
 """
 
 from __future__ import annotations
@@ -236,9 +237,9 @@ def main(argv: list[str] | None = None) -> int:
             for key in ("full", "tests", "dbt", "kit"):
                 value = result[key]
                 f.write(f"{key}={value if isinstance(value, str) else json.dumps(value)}\n")
-            # The test files as pytest arguments: project paths only (letters, digits, _ . / -), never shell text.
+            # The test files as a JSON array; the test job checks each one against TEST_FILE before pytest sees it.
             tests = result["tests"]
-            f.write(f"test_args={' '.join(tests) if isinstance(tests, list) else ''}\n")
+            f.write(f"test_args={json.dumps(tests if isinstance(tests, list) else [])}\n")
     return 0
 
 

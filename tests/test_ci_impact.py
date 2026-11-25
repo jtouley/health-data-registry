@@ -123,6 +123,6 @@ def test_main_writes_the_step_outputs(
     lines = dict(line.split("=", 1) for line in out.read_text(encoding="utf-8").splitlines())
     assert lines["full"] == "false" and lines["dbt"] == "false"
     assert "tests/test_hosted_units.py" in json.loads(lines["tests"])
-    assert "tests/test_hosted_units.py" in lines["test_args"].split()
+    assert "tests/test_hosted_units.py" in json.loads(lines["test_args"])  # a JSON array, never shell words
     with pytest.raises(SystemExit):
         ci.main([])  # neither --base nor --full

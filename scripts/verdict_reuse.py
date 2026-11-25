@@ -4,8 +4,9 @@ Usage (CI, pull_request events only; see the changes job in .github/workflows/ci
   python scripts/verdict_reuse.py --repo OWNER/NAME --sha HEAD_SHA --base BASE_REF --tested-commit TESTED_SHA
 
 The pre-PR gate (docs/dev/README.md#the-pre-pr-gate) runs CI on `pre-pr/<branch>` and then on the PR, for the same
-commit. The PR's run reuses the whole pre-pr verdict ("CI result": checks, tests, dbt and mutation) when, and only
-when, all of these hold (the tree-equality rule of #96):
+commit. The PR's run reuses the whole pre-pr verdict ("CI result": checks, tests and dbt; mutation tests run
+nightly, not in CI) when, and only when, all of these hold (the tree-equality rule of #96), and ci.yml asks only
+while main has a merge queue, which runs everything before the merge:
 
 - the PR targets main (a pre-pr run compares with origin/main, so another base changes what it checked);
 - the commit this run actually tests (TESTED_SHA: `git rev-parse HEAD` after checkout, the merge commit
@@ -23,7 +24,9 @@ job then runs as usual, so an error can cost time but never skip a check.
 
 The head SHA comes from the event payload (github.event.pull_request.head.sha) and the tested SHA from the local
 checkout, never from a branch name, title or other text a contributor writes, and the token is the run's own
-GITHUB_TOKEN with `actions: read`. Standard library only, so the changes job needs no project install.
+GITHUB_TOKEN with `actions: read`. Standard library only, so the changes job needs no project install. The token
+is sent as an unredirected header and redirects are refused, as in scripts/_github_api.py: CI runs this file alone,
+outside the checkout, so it keeps its own copy of those rules instead of importing them.
 
 CI runs the base branch's copy of this script with the PR's own ci.yml. When the two disagree on arguments (a CLI
 change not yet merged), argparse exits 2, the step logs it as an argument mismatch, and everything runs: reuse is
@@ -40,6 +43,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -184,19 +188,34 @@ def github_get_json(api_url: str, token: str) -> GetJson:
         raise ValueError(f"the API URL must be https: {api_url!r}")
     base = api_url.rstrip("/")
 
+    opener = urllib.request.build_opener(_NoRedirect)
+
     def get(path: str) -> Any:
         request = urllib.request.Request(  # noqa: S310 (https only, checked above)
             base + path,
-            headers={
-                "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {token}",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
+            headers={"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"},
         )
-        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 (https only)
+        # Never copied onto a redirect; and _NoRedirect refuses every redirect anyway.
+        request.add_unredirected_header("Authorization", f"Bearer {token}")
+        with opener.open(request, timeout=30) as response:
             return json.load(response)
 
     return get
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse every redirect, so the token never follows a 30x to another host or to plain http."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        raise urllib.error.HTTPError(req.full_url, code, f"redirect to {newurl!r} refused", headers, fp)
 
 
 def main(

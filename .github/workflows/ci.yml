@@ -1,17 +1,14 @@
 name: CI
 
 # What runs where (docs/dev/README.md#ci):
-# - pull_request and push to pre-pr/** (the pre-PR gate): only what the change can affect (scripts/ci_impact.py),
-#   tests on Python 3.12, and mutation tests on the changed functions. A PR whose tested tree equals a green
-#   pre-pr run's reuses that whole verdict (scripts/verdict_reuse.py).
-# - merge_group (the merge queue): everything, tests on 3.12 and 3.13 with the coverage floor, and every mutation
-#   shard of the PR's changed functions with no time budget, so a shard a PR deferred is mutated before the merge.
-# - push to main, nightly and by hand: everything but mutation; main also refreshes the mutmut stats the PR shards
-#   start from.
-# Every PR job fits the pre-PR budget (ci/budgets.yml: 3 minutes, push to every check done). What cannot fit is
-# deferred, by name, to the merge queue, never cut short or skipped: a change of more than 6 shards, a shard with no
-# mutmut stats from main, or one that runs past its budget. Only while main's ruleset has a merge queue
-# (scripts/merge_queue.py): without one, nothing defers and every shard runs on the PR, slower but tested.
+# - pull_request and push to pre-pr/** (the pre-PR gate), while main has a merge queue (scripts/merge_queue.py):
+#   only what the change can affect (scripts/ci_impact.py), with tests on Python 3.12. A PR whose tested tree
+#   equals a green pre-pr run's reuses that whole verdict (scripts/verdict_reuse.py).
+# - the same events while main has no merge queue (or on any doubt): everything, and no reuse, since nothing would
+#   run the rest before the merge.
+# - merge_group (the merge queue), push to main, nightly and by hand: everything, tests on 3.12 and 3.13 with the
+#   coverage floor.
+# Mutation tests are not part of CI: they run nightly on main (.github/workflows/mutation.yml; hard rule 13).
 # The one required check is "CI result": it passes only when every job the changes job selected passed and every
 # other job was skipped for a reason it knows.
 on:
@@ -28,7 +25,7 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same PR or pre-pr branch cancels the superseded run, its queued jobs and shards included.
+# A newer push to the same PR or pre-pr branch cancels the superseded run, its queued jobs included.
 # Every other run (main, a merge-queue entry, nightly) gets a group of its own, keyed by commit and event, so it is
 # never cancelled, nor dropped from the queue by a later one.
 concurrency:
@@ -36,13 +33,13 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pre-pr/') }}
 
 jobs:
-  # Seconds: what the change can affect, the mutation shards of its changed functions, and on a PR whether a green
-  # pre-pr run already checked this exact tree. Standard library only, so no project install.
+  # Seconds: whether main has a merge queue, what the change can affect, and on a PR whether a green pre-pr run
+  # already checked this exact tree. Standard library only, so no project install.
   changes:
     name: Changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # actions: read only for the reuse lookup (workflow runs and their jobs); nothing is written.
+    # actions: read only for the reuse lookup (workflow runs and their jobs) and the ruleset read; nothing is written.
     permissions:
       contents: read
       actions: read
@@ -54,26 +51,33 @@ jobs:
       dbt: ${{ steps.impact.outputs.dbt }}
       kit: ${{ steps.impact.outputs.kit }}
       pythons: ${{ steps.impact.outputs.pythons }}
-      modules: ${{ steps.mutation.outputs.modules }}
-      mutation_base: ${{ steps.mutation.outputs.base }}
-      mutation_deferred: ${{ steps.mutation.outputs.deferred }}
-      queue: ${{ steps.queue.outputs.queue }}
       merge_base: ${{ steps.impact.outputs.merge_base }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      # The same pinned Python as the shards: the mutation split comes from ast, and each shard refuses a split
-      # hash that differs from the one listed here.
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: "3.12"
-      # Whole-verdict reuse (#96's rule): main's copy of the lookup, the head SHA from the event payload, the tested
-      # commit from this checkout. Any failure or argument mismatch reuses nothing, so everything runs.
+      # A PR or pre-pr run may skip what its change cannot affect only while a merge queue runs everything on the
+      # merge before it lands. Any doubt (no rule, an API error) answers false, and then everything runs.
+      - name: Does main have a merge queue?
+        id: queue
+        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pre-pr/')
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          queue="$(uv run --no-project python scripts/merge_queue.py --repo "${REPO}" --branch main)" || queue=false
+          if [ "${queue}" != "true" ]; then queue=false; fi
+          echo "queue=${queue}" >> "$GITHUB_OUTPUT"
+      # Whole-verdict reuse (#96's rule), only while main has a merge queue: main's copy of the lookup, the head SHA
+      # from the event payload, the tested commit from this checkout. Any failure or argument mismatch reuses
+      # nothing, so everything runs.
       - name: Look for a green pre-pr verdict on this tree
         id: reuse
-        if: github.event_name == 'pull_request' && github.base_ref == 'main'
+        if: github.event_name == 'pull_request' && github.base_ref == 'main' && steps.queue.outputs.queue == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -108,7 +112,8 @@ jobs:
           fi
           echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
       # A pull request compares with its base branch; a push to pre-pr/** compares with main, the branch its PR will
-      # target. Any other event runs everything. Fail if the base was not fetched (fetch-depth 0 above).
+      # target. With a merge queue on main, only what the change can affect runs; without one, everything. Any
+      # other event runs everything. Fail if the base was not fetched (fetch-depth 0 above).
       - name: What the change can affect
         id: impact
         if: steps.reuse.outputs.run_id == ''
@@ -116,65 +121,25 @@ jobs:
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
           BASE_REF: ${{ github.base_ref || 'main' }}
+          QUEUE: ${{ steps.queue.outputs.queue }}
         run: |
           if [ "${EVENT}" = "pull_request" ] || [[ "${REF}" == refs/heads/pre-pr/* ]]; then
             if ! merge_base="$(git merge-base "origin/${BASE_REF}" HEAD)" || ! [[ "${merge_base}" =~ ^[0-9a-f]{40}$ ]]; then
               echo "No merge base with origin/${BASE_REF}, so what changed is unknown. Failing."
               exit 1
             fi
-            uv run --no-project python scripts/ci_impact.py --base "${merge_base}" --github-output "$GITHUB_OUTPUT"
             echo "merge_base=${merge_base}" >> "$GITHUB_OUTPUT"
-            echo 'pythons=["3.12"]' >> "$GITHUB_OUTPUT"
+            if [ "${QUEUE}" = "true" ]; then
+              uv run --no-project python scripts/ci_impact.py --base "${merge_base}" --github-output "$GITHUB_OUTPUT"
+              echo 'pythons=["3.12"]' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "main has no merge queue, so nothing would run the rest before the merge: everything runs here."
           else
-            uv run --no-project python scripts/ci_impact.py --full --github-output "$GITHUB_OUTPUT"
             echo "merge_base=" >> "$GITHUB_OUTPUT"
-            echo 'pythons=["3.12","3.13"]' >> "$GITHUB_OUTPUT"
           fi
-      # Deferral is safe only while a merge queue runs the deferred shards before the merge. Any doubt (no rule, an
-      # API error) answers false, and then every shard runs on the PR.
-      - name: Does main have a merge queue?
-        id: queue
-        if: steps.reuse.outputs.run_id == ''
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: |
-          queue="$(uv run --no-project python scripts/merge_queue.py --repo "${REPO}" --branch main)" || queue=false
-          if [ "${queue}" != "true" ]; then queue=false; fi
-          echo "queue=${queue}" >> "$GITHUB_OUTPUT"
-      # Only the functions this change touches (spec: mutation tests on changed functions), compared with the merge
-      # base (in the merge queue, the queue's base commit), as shard ids `<module>#<k>of<n>@<split hash>`; the hash
-      # covers exactly which functions each shard mutates. On a PR, more than 6 shards (more than one wave at
-      # max-parallel) cannot fit the budget: the PR then lists none and names why, and the merge queue runs them.
-      # Main and nightly run none: every change reaches main through the queue.
-      - name: Mutation shards of the changed functions
-        id: mutation
-        if: steps.reuse.outputs.run_id == ''
-        env:
-          EVENT: ${{ github.event_name }}
-          MERGE_BASE: ${{ steps.impact.outputs.merge_base }}
-          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
-          QUEUE: ${{ steps.queue.outputs.queue }}
-        run: |
-          base="${MERGE_BASE}"
-          if [ "${EVENT}" = "merge_group" ]; then base="${QUEUE_BASE}"; fi
-          if [ -z "${base}" ]; then
-            echo "modules=[]" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if ! [[ "${base}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "The base commit is not a full SHA (${base}). Failing."
-            exit 1
-          fi
-          modules="$(uv run --no-project python scripts/mutate_changed.py --list --base "${base}")"
-          echo "Shards of the changed functions since ${base}: ${modules}"
-          count="$(python3 -c 'import json, sys; print(len(json.loads(sys.argv[1])))' "${modules}")"
-          if [ "${EVENT}" != "merge_group" ] && [ "${QUEUE}" = "true" ] && [ "${count}" -gt 6 ]; then
-            echo "deferred=${count} mutation shards are more than one wave (6), so they cannot fit the pre-PR budget; the merge queue mutates them before the merge." >> "$GITHUB_OUTPUT"
-            modules="[]"
-          fi
-          echo "modules=${modules}" >> "$GITHUB_OUTPUT"
-          echo "base=${base}" >> "$GITHUB_OUTPUT"
+          uv run --no-project python scripts/ci_impact.py --full --github-output "$GITHUB_OUTPUT"
+          echo 'pythons=["3.12","3.13"]' >> "$GITHUB_OUTPUT"
 
   # The fast checks in one job, one install: generated files current (docs, transform/), then in parallel every
   # pre-commit hook (ruff, mypy, actionlint and the rest), the Claude Projects kit, and dbt build on the fixtures.
@@ -280,114 +245,28 @@ jobs:
             make test
             exit 0
           fi
-          if ! [[ "${TEST_ARGS}" =~ ^tests/[A-Za-z0-9_./\ -]+$ ]]; then
-            echo "The test selection is not a list of test files: ${TEST_ARGS}. Failing."
+          # A JSON array of test files; each must be a plain path under tests/ ending in .py, never an option.
+          check='import json, re, sys
+          files = json.loads(sys.argv[1])
+          ok = re.compile(r"tests/[A-Za-z0-9_][A-Za-z0-9_./-]*[.]py")
+          if not files or not all(isinstance(f, str) and ok.fullmatch(f) and ".." not in f for f in files):
+              sys.exit(f"The test selection is not a list of test files: {sys.argv[1]}")
+          print("\n".join(files))'
+          if ! list="$(python3 -c "${check}" "${TEST_ARGS}")"; then
+            echo "Failing."
             exit 1
           fi
-          read -ra files <<< "${TEST_ARGS}"
+          mapfile -t files <<< "${list}"
           echo "Running ${#files[@]} test files the change can reach (scripts/ci_impact.py)."
-          uv run pytest -m "not network" -n auto --dist worksteal "${files[@]}"
-
-  # One job per shard of the changed functions (scripts/mutate_changed.py). Each shard generates its own module's
-  # mutants only and starts from main's mutmut stats (job mutation-stats), so mutmut re-collects stats only for
-  # the tests of the changed functions and changed test files; without them (a cache miss) it collects stats on
-  # the tests that import the module. "CI result" applies the 70% floor to the summed counts and fails closed: a
-  # shard whose baseline failed, that left mutants unchecked or a mutant in no shard, or that left no report fails
-  # the check. A change too big for 6 shards at once takes longer; it is never cut short or skipped.
-  mutation:
-    name: Mutation tests (${{ matrix.module }})
-    needs: changes
-    if: needs.changes.outputs.reused_run == '' && needs.changes.outputs.modules != '[]' && needs.changes.outputs.modules != ''
-    runs-on: ubuntu-latest
-    # On a PR with a merge queue on main, mutmut gets 100 s (--budget) and needs main's stats (--require-stats); past
-    # either it reports itself deferred, and the merge queue mutates it. The job limit is the backstop for a hung
-    # step. In the merge queue, or on a PR while main has no queue, a shard runs to the end, cold stats included,
-    # under the 20-minute limit: #114 measured a cold scoped shard at up to 7.5 minutes (stats run 3.0, clean test
-    # run 2.9, mutants 1.2; CI run 45643738512). Main's cached stats remove the stats run; the clean test run of the
-    # tests that reach the changed functions remains, which is what still keeps a core-module shard over 100 s.
-    timeout-minutes: ${{ (github.event_name == 'merge_group' || needs.changes.outputs.queue != 'true') && 20 || 3 }}
-    strategy:
-      fail-fast: false
-      # At most 6 shards of this run at a time, so one run takes at most 6 of the account's runners (about 20). The
-      # cap is per run, not per account: several mutation runs at once (other PRs, a pre-pr branch) can still hold
-      # more between them.
-      max-parallel: 6
-      matrix:
-        module: ${{ fromJSON(needs.changes.outputs.modules) }}
-    steps:
-      # fetch-depth 0: the shard diffs against the merge base the changes job resolved, to scope to the same
-      # functions.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
-        with:
-          python-version: "3.12"
-      - name: Install dependencies (locked)
-        run: uv sync --locked
-      # Read only: main's stats for the merge base, or else the newest main saved. Only main writes this cache
-      # (job mutation-stats); a stale or missing map can only lower the score, never raise it.
-      - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: .mutmut-cache/stats.json
-          key: mutmut-stats-v1-py3.12-${{ needs.changes.outputs.mutation_base }}
-          restore-keys: mutmut-stats-v1-py3.12-
-      # MODULE is a shard id `<module>#<k>of<n>@<split hash>`; it is always quoted. mutmut runs one mutant per core.
-      - name: Mutation tests on one shard
-        env:
-          EVENT: ${{ github.event_name }}
-          QUEUE: ${{ needs.changes.outputs.queue }}
-          MODULE: ${{ matrix.module }}
-          MERGE_BASE: ${{ needs.changes.outputs.mutation_base }}
-        run: |
-          if ! [[ "${MERGE_BASE}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "The changes job gave no merge base, so this shard cannot scope to the changed functions. Failing."
-            exit 1
-          fi
-          limits=(--require-stats --budget 100)
-          if [ "${EVENT}" = "merge_group" ] || [ "${QUEUE}" != "true" ]; then limits=(); fi
-          uv run python scripts/mutate_changed.py --module "${MODULE}" --base "${MERGE_BASE}" \
-            --stats .mutmut-cache/stats.json "${limits[@]}" --report "mutation-report/${MODULE}.json"
-      # Uploaded even when the shard failed, so "CI result" shows its counts; a missing report fails there.
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: ${{ !cancelled() }}
-        with:
-          name: mutation-${{ matrix.module }}
-          path: mutation-report/
-          if-no-files-found: error
-          retention-days: 7
-
-  # On main (and nightly, and by hand): mutmut's map of which tests call which function, over every test, cached
-  # for the PR shards above. Not part of "CI result": it gates nothing, and a failure only makes shards start cold.
-  mutation-stats:
-    name: Mutation stats (main)
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
-        with:
-          python-version: "3.12"
-      - name: Install dependencies (locked)
-        run: uv sync --locked
-      - name: Collect mutmut's stats over every test
-        run: uv run python scripts/mutate_changed.py --collect-stats .mutmut-cache/stats.json
-      - uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: .mutmut-cache/stats.json
-          key: mutmut-stats-v1-py3.12-${{ github.sha }}
+          uv run pytest -m "not network" -n auto --dist worksteal -- "${files[@]}"
 
   # The one required check. always(), not !cancelled(), on purpose: GitHub counts a skipped required check as
   # passing, so a cancelled run must still end this check as a failure. It passes only when the changes job passed,
-  # every job it selected passed, every other job was skipped, and the mutation total meets the floor. On a PR
-  # whose tested tree equals a green pre-pr run's (changes job), every other job is skipped and this names that run.
+  # every job it selected passed and every other job was skipped. On a PR whose tested tree equals a green pre-pr
+  # run's (changes job), every other job is skipped and this names that run.
   result:
     name: CI result
-    needs: [changes, checks, test, mutation]
+    needs: [changes, checks, test]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -397,15 +276,12 @@ jobs:
       actions: read
     env:
       REUSED_RUN: ${{ needs.changes.outputs.reused_run }}
-      MODULES: ${{ needs.changes.outputs.modules }}
-      DEFERRED: ${{ needs.changes.outputs.mutation_deferred }}
     steps:
       - name: Every selected job passed, every other one was skipped
         env:
           CHANGES: ${{ needs.changes.result }}
           CHECKS: ${{ needs.checks.result }}
           TEST: ${{ needs.test.result }}
-          MUTATION: ${{ needs.mutation.result }}
           TESTS: ${{ needs.changes.outputs.tests }}
           SERVER: ${{ github.server_url }}
           REPO: ${{ github.repository }}
@@ -413,7 +289,7 @@ jobs:
           fail() { echo "$1 Failing."; exit 1; }
           [ "${CHANGES}" = "success" ] || fail "The changes job ended with '${CHANGES}', so nothing was selected."
           if [ -n "${REUSED_RUN}" ]; then
-            for r in "${CHECKS}" "${TEST}" "${MUTATION}"; do
+            for r in "${CHECKS}" "${TEST}"; do
               [ "${r}" = "skipped" ] || fail "A pre-pr verdict was reused, yet a job ended with '${r}'."
             done
             echo "Reused the green 'CI result' of run ${REUSED_RUN}, which checked this exact tree:"
@@ -426,40 +302,14 @@ jobs:
           else
             [ "${TEST}" = "success" ] || fail "The tests ended with '${TEST}'."
           fi
-          if [ -n "${DEFERRED}" ]; then
-            echo "Mutation deferred to the merge queue: ${DEFERRED}"
-          fi
-          if [ "${MODULES}" = "[]" ] || [ -z "${MODULES}" ]; then
-            [ "${MUTATION}" = "skipped" ] || fail "No shard was listed, yet the shards ended with '${MUTATION}'."
-          else
-            # A failed shard still left its report; the floor step below decides.
-            [ "${MUTATION}" = "success" ] || [ "${MUTATION}" = "failure" ] || fail "The shards ended with '${MUTATION}'."
-          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: always() && env.REUSED_RUN == ''
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        if: env.REUSED_RUN == '' && env.MODULES != '[]' && env.MODULES != ''
-        with:
-          pattern: mutation-*
-          path: mutation-reports/
-          merge-multiple: true
-      # A PR's run accepts a shard that deferred itself (named in the log) only while main has a merge queue; the
-      # merge queue's own run never does.
-      - name: Mutation floor on the total
-        if: env.REUSED_RUN == '' && env.MODULES != '[]' && env.MODULES != ''
-        env:
-          EVENT: ${{ github.event_name }}
-          QUEUE: ${{ needs.changes.outputs.queue }}
-          MUTATION_FLOOR: "70"
-        run: |
-          mkdir -p mutation-reports
-          allow=(--allow-deferred)
-          if [ "${EVENT}" = "merge_group" ] || [ "${QUEUE}" != "true" ]; then allow=(); fi
-          python3 scripts/mutate_changed.py --aggregate mutation-reports --expect "${MODULES}" --floor "${MUTATION_FLOOR}" "${allow[@]}"
-      # Every job of this run against its budget (ci/budgets.yml), slow jobs listed. Runs even when a step above
-      # failed, so a slow run is reported either way. Not this job (still running), nor the stats job, which is no
-      # part of the verdict.
+      # Every job of this run, and the run's critical path, against its budget (ci/budgets.yml), slow ones listed.
+      # Runs even when a step above failed, so a slow run is reported either way. Not this job (still running). On
+      # a pull request or a pre-pr push it fails the run; on the merge queue, main and nightly it only warns, since
+      # runner speed is no reason to block a merge. An API error warns in either case.
       - name: CI budget
         if: always() && env.REUSED_RUN == ''
         env:
@@ -467,4 +317,8 @@ jobs:
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           PROFILE: ${{ needs.changes.outputs.full == 'true' && 'full' || 'pr' }}
-        run: python3 scripts/ci_budget.py check --repo "${REPO}" --run-id "${RUN_ID}" --profile "${PROFILE}" --skip "CI result" --skip "Mutation stats (main)"
+          STRICT: ${{ github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pre-pr/') }}
+        run: |
+          mode=(--warn-only)
+          if [ "${STRICT}" = "true" ]; then mode=(); fi
+          python3 scripts/ci_budget.py check --repo "${REPO}" --run-id "${RUN_ID}" --profile "${PROFILE}" --skip "CI result" "${mode[@]}"
