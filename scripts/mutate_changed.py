@@ -94,10 +94,16 @@ SEP = "ǁ"
 # mutants 3 s, mutmut's stats run 3.0 minutes and its clean test run 2.9 minutes over the 48 test files that reach
 # it, then 99 mutants in 1.2 minutes; registry.py took 5.1 minutes. Setup is now most of a shard; caching the stats
 # run is #115's work. The shard job's timeout-minutes (12) is the hard stop. Add a module here when its shards run
-# long. query.py joined registry.py at 40 on 25 Nov 2026 (PR #92, CI run 45657357595): its 150-mutant shards ran
-# about 14 mutants a minute (most of its tests open an engine) and three of ten hit the 12-minute stop.
+# long. Added on 25 Nov 2026 for PR #92: query.py's 150-mutant shards hit the 12-minute stop (CI run
+# 45657357595), and at 40 so did the three holding Engine.connect, at about 6 mutants a minute since most of its
+# tests open an engine (CI run 45664837627); paging.py's shard holding _respond (about 155 mutants) ran 9 minutes
+# once and passed 12 the next time.
 SHARD_TARGET = 150
-SHARD_TARGET_BY_MODULE = {"health_data_registry.registry": 40, "health_data_registry.query": 40}
+SHARD_TARGET_BY_MODULE = {
+    "health_data_registry.registry": 40,
+    "health_data_registry.query": 20,
+    "health_data_registry.paging": 100,
+}
 # GitHub runs at most 256 jobs from one matrix.
 MAX_SHARDS = 256
 DIGITS = "0123456789"
