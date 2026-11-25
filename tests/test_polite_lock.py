@@ -179,6 +179,29 @@ def test_our_user_agent_group_wins_over_the_star_group(tmp_path: Path) -> None:
         assert c.delay == 300.0
 
 
+def test_a_disallow_for_our_user_agent_only_is_obeyed(tmp_path: Path) -> None:
+    clock = FakeClock()
+    robots = b"User-agent: health-data-registry\nDisallow: /a/\n\nUser-agent: *\nAllow: /\n"
+    site = FakeSite(clock, {f"https://{HOST}/a/": b"a"}, robots=robots)
+    with client(tmp_path, site, clock) as c, pytest.raises(CrawlStopped) as e:
+        c.get(f"https://{HOST}/a/")
+    assert e.value.code == "robots_disallow"
+
+
+def test_another_host_is_refused_with_its_code(tmp_path: Path) -> None:
+    clock = FakeClock()
+    with client(tmp_path, FakeSite(clock), clock) as c, pytest.raises(CrawlStopped) as e:
+        c.get("https://elsewhere.example.com/a/")
+    assert e.value.code == "other_host"
+    assert str(e.value) == f"https://elsewhere.example.com/a/ is not on {HOST}; this client reads one site"
+
+
+def test_a_small_default_delay_is_used_before_robots_is_read(tmp_path: Path) -> None:
+    clock = FakeClock()
+    with client(tmp_path, FakeSite(clock), clock, default_delay=0.5) as c:
+        assert c._pace() == 0.5
+
+
 @pytest.mark.parametrize("delay", [0.0, -1.0, float("nan")])
 def test_a_default_delay_that_would_hammer_the_site_is_refused(tmp_path: Path, delay: float) -> None:
     clock = FakeClock()
