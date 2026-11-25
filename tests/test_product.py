@@ -597,7 +597,13 @@ def test_an_unresolved_suppression_rule_keeps_a_port_an_unserved_stub(tmp_path: 
 
     with pytest.raises(RegistryError, match="unreliableRule needs a kind"):
         parse_contract(doc, expected_id="toy_stub")
-    assert parse_contract(doc, expected_id="toy_stub", port=True).unreliable.kind == "unresolved"
+    parsed = product._parse_port_contract(doc, "toy_stub")
+    assert parsed.unreliable.kind == "unresolved" and parsed.unreliable.description == "Not read yet."
+    assert parsed.raw == doc  # the stand-in used for parsing never leaks into the contract
+    for bad in ({"kind": "unresolved", "description": ""}, {**rule, "threshold": 5}):
+        doc["customProperties"][1]["value"] = bad
+        with pytest.raises(RegistryError, match="needs a description and no threshold"):
+            product._parse_port_contract(doc, "toy_stub")
 
 
 def test_duplicate_ids_and_names_are_refused(tmp_path: Path) -> None:

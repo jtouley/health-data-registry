@@ -46,6 +46,7 @@ from health_data_registry.registry import (
     Contract,
     Registry,
     RegistryError,
+    UnreliableSpec,
     parse_contract,
 )
 
@@ -352,7 +353,36 @@ def port_contract(root: Path, registry: Registry, contract_id: str) -> Contract:
     doc = _read(path)
     if doc.get("id") != contract_id:
         raise RegistryError(f"{path.name}: contract id must be {contract_id}")
-    return parse_contract(doc, expected_id=contract_id, port=True)
+    return _parse_port_contract(doc, contract_id)
+
+
+def _parse_port_contract(doc: Mapping[str, Any], contract_id: str) -> Contract:
+    """A port contract as the registry's parser reads it, plus one kind only a port contract may use:
+    unreliableRule kind unresolved (the publisher's rule isn't read yet). It keeps the port an unserved stub and
+    is never read as "nothing is suppressed" (hard rules 1 and 4). A catalogued source's contract never may."""
+    custom = doc.get("customProperties")
+    rule = _custom(custom).get("unreliableRule")
+    if not (isinstance(rule, Mapping) and rule.get("kind") == UNRESOLVED):
+        return parse_contract(doc, expected_id=contract_id)
+    desc = str(rule.get("description") or "").strip()
+    if not desc or rule.get("threshold") is not None:
+        raise RegistryError(
+            f"{contract_id}: an unresolved unreliableRule needs a description and no threshold"
+        )
+    stand_in = {"kind": "none", "description": desc}
+    parsed = parse_contract(
+        {
+            **doc,
+            "customProperties": [
+                {**c, "value": stand_in}
+                if isinstance(c, Mapping) and c.get("property") == "unreliableRule"
+                else c
+                for c in custom or []
+            ],
+        },
+        expected_id=contract_id,
+    )
+    return replace(parsed, raw=doc, unreliable=UnreliableSpec(UNRESOLVED, desc))
 
 
 def _columns(doc: Mapping[str, Any]) -> list[Mapping[str, Any]]:
