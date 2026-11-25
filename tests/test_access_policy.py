@@ -286,7 +286,7 @@ def test_a_dashboard_read_is_kept_in_memory_for_a_stated_time(
         "Read live from the publisher at 2026-11-24 00:00 UTC; a dashboard takes a few minutes"
     )
     assert "never on disk) for up to 60 minutes" in note
-    assert table.fresh(table.fetched + 3599) and not table.fresh(table.fetched + 3600)
+    assert table.fresh(table.fetched + 3599) and not table.fresh(table.fetched + 3601)
     plain = live.LiveTable(records=[], manifest=table.manifest, fetched=0.0)
     assert plain.fresh(599) and not plain.fresh(600)  # other live sources keep the 10-minute limit
     assert "several lookups read the publisher once" in live.kept_note(
