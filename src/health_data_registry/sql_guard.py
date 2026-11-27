@@ -35,6 +35,7 @@ are ported. ``polars``/``structlog`` are replaced by plain tuples and stdlib ``l
 
 from __future__ import annotations
 
+import functools
 import logging
 import re
 import threading
@@ -329,19 +330,76 @@ _STATEMENT_WORDS = frozenset(
      "update", "delete", "create", "alter"}
 )  # fmt: skip
 
+# Function names never used as a bare alias or WITH name (FROM deaths read_csv('x') parses as a table alias named
+# read_csv with a column alias x): refused so the query that runs never even reads like a file read, a table
+# function or a setting. The known ones by name, whole families by prefix or suffix, and every table function the
+# installed DuckDB lists (_table_functions), so a new reader is refused too. A quoted name ("glob") is an ordinary
+# name: it is regenerated quoted, so it can't read as a call.
+_FUNCTION_NAMES: Final = frozenset(
+    {"read_csv", "read_csv_auto", "read_parquet", "read_json", "read_json_auto", "read_json_objects",
+     "read_ndjson", "read_text", "read_blob", "read_xlsx", "glob", "query", "query_table", "sqlite_scan",
+     "sqlite_attach", "postgres_scan", "postgres_attach", "mysql_scan", "parquet_scan", "parquet_metadata",
+     "parquet_schema", "delta_scan", "iceberg_scan", "getenv", "getvariable", "set_variable", "current_setting",
+     "duckdb_settings", "duckdb_tables", "duckdb_secrets", "pragma_version", "load_extension", "range",
+     "generate_series", "st_read", "http_get", "http_post", "unnest", "which_secret", "sniff_csv", "summary"}
+)  # fmt: skip
+_FUNCTION_PREFIXES: Final = (
+    "read_", "duckdb_", "pragma_", "parquet_", "sqlite_", "postgres_", "mysql_", "iceberg_", "delta_", "http_",
+)  # fmt: skip
+_FUNCTION_SUFFIXES: Final = ("_scan", "_attach", "_secret", "_secrets", "_setting", "_settings")
+
+
+@functools.cache
+def _table_functions() -> frozenset[str]:
+    """Every table and pragma function the installed DuckDB knows, lower-cased."""
+    with duckdb.connect(":memory:") as con:
+        rows = con.execute(
+            "SELECT DISTINCT function_name FROM duckdb_functions() "
+            "WHERE function_type IN ('table', 'table_macro', 'pragma')"
+        ).fetchall()
+    return frozenset(str(name).casefold() for (name,) in rows)
+
+
+def _looks_like_function(name: str) -> bool:
+    key = name.casefold()
+    return (
+        key in _FUNCTION_NAMES
+        or key.startswith(_FUNCTION_PREFIXES)
+        or key.endswith(_FUNCTION_SUFFIXES)
+        or key in _table_functions()
+    )
+
+
+def _is_definition(node: exp.Identifier) -> bool:
+    """The identifier names something the query defines: a column alias, a table alias (or its column list), a
+    WITH name, or a named window (WINDOW w AS (...), OVER w). An Identifier sits directly under an Alias or a
+    Window only as that name: the aliased expression and the window's columns are Column nodes."""
+    return isinstance(node.parent, exp.TableAlias | exp.Alias | exp.Window)
+
+
+def _check_name(node: exp.Identifier) -> None:
+    """A bare name may not read like a statement or, where the query defines it, like a function."""
+    if node.args.get("quoted"):
+        return  # a quoted name stays quoted in the SQL that runs
+    name = str(node.name)
+    if name.casefold() in _STATEMENT_WORDS:
+        raise SqlRefused(
+            "forbidden_construct",
+            f"{name} can't be used as a name here: choose another name for the column or table.",
+        )
+    if _is_definition(node) and _looks_like_function(name):
+        raise SqlRefused(
+            "forbidden_construct",
+            f"{name} looks like the name of a function, so it can't name a column, table, window or WITH part: choose "
+            f'another name, or put it in double quotes ("{name}").',
+        )
+
 
 def _check_nodes(tree: exp.Expr) -> None:
     """Fail closed: every node is known structure or an allowlisted function."""
     for node in tree.walk():
-        if (
-            isinstance(node, exp.Identifier)
-            and not node.args.get("quoted")  # a quoted name stays quoted in the SQL that runs
-            and str(node.name).casefold() in _STATEMENT_WORDS
-        ):
-            raise SqlRefused(
-                "forbidden_construct",
-                f"{node.name} can't be used as a name here: choose another name for the column or table.",
-            )
+        if isinstance(node, exp.Identifier):
+            _check_name(node)
         if isinstance(node, exp.Table) and not isinstance(node.this, exp.Identifier):
             raise SqlRefused(
                 "table_function",
