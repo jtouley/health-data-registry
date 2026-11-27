@@ -52,10 +52,10 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
-from urllib.robotparser import RobotFileParser
 from xml.etree import ElementTree
 
 from health_data_registry import naming
+from health_data_registry.access import HostPace
 from health_data_registry.crawl import Robots
 from health_data_registry.fetch import FetchRefused
 
@@ -322,8 +322,8 @@ def allowed_hosts(seeds: Iterable[Seed] = SEEDS, *, registry: Any = None) -> fro
     return frozenset(s.host for s in seeds if s.host in allowed)
 
 
-class Pace:
-    """At least PACE_S seconds between two requests to one host (ADR 0013), whatever robots.txt allows."""
+class Pace(HostPace):
+    """At least PACE_S seconds between two requests to one host (ADR 0013): the shared core's HostPace."""
 
     def __init__(
         self,
@@ -332,16 +332,7 @@ class Pace:
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self.seconds, self.sleep, self.clock = seconds, sleep, clock
-        self.last: dict[str, float] = {}
-
-    def wait(self, url: str) -> None:
-        host = (urlsplit(url).hostname or "").lower()
-        if host in self.last:
-            due = self.last[host] + self.seconds - self.clock()
-            if due > 0:
-                self.sleep(due)
-        self.last[host] = self.clock()
+        super().__init__(seconds, sleep=sleep, clock=clock)
 
 
 def publisher_getter(*, hosts: frozenset[str] | None = None, pace: Pace | None = None) -> Getter:
@@ -373,34 +364,25 @@ ROBOTS_REFUSED = frozenset({401, 403, 429})
 
 
 class BrowserRobots(Robots):
-    """crawl.Robots, with robots.txt read by the same browser as the sitemap.
+    """crawl.Robots (the one access-policy core), with robots.txt read by the same browser as the sitemap and
+    ADR 0013's stop rule (``stop_on_refused_robots``) until that record is amended.
 
     Only a 404 or 410 for robots.txt allows everything. A 401, 403 or 429 (as "http_error" or "blocked") raises
     FetchRefused("blocked"), and any other refusal or a 5xx is raised as it came: the seed is not taken.
     """
 
     def __init__(self, hosts: frozenset[str], read: Reader, **kw: Any) -> None:
-        super().__init__(hosts, **kw)
+        super().__init__(hosts, stop_on_refused_robots=True, **kw)
         self.read = read
 
-    def _rules(self, host: str) -> RobotFileParser | None:
-        if host in self.rules:
-            return self.rules[host]
-        rp = RobotFileParser()
+    def _fetch_robots(self, host: str) -> tuple[int, bytes, float | None] | None:
         try:
             body, _ = self.read(f"https://{host}/robots.txt")
-            rp.parse(body.decode("utf-8", "replace").splitlines())
         except FetchRefused as e:
-            if e.code == "http_error" and e.status in ROBOTS_ABSENT:
-                rp.parse([])  # no robots.txt, so everything is allowed (RFC 9309)
-            elif e.code == "http_error" and e.status in ROBOTS_REFUSED:
-                raise FetchRefused(
-                    "blocked", f"{host} refused to show its robots.txt (status {e.status})", status=e.status
-                ) from e
-            else:
-                raise
-        self.rules[host] = rp
-        return rp
+            if e.code == "http_error" and e.status in ROBOTS_ABSENT | ROBOTS_REFUSED:
+                return e.status, b"", e.retry_after
+            raise
+        return 200, body, None
 
 
 def browser_getter(
