@@ -6,7 +6,8 @@ ranking of ideas, fellows or projects. Its parts, all from the reviewed rubric (
 - Inputs are structured answers only (fixed values and numbers), never read from free text (hard rule 9).
 - Each criterion gives every format a level from 1 to 5 by a deterministic rule with a named basis. A criterion
   whose evidence is unknown is left out for every format and named; nothing is imputed.
-- Gate: a format at level 1 on contribution fit is left out before anything is added up, with the reason.
+- Gate: a format at level 1 on contribution fit can't rank first; it is still scored and shown, flagged, with
+  the reason (ADR 0018: show everything; qualify, don't decide).
 - Weights: unit weights (Dawes 1979), or rank-order centroid weights from the priorities given (Barron and
   Barrett 1996). Each draw takes its weights from a Dirichlet centred on the declared ones, and each sourced
   rate from its Beta(k + 1, n - k + 1) posterior, with a fixed seed (stats.py has the samplers and sources).
@@ -594,7 +595,10 @@ def gate(rubric: Rubric, inp: Inputs) -> tuple[list[str], list[dict[str, str]]]:
     row = g.table[inp.contribution]
     keep = [f for f in rubric.format_ids if row[f] > 1]
     out = [
-        {"format": f, "reason": f"left out before scoring: {g.legend[1]} (contribution = {inp.contribution})"}
+        {
+            "format": f,
+            "reason": f"left out of the ranking: {g.legend[1]} (contribution = {inp.contribution}); its scores are still shown",
+        }
         for f in rubric.format_ids
         if row[f] == 1
     ]
@@ -643,12 +647,16 @@ def _level(e: Evaluated, f: str, p: float | None) -> float:
 def simulate(
     rubric: Rubric, used: Sequence[Evaluated], formats: Sequence[str], weights: dict[str, float]
 ) -> Simulation:
-    """Fixed-seed draws: Dirichlet weights around the declared ones, Beta posteriors for sourced rates."""
+    """Fixed-seed draws: Dirichlet weights around the declared ones, Beta posteriors for sourced rates.
+
+    Only `formats` (those the fit gate keeps) compete for first place, but every format in the rubric gets its
+    scores, so a format left out is still shown with its numbers and the reason (ADR 0018)."""
+    shown = rubric.format_ids
     rng = stats.SplitMix64(rubric.seed)
     ids = [e.criterion.id for e in used]
     alphas = [rubric.concentration * weights[c] for c in ids]
     wins = dict.fromkeys(formats, 0.0)
-    comps: dict[str, list[float]] = {f: [] for f in formats}
+    comps: dict[str, list[float]] = {f: [] for f in shown}
     rate_sum = {e.criterion.id: 0.0 for e in used if e.rate is not None}
     for _ in range(rubric.draws):
         w = stats.dirichlet_draw(rng, alphas)
@@ -658,12 +666,12 @@ def simulate(
                 ps[e.criterion.id] = stats.beta_draw(rng, e.rate.k + 1, e.rate.n - e.rate.k + 1)
                 rate_sum[e.criterion.id] += ps[e.criterion.id]
         score = {f: sum(wi * _level(e, f, ps.get(e.criterion.id)) for wi, e in zip(w, used, strict=True))
-                 for f in formats}  # fmt: skip
-        best = max(score.values())
+                 for f in shown}  # fmt: skip
+        best = max(score[f] for f in formats)
         top = [f for f in formats if score[f] >= best - 1e-12]
         for f in top:
             wins[f] += 1.0 / len(top)
-        for f in formats:
+        for f in shown:
             comps[f].append(score[f])
     return Simulation(wins, comps, {c: s / rubric.draws for c, s in rate_sum.items()})
 
@@ -783,7 +791,8 @@ def _decide(rubric_sha: str, inp: Inputs) -> dict[str, Any]:
         format_rows.append({
             "format": f.id,
             "label": f.label,
-            "status": "compared" if f.id in formats else "left out",
+            "status": "compared" if f.id in formats else "left out of the ranking (shown, not ranked)",
+            "reason": next((x["reason"] for x in excluded if x["format"] == f.id), ""),
             "p_first": probabilities[f.id],
             "wins": sim.wins.get(f.id, 0.0),
             "draws": rubric.draws,

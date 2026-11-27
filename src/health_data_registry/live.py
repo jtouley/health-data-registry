@@ -24,7 +24,7 @@ from typing import Any
 import duckdb
 
 from health_data_registry.registry import Dataset
-from health_data_registry.staging import Staged, stage_checked
+from health_data_registry.staging import Staged, raw_fields, stage_checked
 from health_data_registry.store import Manifest, RawFetch
 
 LIVE_TTL_S = 600.0  # how long parsed publisher records stay in memory; never written to disk
@@ -87,14 +87,14 @@ class LiveTable:
 
 def fetch_live(ds: Dataset, get: Any) -> LiveTable:
     """Page through the publisher in memory and describe the result; nothing touches the disk."""
-    from health_data_registry.adapters import pages
+    from health_data_registry.adapters import method_digest, pages
     from health_data_registry.crawl import override_notes
 
     fields = sorted({c.source_field for c in ds.contract.columns})
     records: list[dict[str, Any]] = []
     fetches: list[RawFetch] = []
     layouts: dict[str, str] = {}
-    for page in pages(ds.entry, get, fields=fields):
+    for page in pages(ds.entry, get, fields=fields, live=True):
         fetches.append(page.fetch)
         layouts.update(page.layout)
         records += [{k: (None if v is None else str(v)) for k, v in r.items()} for r in page.records]
@@ -118,6 +118,7 @@ def fetch_live(ds: Dataset, get: Any) -> LiveTable:
         origin="publisher",
         notes=[attribution(ds), kept_note(ds, retrieved.isoformat()), *override_notes(get)],
         layouts=layouts,
+        method={"type": ds.entry.source.kind, "digest": method_digest(ds.entry)},
     )
     return LiveTable(records=records, manifest=m, fetched=time.monotonic(), dashboard=ds.entry.source.browser)
 
@@ -138,7 +139,7 @@ def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[st
     ).fetchone()
     if where is None or where[0] is not None:
         raise ValueError(f"{ds.id} is never written to disk: load_live needs an in-memory connection")
-    fields = sorted({c.source_field for c in ds.contract.columns})
+    fields = raw_fields(ds.entry, sorted({c.source_field for c in ds.contract.columns}))
     raw = f"_live_raw_{ds.id}"
     con.execute("SET max_temp_directory_size = '0B'")  # never spill WHO-derived rows to disk
 
@@ -154,7 +155,8 @@ def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[st
                 [[r.get(f) for f in fields] for r in records],
             )
         present = {k for r in records for k in r} or None
-        return stage_checked(con, ds.contract, q(raw), table=ds.id, temp=True, present=present)
-
+        return stage_checked(
+            con, ds.contract, q(raw), table=ds.id, temp=True, present=present, entry=ds.entry
+        )
     finally:
         con.execute(f"DROP TABLE IF EXISTS {q(raw)}")

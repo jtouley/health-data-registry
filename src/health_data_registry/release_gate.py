@@ -59,6 +59,11 @@ NOT_EVALUATED = "not evaluated:"  # odcs_check's error for a value rule with not
 RELEASE_TAG = re.compile(r"release-\d{4}-\d{2}-\d{2}(\.[2-9]|\.[1-9]\d+)?")
 
 
+# An expected test missing from the run: not evaluated. Its item carries "reason": "no_result", which reason()
+# reads, so rewording this text never moves a test under another label.
+NO_RESULT = "expected by the contracts, no result"
+
+
 class GateInputMissing(FileNotFoundError):
     """dbt's run record is missing or unreadable, so there is nothing to judge (the gate holds)."""
 
@@ -168,11 +173,14 @@ class Build:
             )
         if self.rule_errors:
             parts.append(f"{len(self.rule_errors)} check(s) could not run")
-        if self.not_evaluated:
-            names = ", ".join(f["test"] for f in self.not_evaluated)
+        empty = [f["test"] for f in self.not_evaluated if f.get("reason") != "no_result"]
+        if empty:
             parts.append(
-                f"{len(self.not_evaluated)} check(s) could not be judged, having no values to check ({names})"
+                f"{len(empty)} check(s) could not be judged, having no values to check ({', '.join(empty)})"
             )
+        absent = [f["test"] for f in self.not_evaluated if f.get("reason") == "no_result"]
+        if absent:
+            parts.append(f"{len(absent)} check(s) the contracts expect have no result ({', '.join(absent)})")
         if self.data_failures:
             names = ", ".join(f["test"] for f in self.data_failures)
             parts.append(f"{len(self.data_failures)} error-severity check(s) failed ({names})")
@@ -286,7 +294,7 @@ def read_build(
             "one build"
         )
     if expected is not None:
-        _check_expected(expected, rows, nodes, model_errors, rule_errors, failures)
+        _check_expected(expected, rows, nodes, model_errors, unjudged, failures)
     generated = str(meta.get("generated_at") or "")
     if inputs is not None:
         build_id = build_id_of(inputs)
@@ -314,10 +322,12 @@ def _check_expected(
     rows: list[Any],
     nodes: Mapping[str, Any],
     model_errors: list[dict[str, str]],
-    rule_errors: list[dict[str, str]],
+    unjudged: list[dict[str, str]],
     failures: list[dict[str, Any]],
 ) -> None:
-    """Every model and test the contracts expect must be in the run record with an acceptable status."""
+    """Every model and test the contracts expect must be in the run record with an acceptable status. An expected
+    test with no result was never evaluated (issue #222): it holds the release under that label, apart from a
+    rule that ran and errored and from a data failure."""
     status: dict[str, str] = {}
     for r in rows:
         uid = str(r.get("unique_id", ""))
@@ -330,9 +340,7 @@ def _check_expected(
     for name, severity in sorted(expected.tests.items()):
         got = status.get(name)
         if got is None:
-            rule_errors.append(
-                {"test": name, "type": "test", "error": "expected by the contracts, did not run"}
-            )
+            unjudged.append({"test": name, "type": "test", "error": NO_RESULT, "reason": "no_result"})
         elif got == "warn" and severity != "warn":  # the run downgraded an error-severity rule
             failures.append(
                 {"test": name, "type": "test", "severity": severity, "dimension": None, "failures": None}

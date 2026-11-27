@@ -96,9 +96,9 @@ formats:
 criteria:
   - id: contribution_fit
     label: fits this kind of work
-    gate: true # a format at level 1 here is left out before anything is added up
+    gate: true # a format at level 1 here can't rank first; it is still scored and shown, with the reason
     legend:
-      1: this format isn't made for this kind of work, so it is left out before scoring
+      1: this format isn't made for this kind of work, so it can't rank first
       2: possible, but the work would have to be reshaped to fit it
       3: fits part of the work; the rest would be left out
       4: a usual home for this kind of work

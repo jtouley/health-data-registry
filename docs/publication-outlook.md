@@ -123,8 +123,9 @@ whose weight, rule, limit or threshold has no source.
 
 **How the answer is made:**
 
-1. **Gate.** A format whose contribution fit is level 1 (for example a viewpoint for new data) is left out
-   before anything is added up, and the answer says why.
+1. **Gate.** A format whose contribution fit is level 1 (for example a viewpoint for new data) can't rank
+   first. As [ADR 0018](adr/0018-show-everything-qualify-dont-decide.md) asks, it is still scored and shown,
+   flagged "left out of the ranking", with the reason.
 2. **Weights.** With no priorities, every criterion in use counts the same (unit weights, Dawes 1979). With
    priorities, they get rank-order centroid weights in the order given (Barron and Barrett 1996) and the other
    criteria share the remaining ranks.

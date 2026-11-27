@@ -212,7 +212,9 @@ def test_gate_leaves_out_a_format_that_does_not_fit_before_scoring() -> None:
     assert [x["format"] for x in out["excluded"]] == ["viewpoint"]
     assert out["probabilities"]["viewpoint"] == 0.0
     vp = next(r for r in out["formats"] if r["format"] == "viewpoint")
-    assert vp["status"] == "left out" and vp["score_interval_95"] is None
+    # ADR 0018: shown with its scores and the reason, never hidden.
+    assert vp["status"].startswith("left out of the ranking") and "contribution = empirical" in vp["reason"]
+    assert vp["score_interval_95"] is not None and vp["wins"] == 0.0
     assert any(n.startswith("Left out: viewpoint") for n in out["notes"])
 
 
