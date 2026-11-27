@@ -15,7 +15,7 @@ import duckdb
 import pytest
 
 from health_data_registry import tools
-from health_data_registry.query import Engine, QueryRefused, compile_metric
+from health_data_registry.query import Engine, compile_metric
 from health_data_registry.registry import Registry, load_registry
 from health_data_registry.store import build_snapshot, write_ndjson
 from tests.conftest import raw_fetch
@@ -126,9 +126,12 @@ def test_get_series_reads_coverage_and_exemptions_apart(built: tuple[Registry, E
 
 
 def test_states_and_the_median_are_never_added(built: tuple[Registry, Engine]) -> None:
+    """Each state's and the median's percentage comes back on its own row as published, never added (ADR 0018:
+    no longer refused)."""
     _reg, eng = built
-    with pytest.raises(QueryRefused):
-        eng.query_metric(DS, "kindergarten_coverage", filters={"school_year": "2024-25", "vaccine": "MMR"})
+    out = eng.query_metric(DS, "kindergarten_coverage", filters={"school_year": "2024-25", "vaccine": "MMR"})
+    assert len(out["rows"]) > 1 and "sum(" not in out["sql"].lower()
+    assert "never added up or averaged" in out["method"]
 
 
 def test_a_coverage_question_is_routed_here(built: tuple[Registry, Engine]) -> None:

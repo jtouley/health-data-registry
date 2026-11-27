@@ -15,7 +15,7 @@ import duckdb
 import pytest
 
 from health_data_registry import quality, tools
-from health_data_registry.query import Engine, QueryRefused
+from health_data_registry.query import Engine
 from health_data_registry.registry import Registry, load_registry
 from health_data_registry.store import build_snapshot, write_ndjson
 from tests.conftest import raw_fetch
@@ -93,9 +93,11 @@ def test_each_rate_is_read_from_one_published_cell(real: tuple[Registry, Engine,
 
 
 def test_cre_and_crab_are_never_added(real: tuple[Registry, Engine, Path]) -> None:
+    """CRE and CRAB rates come back each on its own row as published, never added (ADR 0018: no longer refused)."""
     _, eng, _ = real
-    with pytest.raises(QueryRefused):
-        eng.query_metric(DS, "mugsi_case_rate", filters={"year": 2022})
+    out = eng.query_metric(DS, "mugsi_case_rate", filters={"year": 2022})
+    assert len(out["rows"]) > 1 and "sum(" not in out["sql"].lower()
+    assert "never added up or averaged" in out["method"]
 
 
 def test_by_stratum_leaves_out_the_all_cases_rows(real: tuple[Registry, Engine, Path]) -> None:
