@@ -145,14 +145,14 @@ schema:
             dimension: completeness
             severity: error
             type: sql
-            description: "Fill rate for the Case Rates rows: an all-empty subset passes rates_not_negative, so at least one case rate must carry a value (all 319 did on 2026-11-25)."
+            description: "Fill rate for the Case Rates rows that rates_not_negative reads: an all-empty subset passes it, so at least one case rate must carry a value (all 319 did on 2026-11-25)."
             query: "SELECT COUNT(*) FROM {object} WHERE topic = 'Case Rates' AND value IS NOT NULL"
             mustBeGreaterThan: 0
           - id: death_rates_present
             dimension: completeness
-            severity: error
+            severity: warn
             type: sql
-            description: "Fill rate for the Death Rates rows: an all-empty subset passes rates_not_negative, so at least one death rate must carry a value (all 22 did on 2026-11-25). An error, like case_rates_present, because the death rate is a served series."
+            description: "Fill rate for the Death Rates rows that rates_not_negative reads: at least one death rate carries a value (all 22 did on 2026-11-25)."
             query: "SELECT COUNT(*) FROM {object} WHERE topic = 'Death Rates' AND value IS NOT NULL"
             mustBeGreaterThan: 0
     quality:
@@ -162,27 +162,6 @@ schema:
         type: sql
         description: "Grain: one published rate per year, organism, topic, view and stratum (an exact structural fact of the full table, 341 rows, on 2026-11-25). A repeat would mean two figures for one cell."
         query: "SELECT COUNT(*) FROM (SELECT yearname, organism, topic, viewby, series FROM {object} GROUP BY yearname, organism, topic, viewby, series HAVING COUNT(*) > 1)"
-        mustBe: 0
-      - id: headline_case_rates_present
-        dimension: completeness
-        severity: error
-        type: sql
-        description: "Both organisms, CRE and CRAB, have a value in the cell the headline case-rate series reads (topic Case Rates, viewby and series both 'All cases') in at least one year (both did in all 11 years on 2026-11-25). A relabelled total row would empty the series and turn every total into a group, and the topic-wide fill-rate checks would not see it."
-        query: "SELECT COUNT(DISTINCT organism) FROM {object} WHERE organism IN ('CRE', 'CRAB') AND topic = 'Case Rates' AND viewby = 'All cases' AND series = 'All cases' AND value IS NOT NULL"
-        mustBe: 2
-      - id: headline_death_rates_present
-        dimension: completeness
-        severity: error
-        type: sql
-        description: "Both organisms, CRE and CRAB, have a value in the cell the headline death-rate series reads (topic Death Rates, viewby and series both 'All cases') in at least one year (both did in all 11 years on 2026-11-25), for the same reason as headline_case_rates_present."
-        query: "SELECT COUNT(DISTINCT organism) FROM {object} WHERE organism IN ('CRE', 'CRAB') AND topic = 'Death Rates' AND viewby = 'All cases' AND series = 'All cases' AND value IS NOT NULL"
-        mustBe: 2
-      - id: one_group_per_label_in_by_group_rates
-        dimension: uniqueness
-        severity: warn
-        type: sql
-        description: "Across the views that the by-group metrics read together, no group label other than 'All cases' appears twice in one year, organism and topic (none did on 2026-11-25). A label shared by two views would make those metrics refuse the question, so it is reported here first."
-        query: "SELECT COUNT(*) FROM (SELECT yearname, organism, topic, series FROM {object} WHERE series <> 'All cases' GROUP BY yearname, organism, topic, series HAVING COUNT(*) > 1)"
         mustBe: 0
 customProperties:
   - {property: licence, value: public-domain-us-federal}

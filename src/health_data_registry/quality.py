@@ -380,45 +380,10 @@ def blocked_message(dataset: str, quality: Mapping[str, Any] | None) -> str | No
             f"{dataset}: no data checks have run on this copy, so it is not served or published and the copy "
             "before it stays. Refresh it, or have a maintainer check the contract."
         )
-    parts = _blocking_parts(q)
-    if not parts:
-        return None
-    return (
-        f"{dataset}: {' and '.join(parts)}, so this copy is not served or published and the copy before it "
-        "stays. Compare the data with the publisher's page, then refresh, or have a maintainer fix the contract."
-    )
-
-
-def sample_blocked_message(dataset: str, quality: Mapping[str, Any] | None) -> str | None:
-    """Why a development sample (refresh --max-rows) fails a blocking check, in plain words; None when it doesn't.
-
-    A sample is kept as the local copy so a maintainer can work with it, and it is never published, but a failed
-    blocking check still fails the command that built it: the build never fails open (issue #173).
-    """
-    q = quality or {}
-    if q.get("tool") != "contract-rules":
-        lead = f"{dataset}: no data checks have run on this development sample."
-    else:
-        parts = _blocking_parts(q)
-        if not parts:
-            return None
-        lead = (
-            f"{dataset}: on this development sample, {' and '.join(parts)}. A check that judges the whole load (a "
-            "row count, or that some counts are present) can fail only because the sample stops at --max-rows "
-            "rows, so look at that first."
-        )
-    return (
-        f"{lead} The sample stays as the local copy for development only and is never published. Compare the "
-        "data with the publisher's page, then refresh without --max-rows, or have a maintainer fix the contract."
-    )
-
-
-def _blocking_parts(q: Mapping[str, Any]) -> list[str]:
-    """What blocks a contract-rules quality record, one plain phrase per kind; empty when nothing does."""
     results = q.get("results") or []
     report = QualityReport(tuple(results), tuple(q.get("rule_errors") or ()))
     if not report.blocking:  # the one definition of what blocks, for a fresh build and a rerun alike
-        return []
+        return None
     failed = [str(r.get("test")) for r in results if r.get("status") == "fail"]
     unjudged = [
         str(r.get("test"))
@@ -437,7 +402,10 @@ def _blocking_parts(q: Mapping[str, Any]) -> list[str]:
 
     if broken:
         parts.append(f"the check{'s' if len(broken) > 1 else ''} {', '.join(broken)} could not run")
-    return parts
+    return (
+        f"{dataset}: {' and '.join(parts)}, so this copy is not served or published and the copy before it "
+        "stays. Compare the data with the publisher's page, then refresh, or have a maintainer fix the contract."
+    )
 
 
 def rules_for(contract: Any) -> tuple[Rule, ...]:

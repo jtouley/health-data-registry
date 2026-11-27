@@ -1,9 +1,6 @@
 # Hand-written dbt unit tests of the generated staging models' typing: what `dbt build` itself proves about the
 # projection in staging.typed_select. The inputs are SQL so they don't need the raw source loaded first. The
-# plugin that picks the LATEST load is tested in tests/test_dbt_raw.py. A source added later keeps its own typing
-# tests in staging_typing_<dataset id>.yml beside this file, so source pull requests don't edit one shared file; a
-# source whose unit tests cover more than staging (its intermediate model or its fact too) keeps all of them in one
-# <dataset id>.yml instead.
+# plugin that picks the LATEST load is tested in tests/test_dbt_raw.py.
 version: 2
 unit_tests:
 - name: stg_cdc_nndss_weekly_counts_become_whole_numbers_and_flags_stay_as_published

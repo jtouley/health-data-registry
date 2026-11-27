@@ -3,9 +3,8 @@ version: 2
 models:
 - name: flag_cauris_clinical_screening_swap
   description: One row per reporting area (summary rows such as TOTAL and the census divisions left out) and MMWR
-    year whose clinical year-to-date exceeds its screening year-to-date (an empty screening count is treated as
-    zero here only, to put the pair in front of a reviewer; no answer ever counts it as 0) at the latest week published
-    for that year.
+    year whose clinical year-to-date exceeds its screening year-to-date (an empty screening count counts as zero)
+    at the latest week published for that year.
   config:
     materialized: table
     contract:

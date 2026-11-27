@@ -21,8 +21,8 @@ description:
   limitations: >-
     Only sources whose licence allows redistribution are hosted (US federal public domain today). Publishers'
     suppression and missing-value codes are kept exactly as published: an empty cell is never silently turned
-    into a zero and is never filled in. That includes a publisher's own no-cases code (NNDSS '-'): the count stays
-    empty, with its flag and meaning. Contracts are drafts until a maintainer reviews them.
+    into a zero and is never filled in. The only exception is a publisher's own no-cases code (NNDSS '-'), which
+    is read as 0 and labelled as such. Contracts are drafts until a maintainer reviews them.
 tags: [public-health, infectious-disease, surveillance, open-data, weekly]
 authoritativeDefinitions:
   - type: license
@@ -127,13 +127,6 @@ outputPorts:
     type: tables
     version: 0.1.0
     contractId: cdc_respnet
-    customProperties:
-      - {property: hosted, value: true}
-  - name: cdc_nrevss_positivity
-    description: NREVSS weekly national percent of laboratory tests positive for COVID-19, influenza and RSV.
-    type: tables
-    version: 0.1.0
-    contractId: cdc_nrevss_positivity
     customProperties:
       - {property: hosted, value: true}
   - name: cdc_schoolvaxview_kindergarten

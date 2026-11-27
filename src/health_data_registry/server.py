@@ -303,9 +303,7 @@ def build_server(
         fmt: Fmt = "csv",
     ) -> Out:
         """Is this week unusual? The last 4 weeks' cases against the same, preceding and following 4 weeks of the
-        past 5 years, in the style of CDC's historical limits for notifiable diseases. A signal is not an outbreak.
-        A week with no number (CDC's '-', read as not reported) is never counted as zero, so it refuses any window
-        that includes one, which is common for rare conditions."""
+        past 5 years, in the style of CDC's historical limits for notifiable diseases. A flag is not an outbreak."""
         return safe(
             "check_signal",
             lambda: analysis.check_signal(

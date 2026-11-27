@@ -8,7 +8,7 @@ select
   viewby as view,
   series as stratum,
   value,
-  {{ value_status('value') }} as value_status,
+  case when value is null then 'not published: the publisher''s cell is empty' else 'published' end as value_status,
   is_total_row,
   _snapshot_id as snapshot_id,
   _raw_sha256 as raw_sha256

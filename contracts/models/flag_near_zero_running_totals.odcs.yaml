@@ -7,7 +7,7 @@ status: draft
 domain: infectious_disease
 description:
   purpose: "Lists NNDSS area, condition and year combinations whose year-to-date count at the year's latest week is at or below a small number while the year before had passed a larger one by the same MMWR week: a running total that may have been withdrawn, reset or left unreported (the Minnesota C. auris 2025 pattern in the NNDSS contract's open questions). A year in progress is compared week for week, so January is not set against a whole prior year."
-  usage: "A review queue for maintainers. It removes and changes nothing. The two thresholds are the dbt variables near_zero_ytd_max and near_zero_prior_year_min in transform/dbt_project.yml; they choose what to look at, never a number in an answer. An empty year-to-date is treated as 0 only to choose rows for review; no answer counts it as 0."
+  usage: "A review queue for maintainers. It removes and changes nothing. The two thresholds are the dbt variables near_zero_ytd_max and near_zero_prior_year_min in transform/dbt_project.yml; they choose what to look at, never a number in an answer."
   limitations: "A real fall to zero looks the same; only the publisher can say which it is."
 schema:
   - name: flag_near_zero_running_totals

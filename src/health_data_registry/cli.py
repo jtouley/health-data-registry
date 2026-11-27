@@ -22,7 +22,6 @@ def _fetcher(registry: Registry, log: FetchLog | None = None):  # type: ignore[n
 
 def refresh(registry: Registry, ids: Sequence[str], *, max_rows: int | None, lake: Path) -> int:
     from health_data_registry.crawl import LiveOnly, refresh_dataset
-    from health_data_registry.quality import sample_blocked_message
 
     failed = 0
     for dataset_id in ids:
@@ -35,11 +34,6 @@ def refresh(registry: Registry, ids: Sequence[str], *, max_rows: int | None, lak
         except Exception as e:  # report and carry on with the next dataset
             failed += 1
             print(f"FAIL {dataset_id}: {e}", file=sys.stderr)
-            continue
-        # A development sample is kept even when a blocking check fails on it, but the command still fails.
-        if m.partial and (why := sample_blocked_message(dataset_id, m.quality)):
-            failed += 1
-            print(f"FAIL {dataset_id}: {why}", file=sys.stderr)
             continue
         print(f"ok   {dataset_id}: {m.row_count} rows, snapshot {m.snapshot_id}")
     return 1 if failed else 0

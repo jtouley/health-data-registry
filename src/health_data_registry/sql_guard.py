@@ -77,37 +77,6 @@ class GuardedQuery:
     sql: str
     tables: frozenset[str]
     limit: int
-    # What the guard changed in the query so a sum follows the sources' rules, in plain words (SumRules).
-    notes: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class SumRules:
-    """What a sum over one catalogued table must respect, from its contract and semantic model (hard rule 2).
-
-    These rules apply to sums (``sum`` and the summing functions in _SUM_FUNCTIONS) only, like the
-    non-additive check; other aggregates are not rewritten.
-
-    total_rows: the contract's totalRows predicate (registry.check_predicate checked it at load). A sum that adds
-        up several areas (no column of `areas` filtered to one value or grouped by) gets
-        ``FILTER (WHERE NOT coalesce((total_rows), false))``, so the summary rows are never added to their own
-        parts; the rows the query lists are not changed.
-    measures: count columns whose empty value (no reported cases, suppressed or missing) is never counted as 0:
-        a sum that adds one up stops with a plain refusal instead of skipping it, and a WHERE that drops the
-        empty values of a summed measure (``IS NOT NULL``) is refused.
-    per_week, within: columns (per-week counts and running totals) never added up across `within` (NNDSS:
-        week), because late reports reach only the year-to-date count; such a sum must pin or group `within`.
-    """
-
-    total_rows: str | None = None
-    areas: frozenset[str] = frozenset()
-    measures: frozenset[str] = frozenset()
-    per_week: frozenset[str] = frozenset()
-    within: str | None = None
-
-    def __bool__(self) -> bool:
-        """True when the table has any rule a sum must respect."""
-        return bool(self.total_rows or self.measures or self.per_week)
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +192,6 @@ def guard_sql(
     max_rows: int = 5000,
     non_additive: Mapping[str, frozenset[str]] | None = None,
     ordered: bool = False,
-    sum_rules: Mapping[str, SumRules] | None = None,
 ) -> GuardedQuery:
     """Check ``sql`` and return the SQL that may run.
 
@@ -239,9 +207,6 @@ def guard_sql(
         ordered: give the outer query a total order, so the rows and the rows the LIMIT keeps come in the same
             order on every run (answers cut into pages need that): ``ORDER BY ALL`` when it has no ORDER BY, and
             otherwise every output column after its own keys as tie-breakers.
-        sum_rules: catalogued table name -> its SumRules. A sum across areas leaves the total rows out, an empty
-            value in a sum stops the query instead of counting as 0, and per-week counts are never added up
-            across weeks. What the guard changed is in the returned ``notes``.
 
     Raises:
         SqlRefused: anything outside the read-only shape, with a plain-language reason.
@@ -255,21 +220,16 @@ def guard_sql(
         name.casefold(): frozenset(c.casefold() for c in cols) for name, cols in (non_additive or {}).items()
     }
 
-    rules = {name.casefold(): r for name, r in (sum_rules or {}).items()}
-
     tree = _parse(sql)
     _check_nodes(tree)
     _check_tables(tree, tables)
     scopes = _scopes(tree)
     used: set[str] = set()
-    notes: list[str] = []
     for scope in scopes:
         _check_scope_sources(scope, tables, used)
         _check_columns(scope, tables)
         _check_joins(scope, tables, joins)
         _check_sums(scope, tables, loose)
-    for scope in scopes:  # after every check: these rewrite the tree the checks read
-        notes += _apply_sum_rules(scope, tables, rules)
     limit = _apply_limit(tree, max_rows)
     if ordered:
         _total_order(tree)
@@ -278,7 +238,7 @@ def guard_sql(
         node.comments = None  # the generated SQL carries no caller text outside literals and names
     generated = tree.sql(dialect=_DIALECT)
     _require_single_select(generated)
-    return GuardedQuery(sql=generated, tables=frozenset(used), limit=limit, notes=tuple(dict.fromkeys(notes)))
+    return GuardedQuery(sql=generated, tables=frozenset(used), limit=limit)
 
 
 def _total_order(tree: exp.Query) -> None:
@@ -684,10 +644,10 @@ def _check_sums(
         if not isinstance(source, exp.Table):
             if any(loose.get(t) for t in _reachable(source, tables)):
                 raise SqlRefused(
-                    "sum_over_subquery",
+                    "non_additive",
                     "This query adds up rows of an inner query or WITH table, so it can't be checked that "
                     "values which overlap or count different things (a Total row beside its parts, different "
-                    "conditions) are kept apart.",
+                    "conditions) are kept apart. Add up directly from the catalogued table instead.",
                 )
             continue
         cols = loose.get(source.name.casefold(), frozenset())
@@ -709,184 +669,6 @@ def _check_sums(
                     "sum would count the same cases twice or mix different things. Filter each of them to one "
                     "value in WHERE, or add it to GROUP BY to get one row per value.",
                 )
-
-
-# The text DuckDB's error() raises when a sum meets an empty value; run_guarded turns exactly that error (an
-# InvalidInputException whose whole message is this text) into a plain refusal. error() is not on the allowlist,
-# so a caller can't raise it; a caller's literal quoted in some other engine error never matches.
-EMPTY_IN_SUM: Final = "hdr-empty-value-in-sum"
-_EMPTY_IN_SUM_ERROR: Final = f"Invalid Input Error: {EMPTY_IN_SUM}"
-# Each refusal body gives the reason; the action is its code's Next step (query.NEXT_STEPS), said once.
-EMPTY_IN_SUM_MESSAGE: Final = (
-    "This sum includes a count that has no number (CDC's '-' for no reported cases, or a value that is "
-    "unavailable, suppressed or not published; the flag column next to it says which). A count with no number is "
-    "never counted as 0, so no total is shown."
-)
-
-
-def weekly_sum_message(within: str) -> str:
-    """The refusal for adding a source's per-week counts (or its running totals) across weeks, in plain words.
-
-    `within` is the period dimension the running total is kept along; MMWR weeks are the only one so far, so the
-    text says weeks. A source with another period needs its own whole sentence here, never a derived word.
-    """
-    del within  # one period so far (NNDSS weeks); see the docstring
-    return (
-        "This would add up counts across several weeks. Adding up a year's weekly counts gives too few cases, "
-        "because reports that arrive late are added to the year-to-date count, not to the week they belong to; "
-        "and adding up year-to-date counts would count the same cases again each week. So nothing is added."
-    )
-
-
-def _sum_columns(node: exp.Expr, alias: str, owners: Mapping[str, str]) -> list[exp.Column]:
-    """The columns inside a sum's arguments that belong to one source of the SELECT: qualified by its alias, or
-    unqualified and found in that source's table only (`owners`: column -> the one alias whose table has it)."""
-    return [
-        c
-        for c in node.find_all(exp.Column)
-        if c.table.casefold() == alias or (not c.table and owners.get(c.name.casefold()) == alias)
-    ]
-
-
-def _added(column: exp.Column, top: exp.Expr) -> bool:
-    """True when a sum adds the column's value up; False when the column is only tested (IS NULL, a comparison,
-    IN, BETWEEN, LIKE) between it and the sum `top`, as in sum(CASE WHEN m1 IS NULL THEN 1 ELSE 0 END)."""
-    node = column.parent
-    while node is not None and node is not top:
-        if isinstance(node, exp.Predicate):
-            return False
-        node = node.parent
-    return True
-
-
-def _with_filter(agg: exp.Expr, predicate: exp.Expr) -> None:
-    """Add ``predicate`` to the aggregate's own FILTER (WHERE ...), so only that sum leaves the rows out."""
-    parent = agg.parent
-    if isinstance(parent, exp.Filter) and parent.this is agg:
-        where = parent.args["expression"]
-        where.set("this", exp.and_(where.this, predicate))
-        return
-    agg.replace(exp.Filter(this=agg.copy(), expression=exp.Where(this=predicate)))
-
-
-def _apply_sum_rules(
-    scope: Scope, tables: Mapping[str, frozenset[str]], rules: Mapping[str, SumRules]
-) -> list[str]:
-    """Each catalogued table's SumRules, on every sum of one SELECT: refuse per-week counts added across weeks,
-    make an empty value stop the sum, and leave total rows out of a sum across areas. Returns plain notes."""
-    select = scope.expression
-    if not isinstance(select, exp.Select) or not rules:
-        return []
-    sums = [
-        n for n in select.walk() if _is_sum(n) and n.find_ancestor(exp.Select, exp.SetOperation) is select
-    ]
-    if not sums:
-        return []
-    where = select.args.get("where")
-    pinned = pinned_columns(where.this if where is not None else None)
-    grouped = _grouped_columns(select)
-    sources = scope.selected_sources
-    seen: dict[str, list[str]] = {}
-    for name, (_n, src) in sources.items():
-        for col in tables.get(src.name.casefold(), frozenset()) if isinstance(src, exp.Table) else ():
-            seen.setdefault(col, []).append(name.casefold())
-    owners = {col: names[0] for col, names in seen.items() if len(names) == 1}
-    notes: list[str] = []
-    leave_out: dict[int, list[exp.Expr]] = {}  # id(sum) -> total-row predicates its FILTER leaves out
-    for alias, (_node, source) in sources.items():
-        if not isinstance(source, exp.Table):
-            if any(rules.get(t) for t in _reachable(source, tables)):
-                raise SqlRefused(
-                    "sum_over_subquery",
-                    "This query adds up rows of an inner query or WITH table, so it can't be checked that total "
-                    "rows, weeks and counts with no number are handled as the source requires.",
-                )
-            continue
-        rule = rules.get(source.name.casefold())
-        if not rule:
-            continue
-        a = alias.casefold()
-        crosses_areas = False
-        summed_measures: set[str] = set()
-        for n in sums:
-            held = set(pinned) | grouped
-            window = n.find_ancestor(exp.Window)
-            if window is not None and window.find_ancestor(exp.Select) is select:
-                held |= {
-                    (p.table.casefold(), p.name.casefold())
-                    for p in (_bare(x) for x in window.args.get("partition_by") or [])
-                    if isinstance(p, exp.Column)
-                }
-
-            def is_held(col: str, held: set[tuple[str, str]] = held, a: str = a) -> bool:
-                return bool({("", col), (a, col)} & held)
-
-            inside = _sum_columns(n, a, owners)
-            added = [c for c in inside if _added(c, n)]
-            if (
-                rule.within
-                and not is_held(rule.within)
-                and any(c.name.casefold() in rule.per_week for c in added)
-            ):
-                raise SqlRefused("weekly_sum", weekly_sum_message(rule.within))
-            # A sum that reads this table (or adds up its rows, as count-like sums over one table do) across areas.
-            keep: exp.Expr | None = None  # true on the rows this sum keeps (not a total row)
-            if rule.total_rows and (inside or len(sources) == 1) and not any(is_held(c) for c in rule.areas):
-                crosses_areas = True
-                predicate = sqlglot.parse_one(rule.total_rows, dialect=_DIALECT)
-                for c in predicate.find_all(exp.Column):
-                    c.set("table", exp.to_identifier(alias))
-                keep = exp.Not(this=exp.Coalesce(this=exp.Paren(this=predicate), expressions=[exp.false()]))
-                leave_out.setdefault(id(n), []).append(keep)
-            for c in added:
-                if c.name.casefold() in rule.measures:
-                    summed_measures.add(c.name.casefold())
-                    empty: exp.Expr = exp.Is(this=c.copy(), expression=exp.Null())
-                    if keep is not None:
-                        # DuckDB evaluates a sum's argument before its FILTER, so a total row's empty value
-                        # must not stop a sum that leaves that row out.
-                        empty = exp.and_(empty, keep.copy())
-                    c.replace(
-                        exp.Case(
-                            ifs=[
-                                exp.If(
-                                    this=empty,
-                                    true=exp.Anonymous(
-                                        this="error", expressions=[exp.Literal.string(EMPTY_IN_SUM)]
-                                    ),
-                                )
-                            ],
-                            default=c.copy(),
-                        )
-                    )
-        # WHERE m1 IS NOT NULL (or m1 > 0) before sum(m1) drops the counts with no number before the sum sees them:
-        # the total would look whole while missing them.
-        filtered = sorted(
-            {
-                c.name
-                for c in (where.find_all(exp.Column) if where is not None else ())
-                if c.name.casefold() in summed_measures
-                and (c.table.casefold() == a or (not c.table and owners.get(c.name.casefold()) == a))
-            }
-        )
-        if filtered:
-            raise SqlRefused(
-                "empty_in_sum",
-                f"This sum filters on the count it adds up ({', '.join(filtered)}), which drops the counts that have "
-                "no number before they are added, so the total would look whole while missing them. A count with "
-                "no number is never counted as 0 and never left out of a total without saying so.",
-            )
-        if crosses_areas:
-            notes.append(
-                f"The publisher's total rows of {source.name} (summary rows such as national or regional totals) "
-                "were left out of this sum, so no area is counted twice. Filter the area to one value, such as the "
-                "national row, to read a total row itself."
-            )
-    for n in sums:
-        if id(n) in leave_out:
-            preds = leave_out[id(n)]
-            _with_filter(n, preds[0] if len(preds) == 1 else exp.and_(*preds))
-    return notes
 
 
 def _literal_int(node: exp.Expr | None) -> int | None:
@@ -1012,9 +794,6 @@ def run_guarded(
     except duckdb.InterruptException as e:
         raise SqlRefused("timeout", TIMED_OUT) from e
     except duckdb.Error as e:
-        if isinstance(e, duckdb.InvalidInputException) and str(e) == _EMPTY_IN_SUM_ERROR:
-            # A count with no number met by a sum (_apply_sum_rules): never counted as 0.
-            raise SqlRefused("empty_in_sum", EMPTY_IN_SUM_MESSAGE) from e
         # The engine's message can quote a cell value or a path: log the type only.
         logger.info("guarded SQL failed: %s", type(e).__name__)
         for kind, code, message in _COULD_NOT_RUN:

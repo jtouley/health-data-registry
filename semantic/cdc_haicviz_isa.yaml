@@ -23,7 +23,7 @@ dimensions:
     non_additive_reason: "'All cases' sits beside its groups, and CDC doesn't say the groups add up to it"
     description: "The group the figure is for: all cases, an age group, a sex, a race, hospital-onset, healthcare-associated community-onset or community-associated, dialysis patients, a syndrome or a strain type."
 measures:
-  - {name: isa_rate, column: value, kind: rate, unit: "per 100,000 population for Case rates and Death rates (assumed; not stated in the table); Dialysis is per an unstated population, and Syndromes and PFGE rows are shares of cases, not rates", description: "The published figure, as CDC gives it. Only the Case rates and Death rates rows are cases or deaths per population in the EIP sites; the Dialysis row is per an unstated population, and the Syndromes and PFGE rows are shares of cases (unit not stated). Every metric here reads Case rates or Death rates rows only."}
+  - {name: isa_rate, column: value, kind: rate, unit: "per 100,000 population (assumed; not stated in the table)", description: "Invasive Staphylococcus aureus cases or deaths per population in the EIP sites, as published."}
 metrics:
   - name: isa_case_rate
     description: "Invasive Staphylococcus aureus cases per population in the EIP sites, all cases, from the published 'All cases' row; never added."
