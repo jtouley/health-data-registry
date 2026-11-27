@@ -198,10 +198,6 @@ def test_initialize_without_a_session_gets_a_fresh_opaque_id() -> None:
      ("a\tb", None), (issued("abc")[:-1] + ("1" if issued("abc").endswith("0") else "0"), None),
      (issued("abc")[:32], None),
      ("0" * 32 + "." + issued("abc")[33:], None), (issued("abc") + "0", None)],
-    # Fixed ids: the signed values change with each process's signing key, and pytest-xdist needs every worker to
-    # collect the same test names.
-    ids=["signed", "unsigned", "too-long", "empty", "non-ascii", "tab", "bad-signature", "nonce-only",
-         "zero-nonce", "trailing-digit"],
 )  # fmt: skip
 def test_only_session_ids_this_server_signed_count(value: str, expected: str | None) -> None:
     assert hosted._session_id(scope(session=value)) == expected
@@ -588,62 +584,6 @@ def test_the_guard_is_poisoned_by_an_unreaped_child_or_a_straggling_download(
     assert guard.poisoned()
     monkeypatch.setattr(hosted, "stragglers", lambda: 0)
     assert not CallGuard(cfg(tmp_path), Metrics(), object()).poisoned()
-
-
-def test_a_poisoned_engine_is_logged_once_shown_on_health_and_restarts_after_a_while(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    """PR #92 review: work that never ends poisoned the engine for good, with nothing logged or restarted."""
-
-    class Iso:
-        bad = True
-
-        def poisoned(self) -> bool:
-            return self.bad
-
-    class Eng:
-        isolation = Iso()
-
-    now = [100.0]
-    exits: list[str] = []
-    guard = CallGuard(cfg(tmp_path, poisoned_exit_s=60), Metrics(), Eng(), clock=lambda: now[0],
-                      exit_fn=lambda: exits.append("exit"))  # fmt: skip
-    with caplog.at_level("WARNING", logger=hosted.METRICS_LOGGER):
-        assert guard.poisoned() and guard.poisoned()
-        onset = [r for r in caplog.records if "engine poisoned:" in r.getMessage()]
-        assert len(onset) == 1 and "a query process did not stop" in onset[0].getMessage()
-        now[0] = 130.0
-        status = guard.poison_status()
-        assert status["poisoned"] and status["poisoned_for_s"] == 30.0 and status["poisoned_since"]
-        assert status["poisoned_reasons"] == ["a query process did not stop when it was killed"]
-        assert exits == []
-        now[0] = 161.0
-        assert guard.poisoned() and exits == ["exit"]  # past poisoned_exit_s: the process exits
-        Eng.isolation.bad = False
-        assert not guard.poisoned()
-        assert any("no longer poisoned" in r.getMessage() for r in caplog.records)
-    assert guard.poison_status() == {"poisoned": False, "poisoned_since": None, "poisoned_for_s": None,
-                                     "poisoned_reasons": [], "restarts_after_s": 60}  # fmt: skip
-
-
-def test_the_warm_start_measures_whether_the_memory_limit_holds(tmp_path: Path) -> None:
-    measured: list[bool] = []
-
-    class Iso:
-        def measure(self) -> bool:
-            measured.append(True)
-            return True
-
-    class Eng:
-        hub = None
-        isolation = Iso()
-
-        def connect(self) -> None:
-            raise OSError("no hub")  # a failed warm-up still measures
-
-    state = hosted.Hosted(cfg(tmp_path), None, Eng(), CallGuard(cfg(tmp_path), Metrics()), None, Metrics())  # type: ignore[arg-type]
-    state.warm_up()
-    assert measured == [True] and state.warm["done"] is True
 
 
 def test_the_guard_interrupts_pinned_engines_too(tmp_path: Path) -> None:

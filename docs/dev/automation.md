@@ -12,29 +12,13 @@ our own.
 | [`sitemaps.yml`](../../.github/workflows/sitemaps.yml) | Takes a weekly copy of the michigan.gov and kentcountymi.gov seed sitemaps, with the week's diff | Monday 04:43 | Private dataset `jtouley/health-data-registry-ops-sitemaps`; an issue when refused |
 | [`deploy-space.yml`](../../.github/workflows/deploy-space.yml) | Syncs `space/` to the Space that hosts the MCP server | Only on a release tag `vX.Y.Z` on main that passed CI | Space `jtouley/health-data-registry-mcp` |
 | [`drift-check.yml`](../../.github/workflows/drift-check.yml) | `check-contracts` against every publisher, opening or updating an issue on failure; re-enables the scheduled workflows | Friday 05:37 | Issues; workflow enabled state |
-| [`branch-hygiene.yml`](../../.github/workflows/branch-hygiene.yml) | Archive-tags, verifies, then deletes inactive and finished branches; deletes a PR's `pre-pr/` twin when it closes ([branch-hygiene.md](branch-hygiene.md)) | 03:41 daily; when a PR closes | Tags `archive/<branch>/<date>`; branch deletes; the tracking issue |
-| [`cflite_pr.yml`](../../.github/workflows/cflite_pr.yml) | ClusterFuzzLite: builds the Atheris harnesses in `fuzz/` and fuzzes what the change reaches, about 5 minutes per harness | On pull requests, and pushes to `pre-pr/**`, that touch `src/`, `fuzz/` or `.clusterfuzzlite/` | Run artifacts only |
-| [`cflite_batch.yml`](../../.github/workflows/cflite_batch.yml) | ClusterFuzzLite: fuzzes every harness for about 30 minutes each and keeps the grown corpus | Thursday 02:53 | Run artifacts only (the corpus) |
-| [`sealed-test.yml`](../../.github/workflows/sealed-test.yml) | Runs and scores the sealed TEST set on a commit of main, or lists the TEST items a catalog change touches; aggregates only ([eval/README.md](../../eval/README.md#running-test-in-ci)) | Manual dispatch only, on main, in the `eval` environment; release milestones only | The job summary; one comment per run on the issue "Sealed TEST use log" |
-| [`check-crawl-keys.yml`](../../.github/workflows/check-crawl-keys.yml) | Checks the `crawl` environment's API keys (Census, Socrata, OpenAlex), one request per publisher; never prints a key ([README](README.md)) | Manual dispatch only, on main, in the `crawl` environment | Nothing |
-| [`mutation.yml`](../../.github/workflows/mutation.yml) | Mutation tests on every function changed on main since the last green run, with the 70% floor ([Nightly mutation tests](README.md#nightly-mutation-tests)) | Daily 02:41, and by hand | One issue per originating PR or commit with survivors (label `mutation-survivors`) |
 
-CI runs only what a change can affect, with one required check, "CI result" ([CI](README.md#ci)). CodeQL, Scorecard
-and npm-publish are described in their own files. Release, the Space deploy and the hub publish each wait for the
-mutation gate (`scripts/mutation_nightly.py gate`).
+CI, CodeQL, Scorecard, release and npm-publish are unchanged and described in their own files.
 
-Every action is pinned to a full commit SHA. Every workflow's top-level token is `contents: read` or narrower
-(`check-crawl-keys.yml`, `sealed-test.yml` and `branch-hygiene.yml` have `permissions: {}`); `issues: write` is granted only to the jobs
-that open an issue or write the sealed TEST use log, `actions: write` only to the keep-alive job and `actions: read`
-only to the deploy's verify job, the sealed TEST workflow's inputs job (to check the `eval` environment allows main
-only), the two fuzzing jobs (to read earlier runs' corpus artifacts), CI's Changes job (the merge-queue rule and a
-green pre-pr verdict for the same commit, [the pre-PR gate](README.md#the-pre-pr-gate)), CI's "CI result" (this
-run's job times, for the budgets), the nightly mutation run's plan job (its last green run) and the `mutation-gate`
-jobs (with `issues: read`). The ClusterFuzzLite actions are pinned by SHA too, but they pull OSS-Fuzz's runner images by their
-`v1` tag inside the action, which a workflow can't pin. Every checkout drops its credentials, and no workflow pushes to
-git; only `branch-hygiene.yml` writes refs, through the API (`contents: write` on its sweep and pull-request jobs). Each source has its own concurrency group, and no scheduled workflow's group cancels a running job. The PR
-fuzzing group (`cflite_pr.yml`) is the exception: a newer push to the same PR or `pre-pr/` branch cancels the
-fuzzing run it supersedes. `HF_TOKEN` is set only on
+Every action is pinned to a full commit SHA. Every workflow's top-level token is `contents: read`; `issues:
+write` is granted only to the jobs that open an issue, `actions: write` only to the keep-alive job and
+`actions: read` only to the deploy's verify job. Every checkout drops its credentials, and no workflow pushes to
+git. Each source has its own concurrency group, and no group cancels a running job. `HF_TOKEN` is set only on
 the steps that talk to Hugging Face, never job-wide, so dependency installs, the browser and the crawlers'
 parsers never see it. Before every upload to a private or ops dataset, `python -m health_data_registry.naming
 assert-private <repo>` checks that the repo is a private or ops dataset of `HDR_PRIVATE_HF_OWNER`, creates it
@@ -184,37 +168,6 @@ only). GitHub disables scheduled workflows in a public repository after 60 days 
 A workflow the maintainer disabled by hand is left alone. If the drift-check workflow itself has been disabled,
 re-enable it once in the Actions tab.
 
-### Fuzzing (`cflite_pr.yml`, `cflite_batch.yml`)
-
-ClusterFuzzLite builds `.clusterfuzzlite/Dockerfile` (OSS-Fuzz's Python builder, pinned by digest) and runs
-`.clusterfuzzlite/build.sh`, which bundles each `fuzz/fuzz_*.py` harness with PyInstaller, plus its seed corpus
-(`fuzz/corpus/<harness>/`, tiny hand-written inputs only), dictionary and libFuzzer options (10 s and 2 GB per
-input). `.dockerignore` keeps `lake/`, `.env*`, `.venv/`, `dist/` and `.git/` out of the image, also for a local
-build from a working copy. The image runs Python 3.11, so the build installs the hash-pinned
-`fuzz/requirements.txt` and bundles `src/` directly; a harness may import only modules that run on 3.11.
-`fuzz/requirements.txt` is generated from uv.lock (`make fuzz-requirements`: uv.lock's versions, PyPI's hashes
-for 3.11), so the fuzzer runs the DuckDB and sqlglot that production runs. Dependabot bumps only uv.lock; a test
-fails until `make fuzz-requirements` is run and its output committed.
-
-| Harness | Code under test | Property |
-|---|---|---|
-| `fuzz_sql_guard` | `sql_guard.guard_sql` | Refuses with `SqlRefused`, or what it accepts is, by DuckDB's own parse of the generated SQL, one SELECT reading catalogued tables or its CTEs, calling only allowlisted functions, joining only declared pairs, with a LIMIT no larger than the cap |
-| `fuzz_sitemap_parse` | `sitemaps.parse` | Pages or child sitemaps, or `SitemapError` |
-| `fuzz_https_csv` | `adapters/https_csv.records`, with and without the wide-to-long pivot | Text records, or `ValueError` |
-| `fuzz_json_adapters` | `adapters/socrata` and `adapters/who_gho` pages and field lists | Flat records, no more than `max_rows` in all, or `ValueError` |
-
-Any other exception, a timeout or running out of memory is a finding. File it as an issue with a minimal
-reproducer. A harness may skip a filed finding behind a `KNOWN_*` flag that names its issue, so it keeps finding
-new ones; set the flag to `False` with the fix. A skip matches only that issue's exact failure: the exception
-type, the function that raised it, its message and the input shape the reproducer needs. Any other failure, even
-of the same type, still fails the run, and `tests/test_fuzz_harnesses.py` checks that it does. Run a harness locally with Atheris installed (`pip install atheris`, on
-Python 3.11 to match the image): `PYTHONPATH=src python fuzz/fuzz_sql_guard.py -max_total_time=60
-fuzz/corpus/fuzz_sql_guard`. Point libFuzzer at an empty scratch directory first if you don't want it to add
-inputs to the seed corpus.
-
-Harnesses still to write when their code reaches main: the PDF table parser (`pdf_tables`, the Wayne County
-adapter, #27), the Tableau bootstrapSession parser (#19), and the HTML and DOCX parsers.
-
 ## Free-tier limits (checked against GitHub's docs, 24 Nov 2026)
 
 | Limit | Value | How the workflows fit |
@@ -227,7 +180,7 @@ adapter, #27), the Tableau bootstrapSession parser (#19), and the HTML and DOCX 
 | Artifacts and logs | Kept 90 days by default; 1 to 90 days in a public repo | Per-source lakes kept 7 days; publish checklist 30 days |
 | Schedule | Delayed under high load, especially at the top of the hour; runs only on the default branch; shortest interval 5 min | Every cron is off the hour; nothing relies on exact timing |
 | Inactive repos | Scheduled workflows are disabled after 60 days with no repository activity (public repos) | Weekly keep-alive job |
-| Concurrency groups | One run running and one pending per group; a newer pending run cancels the older pending one | `cancel-in-progress: false` in every scheduled workflow, so a running crawl, refresh or batch fuzzing run is never cancelled; a skipped pending slice is picked up by the next schedule. `cflite_pr.yml` sets `cancel-in-progress: true`, so a newer push cancels the PR fuzzing run it supersedes |
+| Concurrency groups | One run running and one pending per group; a newer pending run cancels the older pending one | `cancel-in-progress: false` everywhere, so a running crawl or refresh is never cancelled; a skipped pending slice is picked up by the next schedule |
 | `GITHUB_TOKEN` API rate | 1,000 requests per hour per repo | The issue, verify and keep-alive jobs make a handful |
 
 Sources: GitHub Docs, "Actions limits", "Events that trigger workflows" (schedule), "Dependency caching",
@@ -238,19 +191,15 @@ Sources: GitHub Docs, "Actions limits", "Events that trigger workflows" (schedul
 ### GitHub environments (maintainer, once)
 
 A repository secret can be read by any workflow run on any branch by someone with write access, so the two
-jobs that write public things, and the crawl key check, read their secrets from a GitHub **environment** whose
-deployment rule GitHub enforces, even if a workflow file is edited. Under Settings → Environments, the
-maintainer creates:
+jobs that write public things read their token from a GitHub **environment** whose deployment rule GitHub
+enforces, even if a workflow file is edited. Under Settings → Environments, the maintainer creates:
 
 | Environment | Used by | Deployment branches and tags | Secrets to move into it |
 |---|---|---|---|
 | `space` | `deploy-space.yml` deploy | Selected tags only: `v*.*.*` | `HF_TOKEN` (or `HF_SPACE_TOKEN`) |
 | `hub-publish` | `refresh.yml` publish | Selected branches only: `main` | `HF_TOKEN` (or `HF_PUBLISH_TOKEN`) |
-| `crawl` | `check-crawl-keys.yml` check | Selected branches only: `main` (required: the workflow's own main-only check is only an early refusal) | `CENSUS_API_KEY`, `SOCRATA_APP_TOKEN`, `OPENALEX_API_KEY` |
-| `eval` | `sealed-test.yml` evaluate and label-check | Selected branches only: `main` (required: the workflow refuses to start without it). Add the maintainer as a required reviewer too, so each decryption of TEST waits for a deliberate approval | `EVAL_TEST_KEY` (the age identity: one `AGE-SECRET-KEY-1...` line), `ANTHROPIC_API_KEY` (for the driver), and `EVAL_HF_TOKEN` (read access to `<owner>/health-data-registry-ops-eval`) when the ciphertext is in the ops dataset |
 
-Required reviewers can be added to any of them; a run then waits for approval, so it may look stuck until
-someone approves it. Until the environments exist, GitHub creates them on the first run
+Required reviewers can be added to either. Until the environments exist, GitHub creates them on the first run
 with no rules and the jobs read the repository secrets, so the workflows' own checks (`verify`, `main` only)
 are the only guard; they stay as defence in depth after. Once both environments hold the token, the crawl
 workflows still need a repository-level `HF_CRAWL_TOKEN` (or `HF_TOKEN`) limited to the private and ops
@@ -296,7 +245,6 @@ gh workflow run crawl-doi.yml                                # every conference
 gh workflow run sitemaps.yml                                 # this week's sitemap snapshots
 gh workflow run deploy-space.yml --ref v0.1.0                # redeploy a release tag; any other ref is refused
 gh workflow run drift-check.yml
-gh workflow run branch-hygiene.yml -f dry_run=true          # preview the branch sweep, change nothing
 gh run watch                                                 # follow the run you started
 ```
 

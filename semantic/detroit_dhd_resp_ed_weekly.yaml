@@ -1,6 +1,5 @@
 dataset: detroit_dhd_resp_ed_weekly
-# 0.1.1: the share says the dashboard gives no interval.
-version: 0.1.1
+version: 0.1.0
 dimensions:
   - {name: diagnosis, column: diagnosis, type: categorical, description: "COVID-19, influenza or RSV, as the dashboard codes the visit's diagnosis."}
   - {name: week_ending, column: week_ending, type: time, description: "The Saturday that ends the week the emergency department visits are counted in, as the dashboard's weekly axis labels it (Sunday to Saturday weeks; whether they are MMWR weeks is not stated)."}
@@ -13,9 +12,6 @@ metrics:
     aggregation: none
     exclude_total_rows: false
     filters: []
-    uncertainty: none
-    # Structural: the contract's columns have no interval column.
-    uncertainty_reason: "The Detroit Health Department's dashboard gives no confidence interval for these shares."
 series:
   - {condition: COVID, label: "COVID-19 share of Detroit emergency department visits (Detroit Health Department)", metric: weekly_share_of_ed_visits, measure: percent, filters: {diagnosis: COVID}, place_coverage: "City of Detroit (as the Detroit Health Department reports it)", time_dimension: week_ending}
   - {condition: Influenza, label: "Influenza share of Detroit emergency department visits (Detroit Health Department)", metric: weekly_share_of_ed_visits, measure: percent, filters: {diagnosis: Influenza}, place_coverage: "City of Detroit (as the Detroit Health Department reports it)", time_dimension: week_ending}

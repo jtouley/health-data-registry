@@ -6,39 +6,6 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Fixed
-
-- A summed count never adds up labels that overlap or count different things (hard rule 2). Semantic-model
-  dimensions say `non_additive: true` or `false`, and each `true` says why in plain words
-  (`non_additive_reason`), which the refusal and `describe_dataset` show. A metric or series that neither picks
-  one value of such a dimension nor shows each value on its own row is declined in plain words with a next step.
-  `query_sql` applies the same rule to a typed `sum()`: each such column is filtered to one value in WHERE or
-  grouped by, and a column a model leaves undeclared counts as such. Before, a weekly NNDSS count asked for
-  without a condition added every label together, including Confirmed, Probable and Total and animal rabies.
-  The tools always picked one label, so their answers don't change.
-- `validate` refuses a summed metric that keeps the publisher's total rows while adding up a place or group
-  declared additive (NNDSS areas add up only once TOTAL, US RESIDENTS and the divisions are excluded).
-- Every percent, estimate or rate names the publisher's uncertainty bounds, in the same units, or says
-  `uncertainty: none` and why in plain words; a bound measure no metric returns is a load error. A row whose
-  interval is empty says so.
-- The CDI total case count is read as the one published Total cell (grouping 'All cases'), not a sum. An empty
-  published cell, there or in any other figure read as published, comes back as "suppressed or not published",
-  never a blank.
-- Semantic-model versions: CDI, NNDSS and RESP-NET 0.2.0; Detroit annual and ED-visit models 0.1.1.
-- NHSN contract: two quality rules check that the confidence interval is filled wherever the percent resistant
-  is, and only there, as the publisher's column descriptions state.
-### Changed
-
-- The README is rewritten for clinicians: five setup steps that each say what you'll see (the Start here
-  helper is the check step), a C. auris in Michigan example checked against CDC with every year provisional and
-  CDC's later count beside each, a short GBD and PubMed section, and light and dark images from
-  `tools/readme_svg/gen.py`. The setup guide no longer says the hosted preview can't answer CDC questions (the hub
-  has published releases since `release-2026-11-24`).
-- The Something's wrong helper, the setup guide and `docs/tools.md` now tell "the hub could not be reached" (try
-  again) apart from "the hub has no published release yet" (retrying won't help).
-- `tools/` is linted and type-checked with the rest of the code, and a test fails if the committed README images
-  differ from what the generator draws.
-
 ### Added
 
 - `serve --http`: the hosted, read-only connector over stateless Streamable HTTP (hub releases and live reads
@@ -58,11 +25,9 @@ All notable changes to this project are documented here. The format follows
 - Hosted query isolation (#64, #74 item 1): every query runs in a child process with an OS memory limit
   (`HDR_QUERY_MEMORY_MB`), a hard kill at the deadline and a capped JSON reply (`HDR_QUERY_RESULT_MB`), so a
   long `lpad` or `repeat` call is stopped and can't exhaust the server's memory. Anything that outlives its call
-  poisons the engine until it ends: new calls get a plain BUSY refusal, `/healthz` answers 503 with the cause and
-  since when, and after `HDR_POISONED_EXIT_S` (900 s) the server exits so it can be started afresh. Each child
-  gets only the tables its query reads and none of the server's environment, and `/healthz` reports whether the
-  memory limit was measured to hold. No page of an answer goes over `HDR_PAGE_CHARS`: pages are measured and
-  re-cut, and a single row too long for any page, even in a one-row answer, is refused in plain words.
+  poisons the engine until it ends: new calls get a plain BUSY refusal and `/healthz` answers 503. No page of an
+  answer goes over `HDR_PAGE_CHARS`: pages are measured and re-cut, and a single row too long for any page is
+  refused in plain words.
 - Condition vocabulary: each catalog entry lists the publisher's own condition labels (`conditions:`, with
   where they come from), and `get_series`, `get_rate` and `get_trend` accept any of them through the semantic
   model's `generic_series`, with the same aggregation rules as the named series. `validate` fails when a local

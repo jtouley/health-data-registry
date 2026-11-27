@@ -6,27 +6,20 @@ rather than on its own DuckDB connection, because a thread can't be stopped from
 every allocation, and a worker the server gave up on could keep running after the next question started.
 
 - **A fresh child per query.** `Isolation.run` starts a child (from a forkserver with DuckDB, sqlglot and the CLI
-  already imported, so a query costs 40-80 ms more than in-process on Linux, measured on the synthetic lake,
-  rather than an interpreter start-up), hands it a `Job`: only the tables that query reads, and the SQL. The
-  child clears its environment (no server secret reaches it), sends its own stdout and stderr to /dev/null, opens
-  its own in-memory DuckDB connection with 2 threads from the start, attaches lake snapshots READ_ONLY and reads
-  hub Parquet files through views, loads restricted live tables into memory from the records the parent holds
-  (never to disk), locks the connection down (sql_guard.harden) and runs the query. It shares no memory with the
-  server, and it never starts a process of its own (DuckDB has no way to, and the guard allows one SELECT only).
+  already imported, so a query costs about 40 ms more than in-process on Linux, measured on the synthetic lake,
+  rather than an interpreter start-up), hands it a `Job`: the files to read and the SQL. The
+  child opens its own in-memory DuckDB connection, attaches lake snapshots READ_ONLY and reads hub Parquet files
+  through views, loads restricted live tables into memory from the records the parent holds (never to disk), locks
+  the connection down (sql_guard.harden) and runs the query. It shares no memory with the server.
 - **An OS memory limit.** Before it touches DuckDB the child sets RLIMIT_AS (HDR_QUERY_MEMORY_MB, default 4,096
   MiB of address space: DuckDB's own 2 GB memory_limit plus its baseline), so an allocation past the limit fails
-  inside the child (DuckDB reports out of memory, or the child aborts) and the server says so in plain words; the
-  server itself never runs out. The child checks that the limit took effect and says so in its reply (/healthz
-  shows it). RLIMIT_FSIZE 0 means the child can't grow a file by one byte (it can still open one: the views read
-  hub files the server made read-only after their sha256 check, and the guard allows SELECT only), and
-  RLIMIT_CORE 0 means a crash leaves no core dump with data in it.
+  inside the child (DuckDB reports out of memory, or the child dies) and the server says so in plain words; the
+  server itself never runs out. RLIMIT_FSIZE 0 means the child can't write to any file, and RLIMIT_CORE 0 means a
+  crash leaves no core dump with data in it.
 - **A hard kill at the deadline.** The parent waits for the reply until the call's deadline (deadline.py) or the
-  job's own limit, whichever comes first, then SIGKILLs the child, through a pidfd on Linux so the signal can
-  reach only that child, never a process that later got its PID. A kill stops anything: a function call that
+  job's own limit, whichever comes first, then SIGKILLs the child. A kill stops anything: a function call that
   ignores interrupts, a loop in a C library. Nothing the killed child did reaches the server: it held only
-  read-only files and its own pipe, and a reply that arrives after the kill is never read. A wait that runs out
-  is a timeout, whatever the kill shows; a child that died of SIGKILL or SIGABRT the server didn't send ran out
-  of memory; any other death (a crash) is reported as the engine stopping.
+  read-only files and its own pipe, and a reply that arrives after the kill is never read.
 - **A capped reply.** The child sends one message over a one-way pipe: JSON with tagged dates, decimals and the
   like (never pickle, so a child can't make the server run code), at most HDR_QUERY_RESULT_MB (default 64 MiB).
   The server enforces the cap itself when it reads (recv_bytes' maxlength), so a child can't exhaust its memory.
@@ -42,7 +35,7 @@ bounded only by DuckDB's memory_limit, which doesn't count every allocation: a w
 
 The local stdio server keeps running queries in-process (Engine without an Isolation): it serves one clinician on
 their own computer, where a runaway query costs only that person's session and a restart of Claude fixes it, and
-most clinicians run macOS or Windows, where the child would add those 40-80 ms (far more where children are spawned)
+most clinicians run macOS or Windows, where the child would add the ~40 ms (far more where children are spawned)
 without the memory limit. Its own queries stay under sql_guard's interrupt and DuckDB's memory_limit.
 """
 
@@ -55,7 +48,6 @@ import decimal
 import json
 import multiprocessing
 import os
-import signal
 import sys
 import threading
 import uuid
@@ -104,21 +96,7 @@ STOPPED = (
     "The data engine stopped unexpectedly while answering, so no numbers are shown. Try again; if it keeps "
     "happening, narrow the question or run the Something's wrong helper."
 )
-NOT_STARTED = (
-    "The hosted server couldn't start the data engine for this question, so no numbers are shown. Try again in a "
-    "minute; if it keeps happening, run the Something's wrong helper."
-)
-UNREADABLE = (
-    "The data engine's answer to this question couldn't be read, so no numbers are shown. Try again; if it keeps "
-    "happening, run the Something's wrong helper."
-)
 FAILED = "The data engine could not run this query on these tables, so no numbers are shown."
-FAILED_NEXT = (
-    "Check the columns with describe_dataset and ask again; if it keeps happening, run the Something's "
-    "wrong helper."
-)
-# What the child keeps of the server's environment: what DuckDB and Python need, never a token or a secret.
-CHILD_ENV = ("HOME", "TMPDIR", "TMP", "TEMP", "PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "SYSTEMROOT")
 
 
 class IsolationRefused(Exception):
@@ -166,11 +144,9 @@ def build_connection(sources: Sequence[Source], memory_limit: str = "2GB") -> An
     import duckdb
 
     from health_data_registry.live import load_live
-    from health_data_registry.sql_guard import DEFAULT_THREADS, harden
+    from health_data_registry.sql_guard import harden
 
-    # Threads and memory are set as the connection opens, so DuckDB never starts one thread per CPU (each with its
-    # own stack and allocator arena) and uses up RLIMIT_AS before a query runs; harden() sets them again.
-    con = duckdb.connect(":memory:", config={"threads": str(DEFAULT_THREADS), "memory_limit": memory_limit})
+    con = duckdb.connect(":memory:")
     parquet: list[str] = []
     for s in sources:
         if s.kind == "attach" and s.path is not None:
@@ -194,7 +170,7 @@ def execute(job: Job) -> tuple[str, Any, Any]:
     """Run one job on a fresh connection: ("ok", columns, rows) or ("refused", code, message). Never raises."""
     import duckdb
 
-    from health_data_registry.sql_guard import _COULD_NOT_RUN, SqlRefused, run_guarded
+    from health_data_registry.sql_guard import SqlRefused, run_guarded
 
     try:
         con = build_connection(job.sources, job.memory_limit)
@@ -213,11 +189,8 @@ def execute(job: Job) -> tuple[str, Any, Any]:
         return "refused", "too_much_memory", TOO_MUCH_MEMORY
     except duckdb.InterruptException:
         return "refused", "too_slow", TOO_SLOW
-    except Exception as e:  # noqa: BLE001 - the server answers in plain words, never the engine's own text
-        for kind, code, words in _COULD_NOT_RUN:
-            if isinstance(e, kind):
-                return "refused", code, f"{words} No numbers are shown. {FAILED_NEXT}"
-        return "refused", "query_failed", f"{FAILED} {FAILED_NEXT}"
+    except Exception as e:  # noqa: BLE001 - the server answers in plain words; the type is enough to log
+        return "refused", "query_failed", f"{FAILED} ({type(e).__name__})"
     return "ok", cols, [list(r) for r in rows]
 
 
@@ -277,25 +250,13 @@ def _hashable(k: Any) -> Any:
     return tuple(k) if isinstance(k, list) else k
 
 
-def encode(reply: tuple[str, Any, Any], enforced: bool | None = None) -> bytes:
-    """One reply as JSON; `enforced` (did the child's memory limit take effect?) travels with it when given."""
-    body = [reply[0], _enc(reply[1]), _enc(reply[2])]
-    return json.dumps(body if enforced is None else [*body, bool(enforced)], separators=(",", ":")).encode()
-
-
-def decode_reply(data: bytes) -> tuple[tuple[str, Any, Any], bool | None]:
-    """A reply and whether the child's memory limit was enforced (None when the reply doesn't say)."""
-    got = json.loads(data, object_hook=_dec)
-    if not isinstance(got, list) or len(got) not in (3, 4):
-        raise ValueError("a query reply is a list of 3 or 4 items")
-    enforced = got[3] if len(got) == 4 else None
-    if enforced is not None and not isinstance(enforced, bool):
-        raise ValueError("a query reply's memory flag is true or false")
-    return (str(got[0]), got[1], got[2]), enforced
+def encode(reply: tuple[str, Any, Any]) -> bytes:
+    return json.dumps([reply[0], _enc(reply[1]), _enc(reply[2])], separators=(",", ":")).encode()
 
 
 def decode(data: bytes) -> tuple[str, Any, Any]:
-    return decode_reply(data)[0]
+    status, a, b = json.loads(data, object_hook=_dec)
+    return str(status), a, b
 
 
 # ------------------------------------------------------------------------------------------ the child
@@ -316,58 +277,20 @@ def limit_child(memory_bytes: int | None) -> bool:
         return False
     try:
         resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
-        took = resource.getrlimit(resource.RLIMIT_AS)[0] == memory_bytes  # measured, not assumed
-    except (ValueError, OSError):  # macOS refuses or ignores it; a container's hard limit may be lower
+    except (ValueError, OSError):  # macOS refuses or ignores it
         return False
-    return took and sys.platform.startswith("linux")
-
-
-def scrub_environment(keep: Sequence[str] = CHILD_ENV) -> None:
-    """Drop every environment variable but `keep`: the forkserver inherited the server's, Space secrets included."""
-    kept = {k: os.environ[k] for k in keep if k in os.environ}
-    os.environ.clear()
-    os.environ.update(kept)
-
-
-def quiet_output() -> None:
-    """Point stdout and stderr at /dev/null and ignore SIGXFSZ, before RLIMIT_FSIZE 0 applies.
-
-    The child inherits the server's stderr, which may be a log file: a write there under RLIMIT_FSIZE 0 would kill
-    the child with SIGXFSZ. /dev/null isn't a regular file, so the limit never applies to it, and with SIGXFSZ
-    ignored any other write past the limit fails with an error instead of killing the child.
-    """
-    if hasattr(signal, "SIGXFSZ"):
-        signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
-    null = os.open(os.devnull, os.O_WRONLY)
-    try:
-        for fd in (1, 2):
-            os.dup2(null, fd)
-    finally:
-        os.close(null)
-
-
-def limit_arenas(arenas: int = 2) -> None:
-    """Cap glibc's malloc arenas (as MALLOC_ARENA_MAX would), which each reserve address space RLIMIT_AS counts."""
-    if not sys.platform.startswith("linux"):
-        return
-    with contextlib.suppress(Exception):  # not glibc (musl), or no libc to load: nothing to cap
-        import ctypes
-
-        ctypes.CDLL(None).mallopt(-8, arenas)  # M_ARENA_MAX
+    return sys.platform.startswith("linux")
 
 
 def child_main(job: Job, conn: Connection, memory_bytes: int | None, result_bytes: int) -> None:
-    """The child's whole life: no secrets, no output, limits, the query, one reply no larger than the cap."""
-    scrub_environment()
-    quiet_output()
-    limit_arenas()
-    enforced = limit_child(memory_bytes)
+    """The child's whole life: limits, the query, one reply no larger than the cap."""
+    limit_child(memory_bytes)
     try:
-        payload = encode(execute(job), enforced)
+        payload = encode(execute(job))
     except MemoryError:
-        payload = encode(("refused", "too_much_memory", TOO_MUCH_MEMORY), enforced)
+        payload = encode(("refused", "too_much_memory", TOO_MUCH_MEMORY))
     if len(payload) > result_bytes:
-        payload = encode(("refused", "too_large", REPLY_TOO_LARGE.format(mb=result_bytes // MIB)), enforced)
+        payload = encode(("refused", "too_large", REPLY_TOO_LARGE.format(mb=result_bytes // MIB)))
     conn.send_bytes(payload)
     conn.close()
 
@@ -405,7 +328,6 @@ class Isolation:
     _unreaped: list[Any] = field(default_factory=list)
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _ctx: Any = None
-    _enforced: bool | None = None  # what the last child measured (limit_child); None before any child ran
 
     def context(self) -> Any:
         if self._ctx is None:
@@ -416,16 +338,9 @@ class Isolation:
         return self._ctx
 
     @property
-    def memory_enforced(self) -> bool | None:
-        """Did the OS memory limit take effect in the last child? As that child measured it; None before any ran."""
-        return self._enforced
-
-    def measure(self) -> bool | None:
-        """Run one tiny query (once, at warm start) so /healthz can say whether the memory limit is enforced."""
-        if self._enforced is None and not self.poisoned():
-            with contextlib.suppress(IsolationRefused):
-                self.run(Job((), sql="SELECT 1"))
-        return self._enforced
+    def memory_enforced(self) -> bool:
+        """Is the OS memory limit enforced here? Only on Linux; elsewhere only DuckDB's own limit applies."""
+        return sys.platform.startswith("linux")
 
     def poisoned(self) -> bool:
         """True while a child that ignored SIGKILL is still alive; reaped children are forgotten."""
@@ -437,7 +352,7 @@ class Isolation:
         return {
             "poisoned": self.poisoned(),
             "memory_limit_mb": self.memory_mb,
-            "memory_limit_enforced": self.memory_enforced,  # null until a child has measured it
+            "memory_limit_enforced": self.memory_enforced,
             "start_method": self.method,
         }
 
@@ -457,134 +372,72 @@ class Isolation:
         )
         if wait <= 0:
             raise IsolationRefused("too_slow", TOO_SLOW)
+        ctx = self.context()
+        reader, writer = ctx.Pipe(duplex=False)
         cap = self.result_mb * MIB
-        reader, writer, proc = self._start(job, cap)
-        target = Target(proc)
+        proc = ctx.Process(
+            target=child_main, args=(job, writer, self.memory_mb * MIB, cap), daemon=True, name="hdr-query"
+        )
+        proc.start()
+        writer.close()  # only the child writes: EOF here once it exits
         killed = threading.Event()
-        state = threading.Lock()
-        done = False
 
         def at_deadline() -> None:
-            with state:  # never after the reap below: the PID may belong to another process by then
-                if done:
-                    return
-                killed.set()
-                target.kill()
+            killed.set()
+            self._kill(proc)
 
         # The kill happens at the deadline whatever the parent is doing (even mid-read of a stalled reply).
         killer = threading.Timer(wait, at_deadline)
         killer.daemon = True
         killer.start()
         try:
-            data = self._read(reader, target, wait, cap, killed)
+            data = self._read(reader, proc, wait, cap)
         finally:
-            with state:
-                done = True
             killer.cancel()
             reader.close()
-            code, forced = self._reap(proc, target)
-            target.close()
+            self._reap(proc)
         if data is None or killed.is_set():  # a reply that raced the kill is never used
-            raise IsolationRefused(*self._why(code, killed.is_set(), forced))
-        try:
-            (status, a, b), enforced = decode_reply(data)
-            answer = ([str(c) for c in a], list(b)) if status == "ok" else None
-        except Exception:  # noqa: BLE001 - the child is the untrusted side: any reply it can't decode is refused
-            raise IsolationRefused("query_failed", UNREADABLE) from None
-        if enforced is not None:
-            self._enforced = enforced
-        if answer is None:
+            raise IsolationRefused(*self._why(proc, killed.is_set()))
+        status, a, b = decode(data)
+        if status != "ok":
             raise IsolationRefused(str(a), str(b))
-        return answer
-
-    def _start(self, job: Job, cap: int) -> tuple[Any, Any, Any]:
-        """Start one child with its reply pipe; a failed start closes both ends and is refused in plain words."""
-        try:
-            ctx = self.context()
-            reader, writer = ctx.Pipe(duplex=False)
-        except Exception:  # noqa: BLE001 - out of descriptors, or no forkserver: one plain refusal
-            raise IsolationRefused("query_failed", NOT_STARTED) from None
-        try:
-            args = (job, writer, self.memory_mb * MIB, cap)
-            proc = ctx.Process(target=child_main, args=args, daemon=True, name="hdr-query")
-            proc.start()
-        except Exception:  # noqa: BLE001 - fork refused (EAGAIN, ENOMEM) or the forkserver gone
-            reader.close()
-            writer.close()
-            raise IsolationRefused("query_failed", NOT_STARTED) from None
-        writer.close()  # only the child writes: EOF here once it exits
-        return reader, writer, proc
+        return list(a), b
 
     @staticmethod
-    def _why(code: int | None, killed: bool, forced: bool = False) -> tuple[str, str]:
+    def _why(proc: Any, killed: bool) -> tuple[str, str]:
         """Why a child gave no reply, in plain words: out of time, out of memory, or stopped."""
         if killed:
             return "too_slow", TOO_SLOW
-        if not forced and code in MEMORY_DEATHS:
-            # A SIGKILL or SIGABRT the server didn't send: the kernel's out-of-memory kill, or an abort on an
-            # allocation RLIMIT_AS refused.
+        code = proc.exitcode
+        if code is not None and code < 0:
+            # Died of a signal the server didn't send: on Linux almost always the memory limit (an abort on a
+            # failed allocation, or the kernel's out-of-memory kill).
             return "too_much_memory", TOO_MUCH_MEMORY
-        return "query_failed", STOPPED  # a crash (SIGSEGV and the like), an exit without a reply
+        return "query_failed", STOPPED
 
-    def _read(self, reader: Any, target: Any, wait: float, cap: int, killed: threading.Event) -> bytes | None:
+    def _read(self, reader: Any, proc: Any, wait: float, cap: int) -> bytes | None:
         try:
             if not reader.poll(wait):
-                killed.set()  # out of time: a timeout, whatever the cleanup kill makes the exit code
                 return None
             data: bytes = reader.recv_bytes(cap)  # the cap is enforced here too: an over-long reply raises
         except EOFError:
             return None  # the child exited (or was killed) without replying
-        except OSError as e:
-            if killed.is_set() or str(e) != "bad message length":
-                return None  # killed or died part-way through its reply: _why says which
-            target.kill()  # longer than the cap: never read, and the child is stopped
+        except OSError:  # longer than the cap: never read, and the child is stopped
+            self._kill(proc)
             raise IsolationRefused("too_large", REPLY_TOO_LARGE.format(mb=self.result_mb)) from None
         return data
 
-    def _reap(self, proc: Any, target: Any = None) -> tuple[int | None, bool]:
-        """Kill the child if it is still running and wait for it; one that won't go poisons the engine.
+    @staticmethod
+    def _kill(proc: Any) -> None:
+        with contextlib.suppress(OSError, ValueError, AttributeError):  # already gone
+            proc.kill()
 
-        Returns its exit code and whether this reap had to kill it (a death the server caused, not memory).
-        """
-        forced = False
+    def _reap(self, proc: Any) -> None:
+        """Kill the child if it is still running and wait for it; one that won't go poisons the engine."""
         proc.join(0.05)
         if proc.is_alive():
-            forced = True
-            (target or Target(proc, pidfd=False)).kill()
+            self._kill(proc)
             proc.join(self.kill_wait_s)
         if proc.is_alive():
             with self._lock:
                 self._unreaped.append(proc)
-            return None, forced
-        code: int | None = proc.exitcode
-        with contextlib.suppress(Exception):
-            proc.close()  # releases the sentinel now, not at garbage collection
-        return code, forced
-
-
-MEMORY_DEATHS = frozenset(-int(getattr(signal, n)) for n in ("SIGKILL", "SIGABRT") if hasattr(signal, n))
-
-
-class Target:
-    """One child to signal: through a pidfd on Linux (it can't reach a process that later reuses the PID)."""
-
-    def __init__(self, proc: Any, *, pidfd: bool = True) -> None:
-        self.proc = proc
-        self.fd: int | None = None
-        if pidfd and hasattr(os, "pidfd_open") and isinstance(getattr(proc, "pid", None), int):
-            with contextlib.suppress(OSError):
-                self.fd = os.pidfd_open(proc.pid)
-
-    def kill(self) -> None:
-        if self.fd is not None:
-            with contextlib.suppress(OSError):  # already gone
-                signal.pidfd_send_signal(self.fd, signal.SIGKILL)
-            return
-        with contextlib.suppress(OSError, ValueError, AttributeError):  # already gone
-            self.proc.kill()
-
-    def close(self) -> None:
-        if self.fd is not None:
-            with contextlib.suppress(OSError):
-                os.close(self.fd)
-            self.fd = None

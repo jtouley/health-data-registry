@@ -1,9 +1,8 @@
 dataset: mdhhs_measles_county
 version: 0.1.0
-# Counties and the map's key add up: one row per county and no total row (the contract's grain check and totalRows).
 dimensions:
-  - {name: county, column: county, type: categorical, non_additive: false, description: "Michigan county the cases are assigned to."}
-  - {name: case_indicator, column: case_indicator, type: categorical, non_additive: false, description: "The map's key: outbreak-associated, other reported, or no reported cases."}
+  - {name: county, column: county, type: categorical, description: "Michigan county the cases are assigned to."}
+  - {name: case_indicator, column: case_indicator, type: categorical, description: "The map's key: outbreak-associated, other reported, or no reported cases."}
 measures:
   - {name: measles_cases, column: total_cases, kind: count, unit: "cases", description: "Measles cases reported in the county."}
   - {name: outbreak_measles_cases, column: outbreak_cases, kind: count, unit: "cases", description: "Outbreak-associated measles cases in the county (a subset of the reported cases)."}

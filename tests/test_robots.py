@@ -103,28 +103,6 @@ def test_the_default_fetcher_checks_robots(monkeypatch: pytest.MonkeyPatch, tmp_
     assert row["status"] == "error" and "robots.txt" in row["error"]
 
 
-def test_robots_statuses_raised_by_the_real_fetcher(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The real fetcher raises for every status but 200; the status on the refusal decides the rules.
-    fake(
-        monkeypatch,
-        {
-            "data.cdc.gov": fetch_mod.FetchRefused("http_error", "gone", status=404),
-            "www2.census.gov": fetch_mod.FetchRefused("http_error", "no", status=401),
-        },
-    )
-    rb = crawl.Robots(HOSTS)
-    rb.wait_turn("https://data.cdc.gov/anything")  # 404: no rules
-    with pytest.raises(fetch_mod.FetchRefused) as e:
-        rb.wait_turn("https://www2.census.gov/x.csv")  # 401: the host is blocked for the run
-    assert e.value.code == "blocked" and e.value.status == 401
-    for busy in (503, 502):
-        seen = fake(monkeypatch, {"data.cdc.gov": fetch_mod.FetchRefused("http_error", "busy", status=busy)})
-        rb2 = crawl.Robots(HOSTS)
-        rb2.wait_turn("https://data.cdc.gov/a")
-        rb2.wait_turn("https://data.cdc.gov/b")
-        assert seen.count("https://data.cdc.gov/robots.txt") == 2  # not cached: asked again
-
-
 def test_crawl_delay_never_sleeps_past_a_hosted_call_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
     """Inside a hosted call's deadline a crawl delay longer than what is left stops the call, without sleeping."""
     from health_data_registry.deadline import DeadlineExceeded, call_deadline

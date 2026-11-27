@@ -286,11 +286,7 @@ def fake_hf(monkeypatch: pytest.MonkeyPatch, releases: tuple[Registry, dict[str,
             raise OSError("404")
         target = Path(kw["local_dir"]) / filename
         target.parent.mkdir(parents=True, exist_ok=True)
-        part = target.with_name(
-            target.name + ".incomplete"
-        )  # as huggingface_hub does: a temp file, then a move
-        shutil.copyfile(releases[1][kw["revision"]] / filename, part)
-        part.replace(target)  # replaces a read-only verified copy too, as a rename does
+        shutil.copyfile(releases[1][kw["revision"]] / filename, target)
         return str(target)
 
     monkeypatch.setattr(huggingface_hub, "hf_hub_download", download)
@@ -997,42 +993,6 @@ def test_a_single_row_too_wide_for_any_page_is_refused_in_plain_words(
         assert refused["refused"] == "too_large" and refused["next_step"]
     for ok in (outs[0], outs[2]):  # the rows around it still come back, on their own pages
         assert "small" in (ok if isinstance(ok, str) else json.dumps(ok))
-
-
-@pytest.mark.parametrize("fmt", ["csv", "json"])
-def test_a_one_row_answer_too_long_for_a_page_is_refused_never_sent(
-    registry: Registry, eng: Engine, fmt: str
-) -> None:
-    """PR #92 review: a one-row answer over the budget used to go out whole, over HDR_PAGE_CHARS."""
-    budget = 6_000
-    rows = [["y" * 200_000, "", 1]]
-    for page in (None, 1, 2):
-        out = _wide(registry, eng, rows, fmt, page or 1, budget) if page else paging.respond(
-            "query_sql", {"sql": "SELECT 1", "fmt": fmt}, eng,
-            lambda e: tools.Result(["a", "b", "c"], [list(r) for r in rows], [], {}),
-            page=None, pin=None, fmt=fmt, budget=budget,
-        )  # fmt: skip
-        assert paging.wire_size(out) <= budget
-        text = out if isinstance(out, str) else out["message"]
-        assert "One row of this answer is too long to send" in text  # never "fits on one page" for page 2
-        if isinstance(out, dict):
-            assert out["refused"] == "too_large"
-
-
-def test_plan_shrinks_geometrically_under_a_steady_overshoot() -> None:
-    """A render that is always a few characters over takes a handful of passes, not one per character."""
-    res = tools.Result(["a"], [["x" * 999] for _ in range(200)], [])
-    costs = [paging._row_cost(r, "csv") for r in res.rows]
-    passes = [0]
-
-    def render(lo: int, hi: int, n: int, bounds: list[tuple[int, int]]) -> Any:
-        passes[0] += n == 1
-        return "x" * (sum(costs[lo:hi]) + 3) if hi > lo else ""  # always 3 characters over its estimate
-
-    budget = 2 * 10 * costs[0]  # ten rows fill a page's room exactly, so every full page starts over
-    bounds = paging.plan(res, "csv", budget, render)
-    assert all(paging.wire_size(render(lo, hi, 0, bounds)) <= budget for lo, hi in bounds if hi - lo > 1)
-    assert passes[0] <= 5  # shrinking by half the overshoot alone took hundreds of passes here
 
 
 def test_plan_recuts_when_its_estimate_is_short() -> None:

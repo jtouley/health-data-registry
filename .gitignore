@@ -17,13 +17,7 @@ lake/
 .env
 mutants/
 mutation-report/
-# mutmut stats from scripts/mutate_changed.py --collect-stats (nightly mutation run)
-.mutmut-cache/
 # Sitemap snapshots live in a private Hugging Face dataset, never in git
 sitemaps/
 *.xml.gz
 .claude/worktrees/
-# Outside skills are installed per session in ~/.claude/skills and never committed (CLAUDE.md, "Skills and how to
-# use them"). Only our own fix-round skill is versioned here.
-.claude/skills/*
-!.claude/skills/fix-round/

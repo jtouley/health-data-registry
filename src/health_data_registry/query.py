@@ -8,24 +8,15 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import duckdb
 
 from health_data_registry import deadline
-from health_data_registry.registry import (
-    Column,
-    Dataset,
-    Metric,
-    Registry,
-    Uncertainty,
-    is_single_value,
-    label_key,
-    unpinned_non_additive,
-)
+from health_data_registry.registry import Column, Dataset, Metric, Registry, label_key
 from health_data_registry.sql_guard import GuardedQuery, guard_sql, harden, run_guarded
 from health_data_registry.store import Manifest, latest_snapshot, snapshot_dir
 
@@ -56,8 +47,6 @@ NEXT_STEPS: dict[str, str] = {
     "publisher_unreachable": "Try again in a few minutes.",
     "publisher_bad_table": "Try again later; if it keeps happening, run the Something's wrong helper.",
     "needs_single_value": "Ask for the year's total, or for one week.",
-    "non_additive": "Use describe_dataset to see the values, then ask again for one of them, or ask to see each "
-    "one on its own row.",
     "not_a_human_count": "Use get_series to read these counts as published; they are not cases in people, so "
     "there is no rate per 100,000 people.",
     "bad_page": "Ask for page=1, or leave page out.",
@@ -89,6 +78,13 @@ def _q(ident: str) -> str:
     return '"' + ident.replace('"', '""') + '"'
 
 
+def _single(value: Any) -> bool:
+    """A filter that pins a dimension to exactly one value."""
+    if value is None:
+        return False
+    return len(value) == 1 if isinstance(value, list | tuple) else True
+
+
 @dataclass(frozen=True)
 class CompiledMetric:
     sql: str
@@ -117,7 +113,7 @@ def compile_metric(
     dims = {d.name: d for d in sem.dimensions}
     for d in metric.single_value_of:
         if measure.kind == "running_count":
-            if d in group_by or not is_single_value((filters or {}).get(d)):
+            if d in group_by or not _single((filters or {}).get(d)):
                 raise QueryRefused(
                     "needs_single_value",
                     f"{metric.name} is a running total, so it is read at one {d}: filter {d} to a single value "
@@ -126,7 +122,7 @@ def compile_metric(
                 )
         # A count whose values of d overlap (Michigan includes Detroit) or are different things (conditions): each
         # answer row holds one value of d, by a filter to one value or by grouping by it; never added across them.
-        elif d not in group_by and not is_single_value((filters or {}).get(d)):
+        elif d not in group_by and not _single((filters or {}).get(d)):
             raise QueryRefused(
                 "needs_single_value",
                 f"{metric.name} is never added up across {d}s: they overlap or count different things (for example "
@@ -188,30 +184,10 @@ def compile_metric(
             period_params.append(end)
 
     group_cols = [dim(g) for g in group_by]
-    # Hard rule 2: a sum never adds across a dimension whose values overlap or count different things.
-    loose = unpinned_non_additive(
-        sem, metric, [*group_by, *(d for d, v in (filters or {}).items() if is_single_value(v))]
-    )
-    if loose:
-        # Plain words only (hard rule 12): each dimension's clinical description and the reason its values can't
-        # be added, never the metric's or the dimension's internal name.
-        what = "; ".join(
-            f"{dims[d].description.rstrip('.')} ({dims[d].non_additive_reason or ''})".replace(" ()", "")
-            for d in loose
-        )
-        one = "one of them" if len(loose) == 1 else "one value of each"
-        raise QueryRefused(
-            "non_additive",
-            "These counts would be added up across groups that overlap or count different things: "
-            f"{what}. Adding them together would count the same cases twice or mix different things into one "
-            f"number, so nothing is added. Ask for {one}, or ask to see each one on its own row.",
-            f"Use describe_dataset on {ds.id} to see the values you can choose, then ask again for {one}, or ask "
-            "to see each one on its own row.",
-        )
     select_dims = [f"{_q(c)} AS {_q(g)}" for g, c in zip(group_by, group_cols, strict=True)]
     m_col = _q(measure.column)
     bounds: list[tuple[str, str]] = []
-    if isinstance(metric.uncertainty, Uncertainty):
+    if metric.uncertainty:
         bounds = [
             ("lower", sem.measure(metric.uncertainty.lower).column),
             ("upper", sem.measure(metric.uncertainty.upper).column),
@@ -273,34 +249,13 @@ def compile_metric(
         sel = [*select_dims, f"{m_col} AS {_q(metric.name)}", *(f"{_q(c)} AS {_q(b)}" for b, c in bounds)]
         if flag:
             sel.append(f"{_q(flag.name)} AS flag")
-        # An empty published cell is a gap, never a silent blank (hard rule 2): not_published says so per row,
-        # beside the publisher's flag where the contract has one.
-        sel.append(f"{m_col} IS NULL AS not_published")
-        out_cols = [*out_cols, "not_published"]
         sql = f"SELECT {', '.join(sel)} FROM {table}{where_sql}"  # noqa: S608 - quoted contract identifiers, bound values
         if group_cols:
             sql += " ORDER BY ALL"
-        method = (
-            f"{measure.name} as published ({measure.kind}); not summed. A row whose published cell is empty says "
-            "so in not_published (suppressed or not published), never a blank read as a value."
-        ) + (
-            " Lower and upper are the publisher's own uncertainty bounds."
-            if bounds
-            else f" No uncertainty bounds: {metric.uncertainty_reason}"
-            if metric.uncertainty == "none"
-            else ""
+        method = f"{measure.name} as published ({measure.kind}); not summed." + (
+            " Lower and upper are the publisher's own uncertainty bounds." if bounds else ""
         )
     return CompiledMetric(sql=sql, params=params, columns=out_cols, method=method)
-
-
-def non_additive_columns(ds: Dataset) -> frozenset[str]:
-    """Columns a sum in query_sql must filter to one value or group by: the semantic model's non_additive
-    dimensions, and every categorical dimension a model leaves undeclared (fail closed)."""
-    return frozenset(
-        d.column
-        for d in ds.semantic.dimensions
-        if d.non_additive or (d.non_additive is None and d.type == "categorical")
-    )
 
 
 def _lit(value: str) -> str:
@@ -359,7 +314,7 @@ def _compile_cumulative(
     loose = [
         d.name
         for d in sem.dimensions
-        if d.type == "categorical" and d.name not in group_by and not is_single_value(filters.get(d.name))
+        if d.type == "categorical" and d.name not in group_by and not _single(filters.get(d.name))
     ]
     if loose:
         raise QueryRefused(
@@ -521,7 +476,6 @@ class Engine:
     _hub_files: dict[str, tuple[Path, Manifest]] = field(default_factory=dict)
     _live: dict[str, Any] = field(default_factory=dict)  # dataset id -> live.LiveTable (memory only)
     _live_failed: set[str] = field(default_factory=set)  # live tables that could not be loaded (refused once)
-    _private: dict[str, Any] = field(default_factory=dict)  # dataset id -> (records, Manifest), memory only
     # Lake snapshots to read instead of LATEST (dataset id -> snapshot id): a later page pinned to older data.
     lake_pins: dict[str, str] = field(default_factory=dict)
     # The sources the current call has read, in order (paging.respond clears it per call and reads it after).
@@ -547,31 +501,17 @@ class Engine:
         parquet: list[str] = []
         sources: list[Source] = []
         for ds in self.registry:
-            if ds.entry.tier == "private":
-                held = self._private.get(ds.id)
-                if held is None:
-                    continue  # read from its private store (private.read_rows) when first asked
-                try:
-                    load_live(con, ds, held[0])  # in memory only, like a live table
-                except Exception:  # noqa: BLE001 - one bad store must not break the other sources
-                    del self._private[ds.id]
-                    continue
-                manifest = held[1]
-            elif not ds.entry.licence.redistribution:
+            if not ds.entry.licence.redistribution:
                 table = self._live.get(ds.id)
                 if table is None:
                     continue  # restricted sources are never read from disk, even a maintainer's lake
                 try:
-                    report = load_live(con, ds, table.records)
+                    load_live(con, ds, table.records)
                 except Exception:  # noqa: BLE001 - one bad publisher table must not break the other sources
                     del self._live[ds.id]
                     self._live_failed.add(ds.id)
                     continue
-                manifest = replace(
-                    table.manifest,
-                    notes=[*table.manifest.notes, *report.notes()],
-                    silver=report.as_dict(),
-                )
+                manifest = table.manifest
                 sources.append(Source("live", ds.id, ds=ds, records=table.records))
             elif (found := self._lake_snapshot(ds.id)) is not None:
                 path, manifest = found
@@ -599,14 +539,12 @@ class Engine:
 
     def _run(
         self, sql: str, params: Sequence[Any] = (), *, limit: int | None = None, guarded: GuardedQuery | None = None,
-        timeout_s: float | None = None, tables: Collection[str] = (),
+        timeout_s: float | None = None,
     ) -> tuple[list[str], list[Any]]:  # fmt: skip
         """Run one query: in a killable child process when this engine has an Isolation, else on the connection.
 
         `guarded` runs through sql_guard.run_guarded (query_sql); otherwise `sql` is trusted SQL this module built,
-        with bound `params`, reading `tables`. Returns (columns, rows), at most `limit` rows (all when None). The
-        child gets only the tables the query reads (a guarded query's own), so a large or broken table elsewhere
-        never slows or fails it.
+        with bound `params`. Returns (columns, rows), at most `limit` rows (all when None).
         """
         con = self.connect()
         if self.isolation is None:
@@ -618,9 +556,7 @@ class Engine:
             return cols, cur.fetchall() if limit is None else cur.fetchmany(limit)
         from health_data_registry.isolation import DEFAULT_JOB_TIMEOUT_S, IsolationRefused, Job
 
-        reads = set(guarded.tables if guarded is not None else tables)
-        job = Job(tuple(s for s in self._sources if s.dataset_id in reads), sql=sql, params=tuple(params),
-                  limit=limit, guarded=guarded,
+        job = Job(tuple(self._sources), sql=sql, params=tuple(params), limit=limit, guarded=guarded,
                   timeout_s=timeout_s or (20.0 if guarded is not None else DEFAULT_JOB_TIMEOUT_S))  # fmt: skip
         try:
             return self.isolation.run(job, deadline.remaining())  # type: ignore[no-any-return]
@@ -649,9 +585,6 @@ class Engine:
         from health_data_registry.deadline import DeadlineExceeded
         from health_data_registry.hub import HubError
 
-        if ds.entry.tier == "private":
-            self._private[ds.id] = self._read_private(ds)
-            return True
         if ds.entry.licence.redistribution:
             if self.hub is None:
                 return False
@@ -678,64 +611,6 @@ class Engine:
                 "publisher because its terms don't allow us to keep a copy. Try again in a few minutes.",
             ) from e
         return True
-
-    def _read_private(self, ds: Dataset) -> tuple[list[dict[str, Any]], Manifest]:
-        """A private-tier source's rows from its own store (local, then its private hub dataset), with a manifest
-        that carries its version and provenance; plain-words refusals when it can't be read."""
-        from health_data_registry import private
-
-        e = ds.entry
-        try:
-            got = private.read_rows(self.lake, ds)
-        except private.PrivateRefused as err:
-            raise QueryRefused(
-                "private_store_refused",
-                f"{e.title} is kept in a private store, and that store isn't set up safely right now, so "
-                f"nothing was read from it. Open the abstracts on {e.source.landing_url} instead, and tell the "
-                "maintainer so they can fix the store's settings.",
-            ) from err
-        if got is None:
-            raise QueryRefused(
-                "private_store_unavailable",
-                f"{e.title} is kept in a private store because its terms don't allow a public copy, and this "
-                f"setup can't reach that store, so no rows are shown. Open the abstracts on {e.source.landing_url} "
-                "instead, or ask the maintainer to connect the private store.",
-            )
-        records = [{k: (None if v is None else str(v)) for k, v in r.items()} for r in got.rows]
-        urls: list[str] = []
-        shas: list[str] = []
-        cols = [("source_url", "raw_sha256")] + [
-            (f"{api}_source_url", f"{api}_raw_sha256") for api in ("openalex", "europepmc")
-        ]
-        for r in got.rows:
-            for u, h in cols:
-                if r.get(u) and r.get(h) and r[h] not in shas:
-                    urls.append(str(r[u]))
-                    shas.append(str(r[h]))
-        when = max((str(r.get("retrieved_at") or "") for r in got.rows), default="")
-        notes = private.notes(ds)
-        if not got.complete:
-            notes.insert(
-                0, "These rows come from a sample harvest, not the whole supplement, so some are missing."
-            )
-        m = Manifest(
-            dataset=ds.id,
-            snapshot_id=f"private-{got.version}",
-            contract_version=ds.contract.version,
-            semantic_version=ds.semantic.version,
-            catalog_status=e.status,
-            retrieved_at=when,
-            source_urls=urls,
-            raw_sha256=shas,
-            row_count=len(records),
-            licence=e.licence.id,
-            redistribution=False,
-            partial=not got.complete,
-            origin="private",
-            release_ref=got.revision,
-            notes=notes,
-        )
-        return records, m
 
     def manifest(self, dataset_id: str) -> Manifest:
         self.connect()
@@ -855,10 +730,7 @@ class Engine:
                 "lake": "the local lake (a maintainer's copy)",
                 "hub": f"the open data hub, release {m.release_ref} ({m.release_id})",
                 "publisher": f"{ds.entry.publisher}, read live at {m.retrieved_at[:16]} UTC and not stored",
-                "private": f"the source's private store, version {m.snapshot_id} (never published)",
             }.get(m.origin, m.origin)
-        elif ds.entry.tier == "private":
-            origin = "not loaded yet: the source's private store, read when asked (never published)"
         elif ds.entry.licence.redistribution:
             origin = (
                 f"not loaded yet: the open data hub ({self.hub.url}) on first use"
@@ -904,26 +776,24 @@ class Engine:
         ds = self.registry.get(dataset_id)
         manifest = self.manifest(dataset_id)
         cm = compile_metric(ds, metric, filters=filters, group_by=group_by, period=period)
-        _, rows = self._run(cm.sql + f" LIMIT {MAX_ROWS + 1}", cm.params, tables=(dataset_id,))
+        _, rows = self._run(cm.sql + f" LIMIT {MAX_ROWS + 1}", cm.params)
         m = ds.semantic.metric(metric)
         if m.aggregation == "none" and group_by:
             keys = [tuple(r[: len(group_by)]) for r in rows]
             if len(keys) != len(set(keys)):
                 raise QueryRefused(
                     "would_combine_rates",
-                    "More than one published figure matches some of the groups asked for. Each published figure "
-                    "is read on its own and never added to another, so nothing is shown rather than one picked "
-                    "at random.",
+                    f"{metric} is a {ds.semantic.measure(m.measure).kind} and more than one published value "
+                    f"matches some {', '.join(group_by)} groups. Rates and estimates can't be added up: "
+                    "filter or group by the other dimensions too (describe_dataset lists them).",
                 )
         elif m.aggregation == "none" and len(rows) > 1:
+            dims = ", ".join(d.name for d in ds.semantic.dimensions)
             raise QueryRefused(
                 "would_combine_rates",
-                "This figure is published separately for each group and is never added up, so one figure "
-                "can't be given for all of them together.",
+                f"{metric} is published per group and can't be added up; choose group_by from: {dims}.",
             )
-        method = (
-            f"{manifest.notes[0]} {cm.method}" if manifest.origin in ("publisher", "private") else cm.method
-        )
+        method = f"{manifest.notes[0]} {cm.method}" if manifest.origin == "publisher" else cm.method
         return envelope(ds, manifest, cm.columns, rows, sql=cm.sql, params=cm.params, method=method)
 
     def distinct_values(self, dataset_id: str, column: str) -> list[Any]:
@@ -932,8 +802,7 @@ class Engine:
         self.manifest(dataset_id)
         if column not in ds.contract.column_names:
             raise QueryRefused("unknown_column", f"{dataset_id} has no column {column}")
-        sql = f"SELECT DISTINCT {_q(column)} FROM {_q(dataset_id)} ORDER BY 1"  # noqa: S608 - quoted contract identifiers
-        _, rows = self._run(sql, tables=(dataset_id,))
+        _, rows = self._run(f"SELECT DISTINCT {_q(column)} FROM {_q(dataset_id)} ORDER BY 1")  # noqa: S608 - quoted contract identifiers
         return [r[0] for r in rows if r[0] is not None]
 
     def loaded_values(
@@ -953,14 +822,9 @@ class Engine:
         sql = f"SELECT DISTINCT {_q(column)} FROM {_q(dataset_id)} ORDER BY 1"  # noqa: S608 - quoted contract identifiers
         if self.isolation is not None:
             try:
-                _, rows = self._run(sql, timeout_s=timeout_s, tables=(dataset_id,))
-            except QueryRefused as e:
-                if e.code == "busy":  # a poisoned engine: the clinician is told, and no further child starts
-                    raise
-                return None  # slow, too big or broken here: describe_dataset carries on without the values
-            except OSError:
+                _, rows = self._run(sql, timeout_s=timeout_s)
+            except (QueryRefused, OSError):
                 return None
-            # A DeadlineExceeded isn't caught: the call's whole budget is gone, so the call ends with its message.
             return [r[0] for r in rows if r[0] is not None]
         timer = threading.Timer(timeout_s, con.interrupt)
         timer.start()
@@ -975,24 +839,13 @@ class Engine:
     def query_sql(self, sql: str) -> dict[str, Any]:
         self.connect()
         available = {ds.id: ds.contract.column_names for ds in self.registry}
-        q: GuardedQuery = guard_sql(
-            sql,
-            allowed_tables=available,
-            max_rows=MAX_ROWS,
-            ordered=True,
-            non_additive={ds.id: non_additive_columns(ds) for ds in self.registry},
-        )
+        q: GuardedQuery = guard_sql(sql, allowed_tables=available, max_rows=MAX_ROWS, ordered=True)
         for t in sorted(q.tables):
             if t in self.registry.datasets:
                 self.manifest(t)  # brings a hub or run-time source onto this computer on first use
         cols, rows = self._run(q.sql, guarded=q)
         ids = sorted(t for t in q.tables if t in self.manifests)
-        notices = [
-            n
-            for i in ids
-            if self.manifests[i].origin in ("publisher", "private")
-            for n in self.manifests[i].notes
-        ]
+        notices = [n for i in ids if self.manifests[i].origin == "publisher" for n in self.manifests[i].notes]
         if len(ids) == 1:
             ds = self.registry.get(ids[0])
             out = envelope(

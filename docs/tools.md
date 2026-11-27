@@ -201,8 +201,7 @@ address, the main caveats, whether the contract is still a draft, and whether th
 zeros.
 
 **Try:** "How many clinical C. auris cases did Michigan and Ohio report each year from 2022 to 2025?" The
-[README example](../README.md#example) charts CDC's figures for Michigan alone, each year-end count beside CDC's
-later count for that year.
+[README example](../README.md#example) shows the real answer.
 
 ### `get_aligned_with_gbd`
 
@@ -427,8 +426,7 @@ The common ones:
 | "… could not be reached to download …" | A restricted source (WHO) is fetched from the publisher, and the publisher's site didn't answer | Try again in a few minutes |
 | "The hub release … has no file …" or "… does not list …" | The hub release the server reads from is incomplete | Try again later, or [open an issue](https://github.com/jtouley/health-data-registry/issues) |
 | "The index … isn't built yet" | `find_prior_work` is coming | Search PubMed |
-| "The open data hub … could not be reached …" | The hub didn't answer just then (a passing outage or no internet) | Check the connection and try again in a few minutes |
-| "The open data hub … has no published release yet" | The hub this setup reads has never published a data release, so retrying won't help | Run the [Something's wrong](helpers.md#somethings-wrong) helper; nothing was guessed |
+| "The open data hub … has no published release yet" | The hub's first data release isn't out | Try again later; nothing was guessed |
 | "This setup has reading data turned off for …" | This installation reads neither the hub (`HDR_HUB=off`) nor the publisher live (`HDR_FETCH_AT_RUN_TIME=0`), and has no local copy | Run the [Something's wrong](helpers.md#somethings-wrong) helper; whoever installed it removes whichever of the two settings is there |
 | "That query can't run: …" | `query_sql` refused the query | Use `get_series` or `describe_dataset` instead |
 | "Page 1 of N: …" | Not a problem: the answer is long and comes in pages | Fetch every page with the Next line, then save the rows to one CSV file or artifact |

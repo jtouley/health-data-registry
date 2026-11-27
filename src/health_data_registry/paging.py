@@ -319,9 +319,7 @@ def plan(res: Result, fmt: Fmt, budget: int, render: Callable[[int, int, int, li
         )
         if over <= 0:
             return bounds
-        # Both copies count, so the text shrinks by half the overshoot, and by at least a tenth of the room each
-        # pass: a steady overshoot of a few characters (a page number gaining a digit) ends in a few passes.
-        room -= max(1, over // 2, room // 10)
+        room -= max(1, over // 2)  # both copies count: the text shrinks by half the overshoot
 
 
 def row_too_long(size: int, limit: int) -> str:
@@ -398,8 +396,6 @@ def respond(
     def render(lo: int, hi: int, n: int, bounds: list[tuple[int, int]]) -> Out:
         return _render_page(res, lo, hi, n, bounds, tool, args, token, downloads, fmt)
 
-    if len(res.rows) <= 1:  # one row too long for a page: no cut can help, and it is never sent over budget
-        return message(row_too_long(wire_size(whole), limit), fmt, refused="too_large")
     bounds = plan(res, fmt, limit, render)
     n = page or 1
     if n > len(bounds):
@@ -412,7 +408,8 @@ def respond(
             fmt,
             refused="no_such_page",
         )
-    # Even a plan of one page is rendered and measured: `whole` is already over the limit.
+    if len(bounds) == 1:
+        return whole
     lo, hi = bounds[n - 1]
     out = render(lo, hi, n, bounds)
     if wire_size(out) > limit:  # only a page of one row can be over (plan re-cuts the rest): never sent

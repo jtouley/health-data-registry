@@ -1,14 +1,12 @@
 dataset: census_county_pop
 version: 0.1.0
-# Within one level, states and counties are separate places (non_additive: false): the contract checks that the
-# 51 state rows add up to the US and each state's counties to the state. Years are separate estimates.
 dimensions:
-  - {name: geo_level, column: sumlev, type: categorical, non_additive: true, non_additive_reason: "state rows are the totals of their county rows", description: "040 a state or DC; 050 a county or county equivalent."}
-  - {name: state, column: state_name, type: categorical, non_additive: false, description: "State (or DC) the row belongs to."}
-  - {name: state_fips, column: state_fips, type: categorical, non_additive: false, description: "Two-digit state FIPS code."}
-  - {name: county, column: county_name, type: categorical, non_additive: false, description: "County name; repeats across states, so pair it with the state."}
-  - {name: county_fips, column: county_fips, type: categorical, non_additive: false, description: "Three-digit county FIPS code within the state; 000 on state rows."}
-  - {name: year, column: year, type: time, non_additive: false, description: "Year of the July 1 estimate."}
+  - {name: geo_level, column: sumlev, type: categorical, description: "040 a state or DC; 050 a county or county equivalent."}
+  - {name: state, column: state_name, type: categorical, description: "State (or DC) the row belongs to."}
+  - {name: state_fips, column: state_fips, type: categorical, description: "Two-digit state FIPS code."}
+  - {name: county, column: county_name, type: categorical, description: "County name; repeats across states, so pair it with the state."}
+  - {name: county_fips, column: county_fips, type: categorical, description: "Three-digit county FIPS code within the state; 000 on state rows."}
+  - {name: year, column: year, type: time, description: "Year of the July 1 estimate."}
 measures:
   - {name: population, column: population, kind: count, unit: "persons", description: "Estimated resident population on July 1."}
 metrics:
