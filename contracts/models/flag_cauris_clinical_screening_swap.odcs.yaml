@@ -14,7 +14,7 @@ schema:
     physicalName: flag_cauris_clinical_screening_swap
     physicalType: table
     logicalType: object
-    description: "One row per reporting area (summary rows such as TOTAL and the census divisions left out) and MMWR year whose clinical year-to-date exceeds its screening year-to-date (an empty screening count counts as zero) at the latest week published for that year."
+    description: "One row per reporting area (summary rows such as TOTAL and the census divisions left out) and MMWR year whose clinical year-to-date exceeds its screening year-to-date (an empty screening count is treated as zero here only, to put the pair in front of a reviewer; no answer ever counts it as 0) at the latest week published for that year."
     customProperties:
       - {property: layer, value: flag}
       - {property: totalRows, value: none}
