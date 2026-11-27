@@ -1,0 +1,162 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: cdc_nrevss_positivity
+name: Percent of Tests Positive for Viral Respiratory Pathogens (NREVSS)
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "The weekly national percent of laboratory tests positive for COVID-19 (SARS-CoV-2), influenza and RSV. COVID-19 and RSV come from the National Respiratory and Enteric Virus Surveillance System (NREVSS); influenza results are clinical laboratory test results from NREVSS and influenza collaborating laboratories (dataset description, https://data.cdc.gov/api/views/seuz-s2cv.json)."
+  usage: "Read one virus and week as published, or follow one virus over the weeks. Never add percents across viruses or weeks; the number of tests behind each percent is not published, so nothing can be pooled."
+  limitations: "National only (no state or region); a percent of tests, not of people; each virus has its own set of laboratories and test types; all data provisional."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://data.cdc.gov/d/seuz-s2cv", description: "Publisher dataset page"}
+    - {type: businessDefinition, url: "https://data.cdc.gov/api/views/seuz-s2cv.json", description: "Socrata metadata (dataset description, column descriptions, update frequency), read 2026-11-25"}
+    - {type: businessDefinition, url: "https://www.cdc.gov/surveillance/nrevss/index.html", description: "NREVSS programme page, linked from the dataset description (not fetched; see openQuestions)"}
+    - {type: businessDefinition, url: "https://www.cdc.gov/flu/weekly/overview.html", description: "Influenza virologic surveillance overview, linked from the dataset description (not fetched; see openQuestions)"}
+servers:
+  - id: data_cdc_gov
+    server: data.cdc.gov
+    type: api
+    location: https://data.cdc.gov/resource/seuz-s2cv.json
+schema:
+  - name: cdc_nrevss_positivity
+    physicalName: cdc_nrevss_positivity
+    physicalType: table
+    logicalType: object
+    description: "Long table: one national percent of tests positive per week and virus."
+    dataGranularityDescription: "MMWR week (its Saturday) x virus, for the United States as a whole"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://data.cdc.gov/api/views/seuz-s2cv.json"}
+    customProperties:
+      - property: totalRows
+        value: none
+        description: "No total or combined row: three columns, one row per week and virus (648 rows, 216 weeks x 3 viruses, 2022-10-01 to 2026-11-14, on 2026-11-25). No percent is ever added in any case."
+      - {property: tableShape, value: surveillance_series}
+      - property: idDimensions
+        value:
+          condition: pathogen
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: null
+          period: week_end
+          provisionalFlag: null
+        description: "Condition is the virus in pathogen (Influenza, COVID-19, RSV; column description). A positive test is a laboratory result, not a case, so there is no case definition or case status. No subtype or resistance field. Period is the MMWR week, by its Saturday. The dataset description says all data are provisional; there is no per-row provisional column."
+    quality:
+      - id: rows_raw_to_staging
+        type: custom
+        engine: dbt-expectations
+        implementation: {check: row_count_matches, model: staging, compare: raw}
+        dimension: consistency
+        severity: error
+        description: "Staging has exactly as many rows as the raw load it types: staging drops and adds no row (an exact structural fact of the generated staging model)."
+      - id: rows_staging_to_intermediate
+        type: custom
+        engine: dbt-expectations
+        implementation: {check: row_count_matches, model: intermediate, compare: staging}
+        dimension: consistency
+        severity: error
+        description: "The intermediate model has exactly as many rows as staging: it only adds columns beside each staging row (an exact structural fact)."
+      - id: load_within_refresh
+        type: custom
+        engine: dbt-expectations
+        implementation: {check: load_within_sla, sla: frequency}
+        dimension: timeliness
+        severity: warn
+        description: "The latest load is no older than the weekly cadence in slaProperties frequency. It times our copy, not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold."
+    properties:
+      - name: week_end
+        physicalType: DATE
+        logicalType: date
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "The Saturday that ends the MMWR week (column description: 'Date of Saturday of the MMWR week'). For COVID-19 and RSV, the week the tests were performed (dataset description: laboratories report 'the total number of SARS-CoV-2 and RSV tests performed that week'); which date puts an influenza test in a week is not stated (see openQuestions)."
+        examples: ["2026-11-14"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: week_end}
+        quality:
+          - id: week_end_is_a_saturday
+            dimension: conformity
+            severity: error
+            type: sql
+            description: "Column description: week_end is the date of Saturday of the MMWR week. Any other weekday is a data failure."
+            query: "SELECT COUNT(*) FROM {object} WHERE week_end IS NOT NULL AND dayofweek(week_end) <> 6"
+            mustBe: 0
+      - name: pathogen
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "The virus tested for: COVID-19 (SARS-CoV-2, the virus that causes COVID-19), Influenza, or RSV (respiratory syncytial virus)."
+        enum: [{value: COVID-19}, {value: Influenza}, {value: RSV}]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: pathogen}
+        quality:
+          - id: pathogen_codes
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["Influenza", "COVID-19", "RSV"]}
+            mustBe: 0
+            description: "Column description: pathogen is one of [Influenza, COVID-19, RSV]. A warning, not an error: a new or renamed virus must reach the flag_unmapped_labels review queue for a maintainer, as other sources' condition labels do, rather than stop the build before that queue runs. The three listed viruses' percents are not made wrong by a new one."
+          - id: every_virus_published
+            dimension: completeness
+            severity: warn
+            type: sql
+            description: "Fill rate by virus: each of the three viruses the column description lists has at least one week with a percent. A virus with none would leave its questions unanswered while every value check still passes."
+            query: "SELECT COUNT(DISTINCT pathogen) FROM {object} WHERE percent_test_positivity IS NOT NULL AND pathogen IN ('Influenza', 'COVID-19', 'RSV')"
+            mustBe: 3
+      - name: percent_test_positivity
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Percent of laboratory tests for the virus that were positive in the week, nationally: positive tests divided by all tests, times 100 (dataset description). Counts tests, not people (dataset description). An empty value is kept empty, never read as zero; what CDC means by an empty value is not stated (see openQuestions)."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: percent_test_positivity}
+          - {property: unit, value: "%"}
+        quality:
+          - id: percent_between_0_and_100
+            dimension: conformity
+            severity: error
+            type: sql
+            description: "Dataset description: the percent is (positive tests / total tests) x 100, so it lies between 0 and 100."
+            query: "SELECT COUNT(*) FROM {object} WHERE percent_test_positivity < 0 OR percent_test_positivity > 100"
+            mustBe: 0
+          - id: some_percents_present
+            dimension: completeness
+            severity: error
+            type: sql
+            description: "Fill rate: an all-empty percent column would pass the range check, so at least one row must carry a percent (all 648 did on 2026-11-25). The error-severity version of the generated fill-rate warning on this column, so an all-empty column is reported by both and blocks the load."
+            query: "SELECT COUNT(*) FROM {object} WHERE percent_test_positivity IS NOT NULL"
+            mustBeGreaterThan: 0
+slaProperties:
+  - {property: frequency, value: 1, unit: w, driver: analytics}
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: licenceSource, value: "No licence field in the Socrata metadata (read 2026-11-25). A CDC work on data.cdc.gov, a US federal work under 17 USC 105. A maintainer confirms the wording (see openQuestions)."}
+  - {property: citation, value: "Centers for Disease Control and Prevention, National Respiratory and Enteric Virus Surveillance System. Percent of Tests Positive for Viral Respiratory Pathogens. https://data.cdc.gov/d/seuz-s2cv. Accessed on <date>."}
+  - {property: refresh, value: weekly}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "CDC says all data are provisional and subject to change, so each refresh stores the complete table as a dated, append-only load; older loads are never overwritten. Incremental loading waits for a reviewed row key and the publisher's update field."
+  - {property: geographyBasis, value: "the United States as a whole: one national figure per week and virus (metadata geographic coverage: US); no state, region or laboratory breakdown"}
+  - {property: unreliableRule, value: {kind: none, description: "None stated in the dataset metadata: no percent is marked unreliable or suppressed for a small number of tests."}}
+  - property: openQuestions
+    value:
+      - "Freshness: the publisher's own last-update time is not stored, so load_within_refresh times our latest load against the weekly cadence (slaProperties frequency), not the publisher's update. Store the publisher's update time (e.g. Socrata rowsUpdatedAt) in the snapshot manifest, then check that instead."
+      - "Freshness grace: how long past the weekly cadence should a load count as stale? Nothing the publisher states sets a grace period, so load_within_refresh warns at exactly the cadence. Maintainer to decide."
+      - "Licence: the Socrata metadata has no licence field (2026-11-25). public-domain-us-federal is assumed from its being a CDC work; a maintainer confirms the wording."
+      - "How many tests and laboratories stand behind each week's percent, and has the set of reporting laboratories changed over time? Not in the table; the NREVSS page was not fetched."
+      - "Influenza: the dataset description says NREVSS 'includes clinical, public health and commercial laboratories', but that 'Influenza results include clinical laboratory test results from NREVSS and influenza collaborating laboratories'. Does the influenza percent include public health or commercial laboratory results, and which test types (the RSV and COVID-19 rows are NAAT only)?"
+      - "Which date puts an influenza test in a week (the date the test was performed, as for COVID-19 and RSV, or another date)? The metadata states the week of testing for SARS-CoV-2 and RSV only."
+      - "What does an empty percent mean (no laboratory reported, too few tests, or not yet available)? No empty value was seen on 2026-11-25, and the metadata does not say."
+      - "How far back are weeks revised in a later load ('All data are provisional and subject to change')? Each load is kept so an answer can name the load it came from."
+      - "Is the percent rounded to one decimal place by CDC (every value seen on 2026-11-25 had one decimal)? Not stated."
+      - "Does CDC publish a regional (HHS region) or state version of this percent elsewhere? This table is national only, so a question by region or state is declined here."
+      - "Proposed GBD keys (catalog gbd.causes): COVID-19 to the cause COVID-19; influenza and RSV to Lower respiratory infections with pathogens Influenza and Respiratory syncytial virus. A test positivity percent is not a GBD measure, so the keys align by cause only. A maintainer reviews the mapping."
