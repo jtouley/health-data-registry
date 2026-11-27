@@ -114,13 +114,20 @@ schema:
       - name: dim1
         physicalType: VARCHAR
         logicalType: string
-        required: true
-        description: "Sex, as a code of WHO's SEX dimension: SEX_BTSX both sexes, SEX_FMLE female, SEX_MLE male, given on every one of the 15,654 rows on 2026-11-27 (an exact structural fact; sex is part of the grain, so a row without it would be dropped by every metric). Both sexes is its own estimate, not the sum of the other two."
+        required: false
+        description: "Sex, as a code of WHO's SEX dimension: SEX_BTSX both sexes, SEX_FMLE female, SEX_MLE male, given on every one of the 15,654 rows on 2026-11-27. Both sexes is its own estimate, not the sum of the other two."
         examples: ["SEX_BTSX", "SEX_FMLE", "SEX_MLE"]
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: Dim1}
         quality:
+          - id: sex_given_on_every_row
+            dimension: completeness
+            severity: error
+            type: sql
+            description: "Sex is part of the grain and both metrics select on it, so a row without a sex code is in no answer; every one of the 15,654 rows had one on 2026-11-27 (an exact structural fact). The row is kept as WHO sent it and the answer says so (hard rule 2: qualify, don't decide)."
+            query: "SELECT COUNT(*) FROM {object} WHERE dim1 IS NULL"
+            mustBe: 0
           - id: sex_is_a_who_sex_code
             dimension: conformity
             severity: warn
@@ -128,7 +135,7 @@ schema:
             metric: invalidValues
             arguments: {validValues: ["SEX_BTSX", "SEX_FMLE", "SEX_MLE"]}
             mustBe: 0
-            description: "The three codes of WHO's SEX dimension (DIMENSION/SEX/DimensionValues) that this indicator uses, and the only ones the two metrics read. Any other code, WHO's fourth code SEX_NOA (not applicable) included, is a row no answer would show, so it warns for review; on this live source a failed check is a caveat on the answer, never a refusal."
+            description: "The three codes of WHO's SEX dimension (DIMENSION/SEX/DimensionValues) that this indicator uses, and the only ones the two metrics read. Any other code, WHO's fourth code SEX_NOA (not applicable) included, is a row no answer would show, so it warns for review. On this live source every failed check is a caveat on the answer, never a refusal (hard rule 2)."
       - name: value_text
         physicalType: VARCHAR
         logicalType: string
@@ -227,4 +234,4 @@ customProperties:
       - "STI and hepatitis indicators (also from WHO's Global HIV, Hepatitis and STIs Programmes) are separate GHO indicator codes; each would be its own catalog entry on this adapter, one indicator per entry."
       - "WHO has announced a successor to the GHO OData API; when ghoapi.azureedge.net is retired the adapter and api_url must move. Current status not checked."
       - "GBD location crosswalk: spatial_dim holds ISO3 codes for countries; WHO region codes have no GBD equivalent and must not be mapped. Until a reviewed ISO3-to-GBD-name crosswalk exists, no row is keyed to a GBD location and places are asked for by code (follow-up #266)."
-      - "Severity on the live tier: a failed error-severity rule here becomes a caveat on the answer (worded as a failure), not a refusal, because a live read has no snapshot or release gate to stop. Should an error failure on a live read refuse the source for the session? (follow-up #267)"
+      - "Severity on the live tier: a failed error-severity rule here becomes a caveat on the answer, worded as a failure, and never a refusal: a live read has no snapshot or release gate, and hard rule 2 (ADR 0018) says qualify, don't decide. error and warn differ in that wording only (#267)."
