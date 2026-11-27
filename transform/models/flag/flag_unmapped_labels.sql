@@ -20,6 +20,11 @@ select 'cdc_respnet' as dataset, "surveillance_network" as label, count(*) as ro
 from {{ ref('int_cdc_respnet') }}
 where "surveillance_network" is not null and "surveillance_network" not in ('COVID-NET', 'FluSurv-NET', 'RSV-NET', 'Combined')
 group by "surveillance_network"
+union all
+select 'cdc_schoolvaxview_kindergarten' as dataset, "vaccine" as label, count(*) as row_count
+from {{ ref('int_cdc_schoolvaxview_kindergarten') }}
+where "vaccine" is not null and "vaccine" not in ('DTP, DTaP, or DT', 'Exemption', 'Hepatitis B', 'MMR', 'MMR (PAC)', 'Polio', 'Varicella')
+group by "vaccine"
 )
 
 select dataset, label, row_count,
