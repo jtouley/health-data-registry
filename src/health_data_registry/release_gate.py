@@ -20,13 +20,19 @@ test: the expected set comes from the contracts (expected_from: every staging, i
 model, and one named test per contract quality rule), and each expected test must pass, or warn when its rule is
 warn-severity. A missing or unreadable artifact holds it too.
 
-The build id is a content hash of the build's inputs (build_inputs: each stored dataset's sorted raw sha256s,
-each contract's version and file hash, the dbt vars and the code commit), never of a snapshot id, dbt's run id,
-its thread count or the clock, so the same inputs always give the same id.
+The build id is the hash of the build's pinned inputs (build_manifest.py, ADR 0017 section 2): every snapshot id
+and raw sha256 dbt read, the contracts, semantic models and dbt project files, the code commit and uv.lock, the
+engine versions and the dbt vars. Never dbt's run id, its thread count or the clock, so the same inputs always give
+the same id. The CLI's check also re-derives the pin made before dbt ran from its own checkout and lake and holds
+the release unless they match, and holds a build of uncommitted code, a run record from another dbt than the pinned
+one, and a run given dbt vars on its command line. It then writes the build manifest,
+builds/<build_id>/build.json (the pinned part and this verdict, byte-identical on a rerun), and on a pass points
+builds/LATEST at it; export-public publishes that manifest with the release.
 
 Two steps, so "served" is only ever recorded for a release that was uploaded:
 
-    check     `gate --target T --ops O`: records the build in ops/builds.jsonl and its verdict, pass or hold, in
+    check     `gate --target T --ops O`: records the build in ops/builds.jsonl (the run log: dbt's run id, its
+              time and thread count, and the build manifest's sha256) and its verdict, pass or hold, in
               ops/serving_log.jsonl. A hold exits 1, so the refresh uploads nothing and the release served
               before stays served. ops/SERVING is not touched.
     confirm   `gate --confirm <tag>`: after export-public has uploaded and tagged the release, records
@@ -44,11 +50,14 @@ import hashlib
 import json
 import os
 import re
-from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from health_data_registry import build_manifest as bm
+from health_data_registry.build_manifest import build_id_of
 
 BUILDS = "builds.jsonl"
 SERVING_LOG = "serving_log.jsonl"
@@ -86,50 +95,6 @@ def expected_from(registry: Any) -> Expected:
     return Expected(frozenset(models), tests)
 
 
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-DBT_PROJECT = Path("transform/dbt_project.yml")
-
-
-def build_inputs(registry: Any, lake: Path, commit: str) -> dict[str, Any]:
-    """Everything a build is made from, and nothing about how it ran, for its content-hash id: the code commit;
-    for each stored dataset the sorted sha256s of the raw bytes its LATEST snapshot was made from (an empty list
-    when the lake has none) and its contract's version and file hash; each model contract's file hash; and the dbt
-    project's vars. Not the snapshot id or retrieval time: fetching identical bytes again gives the same id (the
-    snapshot id stays in each row and manifest as provenance). Not dbt's run id, thread count or the clock.
-    Vars passed on dbt's command line (--vars) are not read: the workflow passes none, so a run that adds some
-    must add them here too. Raises GateInputMissing when a snapshot, contract or the dbt project can't be read."""
-    import yaml
-
-    from health_data_registry.store import latest_snapshot
-    from health_data_registry.transform_gen import model_contracts, stored
-
-    datasets: dict[str, Any] = {}
-    try:
-        for ds in stored(registry):
-            found = latest_snapshot(lake, ds.id)
-            datasets[ds.id] = {
-                "raw_sha256": sorted(found[1].raw_sha256) if found else [],
-                "contract_version": ds.contract.version,
-                "contract_sha256": _sha256(registry.root / ds.entry.contract),
-            }
-        models = {c.id: _sha256(registry.root / p) for p, c in model_contracts(registry.root)}
-        project = registry.root / DBT_PROJECT
-        # A missing project can't have built anything: read_text raises, and the release is held.
-        dbt_vars = (yaml.safe_load(project.read_text(encoding="utf-8")) or {}).get("vars") or {}
-    except (OSError, ValueError, yaml.YAMLError) as e:
-        raise GateInputMissing(f"the build's inputs could not be read ({e}); the release is held") from e
-    return {"commit": commit, "datasets": datasets, "model_contracts": models, "dbt_vars": dbt_vars}
-
-
-def build_id_of(inputs: Mapping[str, Any]) -> str:
-    """The same inputs always give the same id."""
-    canonical = json.dumps(inputs, sort_keys=True, separators=(",", ":"))
-    return "build-" + hashlib.sha256(canonical.encode()).hexdigest()[:12]
-
-
 @dataclass(frozen=True)
 class Build:
     build_id: str
@@ -145,11 +110,16 @@ class Build:
     warnings: list[dict[str, Any]] = field(default_factory=list)
     incomplete: list[str] = field(default_factory=list)
     tests_passed: int = 0
+    passed_tests: list[str] = field(default_factory=list)
+    # What the build read does not match what it pinned, or can't be published (build_manifest.py).
+    input_problems: list[str] = field(default_factory=list)
+    threads: int | None = None  # run metadata, never in the build id or the build manifest
 
     @property
     def servable(self) -> bool:
         return not (
-            self.model_errors
+            self.input_problems
+            or self.model_errors
             or self.skipped
             or self.rule_errors
             or self.not_evaluated
@@ -159,7 +129,7 @@ class Build:
 
     def reason(self) -> str:
         """Why the build is held, in plain words; empty when it can be served."""
-        parts = list(self.incomplete)
+        parts = [*self.input_problems, *self.incomplete]
         if self.model_errors:
             parts.append(f"{len(self.model_errors)} model(s) failed to build")
         if self.skipped:
@@ -196,13 +166,18 @@ def _kind(uid: str, node: Mapping[str, Any]) -> str:
 
 
 def read_build(
-    target: Path, *, expected: Expected | None = None, inputs: Mapping[str, Any] | None = None
+    target: Path,
+    *,
+    expected: Expected | None = None,
+    inputs: Mapping[str, Any] | None = None,
+    problems: Sequence[str] = (),
 ) -> Build:
     """Sort one dbt build (target/run_results.json and target/manifest.json) into the gate's outcomes.
 
     With `expected`, every expected model must have built and every expected test must have passed (or warned,
-    for a warn-severity rule). With `inputs`, the build id is their content hash (build_id_of); without, it is a
-    hash of the run record (tests only).
+    for a warn-severity rule). With `inputs` (the build's pinned part), the build id is their hash (build_id_of),
+    and the run must come from the pinned dbt and pass no dbt vars on its command line; without, the id is a hash
+    of the run record (tests only). `problems` are the caller's own reasons to hold (the pin doesn't match).
     """
     results = _read(target / "run_results.json")
     manifest = _read(target / "manifest.json")
@@ -215,6 +190,7 @@ def read_build(
     failures: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     built = passed = 0
+    passed_names: list[str] = []
     seen: set[str] = set()
     rows = results.get("results") or []
     for r in rows:
@@ -244,6 +220,7 @@ def read_build(
             }
             if status == "pass":
                 passed += 1
+                passed_names.append(name)
             elif status == "warn":
                 warnings.append(item)
             elif status == "fail":
@@ -288,8 +265,12 @@ def read_build(
     if expected is not None:
         _check_expected(expected, rows, nodes, model_errors, rule_errors, failures)
     generated = str(meta.get("generated_at") or "")
+    raw_args = results.get("args")
+    args: Mapping[str, Any] = raw_args if isinstance(raw_args, Mapping) else {}
+    input_problems = list(problems)
     if inputs is not None:
         build_id = build_id_of(inputs)
+        input_problems += _run_problems(meta, args, inputs)
     else:
         build_id = "build-" + hashlib.sha256(f"{invocation}|{generated}".encode()).hexdigest()[:12]
     return Build(
@@ -306,7 +287,32 @@ def read_build(
         warnings=warnings,
         incomplete=incomplete,
         tests_passed=passed,
+        passed_tests=sorted(passed_names),
+        input_problems=input_problems,
+        threads=_int(args.get("threads")),
     )
+
+
+def _int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _run_problems(meta: Mapping[str, Any], args: Mapping[str, Any], pinned: Mapping[str, Any]) -> list[str]:
+    """A run that isn't the build its pin describes: another dbt, or vars the pin doesn't record."""
+    out = []
+    pinned_dbt = (pinned.get("engines") or {}).get("dbt-core")
+    ran = str(meta.get("dbt_version") or "")
+    if ran != pinned_dbt:
+        out.append(
+            f"dbt {ran or '(unknown)'} made the run record, but the build pinned dbt-core {pinned_dbt}"
+        )
+    cli_vars = args.get("vars")
+    if cli_vars not in (None, {}, "", "{}"):
+        out.append(
+            "the run was given dbt vars on its command line, which the build manifest does not pin; set them in "
+            "transform/dbt_project.yml"
+        )
+    return out
 
 
 def _check_expected(
@@ -379,7 +385,12 @@ def _now(now: datetime | None) -> str:
 
 
 def decide(
-    ops: Path, build: Build, *, now: datetime | None = None, run_date: str | None = None
+    ops: Path,
+    build: Build,
+    *,
+    now: datetime | None = None,
+    run_date: str | None = None,
+    manifest_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Record the build and its verdict (pass or hold); returns the serving-log row written. SERVING is untouched:
     a passed build is served only once its upload is confirmed (confirm). A pass records the dbt run it judged
@@ -388,7 +399,15 @@ def decide(
     previous = serving(ops)
     read_log(ops, BUILDS)  # an unreadable log holds the release before anything is appended to it
     read_log(ops, SERVING_LOG)
-    _append(ops / BUILDS, {**asdict(build), "recorded_at": at, "servable": build.servable})
+    _append(
+        ops / BUILDS,
+        {
+            **asdict(build),
+            "recorded_at": at,
+            "servable": build.servable,
+            "build_manifest_sha256": manifest_sha256,
+        },
+    )
     kept = previous["release_ref"] if previous else None
     if build.servable:
         row = {"at": at, "action": "pass", "build_id": build.build_id, "serving": kept,
@@ -448,7 +467,7 @@ def confirm(ops: Path, build: Build, release_ref: str, *, now: datetime | None =
     return row
 
 
-def _hold(ops: Path, reason: str) -> None:
+def hold(ops: Path, reason: str) -> None:
     """Log a hold that has no build to record (no run record); never raises over unreadable ops state."""
     try:
         previous = serving(ops)
@@ -468,25 +487,41 @@ def run(
     expected: Expected | None = None,
     inputs: Mapping[str, Any] | None = None,
     run_date: str | None = None,
+    problems: Sequence[str] = (),
+    lake: Path | None = None,
 ) -> tuple[bool, str]:
-    """The CLI's check: (passed, plain-words message). Anything unreadable holds the release."""
+    """The CLI's check: (passed, plain-words message). Anything unreadable holds the release.
+
+    With `inputs` (the pin) and `lake`, the build manifest is written to builds/<build_id>/build.json, held build or
+    not, and a pass points builds/LATEST at it. A manifest already there with other bytes holds the build."""
     try:
-        build = read_build(target, expected=expected, inputs=inputs)
+        build = read_build(target, expected=expected, inputs=inputs, problems=problems)
     except GateInputMissing as e:
-        _hold(ops, str(e))
+        hold(ops, str(e))
         return False, str(e)
+    written: Path | None = None
+    sha = None
+    if inputs is not None and lake is not None:
+        try:
+            written = bm.write_manifest(lake, bm.manifest_of(inputs, build))
+            sha = bm.sha256_file(written)
+        except bm.BuildManifestError as e:
+            build = replace(build, input_problems=[*build.input_problems, str(e)])
     try:
-        row = decide(ops, build, run_date=run_date)
+        row = decide(ops, build, run_date=run_date, manifest_sha256=sha)
     except GateStateUnreadable as e:
         return False, f"The release is held: {e}. Restore the file from the ops dataset, then run again."
+    where = f" Its build manifest is {written}." if written else ""
     if row["action"] == "pass":
+        if written is not None and lake is not None:
+            bm.point_latest(lake, build.build_id)
         warn = f", with {len(build.warnings)} warning(s)" if build.warnings else ""
         return (
             True,
-            f"Build {build.build_id} passed the gate{warn}; it is served once its release is uploaded.",
+            f"Build {build.build_id} passed the gate{warn}; it is served once its release is uploaded.{where}",
         )
     kept = row["kept"] or "no release (none was served before)"
-    return False, f"Build {build.build_id} is held: {row['reason']}. Still serving {kept}."
+    return False, f"Build {build.build_id} is held: {row['reason'].rstrip('.')}. Still serving {kept}.{where}"
 
 
 def run_confirm(
@@ -496,11 +531,17 @@ def run_confirm(
     *,
     expected: Expected | None = None,
     inputs: Mapping[str, Any] | None = None,
+    problems: Sequence[str] = (),
+    lake: Path | None = None,
 ) -> tuple[bool, str]:
-    """The CLI's confirm, after the upload: (recorded, plain-words message)."""
+    """The CLI's confirm, after the upload: (recorded, plain-words message). With `lake`, the build's manifest must
+    be on disk with a passing verdict."""
     try:
-        build = read_build(target, expected=expected, inputs=inputs)
-
+        build = read_build(target, expected=expected, inputs=inputs, problems=problems)
+        if lake is not None and build.servable:
+            recorded = bm.read_manifest(bm.build_dir(lake, build.build_id) / bm.MANIFEST_FILE)
+            if recorded["verdict"]["status"] != "pass":
+                raise ValueError(f"build {build.build_id}'s build manifest records a hold, not a pass")
         row = confirm(ops, build, release_ref)
     except (GateInputMissing, GateStateUnreadable, ValueError) as e:
         return False, f"{release_ref} was not recorded as served: {e}."

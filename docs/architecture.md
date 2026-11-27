@@ -37,7 +37,8 @@ layer because it checks the same catalog and semantic layer the tools use.
 | `registry.py` | Loads and cross-checks `catalog/<id>.yaml`, `contracts/<id>.odcs.yaml` (ODCS v3.2.0) and `semantic/<id>.yaml` |
 | `query.py` | The read path: attaches snapshots read-only, compiles semantic-model metrics to SQL, runs guarded SQL, wraps every answer with its provenance |
 | `sql_guard.py` | Checks `query_sql` statements: one read-only SELECT, allowlisted functions, declared joins only |
-| `store.py` | The lake: raw bytes by sha256, snapshots partitioned by source and run date with manifests, the `LATEST` pointer, the fetch log |
+| `store.py` | The lake: raw bytes by sha256, snapshots partitioned by source and run date with manifests, the `LATEST` pointer, the fetch log; the gate adds `builds/<build_id>/build.json` and `builds/LATEST` |
+| `build_manifest.py` | The build manifest ([ADR 0017](adr/0017-immutable-raw-reproducible-builds.md)): `pin-build` pins every input before dbt runs; the gate writes `builds/<build_id>/build.json` once, with its verdict; export-public publishes it as the release's `build.json` |
 | `crawl.py` | Fetch one source into a lake: every attempt logged, raw bytes kept, one snapshot |
 | `publish.py` | `export-public`: hub release with cards, licence texts, Parquet and `manifest.json`; listed-not-hosted cards; pre-publish checks; upload and `release-<run date>` tag |
 | `hub.py` | The hosted read path: immutable hub release, sha256 check, fail-closed contract check, bounded cache |
@@ -48,7 +49,7 @@ layer because it checks the same catalog and semantic layer the tools use.
 | `evaluation.py` | Sealed blind sets, the scorer and the release gate |
 | `adapters/socrata.py`, `adapters/who_gho.py` | Per-portal fetch and column metadata |
 | `ratchet.py` | CI only, not used by the server: the Trusted gate's ratchet, which fails a pull request that weakens the checks guarding `main` ([dev docs](dev/README.md#the-trusted-gate)) |
-| `cli.py` | `serve`, `refresh <dataset>\|--all`, `fetch <source>`, `export-public --to`, `check-contracts`, `validate`, `eval` |
+| `cli.py` | `serve`, `refresh <dataset>\|--all`, `fetch <source>`, `export-public --to`, `check-contracts`, `validate`, `eval`, `pin-build`, `gate` |
 
 ## Data flow
 
@@ -85,8 +86,18 @@ flowchart LR
    marks `mayBeEmpty` is exempt). A refused load leaves no table behind. A live source refused this way is
    unavailable for the session rather than answered from the rows that passed, which would change totals
    without saying so.
-   The dbt project in `transform/` (dbt-duckdb) reads the full load each dataset's `LATEST` pointer names, from
-   `raw_records/<id>/<snapshot_id>.ndjson` (`dbt_raw.py`, a dbt-duckdb plugin). Every staging row carries its
+   The dbt project in `transform/` (dbt-duckdb) reads, from `raw_records/<id>/<snapshot_id>.ndjson`
+   (`dbt_raw.py`, a dbt-duckdb plugin), the full load the build's pin names: `pin-build` resolves each dataset's
+   `LATEST` pointer once before dbt runs and records the snapshot id and the records file's sha256, and the
+   plugin refuses a file whose bytes no longer match (without a pin, a quick local run reads the load `LATEST`
+   names). After the build, the release gate writes the build manifest, `builds/<build_id>/build.json`: the
+   pinned inputs (snapshot ids, raw and records sha256s, contract and semantic versions and hashes, the dbt
+   project's files, the git commit and any uncommitted change, `uv.lock`, Python, dbt and DuckDB versions, dbt
+   vars) and the gate's verdict by check name. The build id is the hash of the pinned inputs, so a rebuild of
+   the same inputs writes the same bytes; times, thread count and dbt's run id go to the gate's run log
+   (`ops/builds.jsonl`). The file is written once and never rewritten. The hub release carries it as
+   `build.json`, `manifest.json` and each source's manifest name its build id and sha256, and `get_provenance`
+   reports them. Every staging row carries its
    snapshot id and raw sha256. A source with no load to read is empty, with a warning, so the rest still
    builds. Staging models are generated from the contracts by `make contracts` and only type: no row is dropped
    or deduplicated, and a declared key that repeats fails a test. Business rules go in intermediate models (also

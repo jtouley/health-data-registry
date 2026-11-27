@@ -79,10 +79,16 @@ ends green with a notice and does nothing. Each starts working on its next run a
    fails, nothing is published or tagged. Without a token, the release is staged and checked and the job ends
    with a notice instead of publishing, and nothing is recorded as served.
 
-   Before publishing, the **release gate** judges dbt's run record from the **transform** job, which runs
-   `dbt build` on this run's raw records outside the `hub-publish` environment and holds no secret (so dbt and
-   its dependencies never share a job with the publish token); it hands over only `run_results.json` and
-   `manifest.json`, as an artifact. The gate holds the release unless every model, seed and snapshot built, at
+   Before publishing, the **release gate** judges dbt's run record from the **transform** job, which pins the
+   build (`pin-build`: each source's `LATEST` load and its sha256, the contracts, the commit, `uv.lock`, the
+   engines and the dbt vars) and runs `dbt build` on exactly the pinned loads, outside the `hub-publish`
+   environment and with no secret (so dbt and its dependencies never share a job with the publish token); it
+   hands over only `build-pin.json`, `run_results.json` and `manifest.json`, as an artifact. The gate pins
+   again from the publish job's own checkout and lake and holds the release unless the two pins match, or if
+   the code had uncommitted changes. It writes the build manifest, `builds/<build id>/build.json` (the pinned
+   inputs and the verdict, never rewritten), and on a pass points `builds/LATEST` at it; `export-public`
+   publishes that file in the release as `build.json` and refuses a build that read other snapshots than the
+   ones it publishes. Each build manifest is also kept under `builds/` in the private ops dataset. The gate holds the release unless every model, seed and snapshot built, at
    least one test ran, nothing was skipped, every check ran and every error-severity test and unit test passed.
    A pass records only the verdict. After `export-public` has uploaded the release, `gate --confirm <tag>`
    records the exact tag it created (`release-<date>`, or `release-<date>.N` for a correction) as served and

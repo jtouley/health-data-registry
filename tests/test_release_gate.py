@@ -4,8 +4,7 @@ release as served only after its upload is confirmed with the exact tag export-p
 from __future__ import annotations
 
 import json
-from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -106,7 +105,7 @@ def test_every_test_the_contracts_expect_must_run(tmp_path: Path) -> None:
 
 def test_results_are_matched_by_name_never_by_position(tmp_path: Path) -> None:
     """dbt may list results in any order; the verdict and the build are the same whatever the order."""
-    inputs = {"commit": "c1"}
+    inputs = {"code": {"commit": "c1"}, "engines": {"dbt-core": "1.12.7"}}
     forward = rg.read_build(target(tmp_path, GOOD, invocation="fw"), expected=TOY, inputs=inputs)
     backward = rg.read_build(target(tmp_path, GOOD[::-1], invocation="bw"), expected=TOY, inputs=inputs)
     assert forward.servable and backward.servable and forward.build_id == backward.build_id
@@ -176,7 +175,11 @@ def test_the_run_record_and_manifest_must_be_from_one_run(tmp_path: Path) -> Non
 
 def test_confirm_promotes_only_the_judged_run_and_its_release(tmp_path: Path) -> None:
     ops = tmp_path / "ops"
-    inputs = {"commit": "c1", "datasets": {"a": {"snapshot_id": "s1"}}}
+    inputs = {
+        "code": {"commit": "c1"},
+        "inputs": {"a": {"snapshot_id": "s1"}},
+        "engines": {"dbt-core": "1.12.7"},
+    }
     build = rg.read_build(target(tmp_path, GOOD), inputs=inputs)
     rg.decide(ops, build, now=T0, run_date="2026-11-25")
     with pytest.raises(ValueError, match="is not a release of run date 2026-11-25"):
@@ -188,45 +191,24 @@ def test_confirm_promotes_only_the_judged_run_and_its_release(tmp_path: Path) ->
     assert rg.confirm(ops, build, "release-2026-11-25.2", now=T1)["release_ref"] == "release-2026-11-25.2"
 
 
-def test_the_build_id_is_a_content_hash_of_its_inputs(tmp_path: Path) -> None:
-    """Two builds from the same inputs get the same id, whatever dbt's run id or the clock; any input changes it."""
-    from health_data_registry.registry import load_registry
-    from health_data_registry.store import build_snapshot, write_ndjson
-    from tests.conftest import RECORDS, raw_fetch, write_registry
-
-    reg = load_registry(write_registry(tmp_path / "reg"))
-    project = reg.root / rg.DBT_PROJECT
-    with pytest.raises(rg.GateInputMissing, match="could not be read"):  # no dbt project: nothing was built
-        rg.build_inputs(reg, tmp_path, "c1")
-    project.parent.mkdir(parents=True, exist_ok=True)
-    project.write_text("name: toy\nvars:\n  near_zero_ytd_max: 0\n")
-    page = tmp_path / "p.ndjson"
-    write_ndjson(page, RECORDS)
-    lake = tmp_path / "lake"
-    lake.mkdir()
-    fetch = raw_fetch("https://data.cdc.gov/resource/a.json", RECORDS)
-    first_snapshot = build_snapshot(lake, reg.get("toy_cases"), [fetch], [page]).snapshot_id
-    first = rg.build_inputs(reg, lake, "c1")
-    assert first == rg.build_inputs(reg, lake, "c1")
-    (ds,) = first["datasets"].values()
-    assert ds["raw_sha256"] and ds["contract_version"] == "0.1.0" and len(ds["contract_sha256"]) == 64
-    assert "snapshot_id" not in ds and first["dbt_vars"] == {"near_zero_ytd_max": 0}
-    # The same bytes fetched again a day later: a new snapshot id (it carries the retrieval time), the same id.
-    later = replace(fetch, retrieved_at=fetch.retrieved_at + timedelta(days=1))
-    assert build_snapshot(lake, reg.get("toy_cases"), [later], [page]).snapshot_id != first_snapshot
-    assert rg.build_inputs(reg, lake, "c1") == first
-
-    one = rg.read_build(target(tmp_path, GOOD, invocation="run-a"), inputs=first)
-    two = rg.read_build(target(tmp_path, GOOD, invocation="run-b"), inputs=rg.build_inputs(reg, lake, "c1"))
-    assert one.build_id == two.build_id == rg.build_id_of(first)
-    assert rg.build_id_of(rg.build_inputs(reg, lake, "c2")) != one.build_id  # another commit
-    assert rg.build_id_of(rg.build_inputs(reg, tmp_path / "empty-lake", "c1")) != one.build_id  # no snapshot
-    (reg.root / reg.get("toy_cases").entry.contract).write_text(
-        (reg.root / reg.get("toy_cases").entry.contract).read_text() + "# edited\n"
+def test_a_run_that_is_not_the_pinned_build_is_held(tmp_path: Path) -> None:
+    """The run record must come from the dbt the build pinned, with no dbt vars the pin doesn't record."""
+    pinned = {"code": {"commit": "c1"}, "engines": {"dbt-core": "1.12.7"}}
+    assert rg.read_build(target(tmp_path, GOOD), expected=TOY, inputs=pinned).servable
+    other = rg.read_build(
+        target(tmp_path, GOOD, invocation="o"), inputs={**pinned, "engines": {"dbt-core": "1.11.0"}}
     )
-    assert rg.build_id_of(rg.build_inputs(reg, lake, "c1")) != one.build_id  # the contract's bytes changed
-    project.write_text("name: toy\nvars:\n  near_zero_ytd_max: 1\n")
-    assert rg.build_id_of(rg.build_inputs(reg, lake, "c1")) != one.build_id  # a dbt var changed
+    assert other.reason() == "dbt 1.12.7 made the run record, but the build pinned dbt-core 1.11.0"
+    t = target(tmp_path, GOOD, invocation="vars")
+    run = json.loads((t / "run_results.json").read_text())
+    run["args"] = {"vars": {"near_zero_ytd_max": 5}, "threads": 8}
+    (t / "run_results.json").write_text(json.dumps(run))
+    given = rg.read_build(t, inputs=pinned)
+    assert not given.servable and "dbt vars on its command line" in given.reason() and given.threads == 8
+    told = rg.read_build(
+        target(tmp_path, GOOD, invocation="told"), inputs=pinned, problems=["the pin differs"]
+    )
+    assert told.reason() == "the pin differs" and not told.servable
 
 
 def test_the_expected_set_comes_from_the_real_contracts() -> None:
@@ -386,10 +368,21 @@ def test_unreadable_ops_state_holds_in_plain_words(tmp_path: Path) -> None:
 def test_missing_run_record_holds_and_the_cli_checks_then_confirms(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The CLI takes the expected set from the contracts and the build id from the lake; here, the toy run's.
+    """pin-build, then the gate: it re-derives the pin from the lake, judges the run, writes the build manifest and
+    on a pass points builds/LATEST at it; confirm serves only that build."""
+    from health_data_registry import build_manifest as bm
+    from health_data_registry.registry import load_registry
+    from tests.conftest import TEST_CODE, TEST_ENGINES, pin_toy_build, write_registry
+
+    reg = load_registry(write_registry(tmp_path / "reg"))
+    lake = tmp_path / "lake"
+    lake.mkdir()
+    pin_toy_build(reg, lake)  # writes the toy dbt project
+    monkeypatch.setenv("HDR_REGISTRY", str(reg.root))
+    monkeypatch.setenv("HDR_LAKE", str(lake))
     monkeypatch.setattr(rg, "expected_from", lambda registry: TOY)
-    monkeypatch.setattr(rg, "build_inputs", lambda registry, lake, commit: {"commit": commit})
-    monkeypatch.setenv("GITHUB_SHA", "abc123")
+    monkeypatch.setattr(bm, "code_state", lambda root, **kw: dict(TEST_CODE))
+    monkeypatch.setattr(bm, "engines", lambda: dict(TEST_ENGINES))
     ops = tmp_path / "ops"
     passed, message = rg.run(tmp_path / "no-target", ops)
     assert not passed and "dbt's run record could not be read" in message and "the release is held" in message
@@ -401,22 +394,39 @@ def test_missing_run_record_holds_and_the_cli_checks_then_confirms(
     with pytest.raises(rg.GateInputMissing, match="not a dbt run record"):
         rg.read_build(bad)
     good = target(tmp_path, GOOD)
-    build_id = rg.build_id_of({"commit": "abc123"})
+    # No pin: held, in plain words, and logged.
+    assert cli.main(["gate", "--target", str(good), "--ops", str(ops), "--run-date", "2026-11-25"]) == 1
+    assert "The release is held: the build's pin" in capsys.readouterr().err
+    assert rg.read_log(ops, rg.SERVING_LOG)[-1]["action"] == "hold"
+    assert cli.main(["pin-build", "--out", str(good / bm.PIN_FILE)]) == 0
+    build_id = bm.build_id_of(bm.read_pin(good / bm.PIN_FILE))
+    assert f"Pinned {build_id}" in capsys.readouterr().out
     assert cli.main(["gate", "--target", str(good), "--ops", str(ops), "--run-date", "2026-11-25"]) == 0
-
-    assert (
-        f"Build {build_id} passed the gate, with 1 warning(s); it is served once" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert f"Build {build_id} passed the gate, with 1 warning(s); it is served once" in out
+    manifest = bm.read_manifest(lake / "builds" / build_id / "build.json")
+    assert manifest["verdict"]["status"] == "pass" and bm.latest_build(lake) is not None
+    assert rg.read_log(ops, rg.BUILDS)[-1]["build_manifest_sha256"] == bm.sha256_file(
+        lake / "builds" / build_id / "build.json"
     )
     assert (
         cli.main(["gate", "--target", str(good), "--ops", str(ops), "--confirm", "release-2026-11-25"]) == 0
     )
     assert f"release-2026-11-25 is served (build {build_id}; before it: none)." in capsys.readouterr().out
     held = target(tmp_path, [*GOOD, ("test.p.z.1", "fail", "error")], invocation="inv-3")
+    (held / bm.PIN_FILE).write_bytes((good / bm.PIN_FILE).read_bytes())
+    # The same inputs, a different verdict: the build manifest already on disk is never rewritten.
     assert cli.main(["gate", "--target", str(held), "--ops", str(ops)]) == 1
     err = capsys.readouterr().err
-    assert "is held: 1 error-severity check(s) failed (z). Still serving release-2026-11-25." in err
+    assert "error-severity check(s) failed (z)" in err and "differs from this run's" in err
+    assert "Still serving release-2026-11-25." in err
     assert (
         cli.main(["gate", "--target", str(held), "--ops", str(ops), "--confirm", "release-2026-11-26"]) == 1
     )
     assert "release-2026-11-26 was not recorded as served: build" in capsys.readouterr().err
     assert rg.serving(ops)["release_ref"] == "release-2026-11-25"  # type: ignore[index]
+    # A lake whose LATEST moved after the pin: the build read other inputs, so it is held.
+    (lake / "datasets" / "toy_cases").mkdir(parents=True)
+    (lake / "datasets" / "toy_cases" / "LATEST").write_text("20261124T120000Z-000000000000\n")
+    assert cli.main(["gate", "--target", str(good), "--ops", str(ops)]) == 1
+    assert "The release is held: toy_cases: the lake's LATEST pointer" in capsys.readouterr().err

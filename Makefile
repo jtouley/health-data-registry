@@ -69,10 +69,11 @@ serve-http: ## Run the hosted read-only server over Streamable HTTP on port 7860
 contracts: ## Regenerate transform/ raw sources, staging models and model schemas from contracts/
 	$(UV) run python -m health_data_registry.transform_gen
 
-transform: ## dbt build (models and tests) on the synthetic fixtures in tests/fixtures/transform, as CI runs it
+transform: ## Pin the build, then dbt build (models and tests) on the synthetic fixtures in tests/fixtures/transform, as CI runs it
 	$(UV) run python -m health_data_registry.transform_gen --check
-	HDR_LAKE=../tests/fixtures/transform HDR_TRANSFORM_DB=target/ci.duckdb DBT_SEND_ANONYMOUS_USAGE_STATS=false \
-		$(UV) run --directory transform dbt build --profiles-dir . --project-dir .
+	HDR_LAKE=tests/fixtures/transform $(UV) run health-data-registry pin-build --out transform/target/build-pin.json
+	HDR_LAKE=../tests/fixtures/transform HDR_BUILD_PIN=target/build-pin.json HDR_TRANSFORM_DB=target/ci.duckdb \
+		DBT_SEND_ANONYMOUS_USAGE_STATS=false $(UV) run --directory transform dbt build --profiles-dir . --project-dir .
 
 check-contracts: ## Check every source against its ODCS contract
 	$(UV) run health-data-registry check-contracts

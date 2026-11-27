@@ -13,6 +13,10 @@ Layout of a release (the same in a directory and on the Hub):
     README.md                      the hub card: every source, hosted or listed, one config per hosted table
     manifest.json                  the release: id, run date, product, every source and every file's sha256
     CHANGELOG.md                   one entry per release, newest first; a correction names what it supersedes
+    build.json                     the build manifest of the transform build that passed the release gate
+                                   (build_manifest.py): every snapshot, raw sha256, contract, code commit and
+                                   engine version it read, and the gate's verdict; manifest.json and each
+                                   source's manifest name its build id and sha256 (hub uploads always carry one)
     <source>/README.md             the dataset card, in plain clinical words, with its YAML header
     <source>/manifest.json         this source's part of the release manifest, with a `quality` section: the
                                    weekly build's data tests (test, what it checks in plain words,
@@ -46,6 +50,16 @@ from typing import Any
 import duckdb
 import yaml
 
+from health_data_registry.build_manifest import (
+    MANIFEST_FILE as BUILD_FILE,
+)
+from health_data_registry.build_manifest import (
+    BuildManifestError,
+    build_dir,
+    latest_build,
+    read_manifest,
+    snapshot_problems,
+)
 from health_data_registry.product import Port, load_ports
 from health_data_registry.quality import blocked_message
 from health_data_registry.registry import Dataset, Registry
@@ -415,6 +429,61 @@ def listed_card(ds: Dataset, *, release: str, run_date: str) -> str:
     return _front_matter(header) + "\n" + "\n".join(body)
 
 
+def _build_problems(release: Mapping[str, Any], out: Path) -> list[str]:
+    """The staged build.json is the one manifest.json names, intact, and it passed the gate."""
+    ref = release["build"]
+    path = out / BUILD_FILE
+    if not path.is_file() or sha256_file(path) != ref["sha256"]:
+        return ["build.json does not match its sha256 in manifest.json"]
+    try:
+        manifest = read_manifest(path)
+    except BuildManifestError as e:
+        return [str(e)]
+    problems = []
+    if manifest["build_id"] != ref["build_id"]:
+        problems.append(
+            f"build.json is build {manifest['build_id']}, not {ref['build_id']} as manifest.json says"
+        )
+    if manifest["verdict"]["status"] != "pass":
+        problems.append(f"build {manifest['build_id']} did not pass the release gate")
+    return problems
+
+
+def build_for(registry: Registry, lake: Path, build: str | None, *, required: bool) -> Path | None:
+    """The build manifest a release carries: `build` (a build id), else for a hub upload (`required`) builds/LATEST,
+    the last build that passed the gate; a hub upload without one is refused. Refused unless it passed and read
+    exactly the snapshots the release publishes. Returns its path, or None for a local export not given one."""
+    try:
+        if build is not None:
+            path = build_dir(lake, build) / BUILD_FILE
+            manifest = read_manifest(path)
+        elif not required:
+            return None
+        else:
+            found = latest_build(lake)
+            if found is None:
+                raise PublishCheckFailed(
+                    "no build has passed the release gate in this lake, so nothing ties the release to a checked "
+                    "build; run `health-data-registry pin-build`, `dbt build` and `health-data-registry gate` first"
+                )
+            path, manifest = found
+    except BuildManifestError as e:
+        raise PublishCheckFailed(f"the build manifest can't be used: {e}") from e
+    if manifest["verdict"]["status"] != "pass":
+        raise PublishCheckFailed(
+            f"build {manifest['build_id']} did not pass the release gate ({manifest['verdict']['reason']})"
+        )
+    snaps = {ds_id: m for ds_id, (_, m) in lake_snapshots(registry, lake).items()}
+    problems = snapshot_problems(manifest, snaps)
+    if problems:
+        raise PublishCheckFailed(
+            "the release would not publish what the build that passed the gate read: "
+            + "; ".join(problems)
+            + ". Run the transform and the gate again on this lake."
+        )
+    return path
+
+
 def hub_card(registry: Registry, release: dict[str, Any], repo: str | None) -> str:
     hosted = [registry.get(s) for s, v in release["sources"].items() if v["hosted"]]
     listed = [registry.get(s) for s, v in release["sources"].items() if not v["hosted"]]
@@ -448,7 +517,13 @@ def hub_card(registry: Registry, release: dict[str, Any], repo: str | None) -> s
         "[health-data-registry](https://github.com/jtouley/health-data-registry).",
         "",
         f"Release `{release['release_id']}` (run {release['run_date']}). Pin it with "
-        f"`@{release['tag']}`. `manifest.json` lists every file's sha256 and row count.",
+        f"`@{release['tag']}`. `manifest.json` lists every file's sha256 and row count."
+        + (
+            f" Built by `{release['build']['build_id']}`: `build.json` names every snapshot, contract, code "
+            "commit and engine version the build read, and the quality gate's verdict."
+            if release.get("build")
+            else ""
+        ),
         "",
         *rows,
         "",
@@ -584,6 +659,7 @@ def _source_manifest(
     snap: Manifest | None,
     hosted: bool,
     quality: Iterable[Mapping[str, Any]] | None = None,
+    build: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "release_id": release,
@@ -600,6 +676,7 @@ def _source_manifest(
         "citation": citation(ds, snap),
         "snapshot": asdict(snap) if snap and hosted else None,
         "quality": quality_section(quality),
+        "build": dict(build) if build else None,
         "files": {},
     }
 
@@ -666,16 +743,27 @@ def stage(
     repo: str | None,
     plan: ReleasePlan | None = None,
     quality: Mapping[str, Iterable[Mapping[str, Any]]] | None = None,
+    build: Path | None = None,
 ) -> dict[str, Any]:
     """Write the release into `out` (cards, licence texts, data files, manifests). Returns the release manifest.
 
-    `quality` maps a source id to its data-test results from the weekly build (see quality_section).
+    `quality` maps a source id to its data-test results from the weekly build (see quality_section). `build` is a
+    checked build manifest (build_for), copied byte for byte to build.json and named in every manifest.
     """
     ports = load_ports(registry.root)
     snaps = lake_snapshots(registry, lake)
     rid = release_id(run_date, [m.snapshot_id for _, m in snaps.values()])
     plan = plan or ReleasePlan(tag=release_tag(run_date))
     prepare_staging(out)
+    build_ref = None
+    if build is not None:
+        shutil.copyfile(build, out / BUILD_FILE)
+        manifest = read_manifest(out / BUILD_FILE)
+        build_ref = {
+            "build_id": manifest["build_id"],
+            "manifest": BUILD_FILE,
+            "sha256": sha256_file(out / BUILD_FILE),
+        }
     release: dict[str, Any] = {
         "release_id": rid,
         "run_date": run_date,
@@ -684,8 +772,9 @@ def stage(
         "supersedes_tag": plan.supersedes_tag,
         "exported_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "data_product": None,
+        "build": build_ref,
         "sources": {},
-        "files": {},
+        "files": {BUILD_FILE: {"sha256": build_ref["sha256"], "rows": None}} if build_ref else {},
     }
     for ds in public_sources(registry):
         port = ports.get(ds.contract.id)
@@ -703,6 +792,7 @@ def stage(
             snap=snap,
             hosted=hosted,
             quality=(quality or {}).get(ds.id),
+            build=build_ref,
         )
         if hosted and snap is not None:
             target = out / data_path(ds.id)
@@ -795,6 +885,8 @@ def check_release(registry: Registry, lake: Path, out: Path) -> list[str]:
     release = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     hub = read_front_matter((out / "README.md").read_text(encoding="utf-8"))
     problems: list[str] = []
+    if release.get("build"):
+        problems += _build_problems(release, out)
     for ds in public_sources(registry):
         e = ds.entry
         folder = out / ds.id
@@ -917,8 +1009,12 @@ def export_public(
     staging: Path = STAGING,
     api: Any = None,
     quality: Mapping[str, Iterable[Mapping[str, Any]]] | None = None,
+    build: str | None = None,
 ) -> Release:
     """Stage, check and (for hf://) upload one release. Raises PublishCheckFailed before any upload.
+
+    A hub upload carries the build manifest of a build that passed the gate and read exactly the snapshots it
+    publishes (`build`, else builds/LATEST); a local export carries one only when `build` is given.
 
     For the Hub, the published release tags are read first: an identical release is not published again, and a
     changed release for a run date that already has one is a correction under a new tag (never a moved tag).
@@ -928,6 +1024,7 @@ def export_public(
         raise PublishCheckFailed(f"run date {run_date!r} is not YYYY-MM-DD")
     to_hub = dest.startswith(HF_PREFIX)
     repo = hf_repo_id(dest) if to_hub else None
+    build_path = build_for(registry, lake, build, required=to_hub)  # before any call to the Hub
     plan = None
     if repo is not None:
         if api is None:
@@ -942,7 +1039,9 @@ def export_public(
         published, changelog = published_releases(api, repo)
         plan = plan_release(run_date, rid, published, changelog)
     out = staging if to_hub else Path(dest)
-    release = stage(registry, lake, out, run_date=run_date, repo=repo, plan=plan, quality=quality)
+    release = stage(
+        registry, lake, out, run_date=run_date, repo=repo, plan=plan, quality=quality, build=build_path
+    )
     problems = check_release(registry, lake, out)
     if problems:
         raise PublishCheckFailed("pre-publish checks failed:\n  - " + "\n  - ".join(problems))

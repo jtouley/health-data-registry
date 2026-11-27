@@ -1235,6 +1235,12 @@ def get_provenance(
             f"{prov['release_contract_version']}). Release file fingerprints (sha256): "
             + "; ".join(f"{k} {v}" for k, v in sorted(prov["release_files"].items()))
         )
+    if prov["build_id"]:
+        notes.append(
+            f"Built by {prov['build_id']}. The release's build.json (sha256 {prov['build_manifest_sha256']}) "
+            "names every snapshot, contract, code version and dbt and DuckDB version the build read, and the "
+            "quality checks it passed."
+        )
     if year is not None:
         notes.insert(0, f"Every row for {year} in this source comes from the fetches listed.")
     cols = ["source_id", "url", "retrieved_at", "content_sha256", "snapshot_id", "contract_version"]

@@ -11,6 +11,8 @@ Layout under the lake root ($HDR_LAKE, default ./lake), partitioned by source an
     raw_records/<id>/<snapshot_id>.ndjson
                                          the parsed publisher records (every value as published text) that the
                                          dbt staging models in transform/ read; full loads only, never partial
+    builds/<build_id>/build.json         a transform build's manifest (build_manifest.py), written by the release
+                                         gate; builds/LATEST names the last build that passed
     fetch_log/source=<id>/run_date=<YYYY-MM-DD>.jsonl
                                          one row per fetch attempt, ok or error: URL, time, status, bytes,
                                          sha256 and the error in plain words
@@ -46,6 +48,8 @@ from health_data_registry.registry import Dataset
 from health_data_registry.staging import Staged, check_snapshot, stage, write_parquet
 
 _SNAPSHOT_ID = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{12}$")
+# Manifest fields the read path fills from a hub release; a snapshot's own manifest.json never carries them.
+READ_PATH_ONLY = frozenset({"build_id", "build_manifest_sha256"})
 
 
 @dataclass(frozen=True)
@@ -83,6 +87,9 @@ class Manifest:
     run_date: str | None = None
     release_contract_version: str | None = None
     release_files: dict[str, str] = field(default_factory=dict)  # path in the release -> sha256
+    # The transform build the release carries (build_manifest.py): its id and the sha256 of its build.json.
+    build_id: str | None = None
+    build_manifest_sha256: str | None = None
     notes: list[str] = field(default_factory=list)  # plain-words notes shown with every answer
     quality: dict[str, Any] = field(
         default_factory=dict
@@ -263,7 +270,8 @@ def build_snapshot(
             quality=staged.quality.as_dict(),
             silver=staged.staging.as_dict(),
         )
-        (tmp / "manifest.json").write_text(json.dumps(asdict(manifest), indent=2) + "\n", encoding="utf-8")
+        stored = {k: v for k, v in asdict(manifest).items() if k not in READ_PATH_ONLY}
+        (tmp / "manifest.json").write_text(json.dumps(stored, indent=2) + "\n", encoding="utf-8")
         out.parent.mkdir(parents=True, exist_ok=True)
         tmp.replace(out)
     finally:

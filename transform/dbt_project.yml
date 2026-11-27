@@ -13,8 +13,10 @@ target-path: target
 clean-targets: [target, dbt_packages]
 
 # Raw sources are resolved by the dbt_raw plugin (profiles.yml) from the lake at HDR_LAKE (default ../lake): the
-# full load each dataset's LATEST pointer names, raw_records/<id>/<snapshot id>.ndjson. A source with no such load
-# is empty, with a warning. CI points HDR_LAKE at the synthetic fixture lake in tests/fixtures/transform.
+# full load the build's pin names (HDR_BUILD_PIN, from `health-data-registry pin-build`), or without a pin the one
+# each dataset's LATEST pointer names, raw_records/<id>/<snapshot id>.ndjson. A source with no such load is empty,
+# with a warning. CI points HDR_LAKE at the synthetic fixture lake in tests/fixtures/transform. These vars are pinned
+# in the build manifest; never pass --vars on the command line for a build that is published.
 
 vars:
   # The MMWR years the calendar covers (contracts/models/mmwr_calendar.odcs.yaml).

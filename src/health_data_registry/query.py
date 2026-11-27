@@ -889,6 +889,8 @@ class Engine:
             "release_ref": m.release_ref if m else None,
             "run_date": m.run_date if m else None,
             "release_files": dict(m.release_files) if m else {},
+            "build_id": m.build_id if m else None,
+            "build_manifest_sha256": m.build_manifest_sha256 if m else None,
             "quality": dict(m.quality) if m and m.quality else {"tool": None, "results": []},
             "add_to_claude": add_to_claude(
                 ds,

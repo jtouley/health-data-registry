@@ -116,7 +116,7 @@ One review round, one fix round, merge, then follow-ups. We don't get stuck in r
 ```text
 src/health_data_registry/
   cli.py          serve [--http], refresh <dataset>|--all, fetch <source>, export-public --to, check-contracts, validate,
-                  eval, gate, publication-outlook, and the analysis tools (get-rate, compare-rates, get-trend,
+                  eval, pin-build, gate, publication-outlook, and the analysis tools (get-rate, compare-rates, get-trend,
                   age-adjust, check-signal)
   server.py       the MCP server (stdio): registers the tools (listed below) and the helper prompts; wraps
                   every failure as a plain-words refusal
@@ -137,19 +137,25 @@ src/health_data_registry/
   fetch.py        HTTPS-only fetcher to catalogued, publicly routable publisher hosts
   store.py        the lake ($HDR_LAKE, default ./lake): raw/<sha256>, datasets/<id>/run_date=<d>/<snapshot>/
                   with data.parquet, data.duckdb and manifest.json, LATEST, fetch_log/, and
-                  raw_records/<id>/<snapshot>.ndjson (parsed records that dbt staging reads)
+                  raw_records/<id>/<snapshot>.ndjson (parsed records that dbt staging reads), and
+                  builds/<build_id>/build.json with builds/LATEST (the build manifests; build_manifest.py)
   staging.py      the one contract-driven typed projection (names, types, missing codes, required, code
                   lists); the lake, the live read and the generated dbt staging models all use it
   transform_gen.py  `make contracts`: writes transform/'s raw sources, staging and intermediate models,
                   every model schema, the contract rules as dbt tests and the unmapped-labels queue; deletes
                   only its own stale files in staging/ and refuses on anything hand-written there
-  dbt_raw.py      the dbt-duckdb plugin: each raw source is the full load LATEST names, with snapshot id and
-                  raw sha256 on every row; empty, with a warning, when there is none
+  dbt_raw.py      the dbt-duckdb plugin: each raw source is the full load the build's pin names (HDR_BUILD_PIN;
+                  without a pin, the one LATEST names), sha256-checked, with snapshot id and raw sha256 on every
+                  row; empty, with a warning, when there is none
+  build_manifest.py ADR 0017's build manifest: `pin-build` pins every input before dbt runs (snapshot ids, raw
+                  and records sha256s, contracts, semantic models, transform/ files, commit, uv.lock, engines,
+                  dbt vars); the gate writes builds/<build_id>/build.json once, byte-identical on a rebuild, with
+                  its verdict; export-public puts it in the release and provenance names it
   quality.py      runs each contract's ODCS quality rules (with dimension and severity), a has-rows check and
                   fill-rate checks on every snapshot and live read; rule SQL passes sql_guard and runs read-only;
                   data failures become caveats, rule errors stay apart for maintainers
-  release_gate.py the release gate: passes a hub release only after a complete, clean dbt build, and records it
-                  served only after its upload; ops/builds.jsonl, ops/serving_log.jsonl and ops/SERVING, kept in
+  release_gate.py the release gate: passes a hub release only after a complete, clean dbt build of the pinned
+                  inputs, and records it served only after its upload; ops/builds.jsonl, ops/serving_log.jsonl and ops/SERVING, kept in
                   the private ops dataset health-data-registry-ops-release-gate
   crawl.py        fetch one source into a lake (refresh, fetch, and run-time fetches)
   publish.py      export-public to the open data hub: cards, licence, manifest, pre-publish checks, tag

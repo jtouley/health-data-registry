@@ -382,6 +382,7 @@ class Hub:
         allowed = set(Manifest.__dataclass_fields__)
         snap = {k: v for k, v in dict(sm["snapshot"]).items() if k in allowed}
         files = {f"{ds.id}/{k}": str(v["sha256"]) for k, v in (sm.get("files") or {}).items()}
+        build = sm.get("build") or {}  # releases before the build manifest have none
         m = Manifest(
             **{
                 **snap,
@@ -393,6 +394,8 @@ class Hub:
                 "release_files": files,
                 "notes": hub_notes(snap),
                 "quality": dict(sm.get("quality") or {}),
+                "build_id": str(build["build_id"]) if build.get("build_id") else None,
+                "build_manifest_sha256": str(build["sha256"]) if build.get("sha256") else None,
             }
         )
         return local, m
