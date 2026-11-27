@@ -11,7 +11,7 @@ from collections.abc import Iterator
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from health_data_registry.adapters import Fetcher, Page
+from health_data_registry.adapters import Fetcher, LayoutError, Page
 from health_data_registry.registry import CatalogEntry
 
 PAGE_SIZE = 50_000
@@ -32,17 +32,23 @@ def page_url(api_url: str, *, limit: int, offset: int, fields: list[str] | None 
 
 
 def pages(
-    entry: CatalogEntry, fetcher: Fetcher, *, max_rows: int | None = None, fields: list[str] | None = None
+    entry: CatalogEntry,
+    fetcher: Fetcher,
+    *,
+    max_rows: int | None = None,
+    fields: list[str] | None = None,
+    page_size: int | None = None,
 ) -> Iterator[Page]:
     offset = 0
     while True:
-        limit = PAGE_SIZE if max_rows is None else min(PAGE_SIZE, max_rows - offset)
+        size = PAGE_SIZE if page_size is None else page_size
+        limit = size if max_rows is None else min(size, max_rows - offset)
         if limit <= 0:
             return
         raw = fetcher(page_url(entry.source.api_url, limit=limit, offset=offset, fields=fields))
         records = json.loads(raw.content)
         if not isinstance(records, list):
-            raise ValueError(f"{entry.id}: expected a JSON array from {raw.url}")
+            raise LayoutError(f"{entry.id}: expected a JSON array from {raw.url}")
         yield Page(fetch=raw, records=[_flat(r) for r in records])
         if len(records) < limit:
             return
@@ -56,8 +62,12 @@ def _flat(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def metadata_path(entry: CatalogEntry) -> str:
+    return f"/api/views/{entry.source.dataset}.json"
+
+
 def metadata_url(entry: CatalogEntry) -> str:
-    return f"https://{entry.source.host}/api/views/{entry.source.dataset}.json"
+    return f"https://{entry.source.host}{metadata_path(entry)}"
 
 
 def publisher_fields(entry: CatalogEntry, fetcher: Fetcher) -> set[str]:

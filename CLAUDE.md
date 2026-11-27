@@ -151,7 +151,15 @@ src/health_data_registry/
   release_gate.py the release gate: passes a hub release only after a complete, clean dbt build, and records it
                   served only after its upload; ops/builds.jsonl, ops/serving_log.jsonl and ops/SERVING, kept in
                   the private ops dataset health-data-registry-ops-release-gate
-  crawl.py        fetch one source into a lake (refresh, fetch, and run-time fetches)
+  crawl.py        fetch one source into a lake (refresh, fetch, and run-time fetches); the access policy
+                  (crawl.Robots) and the one polite getter every type and runner fetches through
+  access.py       the shared fetch rules beside it: a source's own hosts and scope paths, link normalising,
+                  pace that config can only slow, persisted pace and per-host locks, keys stripped from
+                  provenance, live reads clamped to the deadline, the 8-week stop rule
+  listing.py      the resumable listing crawl (html_table, shape listing): checkpoints in the lake, data first
+                  and checkpoint last, a snapshot only when the crawl matches the listing's own total
+  source_config.py  the crawler factory's catalog schema (ADR 0016): type names, strict per-type config blocks
+                  with bounded caps, checked scope patterns, extension choices
   publish.py      export-public to the open data hub: cards, licence, manifest, pre-publish checks, tag
   hosted.py       serve --http: stateless Streamable HTTP for the claude.ai connector; hub releases and live only,
                   rate limits per session and overall, result cap, no request content in any log
@@ -161,7 +169,11 @@ src/health_data_registry/
   product.py      the ODPS data product (contracts/health-data-registry.odps.yaml)
   geo.py          one place whatever the publisher calls it (name, postal code, FIPS; GBD location name)
   evaluation.py   sealed blind sets: seal check, scorer, release gate
-  adapters/       socrata.py (CDC portals), who_gho.py (WHO GHO OData), https_csv.py (one CSV file, e.g. Census)
+  adapters/       the generic adapter types (ADR 0016), registered in adapters.TYPES with declared capabilities:
+                  socrata, odata (WHO GHO), https_csv, https_file (csv, xlsx, zip member), html_table (a table,
+                  or a listing of item pages), pdf_table (wide or long; reconcile.py checks printed totals as
+                  metadata), tableau, doi; adapters.pages runs every page through
+                  the row guard; extensions/ holds the named, pure extensions a source opts in to by name
 catalog/          one reviewed YAML per dataset (6 sources: 5 infectious-disease, plus Census county population
                   as the denominator; contracts all draft)
 contracts/        one ODCS v3.2.0 contract per dataset, the ODPS data product, and models/: one contract per

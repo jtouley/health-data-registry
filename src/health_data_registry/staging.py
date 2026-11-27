@@ -4,9 +4,11 @@ The layers follow sources -> staging -> intermediate -> marts (the dbt project i
 
     raw           the publisher's bytes, kept by sha256 (store.write_raw); an adapter only fetches and parses them
                   into records keyed by the publisher's own field names, every value as published text
-    staging       this module: rename, type, blank the codebook's missing codes. Nothing per source. The dbt
+    staging       this module: rename, type, blank the codebook's missing codes. Nothing per source but
+                  declared extensions. The dbt
                   staging models are generated from the same projection (transform_gen.py), so the lake, the
-                  live in-memory table and dbt type every column the same way
+                  live in-memory table and dbt type every column the same way; a source's declared
+                  `staging` extensions (stage_entry) run inside the same projection
     intermediate  business rules (total rows, renamed labels, partial places, conformed keys), in dbt
     marts         dimensions and one fact per source, in dbt; metrics read them
 
@@ -39,14 +41,14 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import duckdb
 
 from health_data_registry.quality import QualityReport, rules_for, run_rules
-from health_data_registry.registry import Column, Contract
+from health_data_registry.registry import CatalogEntry, Column, Contract
 
 SILVER_METADATA_KEY = "health_data_registry.silver"
 SILVER_LAYOUT_VERSION = "1"
@@ -310,10 +312,15 @@ def stage_checked(
     table: str,
     temp: bool = False,
     present: set[str] | None = None,
+    entry: CatalogEntry | None = None,
 ) -> Staged:
-    """Stage `source` into `table` (stage's checks, `present` included), then run every quality rule of the
-    contract on it: the live path. Lake snapshots are checked read-only after the file is closed (check_snapshot)."""
-    report = stage(con, contract, source, table=table, temp=temp, present=present)
+    """Stage `source` into `table` (stage's checks, `present` included; with `entry`, after its staging
+    extensions, as stage_entry), then run every quality rule of the contract on it: the live path. Lake snapshots
+    are checked read-only after the file is closed (check_snapshot)."""
+    if entry is None:
+        report = stage(con, contract, source, table=table, temp=temp, present=present)
+    else:
+        report = stage_entry(con, entry, contract, source, table=table, temp=temp, present=present)
 
     return Staged(report, run_rules(con, table, rules_for(contract)))
 
@@ -362,3 +369,94 @@ def write_parquet(con: duckdb.DuckDBPyConnection, contract: Contract, table: str
         f"COPY {_q(table)} TO {_lit(path)} (FORMAT parquet, KV_METADATA {{{_lit(SILVER_METADATA_KEY)}: "
         f"{_lit(silver_metadata(contract))}}})"
     )
+
+
+# ------------------------------------------------------------------------------------------ staging extensions
+# A source may name `staging` extensions (adapters.extensions): SQL steps over the raw relation, such as a pivot of
+# a wide file. They run here, inside the one shared projection, so the lake, the live in-memory table and the
+# generated dbt staging model apply the same SQL to the same raw records; only declared extensions, nothing else
+# per source. Each step declares its cardinality, checked at the raw-to-staging boundary.
+
+
+def _steps(entry: CatalogEntry) -> list[tuple[Any, Any]]:
+    from health_data_registry.adapters.extensions import resolved
+
+    return resolved(entry.source.extensions, "staging")
+
+
+def raw_fields(entry: CatalogEntry, contract_fields: Sequence[str]) -> list[str]:
+    """The raw fields a load hands on: the contract's source fields, except those a staging extension makes,
+    plus the fields each extension reads."""
+    steps = _steps(entry)
+    if not steps:
+        return list(contract_fields)
+    produced: set[str] = set()
+    inputs: set[str] = set()
+    for ext, args in steps:
+        ins = list(ext.input_fields(args))
+        produced |= set(ext.run(args, "raw", ins).fields) - set(ins)
+        inputs |= set(ins)
+    return sorted(inputs | (set(contract_fields) - produced))
+
+
+def staged_source(
+    entry: CatalogEntry, relation: str, present: set[str] | None
+) -> tuple[str, set[str] | None, int]:
+    """The relation after the source's staging extensions, the fields it then has (None when not known), and how
+    many staged rows one raw row makes.
+
+    With ``present`` None (the generated dbt model, a ``--max-rows`` sample) each step is given only the fields
+    it declares it reads, so its layout check can't see a missing or extra column: the full load already refused
+    such a file before LATEST moved, and dbt reads only what LATEST names. ``made_fields`` gives the fields the
+    steps make in either case, for the row guard.
+    """
+    sql, fields, rows_per_row = relation, present, 1
+    for ext, args in _steps(entry):
+        step = ext.run(args, sql, sorted(fields) if fields is not None else list(ext.input_fields(args)))
+        sql, rows_per_row = step.sql, rows_per_row * step.rows_per_row
+        fields = set(step.fields) if fields is not None else None
+    return sql, fields, rows_per_row
+
+
+def made_fields(entry: CatalogEntry) -> set[str]:
+    """The fields the source's staging steps make from the fields they declare they read: known without a load,
+    so the row guard on what an extension makes runs on every load, a partial sample included."""
+    fields: set[str] = set()
+    for ext, args in _steps(entry):
+        ins = list(ext.input_fields(args))
+        fields = (fields - set(ins)) | set(ext.run(args, "raw", sorted(fields | set(ins))).fields)
+    return fields
+
+
+def stage_entry(
+    con: duckdb.DuckDBPyConnection,
+    entry: CatalogEntry,
+    contract: Contract,
+    source: str,
+    *,
+    table: str,
+    temp: bool = False,
+    present: set[str] | None = None,
+) -> StagingReport:
+    """``stage`` after the entry's staging extensions, with the row guard on what they make and their declared
+    cardinality checked (staged rows = raw rows x rows_per_row), so a step that drops or repeats rows is refused."""
+    from health_data_registry.adapters.extensions import ExtensionRefused
+    from health_data_registry.adapters.row_guard import check_grain
+
+    if not _steps(entry):
+        return stage(con, contract, source, table=table, temp=temp, present=present)
+    try:
+        sql, fields, rows_per_row = staged_source(entry, source, present)
+    except ExtensionRefused as e:
+        raise ContractLayoutRefused(f"{contract.id}: {e}") from e
+    check_grain(f"{entry.id} (staged)", sorted(fields if fields is not None else made_fields(entry)))
+    row = con.execute(f"SELECT count(*) FROM {source}").fetchone()  # noqa: S608 - a relation built by the caller
+    raw_rows = int(row[0]) if row else 0
+    report = stage(con, contract, sql, table=table, temp=temp, present=fields)
+    if report.row_count != raw_rows * rows_per_row:
+        con.execute(f"DROP TABLE IF EXISTS {_q(table)}")
+        raise ContractLayoutRefused(
+            f"{contract.id}: staging made {report.row_count} rows from {raw_rows}, not the {raw_rows * rows_per_row} "
+            "its declared steps make; nothing was kept"
+        )
+    return report
