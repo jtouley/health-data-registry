@@ -1,6 +1,6 @@
 # Developer and CI entry points. `make help` lists the targets.
 .DEFAULT_GOAL := help
-.PHONY: help install lint fmt typecheck test test-network smoke mutate docs kit check precheck refresh serve check-contracts eval hooks serve-http
+.PHONY: help install lint fmt typecheck test test-network smoke mutate docs kit check precheck refresh serve check-contracts eval hooks
 
 UV ?= uv
 COV_FLOOR ?= 85
@@ -18,12 +18,12 @@ hooks: ## Install the git hooks (pre-commit and pre-push) from .pre-commit-confi
 	$(UV) run pre-commit install --hook-type pre-commit --hook-type pre-push
 
 lint: ## Lint and check formatting (ruff check, ruff format --check)
-	$(UV) run ruff check src tests eval tools
-	$(UV) run ruff format --check src tests eval tools
+	$(UV) run ruff check src tests eval
+	$(UV) run ruff format --check src tests eval
 
 fmt: ## Fix lint findings and format the code
-	$(UV) run ruff check --fix src tests eval tools
-	$(UV) run ruff format src tests eval tools
+	$(UV) run ruff check --fix src tests eval
+	$(UV) run ruff format src tests eval
 
 typecheck: ## Type check with mypy (strict, settings in pyproject.toml)
 	$(UV) run mypy
@@ -56,9 +56,6 @@ refresh: ## Fetch every catalogued source into the local lake
 
 serve: ## Run the MCP server locally
 	$(UV) run health-data-registry serve
-
-serve-http: ## Run the hosted read-only server over Streamable HTTP on port 7860 (docs/dev/hosting.md)
-	$(UV) run health-data-registry serve --http --host 127.0.0.1 --port 7860
 
 check-contracts: ## Check every source against its ODCS contract
 	$(UV) run health-data-registry check-contracts

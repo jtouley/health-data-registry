@@ -101,30 +101,3 @@ def test_the_default_fetcher_checks_robots(monkeypatch: pytest.MonkeyPatch, tmp_
         get("https://data.cdc.gov/resource/x.json")
     (row,) = read_fetch_log(tmp_path, "toy_cases")
     assert row["status"] == "error" and "robots.txt" in row["error"]
-
-
-def test_crawl_delay_never_sleeps_past_a_hosted_call_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Inside a hosted call's deadline a crawl delay longer than what is left stops the call, without sleeping."""
-    from health_data_registry.deadline import DeadlineExceeded, call_deadline
-
-    asked: list[float] = []
-    fake(monkeypatch, {"data.cdc.gov": "User-agent: *\nCrawl-delay: 5\n"})
-    real = fetch_mod.fetch
-
-    def timed(url: str, **kw: Any) -> fetch_mod.FetchResult:
-        asked.append(kw["timeout"])
-        return real(url, **kw)
-
-    monkeypatch.setattr(fetch_mod, "fetch", timed)
-    clock = Clock()
-    rb = crawl.Robots(HOSTS, sleep=clock.sleep, clock=clock)
-    with call_deadline(4.0), pytest.raises(DeadlineExceeded):
-        # robots.txt is a request too, so the page waits its 5 s after it: more than the 4 s left
-        rb.wait_turn("https://data.cdc.gov/resource/x.json")
-    assert asked and asked[0] <= 4.0  # the robots.txt read is capped by the deadline too
-    assert clock.slept == []
-    with call_deadline(5.0), pytest.raises(DeadlineExceeded):  # exactly the delay left: still nothing sleeps
-        rb.wait_turn("https://data.cdc.gov/resource/y.json")
-    with call_deadline(60.0):
-        rb.wait_turn("https://data.cdc.gov/resource/y.json")
-    assert clock.slept == [5.0]

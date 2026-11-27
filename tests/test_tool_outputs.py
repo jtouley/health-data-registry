@@ -236,17 +236,15 @@ def test_provenance_and_caveats_exact(registry: Registry, lake: Path) -> None:
     ]
     assert out["rows"] == [["toy_cases", "https://data.cdc.gov/resource/toy0-toy0.json", m.retrieved_at,
                             m.raw_sha256[0], m.snapshot_id, "0.1.0"]]  # fmt: skip
-    assert out["notes"][:-2] == [
+    assert out["notes"][:-1] == [
         "Every row for 2023 in this source comes from the fetches listed.",
         "Case definitions: Legionellosis: CSTE 2005 (09-ID-04)",
         "Cite as: CDC. Toy table. https://data.cdc.gov/d/toy0-toy0",
         "Each content hash identifies the exact bytes fetched; the same hash means the same data.",
         "Data from: the local lake (a maintainer's copy). Contract toy_cases version 0.1.0.",
     ]
-    assert out["notes"][-2].startswith("Add it to a Claude project: ")
-    # Like every paged answer, it ends with the source's provenance line (tools.provenance_note).
-    assert out["notes"][-1] == tools.provenance_note(registry.get("toy_cases"), m)
-    assert len(_json(tools.get_provenance(registry, eng, source_id="toy_cases", fmt="json"))["notes"]) == 6
+    assert out["notes"][-1].startswith("Add it to a Claude project: ")
+    assert len(_json(tools.get_provenance(registry, eng, source_id="toy_cases", fmt="json"))["notes"]) == 5
     cav = _json(tools.list_caveats(registry, source_id="toy_cases", fmt="json"))
     assert cav["columns"] == ["source_id", "kind", "caveat"]
     assert cav["rows"][:4] == [

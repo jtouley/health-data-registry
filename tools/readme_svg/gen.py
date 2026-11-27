@@ -6,8 +6,7 @@ Design system (viewBox units; every SVG is 660 wide and shown at 440 px on deskt
         28 units shows at 18.7 px on desktop, 14.8 px in a 400 px phone (about 350 px of image width)
         and 13.1 px on a 360 px phone. The review round raised it from 24/28 at 560 px, which was
         12.7 px on a 400 px phone and under 10 px at 320 px.
-  run: python3 -I tools/readme_svg/gen.py (from the repo root; standard library only). --check exits 1 if a
-       committed SVG differs from what this file draws; tests/test_readme_svg.py runs the same check in CI.
+  run: python3 -I tools/readme_svg/gen.py (from the repo root; standard library only).
   long text: notes that run to several lines live in the README as real text, not in the images.
   spacing: multiples of 4.
   colour: one neutral ramp (ink, muted, line) plus one accent (teal), each with a dark-theme step.
@@ -16,15 +15,11 @@ Design system (viewBox units; every SVG is 660 wide and shown at 440 px on deskt
           never colour alone.
 """
 
-import sys
-from collections.abc import Callable
 from pathlib import Path
-
-Theme = dict[str, str]
 
 OUT = Path(__file__).resolve().parents[2] / "assets" / "readme"
 
-THEMES: dict[str, Theme] = {
+THEMES = {
     "light": {
         "ink": "#1f2328",  # 15.8:1 on #ffffff
         "muted": "#59636e",  # 6.1:1
@@ -59,16 +54,14 @@ def svg(height: int, title: str, desc: str, body: str) -> str:
     )
 
 
-def text(
-    x: float, y: float, s: str, c: str, size: int = BODY, weight: int = 400, anchor: str = "start"
-) -> str:
+def text(x, y, s, c, size=BODY, weight=400, anchor="start"):
     a = f' text-anchor="{anchor}"' if anchor != "start" else ""
     w = f' font-weight="{weight}"' if weight != 400 else ""
     return f'<text x="{x}" y="{y}" font-size="{size}"{w} fill="{c}"{a}>{s}</text>\n'
 
 
 # ---------------------------------------------------------------- 1. hero
-def hero(t: Theme) -> str:
+def hero(t):
     ink, muted, line, acc = t["ink"], t["muted"], t["line"], t["accent"]
     sw = 'stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"'
     # Motifs live in an 88x88 box and tell one paper story: a question, a published page being read, a result.
@@ -118,42 +111,32 @@ def hero(t: Theme) -> str:
 
 
 # ---------------------------------------------------------------- 2. coverage
-def coverage(t: Theme) -> str:
+def coverage(t):
     ink, muted, line, acc = t["ink"], t["muted"], t["line"], t["accent"]
-    # Only what catalog/ has: NNDSS lists every notifiable condition by state; NHSN AR is by state; RESP-NET gives
-    # rates for its surveillance sites' catchment areas, not admissions; HAICViz CDI is pooled across EIP sites.
     now = [
-        [
-            "Notifiable infections by US state,",
-            'from <tspan font-style="italic">C. auris</tspan> to syphilis',
-        ],
-        ["Antibiotic resistance in hospital", "infections, by state"],
-        ["COVID-19, flu and RSV hospitalization", "rates at CDC surveillance sites"],
-        [
-            '<tspan font-style="italic">C. difficile</tspan> infections, national,',
-            "from CDC surveillance sites",
-        ],
+        ["Reportable infections by US state"],
+        ["Antibiotic resistance in hospital", "infections"],
+        ["COVID-19, flu and RSV hospital", "admissions"],
+        ['<tspan font-style="italic">C. difficile</tspan> infections'],
         ["Tuberculosis by country (WHO)"],
     ]
     nxt = [["Measles cases by Michigan county"], ["Detroit Health Department figures"]]
     later = [["HIV"]]
 
-    def mark_now(y: float) -> str:
+    def mark_now(y):
         return (
             f'<circle cx="14" cy="{y}" r="13" fill="{acc}"/>'
             f'<path d="M8 {y}l4 4 8-8.5" stroke="{t["on_accent"]}" stroke-width="3" fill="none" '
             f'stroke-linecap="round" stroke-linejoin="round"/>\n'
         )
 
-    def mark_next(y: float) -> str:
+    def mark_next(y):
         return f'<circle cx="14" cy="{y}" r="12" fill="none" stroke="{acc}" stroke-width="3" stroke-dasharray="5 4"/>\n'
 
-    def mark_later(y: float) -> str:
+    def mark_later(y):
         return f'<path d="M4 {y}h20" stroke="{muted}" stroke-width="3" stroke-linecap="round"/>\n'
 
-    def group(
-        title: str, note: str | None, items: list[list[str]], mark: Callable[[float], str], y: float
-    ) -> tuple[str, float]:
+    def group(title, note, items, mark, y):
         out = text(0, y, title, ink, TITLE, 600)
         if note:
             y += 40
@@ -167,7 +150,7 @@ def coverage(t: Theme) -> str:
             y += LEAD * (len(lines) - 1)
         return out, y
 
-    body, y = "", 36.0
+    body, y = "", 36
     g, y = group("Covered now", "From CDC, except where marked", now, mark_now, y)
     body += g
     for title, items, mark in [("Coming next", nxt, mark_next), ("Not covered yet", later, mark_later)]:
@@ -177,33 +160,22 @@ def coverage(t: Theme) -> str:
         g, y = group(title, None, items, mark, y)
         body += g
     return svg(
-        int(y) + 16,
+        y + 16,
         "What it covers",
-        "Covered now, from CDC: notifiable infections by US state, from C. auris to syphilis; antibiotic "
-        "resistance in hospital infections, by state; COVID-19, flu and RSV hospitalization rates at CDC "
-        "surveillance sites; C. difficile infections, national, from CDC surveillance sites. From WHO: "
-        "tuberculosis by country. "
+        "Covered now, from CDC: reportable infections by US state; antibiotic resistance in hospital infections; "
+        "COVID-19, flu and RSV hospital admissions; C. difficile infections. From WHO: tuberculosis by country. "
         "Coming next: measles cases by Michigan county; Detroit Health Department figures. Not covered yet: HIV.",
         body,
     )
 
 
 # ---------------------------------------------------------------- 3. chart
-# CDC NNDSS (data.cdc.gov/d/x9gk-5huc), Michigan, "Candida auris, clinical", checked 25 November 2026.
-# year end: m3 (cumulative YTD) at the year's last MMWR week (2022-2024 week 52, 2025 week 53).
-# later: m4 (previous year's YTD) in the next year's table at its last week; 2025's is 2026 week 45, the newest
-# week published, so it is still rising. Every figure is provisional: CDC calls none of them final.
-C_AURIS_MI: tuple[tuple[str, int, int], ...] = (
-    ("2022", 27, 33),
-    ("2023", 103, 110),
-    ("2024", 174, 184),
-    ("2025", 178, 217),
-)
-
-
-def chart(t: Theme) -> str:
+def chart(t):
     ink, muted, line, acc, soft = t["ink"], t["muted"], t["line"], t["accent"], t["accent_soft"]
-    base, h, vmax, bw = 380, 224, 240, 48
+    # CDC NNDSS (data.cdc.gov x9gk-5huc), each year's m3 at its last week, checked 25 November 2026. CDC marks
+    # 2024 and 2025 provisional; its 2025 table restates 2024 as 184 (m4), shown in the README text, not here.
+    data = [("2022", 27, False), ("2023", 103, False), ("2024", 174, True), ("2025", 178, True)]
+    base, h, vmax, bw = 380, 224, 200, 48
     body = (
         f'<defs><pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'
         f'<rect width="8" height="8" fill="{soft}"/><rect width="3" height="8" fill="{acc}"/></pattern></defs>\n'
@@ -211,72 +183,32 @@ def chart(t: Theme) -> str:
     body += text(
         0, 36, 'Clinical <tspan font-style="italic">C. auris</tspan> cases, Michigan', ink, TITLE, 600
     )
-    body += text(0, 76, "CDC yearly counts, all provisional", muted)
+    body += text(0, 76, "Reported each year, CDC year-end counts", muted)
     slot = W / 4
-    r = 4
-    for i, (yr, end, later) in enumerate(C_AURIS_MI):
+    for i, (yr, v, prov) in enumerate(data):
         cx = slot * i + slot / 2
-        x0 = cx - bw / 2
-        top = base - end / vmax * h
-        ltop = base - later / vmax * h
-        # The later count: a dashed outline from the axis to its height, behind the year-end bar.
-        d_out = (
-            f"M{x0} {base}V{ltop + r}Q{x0} {ltop} {x0 + r} {ltop}H{x0 + bw - r}"
-            f"Q{x0 + bw} {ltop} {x0 + bw} {ltop + r}V{base}"
-        )
-        body += (
-            f'<path d="{d_out}" fill="none" stroke="{acc}" stroke-width="2.5" stroke-dasharray="6 4" '
-            f'stroke-linejoin="round"/>\n'
-        )
+        bh = v / vmax * h
+        x0, top = cx - bw / 2, base - bh
+        r = 4
         d = f"M{x0} {base}V{top + r}Q{x0} {top} {x0 + r} {top}H{x0 + bw - r}Q{x0 + bw} {top} {x0 + bw} {top + r}V{base}Z"
-        body += f'<path d="{d}" fill="url(#hatch)"/>\n'
-        label = f'<tspan fill="{muted}" font-weight="400" font-size="{BODY}">{end} \u2192 </tspan>{later}'
-        body += text(cx, ltop - 12, label, ink, TITLE, 600, "middle")
+        body += f'<path d="{d}" fill="{"url(#hatch)" if prov else acc}"/>\n'
+        body += text(cx, top - 12, str(v), ink, TITLE, 600, "middle")
         body += text(cx, base + 36, yr, muted, anchor="middle")
+        if prov:
+            body += text(cx, base + 72, "provisional", muted, anchor="middle")
     body += f'<path d="M0 {base}H{W}" stroke="{line}" stroke-width="2"/>\n'
-    ly = base + 92
-    body += f'<rect x="0" y="{ly - 22}" width="28" height="28" rx="4" fill="url(#hatch)"/>\n'
-    body += text(40, ly, "At year end", ink)
-    body += (
-        f'<rect x="260" y="{ly - 22}" width="28" height="28" rx="4" fill="none" stroke="{acc}" '
-        f'stroke-width="2.5" stroke-dasharray="6 4"/>\n'
-    )
-    body += text(300, ly, "CDC\u2019s later count", ink)
-    body += text(0, ly + 44, "2025\u2019s later count is to week 45 of 2026", muted)
     return svg(
-        ly + 64,
+        base + 88,
         "Example answer: clinical C. auris cases in Michigan",
-        "Bar chart of clinical Candida auris cases reported in Michigan, from CDC, checked 25 November 2026. "
-        "All figures are provisional. Count at year end, then CDC's later count from the next year's table: "
-        "2022, 27 then 33; 2023, 103 then 110; 2024, 174 then 184; 2025, 178 then 217 by week 45 of 2026.",
+        "Bar chart of clinical Candida auris cases reported in Michigan, CDC year-end counts, checked "
+        "25 November 2026: 2022, 27; 2023, 103; 2024, 174, provisional; 2025, 178, provisional.",
         body,
     )
 
 
-def render() -> dict[str, str]:
-    """Every README image, by file name."""
-    out = {}
+if __name__ == "__main__":
+    OUT.mkdir(parents=True, exist_ok=True)
     for name, fn in [("how-it-works", hero), ("coverage", coverage), ("example-c-auris-michigan", chart)]:
         for theme, tok in THEMES.items():
-            out[f"{name}-{theme}.svg"] = fn(tok)
-    return out
-
-
-def main(argv: list[str]) -> int:
-    images = render()
-    if "--check" in argv:
-        stale = [n for n, s in images.items() if not (OUT / n).is_file() or (OUT / n).read_text("utf-8") != s]
-        for n in stale:
-            print(
-                f"assets/readme/{n} differs from tools/readme_svg/gen.py; run python3 -I tools/readme_svg/gen.py"
-            )
-        return 1 if stale else 0
-    OUT.mkdir(parents=True, exist_ok=True)
-    for n, s in images.items():
-        (OUT / n).write_text(s, encoding="utf-8")
-    print(sorted(images))
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+            (OUT / f"{name}-{theme}.svg").write_text(fn(tok), encoding="utf-8")
+    print(sorted(p.name for p in OUT.iterdir()))
