@@ -17,3 +17,15 @@
 # A mutation job: <workflow> :: job <id> | needs <job> -> <mutation job> | schedule <cron> | <job>: <command>
 # A removed pre-commit hook: .pre-commit-config.yaml :: hook <id>
 # Say why in a comment above each entry.
+# An entry clears every identical line in its file, any number of times, in every pull request, until it is removed.
+
+# PR #148 (crawler factory): the UNPIVOT of wide_to_long. Its stubs and keys are quoted with _q and _lit, but
+# {relation} goes in unquoted: it is a relation the caller built (store.py builds it from quoted literals), as the
+# existing S608 lines in staging.py and quality.py are. A new caller must build relation the same way.
+src/health_data_registry/adapters/extensions/wide_to_long.py :: f"(SELECT * FROM (SELECT * FROM {relation}) UNPIVOT INCLUDE NULLS "  # noqa: S608 - quoted identifiers
+# PR #148: stage_entry's row-count check; {source} is a relation the caller built, as above.
+src/health_data_registry/staging.py :: row = con.execute(f"SELECT count(*) FROM {source}").fetchone()  # noqa: S608 - a relation built by the caller
+# PR #148: a publisher's PDF or xlsx is untrusted input; pdfminer and defusedxml/expat raise many unrelated
+# exception classes on a broken or hostile file, and each must become a plain refusal, never a traceback.
+src/health_data_registry/adapters/pdf_tables.py :: except Exception as e:  # noqa: BLE001 - a broken or hostile PDF is a refusal, whatever the library raised
+src/health_data_registry/adapters/xlsx.py :: except Exception as e:  # noqa: BLE001 - defusedxml's and expat's errors, whatever their class: a refusal
