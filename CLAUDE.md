@@ -252,8 +252,13 @@ These come from the spec and [docs/adr/](docs/adr/README.md). A PR that breaks o
 10. **Licences decide what is mirrored.** Public-domain US federal data may be snapshotted and published;
     restricted terms (e.g. WHO, non-commercial) are never published and their terms show with every result
     ([ADR 0009](docs/adr/0009-licences-decide-mirroring.md)).
-11. **Infectious disease only** for now. Don't add datasets from other fields until ID passes its evaluation bar.
-    Population denominators (Census) are allowed: they serve only as the denominators of infectious-disease rates.
+11. **Infectious disease, its denominators and its covariates** for now
+    ([ADR 0019](docs/adr/0019-covariates-for-infectious-disease-rates.md)). Don't add datasets from other fields
+    until ID passes its evaluation bar. Population denominators (Census) are allowed: they serve only as the
+    denominators of infectious-disease rates. Covariates that explain infectious-disease rates (e.g. CDC/ATSDR's
+    Social Vulnerability Index) are allowed: research area `covariate`, no conditions or series, served only beside
+    an infectious-disease answer and never as a topic of their own, never a denominator, and area-level only
+    (rule 4). They open no new disease areas.
 12. **Built for clinicians** ([ADR 0012](docs/adr/0012-built-for-clinicians.md)). Tool descriptions, helpers and
     every refusal are in plain clinical words with a next step: never a stack trace, an HTTP code or a bare
     exception. Every step a clinician takes has a helper; change helper text only in `helpers.py`, then

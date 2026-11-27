@@ -464,7 +464,10 @@ Every table's provenance line must be complete and carry the sha256 of the raw b
 
 ## Adding a dataset
 
-One pull request, four parts. Scope is infectious disease only for now.
+One pull request, four parts. Scope is infectious disease, the population denominators of its rates, and
+area-level covariates that explain its rates, such as social vulnerability
+([ADR 0019](../adr/0019-covariates-for-infectious-disease-rates.md)). A covariate's catalog entry sets
+`research_areas: [covariate]` and declares no conditions, so it never answers a question on its own.
 
 1. `catalog/<id>.yaml`: agency, publisher, level, years, geography, shape, grain, refresh cadence, licence and
    terms, citation, source host and dataset, codebook URL, caveats, and the GBD cause and location crosswalk.
