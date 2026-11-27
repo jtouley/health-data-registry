@@ -64,7 +64,8 @@ def properties(con: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 
 def check_structure(con: Mapping[str, Any], rows: list[dict[str, Any]], served_fields: Iterable[str]) -> None:
-    """Every sourceField is served; required fields are filled; measures hold numbers or missingCodes."""
+    """Every sourceField is served; required fields are filled; measures hold numbers (digit grouping as the
+    contract declares) or missingCodes."""
     assert rows, "publisher returned no rows for the test slice"
     served = set(served_fields)
     for p in properties(con):
@@ -76,12 +77,13 @@ def check_structure(con: Mapping[str, Any], rows: list[dict[str, Any]], served_f
             assert not empty, f"{p['name']}: required field empty in {len(empty)} rows"
         if cp["role"] == "measure":
             allowed = {str(c) for c in cp.get("missingCodes") or []}
+            sep = cp.get("thousandsSeparator")
             for r in rows:
                 v = r.get(src)
                 if v in (None, ""):
                     continue
                 try:
-                    float(v)
+                    float(str(v).replace(sep, "") if sep else v)
                 except (TypeError, ValueError):
                     assert str(v) in allowed, (
                         f"{p['name']}: non-numeric value {v!r} is not a declared missing code"
@@ -114,10 +116,14 @@ def duckdb_metric(
     for p in props:
         src = custom(p)["sourceField"].replace("'", "''")
         typ = p["physicalType"]
+        text = f"j->>'$.\"{src}\"'"
+        sep = custom(p).get("thousandsSeparator")
+        if sep and typ in ("BIGINT", "INTEGER", "DOUBLE"):  # digit grouping the contract declares: '1,234'
+            text = f"replace({text}, '{sep}', '')"
         if typ == "BIGINT":  # publishers send '176.0' for counts
-            expr = f"TRY_CAST(TRY_CAST(j->>'$.\"{src}\"' AS DOUBLE) AS BIGINT)"
+            expr = f"TRY_CAST(TRY_CAST({text} AS DOUBLE) AS BIGINT)"
         else:
-            expr = f"TRY_CAST(j->>'$.\"{src}\"' AS {typ})"
+            expr = f"TRY_CAST({text} AS {typ})"
         cols.append(f'{expr} AS "{p["name"]}"')
     db.execute(f"CREATE TABLE t AS SELECT {', '.join(cols)} FROM raw")
     m = next(x for x in sem["metrics"] if x["name"] == metric)

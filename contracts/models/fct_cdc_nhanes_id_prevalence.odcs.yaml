@@ -1,0 +1,113 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: fct_cdc_nhanes_id_prevalence
+name: Fact - NHANES infectious disease seroprevalence
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "One row per published cell of cdc_nhanes_id_prevalence (HSV-1 and HSV-2 antibody, adults 20-49), every row kept and qualified: the estimate with its standard error and 95% interval as NCHS published them, NCHS's flag with what it means, and whether the row is NCHS's Total."
+  usage: "Read one cell with its interval and flag, or follow one infection and subgroup over the survey cycles. Never add percents. Built by transform/models/marts/fct_cdc_nhanes_id_prevalence.sql from int_cdc_nhanes_id_prevalence."
+  limitations: "The same limits as the source contract: a national survey sample of adults 20-49, no state values."
+schema:
+  - name: fct_cdc_nhanes_id_prevalence
+    physicalName: fct_cdc_nhanes_id_prevalence
+    physicalType: table
+    logicalType: object
+    description: "One row per published cell of cdc_nhanes_id_prevalence: every row of the latest load, none removed, none added. Grain: infection x time_period x population_group x subgroup, unique on the full table (340 rows, 2026-11-25)."
+    customProperties:
+      - {property: layer, value: marts}
+      - {property: totalRows, value: "is_total_row"}
+      - {property: tableShape, value: estimate_table}
+    properties:
+      - name: infection
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "Herpes simplex virus type 1 or type 2 (antibody in tested sera)."
+        customProperties: [{property: role, value: dimension}]
+      - name: time_period
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "Two-year NHANES survey cycle."
+        customProperties: [{property: role, value: dimension}]
+      - name: population_group
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 3
+        description: "Total, Age group, Sex, Race and Hispanic origin, or Sex and age group."
+        customProperties: [{property: role, value: dimension}]
+      - name: subgroup
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 4
+        description: "The subgroup within the grouping."
+        customProperties: [{property: role, value: dimension}]
+      - name: estimate
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Crude percent with antibody as NCHS published it; empty where NCHS flags it not available, never a zero."
+        customProperties: [{property: role, value: measure}]
+      - name: standard_error
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Standard error of the estimate, as published."
+        customProperties: [{property: role, value: attribute}]
+      - name: estimate_lci
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Lower bound of NCHS's 95% confidence interval, as published."
+        customProperties: [{property: role, value: measure}]
+      - name: estimate_uci
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Upper bound of NCHS's 95% confidence interval, as published."
+        customProperties: [{property: role, value: measure}]
+      - name: flag
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "NCHS's flag on the estimate, exactly as published; empty when there is none."
+        customProperties: [{property: role, value: attribute}]
+      - name: estimate_status
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "'published', 'published, flagged: ' and what NCHS's flag means (such as not meeting NCHS standards of reliability), or 'not published: ' and why."
+        customProperties: [{property: role, value: attribute}]
+      - name: is_total_row
+        physicalType: BOOLEAN
+        logicalType: boolean
+        required: true
+        description: "True for NCHS's Total row (all adults 20-49), which sits beside the groups of the same people; never added to them."
+        customProperties: [{property: role, value: attribute}]
+      - name: snapshot_id
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The lake load (snapshot id) every value in the row came from (hard rule 8)."
+        customProperties: [{property: role, value: attribute}]
+      - name: raw_sha256
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The sha256 of the raw publisher file the row came from (hard rule 8)."
+        customProperties: [{property: role, value: attribute}]
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "The publisher's own codes and flags are carried on every row (see contracts/cdc_nhanes_id_prevalence.odcs.yaml)."}}
+  - property: openQuestions
+    value:
+      - "Every open question of contracts/cdc_nhanes_id_prevalence.odcs.yaml applies here: this fact only re-keys and qualifies the published cells."

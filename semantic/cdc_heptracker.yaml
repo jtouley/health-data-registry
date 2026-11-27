@@ -1,0 +1,368 @@
+dataset: cdc_heptracker
+# 0.1.0: first draft. Every figure is read from its one published cell, with CDC's code beside it where no number was
+# published; nothing is ever added. Each condition has its own named series for cases or deaths, nationwide and by
+# state, so a case count and a death count are never shown under one name.
+version: 0.1.0
+dimensions:
+  - {name: year, column: year, type: time, non_additive: false, description: "Year."}
+  - name: condition
+    column: condition
+    type: categorical
+    non_additive: true
+    non_additive_reason: "each viral hepatitis condition is counted on its own, and acute, chronic and perinatal infection are different conditions"
+    description: "The viral hepatitis condition as CDC names it."
+  - name: grouping
+    column: grouping
+    type: categorical
+    non_additive: true
+    non_additive_reason: "each grouping (area, age, sex, race and ethnicity, region, risk exposure) counts the same cases again"
+    description: "The grouping category: Area, age groups, sex, race and ethnicity, HHS region, or a risk exposure."
+  - name: stratum
+    column: stratum
+    type: categorical
+    non_additive: true
+    non_additive_reason: "the nationwide Total sits beside the states, and CDC doesn't say the groups add up to it"
+    description: "The value of the grouping: a state or the nationwide Total, an age group, a sex, a race and ethnicity group, a region number, or Yes, No or Missing/Unknown for a risk exposure."
+  - name: data_type
+    column: data_type
+    type: categorical
+    non_additive: true
+    non_additive_reason: "reported cases and deaths are different measures"
+    description: "Case (reported to NNDSS) or Death (from death certificates, NVSS)."
+measures:
+  - {name: hep_count, column: reported_count, kind: count, unit: "cases or deaths", description: "Number of cases reported to NNDSS, or deaths from NVSS, as CDC published it."}
+  - {name: hep_rate, column: rate, kind: rate, unit: "per 100,000 population", description: "Cases or deaths per 100,000 population as CDC published it."}
+metrics:
+  - name: national_case_count
+    description: "Cases of one condition reported to NNDSS nationwide in a year, from CDC's 'Total' area row, with CDC's code where no count was published; never added."
+    measure: hep_count
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["data_type = 'Case'", "grouping = 'Area'", "stratum = 'Total'"]
+  - name: national_case_rate
+    description: "Reported cases of one condition per 100,000 nationwide, from CDC's 'Total' area row, with CDC's code where no rate was published; never added."
+    measure: hep_rate
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["data_type = 'Case'", "grouping = 'Area'", "stratum = 'Total'"]
+    uncertainty: none
+    # Structural: the contract has no interval column.
+    uncertainty_reason: "CDC's HepTracker table gives no confidence interval for these rates."
+  - name: state_case_count
+    description: "Cases of one condition reported to NNDSS in one state or DC, with CDC's code where no count was published; one row per state, never added."
+    measure: hep_count
+    aggregation: none
+    exclude_total_rows: true
+    filters: ["data_type = 'Case'", "grouping = 'Area'"]
+  - name: state_case_rate
+    description: "Reported cases of one condition per 100,000 in one state or DC, with CDC's code where no rate was published; never added."
+    measure: hep_rate
+    aggregation: none
+    exclude_total_rows: true
+    filters: ["data_type = 'Case'", "grouping = 'Area'"]
+    uncertainty: none
+    # Structural: the contract has no interval column.
+    uncertainty_reason: "CDC's HepTracker table gives no confidence interval for these rates."
+  - name: national_death_count
+    description: "Deaths from one viral hepatitis condition nationwide (NVSS), from CDC's 'Total' area row, with CDC's code where no count was published; never added."
+    measure: hep_count
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["data_type = 'Death'", "grouping = 'Area'", "stratum = 'Total'"]
+  - name: national_death_rate
+    description: "Deaths from one viral hepatitis condition per 100,000 nationwide, from CDC's 'Total' area row, with CDC's code where no rate was published; never added."
+    measure: hep_rate
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["data_type = 'Death'", "grouping = 'Area'", "stratum = 'Total'"]
+    uncertainty: none
+    # Structural: the contract has no interval column.
+    uncertainty_reason: "CDC's HepTracker table gives no confidence interval for these rates."
+  - name: state_death_count
+    description: "Deaths from one viral hepatitis condition in one state or DC, with CDC's code (often S, suppressed) where no count was published; never added."
+    measure: hep_count
+    aggregation: none
+    exclude_total_rows: true
+    filters: ["data_type = 'Death'", "grouping = 'Area'"]
+  - name: state_death_rate
+    description: "Deaths from one viral hepatitis condition per 100,000 in one state or DC, with CDC's code (often UR, unreliable) where no rate was published; never added."
+    measure: hep_rate
+    aggregation: none
+    exclude_total_rows: true
+    filters: ["data_type = 'Death'", "grouping = 'Area'"]
+    uncertainty: none
+    # Structural: the contract has no interval column.
+    uncertainty_reason: "CDC's HepTracker table gives no confidence interval for these rates."
+series:
+  - condition: "Hepatitis A"
+    label: "Hepatitis A cases reported to CDC (NNDSS), nationwide"
+    metric: national_case_count
+    measure: cases
+    filters: {condition: "Hepatitis A"}
+    place_coverage: "the nationwide 'Total' row CDC publishes (each state and DC, per the dataset's geographic coverage)"
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Hepatitis A"
+    label: "Hepatitis A cases reported to CDC (NNDSS), by state"
+    metric: state_case_count
+    measure: cases
+    filters: {condition: "Hepatitis A"}
+    location_dimension: stratum
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Hepatitis A"
+    label: "Hepatitis A case rate per 100,000 (NNDSS), nationwide"
+    metric: national_case_rate
+    measure: rate
+    filters: {condition: "Hepatitis A"}
+    place_coverage: "the nationwide 'Total' row CDC publishes (each state and DC, per the dataset's geographic coverage)"
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Hepatitis A"
+    label: "Hepatitis A case rate per 100,000 (NNDSS), by state"
+    metric: state_case_rate
+    measure: rate
+    filters: {condition: "Hepatitis A"}
+    location_dimension: stratum
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Acute Hepatitis B"
+    label: "Acute hepatitis B cases reported to CDC (NNDSS), nationwide"
+    metric: national_case_count
+    measure: cases
+    filters: {condition: "Acute Hepatitis B"}
+    place_coverage: "the nationwide 'Total' row CDC publishes (each state and DC, per the dataset's geographic coverage)"
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Acute Hepatitis B"
+    label: "Acute hepatitis B cases reported to CDC (NNDSS), by state"
+    metric: state_case_count
+    measure: cases
+    filters: {condition: "Acute Hepatitis B"}
+    location_dimension: stratum
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Acute Hepatitis B"
+    label: "Acute hepatitis B case rate per 100,000 (NNDSS), nationwide"
+    metric: national_case_rate
+    measure: rate
+    filters: {condition: "Acute Hepatitis B"}
+    place_coverage: "the nationwide 'Total' row CDC publishes (each state and DC, per the dataset's geographic coverage)"
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Acute Hepatitis B"
+    label: "Acute hepatitis B case rate per 100,000 (NNDSS), by state"
+    metric: state_case_rate
+    measure: rate
+    filters: {condition: "Acute Hepatitis B"}
+    location_dimension: stratum
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Chronic Hepatitis B"
+    label: "Chronic hepatitis B cases reported to CDC (NNDSS), nationwide"
+    metric: national_case_count
+    measure: cases
+    filters: {condition: "Chronic Hepatitis B"}
+    place_coverage: "the nationwide 'Total' row CDC publishes (each state and DC, per the dataset's geographic coverage)"
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Chronic Hepatitis B"
+    label: "Chronic hepatitis B cases reported to CDC (NNDSS), by state"
+    metric: state_case_count
+    measure: cases
+    filters: {condition: "Chronic Hepatitis B"}
+    location_dimension: stratum
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Chronic Hepatitis B"
+    label: "Chronic hepatitis B case rate per 100,000 (NNDSS), nationwide"
+    metric: national_case_rate
+    measure: rate
+    filters: {condition: "Chronic Hepatitis B"}
+    place_coverage: "the nationwide 'Total' row CDC publishes (each state and DC, per the dataset's geographic coverage)"
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Chronic Hepatitis B"
+    label: "Chronic hepatitis B case rate per 100,000 (NNDSS), by state"
+    metric: state_case_rate
+    measure: rate
+    filters: {condition: "Chronic Hepatitis B"}
+    location_dimension: stratum
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Perinatal Hepatitis B"
+    label: "Perinatal hepatitis B cases reported to CDC (NNDSS), nationwide"
+    metric: national_case_count
+    measure: cases
+    filters: {condition: "Perinatal Hepatitis B"}
+    place_coverage: "the nationwide 'Total' row CDC publishes (each state and DC, per the dataset's geographic coverage)"
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Perinatal Hepatitis B"
+    label: "Perinatal hepatitis B cases reported to CDC (NNDSS), by state"
+    metric: state_case_count
+    measure: cases
+    filters: {condition: "Perinatal Hepatitis B"}
+    location_dimension: stratum
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Acute Hepatitis C"
+    label: "Acute hepatitis C cases reported to CDC (NNDSS), nationwide"
+    metric: national_case_count
+    measure: cases
+    filters: {condition: "Acute Hepatitis C"}
+    place_coverage: "the nationwide 'Total' row CDC publishes (each state and DC, per the dataset's geographic coverage)"
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Acute Hepatitis C"
+    label: "Acute hepatitis C cases reported to CDC (NNDSS), by state"
+    metric: state_case_count
+    measure: cases
+    filters: {condition: "Acute Hepatitis C"}
+    location_dimension: stratum
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Acute Hepatitis C"
+    label: "Acute hepatitis C case rate per 100,000 (NNDSS), nationwide"
+    metric: national_case_rate
+    measure: rate
+    filters: {condition: "Acute Hepatitis C"}
+    place_coverage: "the nationwide 'Total' row CDC publishes (each state and DC, per the dataset's geographic coverage)"
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Acute Hepatitis C"
+    label: "Acute hepatitis C case rate per 100,000 (NNDSS), by state"
+    metric: state_case_rate
+    measure: rate
+    filters: {condition: "Acute Hepatitis C"}
+    location_dimension: stratum
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Chronic Hepatitis C"
+    label: "Chronic hepatitis C cases reported to CDC (NNDSS), nationwide"
+    metric: national_case_count
+    measure: cases
+    filters: {condition: "Chronic Hepatitis C"}
+    place_coverage: "the nationwide 'Total' row CDC publishes (each state and DC, per the dataset's geographic coverage)"
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Chronic Hepatitis C"
+    label: "Chronic hepatitis C cases reported to CDC (NNDSS), by state"
+    metric: state_case_count
+    measure: cases
+    filters: {condition: "Chronic Hepatitis C"}
+    location_dimension: stratum
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Chronic Hepatitis C"
+    label: "Chronic hepatitis C case rate per 100,000 (NNDSS), nationwide"
+    metric: national_case_rate
+    measure: rate
+    filters: {condition: "Chronic Hepatitis C"}
+    place_coverage: "the nationwide 'Total' row CDC publishes (each state and DC, per the dataset's geographic coverage)"
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Chronic Hepatitis C"
+    label: "Chronic hepatitis C case rate per 100,000 (NNDSS), by state"
+    metric: state_case_rate
+    measure: rate
+    filters: {condition: "Chronic Hepatitis C"}
+    location_dimension: stratum
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Perinatal Hepatitis C"
+    label: "Perinatal hepatitis C cases reported to CDC (NNDSS), nationwide"
+    metric: national_case_count
+    measure: cases
+    filters: {condition: "Perinatal Hepatitis C"}
+    place_coverage: "the nationwide 'Total' row CDC publishes (each state and DC, per the dataset's geographic coverage)"
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Perinatal Hepatitis C"
+    label: "Perinatal hepatitis C cases reported to CDC (NNDSS), by state"
+    metric: state_case_count
+    measure: cases
+    filters: {condition: "Perinatal Hepatitis C"}
+    location_dimension: stratum
+    time_dimension: year
+    case_definition: "As reported to NNDSS under the CSTE case definition in force that year (CDC Technical Notes; not yet in the contract)"
+  - condition: "Hepatitis A"
+    label: "Hepatitis A deaths (death certificates, NVSS), nationwide"
+    metric: national_death_count
+    measure: deaths
+    filters: {condition: "Hepatitis A"}
+    place_coverage: "the nationwide 'Total' row CDC publishes (each state and DC, per the dataset's geographic coverage)"
+    time_dimension: year
+    case_definition: "Deaths from death certificates (NVSS); cause-of-death coding in CDC's Technical Notes, not yet in the contract"
+  - condition: "Hepatitis A"
+    label: "Hepatitis A death rate per 100,000 (death certificates, NVSS), nationwide"
+    metric: national_death_rate
+    measure: rate
+    filters: {condition: "Hepatitis A"}
+    place_coverage: "the nationwide 'Total' row CDC publishes (each state and DC, per the dataset's geographic coverage)"
+    time_dimension: year
+    case_definition: "Deaths from death certificates (NVSS); cause-of-death coding in CDC's Technical Notes, not yet in the contract"
+  - condition: "Hepatitis B"
+    label: "Hepatitis B deaths (death certificates, NVSS), nationwide"
+    metric: national_death_count
+    measure: deaths
+    filters: {condition: "Hepatitis B"}
+    place_coverage: "the nationwide 'Total' row CDC publishes (each state and DC, per the dataset's geographic coverage)"
+    time_dimension: year
+    case_definition: "Deaths from death certificates (NVSS); cause-of-death coding in CDC's Technical Notes, not yet in the contract"
+  - condition: "Hepatitis B"
+    label: "Hepatitis B death rate per 100,000 (death certificates, NVSS), nationwide"
+    metric: national_death_rate
+    measure: rate
+    filters: {condition: "Hepatitis B"}
+    place_coverage: "the nationwide 'Total' row CDC publishes (each state and DC, per the dataset's geographic coverage)"
+    time_dimension: year
+    case_definition: "Deaths from death certificates (NVSS); cause-of-death coding in CDC's Technical Notes, not yet in the contract"
+  - condition: "Hepatitis B"
+    label: "Hepatitis B deaths (death certificates, NVSS), by state"
+    metric: state_death_count
+    measure: deaths
+    filters: {condition: "Hepatitis B"}
+    location_dimension: stratum
+    time_dimension: year
+    case_definition: "Deaths from death certificates (NVSS); cause-of-death coding in CDC's Technical Notes, not yet in the contract"
+  - condition: "Hepatitis B"
+    label: "Hepatitis B death rate per 100,000 (death certificates, NVSS), by state"
+    metric: state_death_rate
+    measure: rate
+    filters: {condition: "Hepatitis B"}
+    location_dimension: stratum
+    time_dimension: year
+    case_definition: "Deaths from death certificates (NVSS); cause-of-death coding in CDC's Technical Notes, not yet in the contract"
+  - condition: "Hepatitis C"
+    label: "Hepatitis C deaths (death certificates, NVSS), nationwide"
+    metric: national_death_count
+    measure: deaths
+    filters: {condition: "Hepatitis C"}
+    place_coverage: "the nationwide 'Total' row CDC publishes (each state and DC, per the dataset's geographic coverage)"
+    time_dimension: year
+    case_definition: "Deaths from death certificates (NVSS); cause-of-death coding in CDC's Technical Notes, not yet in the contract"
+  - condition: "Hepatitis C"
+    label: "Hepatitis C death rate per 100,000 (death certificates, NVSS), nationwide"
+    metric: national_death_rate
+    measure: rate
+    filters: {condition: "Hepatitis C"}
+    place_coverage: "the nationwide 'Total' row CDC publishes (each state and DC, per the dataset's geographic coverage)"
+    time_dimension: year
+    case_definition: "Deaths from death certificates (NVSS); cause-of-death coding in CDC's Technical Notes, not yet in the contract"
+  - condition: "Hepatitis C"
+    label: "Hepatitis C deaths (death certificates, NVSS), by state"
+    metric: state_death_count
+    measure: deaths
+    filters: {condition: "Hepatitis C"}
+    location_dimension: stratum
+    time_dimension: year
+    case_definition: "Deaths from death certificates (NVSS); cause-of-death coding in CDC's Technical Notes, not yet in the contract"
+  - condition: "Hepatitis C"
+    label: "Hepatitis C death rate per 100,000 (death certificates, NVSS), by state"
+    metric: state_death_rate
+    measure: rate
+    filters: {condition: "Hepatitis C"}
+    location_dimension: stratum
+    time_dimension: year
+    case_definition: "Deaths from death certificates (NVSS); cause-of-death coding in CDC's Technical Notes, not yet in the contract"

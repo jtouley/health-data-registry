@@ -1,0 +1,268 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: cdc_nhanes_id_prevalence
+name: DQS NHANES Select Infectious Diseases Prevalence Estimates
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Crude percent of US adults aged 20-49 with antibody to herpes simplex virus type 1 or type 2, by NHANES survey cycle (1999-2000 to 2017-2018) and population group, with standard errors and 95% confidence intervals (dataset description, https://data.cdc.gov/api/views/v7tk-n6v3.json; footnotes, https://data.cdc.gov/d/iqm3-hbev)."
+  usage: "Read one infection, cycle and population group as published, with its interval and flag, or follow one over the cycles. Never add percents, and never add across population groups."
+  limitations: "A national survey sample: no state values, adults 20-49 only, and an estimate NCHS flags as unreliable is shown with its flag."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://data.cdc.gov/d/v7tk-n6v3", description: "Publisher dataset page"}
+    - {type: businessDefinition, url: "https://data.cdc.gov/api/views/v7tk-n6v3.json", description: "Socrata metadata: dataset description, column descriptions, licence (Public Domain U.S. Government), read 2026-11-25"}
+    - {type: businessDefinition, url: "https://data.cdc.gov/d/iqm3-hbev", description: "DQS NHANES Footnotes: the flag codes (NA_NHANES06 to 09) and the infection definitions (FN_NHANESINFECTIOUS10 to 17), read 2026-11-25"}
+    - {type: businessDefinition, url: "https://www.cdc.gov/nchs/nhanes/visualization/", description: "NHANES Interactive Data Visualizations (analytical methods reference; not fetched)"}
+servers:
+  - id: data_cdc_gov
+    server: data.cdc.gov
+    type: api
+    location: https://data.cdc.gov/resource/v7tk-n6v3.json
+schema:
+  - name: cdc_nhanes_id_prevalence
+    physicalName: cdc_nhanes_id_prevalence
+    physicalType: table
+    logicalType: object
+    description: "Long table: one crude seroprevalence estimate for the United States (NHANES sample, adults 20-49) per infection x survey cycle x population group x subgroup, with its interval and NCHS's flag."
+    dataGranularityDescription: "infection x time_period x population_group x subgroup (the primary key, unique on the full table, 340 rows, 2026-11-25)"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://data.cdc.gov/api/views/v7tk-n6v3.json"}
+    customProperties:
+      - property: totalRows
+        value: "population_group = 'Total'"
+        description: "The group NCHS labels Total (classification Total, subgroup 20-49 years): all adults the table covers, beside the age, sex, race and Hispanic origin, and sex-and-age groups of the same people (every distinct group checked on the full table, 340 rows, 2026-11-25). Nothing here is ever added."
+      - {property: tableShape, value: estimate_table}
+      - property: idDimensions
+        value:
+          condition: infection
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: null
+          period: time_period
+          provisionalFlag: null
+        description: "The infection is the topic column, defined in NCHS's footnotes as antibody to that virus from tested sera (FN_NHANESINFECTIOUS11 and 12). Period is the two-year survey cycle. No case status or provisional column: these are survey estimates, not cases."
+    properties:
+      - name: infection
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "The infection the antibody is to: Herpes simplex virus type 1 or Herpes simplex virus type 2 (TOPIC)."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: topic}
+        quality:
+          - id: infections_known
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["Herpes simplex virus type 1", "Herpes simplex virus type 2"]}
+            mustBe: 0
+            description: "Every distinct topic on the full table (340 rows, 2026-11-25), each defined in NCHS's footnotes. A new infection is reported here and in the unmapped-label queue rather than stopping the build."
+      - name: taxonomy
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "NCHS's subject area for the row: Infectious diseases (TAXONOMY)."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: taxonomy}
+      - name: classification
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The kind of breakdown (CLASSIFICATION): Total, Demographic Characteristic, or Multiple Characteristics (sex and age together)."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: classification}
+      - name: population_group
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 3
+        description: "The population grouping (GROUP): Total, Age group, Sex, Race and Hispanic origin, or Sex and age group."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: group}
+        quality:
+          - id: groups_known
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["Total", "Age group", "Sex", "Race and Hispanic origin", "Sex and age group"]}
+            mustBe: 0
+            description: "Every distinct group on the full table (340 rows, 2026-11-25). The headline series filter on 'Total', so a relabel is reported here."
+      - name: subgroup
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 4
+        description: "The subgroup within the grouping (SUBGROUP): 20-49 years for Total, an age band, Female or Male, a race and Hispanic origin group, or a sex and age band such as Female: 20-29 years."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: subgroup}
+      - name: nesting_label
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "Sex the subgroup is nested in, for the sex-and-age rows only (NESTING_LABEL: Female or Male); empty elsewhere."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: nesting_label}
+      - name: estimate_type
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The kind of estimate (ESTIMATE_TYPE): Percent of population, crude."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: estimate_type}
+        quality:
+          - id: estimates_are_crude_percents
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["Percent of population, crude"]}
+            mustBe: 0
+            description: "Every row on the full table (340 rows, 2026-11-25) is a crude percent of the population, the only estimate type the metrics and the percent rule read; another type is reported here."
+      - name: time_period
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "The two-year NHANES survey cycle the estimate is for (TIME_PERIOD), from 1999-2000 to 2017-2018."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: time_period}
+      - name: estimate
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Crude percent of the group with antibody to the virus (ESTIMATE), as NCHS published it. Empty where NCHS flags the estimate as not available (- - -), never a zero."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: estimate}
+          - {property: unit, value: "%"}
+        quality:
+          - id: percents_between_0_and_100
+            dimension: conformity
+            severity: error
+            type: sql
+            description: "The estimate and its 95% confidence bounds are percents of the population (ESTIMATE_TYPE), so each lies between 0 and 100."
+            query: "SELECT COUNT(*) FROM {object} WHERE estimate < 0 OR estimate > 100 OR estimate_lci < 0 OR estimate_lci > 100 OR estimate_uci < 0 OR estimate_uci > 100"
+            mustBe: 0
+          - id: interval_brackets_the_estimate
+            dimension: consistency
+            severity: error
+            type: sql
+            description: "ESTIMATE_LCI and ESTIMATE_UCI are the lower and upper bounds of the 95% confidence interval for the estimate (column descriptions), so lower <= estimate <= upper wherever all three are published."
+            query: "SELECT COUNT(*) FROM {object} WHERE estimate_lci > estimate OR estimate > estimate_uci"
+            mustBe: 0
+          - id: an_estimate_or_a_flag
+            dimension: consistency
+            severity: warn
+            type: sql
+            description: "An empty estimate carries NCHS's flag saying why (- - -, not available, on all 20 empty estimates on 2026-11-25); an empty estimate with no flag is a gap with no reason."
+            query: "SELECT COUNT(*) FROM {object} WHERE estimate IS NULL AND flag IS NULL"
+            mustBe: 0
+      - name: standard_error
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Standard error of the estimate (STANDARD_ERROR), in percentage points; empty where the estimate is."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: standard_error}
+      - name: estimate_lci
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Lower bound of the 95% confidence interval for the estimate (ESTIMATE_LCI), in percent; empty where the estimate is."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: estimate_lci}
+          - {property: unit, value: "%"}
+      - name: estimate_uci
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Upper bound of the 95% confidence interval for the estimate (ESTIMATE_UCI), in percent; empty where the estimate is."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: estimate_uci}
+          - {property: unit, value: "%"}
+      - name: flag
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "NCHS's flag on the estimate (FLAG), exactly as published; empty when the estimate carries none."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: flag}
+          - {property: flagFor, value: estimate}
+          # A load where NCHS flags no estimate is valid, so the field may be absent from a whole load.
+          - {property: mayBeEmpty, value: true}
+          - property: flagCodes
+            value:
+              "*": "the estimate does not meet NCHS standards of reliability (NCHS footnote NA_NHANES06)"
+              "- - -": "data are not available (NCHS footnote NA_NHANES07); never a zero"
+              "^": "estimates by race and Hispanic origin for August 2021-August 2023 are not shown (NCHS footnote NA_NHANES08)"
+              "^^": "2019-2020 data are not nationally representative (NCHS footnote NA_NHANES09)"
+        quality:
+          - id: flag_codes_known
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["*", "- - -", "^", "^^"]}
+            mustBe: 0
+            description: "The flag codes NCHS's NHANES footnotes define (NA_NHANES06 to 09). Another code is kept as published and reported here, never read."
+      - name: footnote_id_list
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The ids of NCHS's footnotes for the row, comma-separated (FOOTNOTE_ID_LIST), each defined in https://data.cdc.gov/d/iqm3-hbev."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: footnote_id_list}
+    quality:
+      - id: one_row_per_cell
+        dimension: uniqueness
+        severity: error
+        type: sql
+        description: "Grain: one estimate per infection, survey cycle, group and subgroup (an exact structural fact of the full table, 340 rows, on 2026-11-25). A repeat would mean two figures for one cell."
+        query: "SELECT COUNT(*) FROM (SELECT infection, time_period, population_group, subgroup FROM {object} GROUP BY infection, time_period, population_group, subgroup HAVING COUNT(*) > 1)"
+        mustBe: 0
+      - id: total_estimates_present
+        dimension: completeness
+        severity: error
+        type: sql
+        description: "Fill rate for the Total rows the headline series read, which the percent rule also covers: at least one is published (all 20 were on 2026-11-25)."
+        query: "SELECT COUNT(*) FROM {object} WHERE population_group = 'Total' AND estimate IS NOT NULL"
+        mustBeGreaterThan: 0
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: licenceSource, value: "Socrata metadata licence: Public Domain U.S. Government, https://www.usa.gov/government-works (read 2026-11-25)."}
+  - {property: citation, value: "National Center for Health Statistics. Division of Health and Nutrition Examination Surveys. NHANES Interactive Data Visualizations. 2023. https://data.cdc.gov/d/v7tk-n6v3"}
+  - {property: refresh, value: irregular}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "Each refresh stores the complete table as a dated, append-only load. Incremental loading waits for a reviewed row key and the publisher's update field."
+  - {property: geographyBasis, value: "the United States, from the NHANES national sample (Geographic Coverage: United States); no state values"}
+  - {property: rateDenominator, value: "not a rate: a crude percent of the sampled population aged 20-49 with antibody (ESTIMATE_TYPE)"}
+  - {property: unreliableRule, value: {kind: none, description: "NCHS flags an estimate that does not meet its standards of reliability with * (footnote NA_NHANES06; NCHS Series 2 reports 175 and 200). The rule's thresholds are in those reports, not the data; the flag is shown with every row."}}
+  - property: openQuestions
+    value:
+      - "Survey design: the estimates are weighted NHANES estimates; which weights and variance method (and whether the 95% interval is a Korn-Graubard interval) are in NCHS's analytic guidelines, not the data."
+      - "Is the population the civilian noninstitutionalized population, as NHANES samples generally? Not stated in this table; until confirmed it is called 'adults aged 20-49 in the NHANES sample'."
+      - "Update frequency R/P2Y and Temporal Applicability 1999/2018 (metadata): will later cycles (2019-2020 was not nationally representative; August 2021-August 2023) be added? HSV testing in later cycles is not stated."
+      - "The standard_error unit (percentage points) is read from the estimate's unit, not stated."
+      - "Proposed GBD key (catalog gbd.causes): HSV-2 antibody to GBD's genital herpes. HSV-1 genital infection exists too, and GBD's genital herpes is not the same as seroprevalence; a maintainer reviews the mapping."

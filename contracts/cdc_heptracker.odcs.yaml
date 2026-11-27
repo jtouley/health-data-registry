@@ -1,0 +1,267 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: cdc_heptracker
+name: HepTracker Dashboard
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Annual counts and rates per 100,000 of hepatitis A, B and C cases reported to NNDSS and of viral hepatitis deaths from NVSS, nationwide and by state, age group, sex, race and ethnicity, HHS region and (acute infections only) risk exposure: the data behind CDC's HepTracker dashboard (dataset description, https://data.cdc.gov/api/views/jkcx-ndu8.json)."
+  usage: "Read one condition, year, grouping, group and case or death figure as published, with CDC's code beside it where no number was published. Never add rates, never add across groupings, and never add a state to the nationwide 'Total' row."
+  limitations: "Cases are reports to NNDSS, not all infections; the case definitions, the population estimates behind the rates and the meaning of each code beyond its name are in CDC's Technical Notes, not the data."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://data.cdc.gov/d/jkcx-ndu8", description: "Publisher dataset page"}
+    - {type: businessDefinition, url: "https://data.cdc.gov/api/views/jkcx-ndu8.json", description: "Socrata metadata: dataset description and column descriptions (the codes for counts, the grouping categories, rates per 100,000), read 2026-11-25"}
+    - {type: businessDefinition, url: "https://www.cdc.gov/hepatitis/php/data-research/methodology.html", description: "CDC viral hepatitis Technical Notes, linked from the dataset description (not fetched; see openQuestions)"}
+servers:
+  - id: data_cdc_gov
+    server: data.cdc.gov
+    type: api
+    location: https://data.cdc.gov/resource/jkcx-ndu8.json
+schema:
+  - name: cdc_heptracker
+    physicalName: cdc_heptracker
+    physicalType: table
+    logicalType: object
+    description: "Long table: one count and one rate per 100,000 per viral hepatitis condition x year x grouping x group x cases or deaths, each a number or CDC's code in its place."
+    dataGranularityDescription: "condition x year x grouping x stratum x data_type (the primary key, unique on the full table, 8,588 rows, 2026-11-25)"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://data.cdc.gov/api/views/jkcx-ndu8.json"}
+    customProperties:
+      - property: totalRows
+        value: "grouping = 'Area' AND stratum = 'Total'"
+        description: "CDC's 'Total' area row, nationwide (Value column description: 'the Area grouping category includes values such as Total (nationwide) or individual jurisdictions'). No other grouping has a total row (every distinct grouping and value checked on the full table, 8,588 rows, 2026-11-25). Whether the states add up to it is not stated; nothing here is ever added."
+      - {property: tableShape, value: rate_table}
+      - property: idDimensions
+        value:
+          condition: condition
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: null
+          period: year
+          provisionalFlag: null
+        description: "The condition is the Event column (Viral Hepatitis Condition). Acute, chronic and perinatal infection are separate conditions as CDC names them. Case definitions and case status are in CDC's Technical Notes, not the data. No provisional column."
+    properties:
+      - name: condition
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "The viral hepatitis condition as CDC names it (Viral Hepatitis Condition): Hepatitis A, Acute, Chronic or Perinatal Hepatitis B or C for cases; Hepatitis A, Hepatitis B or Hepatitis C for deaths."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: event}
+        quality:
+          - id: conditions_known
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["Hepatitis A", "Acute Hepatitis B", "Chronic Hepatitis B", "Perinatal Hepatitis B", "Acute Hepatitis C", "Chronic Hepatitis C", "Perinatal Hepatitis C", "Hepatitis B", "Hepatitis C"]}
+            mustBe: 0
+            description: "Every distinct condition on the full table (8,588 rows, 2026-11-25). Every series filters on these exact names, so a new or renamed condition is reported here and in the unmapped-label queue rather than stopping the build."
+      - name: year
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "Year (2011 to 2023 on 2026-11-25; perinatal hepatitis C from 2018)."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: year}
+      - name: grouping
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 3
+        description: "The grouping category (Character): Area (nationwide Total or a state), AgeGroups, Sex, SexAgeGroups, RaceEth, HHS region, or a risk exposure such as Injection Drug Use, MSM or Household Contact."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: character}
+        quality:
+          - id: groupings_known
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["Area", "AgeGroups", "Sex", "SexAgeGroups", "RaceEth", "HHS", "Dialysis patient", "Household Contact", "Injection Drug Use", "International Travel", "MSM", "Multi-Sex Partners", "Needlestick", "Occupational", "Other Contact", "Sexual Contact", "Surgery", "Transfusion"]}
+            mustBe: 0
+            description: "Every distinct grouping on the full table (8,588 rows, 2026-11-25), the categories the column description lists. The place series filter on 'Area', so a relabel is reported here."
+      - name: stratum
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 4
+        description: "The value of the grouping (Value): for Area, Total (nationwide) or a state or DC; an age group in years; Female or Male; a race and ethnicity group; an HHS region number (1 to 10); or Yes, No or Missing/Unknown for a risk exposure."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: value}
+      - name: data_type
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 5
+        description: "Case (reported to NNDSS) or Death (from NVSS death certificates) (Type: 'Indicates Whether Case Surveillance or Death Data')."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: type}
+        quality:
+          - id: case_or_death
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["Case", "Death"]}
+            mustBe: 0
+            description: "The Type column description names case surveillance or death data, and every distinct value on the full table (2026-11-25) is Case or Death. Every metric filters on these, so a relabel is reported here."
+      - name: reported_count
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Number of cases or deaths as CDC published it, its digit grouping removed (1,232 reads as 1232). Empty where CDC wrote a code instead (see count_flag), and never a zero."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: count}
+          - {property: unit, value: "cases or deaths"}
+          - {property: missingCodes, value: ["—", "U", "N", "S", "UR"]}
+          - {property: thousandsSeparator, value: ","}
+        quality:
+          - id: counts_not_negative
+            dimension: conformity
+            severity: error
+            type: sql
+            description: "A count of cases or deaths is never negative."
+            query: "SELECT COUNT(*) FROM {object} WHERE reported_count < 0"
+            mustBe: 0
+          - id: case_counts_present
+            dimension: completeness
+            severity: error
+            type: sql
+            description: "Fill rate for the case rows counts_not_negative reads: an all-empty subset passes it, so at least one case count must be published (5,425 of 6,535 were on 2026-11-25)."
+            query: "SELECT COUNT(*) FROM {object} WHERE data_type = 'Case' AND reported_count IS NOT NULL"
+            mustBeGreaterThan: 0
+          - id: death_counts_present
+            dimension: completeness
+            severity: warn
+            type: sql
+            description: "Fill rate for the death rows: at least one death count is published (1,848 of 2,053 were on 2026-11-25)."
+            query: "SELECT COUNT(*) FROM {object} WHERE data_type = 'Death' AND reported_count IS NOT NULL"
+            mustBeGreaterThan: 0
+      - name: count_flag
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "CDC's code where it published no count, exactly as written; empty beside a published count."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: count}
+          - {property: flagFor, value: reported_count}
+          - property: flagCodes
+            value:
+              "—": "not reported (CDC's column description); never a zero"
+              "U": "unavailable (CDC's column description)"
+              "N": "not reportable (CDC's column description)"
+              "S": "suppressed (CDC's column description)"
+              "UR": "unreliable (CDC's column description)"
+        quality:
+          - id: count_codes_known
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["—", "U", "N", "S", "UR"]}
+            mustBe: 0
+            description: "The codes CDC's Count column description lists: not reported (—), unavailable (U), not reportable (N), suppressed (S) or unreliable (UR). Anything else written in place of a count is kept as published and reported here, never read as a number."
+      - name: rate
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Cases or deaths per 100,000 population as CDC published it (Rate: 'Rates calculated per 100,000 population'). Empty where CDC wrote a code instead (see rate_flag) or gave no rate (risk groups, sex-and-age groups, perinatal infection), and never a zero."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: rate}
+          - {property: unit, value: "/100000"}
+          - {property: missingCodes, value: ["—", "U", "N", "S", "UR"]}
+        quality:
+          - id: rates_not_negative
+            dimension: conformity
+            severity: error
+            type: sql
+            description: "A rate of cases or deaths per 100,000 is never negative."
+            query: "SELECT COUNT(*) FROM {object} WHERE rate < 0"
+            mustBe: 0
+          - id: national_case_rates_present
+            dimension: completeness
+            severity: warn
+            type: sql
+            description: "Fill rate for the nationwide case rates the headline series read: at least one is published (every year of the six conditions with rates was on 2026-11-25)."
+            query: "SELECT COUNT(*) FROM {object} WHERE data_type = 'Case' AND grouping = 'Area' AND stratum = 'Total' AND rate IS NOT NULL"
+            mustBeGreaterThan: 0
+      - name: rate_flag
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "CDC's code where it published no rate, exactly as written; empty beside a published rate or where the publisher sent no rate at all."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: rate}
+          - {property: flagFor, value: rate}
+          - property: flagCodes
+            value:
+              "—": "not reported (CDC's column description); never a zero"
+              "U": "unavailable (CDC's column description)"
+              "N": "not reportable (CDC's column description)"
+              "S": "suppressed (CDC's column description)"
+              "UR": "unreliable (CDC's column description)"
+        quality:
+          - id: rate_codes_known
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["—", "U", "N", "S", "UR"]}
+            mustBe: 0
+            description: "The codes CDC's Count column description lists for case and death data, as written in place of a rate (—, U, N and UR on 2026-11-25). Anything else is kept as published and reported here."
+    quality:
+      - id: one_row_per_cell
+        dimension: uniqueness
+        severity: error
+        type: sql
+        description: "Grain: one count and rate per condition, year, grouping, group and case or death (an exact structural fact of the full table, 8,588 rows, on 2026-11-25). A repeat would mean two figures for one cell."
+        query: "SELECT COUNT(*) FROM (SELECT condition, year, grouping, stratum, data_type FROM {object} GROUP BY condition, year, grouping, stratum, data_type HAVING COUNT(*) > 1)"
+        mustBe: 0
+      - id: a_count_or_a_code
+        dimension: consistency
+        severity: error
+        type: sql
+        description: "Every row carries either a published count or CDC's code in its place, never neither (the Count column was filled in every row on 2026-11-25); a row with neither would be a gap with no reason."
+        query: "SELECT COUNT(*) FROM {object} WHERE reported_count IS NULL AND count_flag IS NULL"
+        mustBe: 0
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: licenceSource, value: "No licence field in the Socrata metadata (read 2026-11-25; Common Core Public Access Level: public). A CDC work on data.cdc.gov, a US federal work under 17 USC 105. A maintainer confirms the wording (see openQuestions)."}
+  - {property: citation, value: "Centers for Disease Control and Prevention, Division of Viral Hepatitis. HepTracker Dashboard. https://data.cdc.gov/d/jkcx-ndu8"}
+  - {property: refresh, value: annual}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "Each refresh stores the complete table as a dated, append-only load. Incremental loading waits for a reviewed row key and the publisher's update field."
+  - {property: geographyBasis, value: "unresolved: the Area rows are each state and DC and CDC's nationwide Total (column description; Geographic Coverage: 50 states and DC); whether a case is placed by residence or by the reporting jurisdiction is in the Technical Notes, not the data (see openQuestions)"}
+  - {property: rateDenominator, value: "per 100,000 population (Rate column description); which population estimates, and whether rates are crude or age-adjusted, are in the Technical Notes, not the data (see openQuestions)"}
+  - {property: unreliableRule, value: {kind: none, description: "No threshold in the data: CDC writes its own code where it publishes no number, suppressed (S) or unreliable (UR) among them (Count column description), and the rules behind those codes are in CDC's Technical Notes. The code is kept and shown with every row."}}
+  - property: openQuestions
+    value:
+      - "Licence: no licence field in the Socrata metadata (2026-11-25); public-domain-us-federal is assumed from its being a CDC work. A maintainer confirms the wording."
+      - "The codes: CDC's Count column description lists not reported (—), unavailable (U), not reportable (N), suppressed (S) and unreliable (UR) for case or death data. The Rate column carries the same codes (—, U, N, UR) without its own description. What threshold makes a death count suppressed or a rate unreliable? Not in the data; a maintainer reads it in the Technical Notes before any rule uses it."
+      - "Are rates crude or age-adjusted, and from which census population estimates? Not stated in the data; until confirmed, no rate here is compared with an age-standardised rate."
+      - "Is a case placed by the reporting jurisdiction or by residence, and does CDC's 'Total' include cases reported by territories or non-residents? Until confirmed, 'Total' is shown as CDC labels it (nationwide), never relabelled United States."
+      - "Case definitions: acute, chronic and perinatal hepatitis B and C and hepatitis A as CSTE defines them change over 2011-2023 (for example the 2020 hepatitis C definition). Which definition applies each year is in the Technical Notes, not the data; add as caseDefinitions after a maintainer reads them."
+      - "Deaths: underlying or multiple cause of death, and which ICD-10 codes? Not stated in the data."
+      - "Do the age groups, sexes, races and ethnicities or HHS regions add up to the nationwide Total, and do the states? Not stated. totalRows marks the labelled Total and nothing is added."
+      - "Spelling: risk exposures use both 'Missing/Unknown' and 'Missing/unknown', and some age groups use an en dash (45–64) where others use a hyphen (0-19). Kept as published; filters copy the label exactly."
+      - "Are recent years revised in later releases (rowsUpdatedAt 2026-01-29)?"
+      - "Proposed GBD keys (catalog gbd.causes): Hepatitis A, Acute Hepatitis B and Acute Hepatitis C to GBD's acute hepatitis causes. Chronic and perinatal infection and viral hepatitis deaths span GBD's cirrhosis and liver cancer causes, so they are left unmapped. A maintainer reviews the mapping."

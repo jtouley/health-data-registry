@@ -23,6 +23,12 @@ What staging applies, and the contract property each comes from:
                           instead of loading as an all-empty column
     code lists            customProperties.flagCodes; a code the contract doesn't list is kept as published and
                           reported, so every answer from the table says so
+    inline codes          a flag column reading the same publisher field as its number (HepTracker writes 'S' or
+                          '—' where a count would be): the flag keeps any text that isn't a number, as published,
+                          and the number reads that text as empty instead of stopping the load, so a new code is
+                          kept and reported like any unlisted flag code (hard rules 1 and 4)
+    digit grouping        customProperties.thousandsSeparator: "1,234" reads as 1234, and only a value written as
+                          whole groups of three digits loses its separators
 
 The column descriptions and code lists travel with the table as DuckDB comments and as Parquet key-value
 metadata (SILVER_METADATA_KEY), so the hub copy carries them too.
@@ -31,6 +37,7 @@ metadata (SILVER_METADATA_KEY), so the hub copy carries them too.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -38,7 +45,7 @@ from typing import Any
 import duckdb
 
 from health_data_registry.quality import QualityReport, rules_for, run_rules
-from health_data_registry.registry import Contract
+from health_data_registry.registry import Column, Contract
 
 SILVER_METADATA_KEY = "health_data_registry.silver"
 SILVER_LAYOUT_VERSION = "1"
@@ -128,14 +135,55 @@ def silver_schema(contract: Contract) -> tuple[SilverColumn, ...]:
     )
 
 
+_NUMERIC = ("BIGINT", "INTEGER", "DOUBLE")
+
+
+def inline_flag(contract: Contract, column: Column) -> Column | None:
+    """The flag column that reads the same publisher field as this numeric column (codes written in place of the
+    number), if the contract declares one."""
+    if column.physical_type not in _NUMERIC:
+        return None
+    return next(
+        (f for f in contract.columns if f.flag_for == column.name and f.source_field == column.source_field),
+        None,
+    )
+
+
+def _ungrouped(text: str, sep: str | None) -> str:
+    """SQL for `text` with its digit-group separators removed, only when it is written as whole groups of three."""
+    if sep is None:
+        return text
+    pattern = _lit(rf"\s*-?\d{{1,3}}({re.escape(sep)}\d{{3}})+(\.\d+)?\s*")
+    return f"CASE WHEN regexp_full_match({text}, {pattern}) THEN replace({text}, {_lit(sep)}, '') ELSE {text} END"
+
+
 def typed_select(contract: Contract) -> str:
     """The contract-driven projection from raw publisher fields (all read as text) to typed columns."""
     parts = []
     for c in contract.columns:
         src = _q(c.source_field)
+        number = next(
+            (
+                n
+                for n in contract.columns
+                if c.flag_for == n.name and n.source_field == c.source_field and n.physical_type in _NUMERIC
+            ),
+            None,
+        )
+        if number is not None:
+            # An inline flag: the publisher's text wherever it isn't a number, as published; empty beside a number.
+            num = f"TRY_CAST({_ungrouped(f'trim({src})', number.thousands_separator)} AS DOUBLE)"
+            parts.append(
+                f"CASE WHEN nullif(trim({src}), '') IS NOT NULL AND {num} IS NULL THEN {src} END AS {_q(c.name)}"
+            )
+            continue
         if c.missing_codes:
             codes = ", ".join(_lit(m) for m in c.missing_codes)
             src = f"CASE WHEN trim({src}) IN ({codes}) THEN NULL ELSE {src} END"
+        if c.physical_type in _NUMERIC:
+            src = _ungrouped(src, c.thousands_separator)
+        # With an inline flag a text that isn't a number is kept there, so the number reads it as empty.
+        cast = "TRY_CAST" if inline_flag(contract, c) is not None else "CAST"
         if c.physical_type == "BOOLEAN":
             expr = f"CASE lower(trim({src})) WHEN 'true' THEN true WHEN 'false' THEN false ELSE NULL END"
         elif c.physical_type == "VARCHAR":
@@ -146,11 +194,11 @@ def typed_select(contract: Contract) -> str:
         elif c.physical_type in ("BIGINT", "INTEGER"):
             # Counts arrive as text, "31" or "31.0" (NNDSS from 2025). A plain cast would round "1.5" to 2, so
             # anything with a fraction stops the load instead of becoming a different count.
-            dec = f"CAST(NULLIF(trim({src}), '') AS DECIMAL(38, 6))"
+            dec = f"{cast}(NULLIF(trim({src}), '') AS DECIMAL(38, 6))"
             msg = _lit(f"the publisher's data has a value in {c.name} that {FRACTION_MARK}")
             expr = f"CASE WHEN {dec} IS NULL THEN NULL WHEN {dec} = trunc({dec}) THEN CAST({dec} AS {c.physical_type}) ELSE error({msg}) END"
         else:
-            expr = f"CAST(NULLIF(trim({src}), '') AS {c.physical_type})"
+            expr = f"{cast}(NULLIF(trim({src}), '') AS {c.physical_type})"
         parts.append(f"{expr} AS {_q(c.name)}")
     return ",\n  ".join(parts)
 

@@ -94,11 +94,25 @@ outputPorts:
     contractId: cdc_haicviz_cdi
     customProperties:
       - {property: hosted, value: true}
+  - name: cdc_heptracker
+    description: HepTracker (hepatitis A, B and C cases reported to NNDSS and viral hepatitis deaths from NVSS, nationwide and by state), with CDC's codes kept beside every count and rate.
+    type: tables
+    version: 0.1.0
+    contractId: cdc_heptracker
+    customProperties:
+      - {property: hosted, value: true}
   - name: cdc_nhsn_ar_hai
     description: NHSN antimicrobial resistance in healthcare-associated infections, 2011-2025.
     type: tables
     version: 0.1.0
     contractId: cdc_nhsn_ar_hai
+    customProperties:
+      - {property: hosted, value: true}
+  - name: cdc_nhanes_id_prevalence
+    description: NHANES herpes simplex virus type 1 and 2 antibody seroprevalence, US adults aged 20-49, 1999-2000 to 2017-2018, with 95% intervals.
+    type: tables
+    version: 0.1.0
+    contractId: cdc_nhanes_id_prevalence
     customProperties:
       - {property: hosted, value: true}
   - name: cdc_nndss_weekly

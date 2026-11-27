@@ -1,0 +1,60 @@
+dataset: cdc_nhanes_id_prevalence
+# 0.1.0: first draft. Every estimate is read from its one published cell with NCHS's 95% interval and flag; nothing is
+# ever added. Series are named for the antibody, so a seroprevalence percent never reads as a case count.
+version: 0.1.0
+dimensions:
+  - {name: cycle, column: time_period, type: time, non_additive: false, description: "Two-year NHANES survey cycle, such as 2017-2018."}
+  - name: infection
+    column: infection
+    type: categorical
+    non_additive: true
+    non_additive_reason: "HSV-1 and HSV-2 antibody are different infections, and a person can have both"
+    description: "Herpes simplex virus type 1 or type 2 (antibody in tested sera)."
+  - name: population_group
+    column: population_group
+    type: categorical
+    non_additive: true
+    non_additive_reason: "each grouping covers the same people again, beside the Total"
+    description: "Total, Age group, Sex, Race and Hispanic origin, or Sex and age group."
+  - name: subgroup
+    column: subgroup
+    type: categorical
+    non_additive: true
+    non_additive_reason: "percents of different groups can't be added"
+    description: "The subgroup within the grouping, such as 30-39 years, Female or Female: 20-29 years."
+measures:
+  - {name: seroprevalence, column: estimate, kind: percent, unit: "%", description: "Crude percent of adults aged 20-49 in the NHANES sample with antibody to the virus."}
+  - {name: seroprevalence_lower, column: estimate_lci, kind: lower_bound, unit: "%", description: "Lower bound of NCHS's 95% confidence interval."}
+  - {name: seroprevalence_upper, column: estimate_uci, kind: upper_bound, unit: "%", description: "Upper bound of NCHS's 95% confidence interval."}
+metrics:
+  - name: seroprevalence_all_adults_20_49
+    description: "Crude percent of US adults aged 20-49 (NHANES sample) with antibody to HSV-1 or HSV-2 in one survey cycle, from NCHS's Total row, with its 95% interval and flag; never added."
+    measure: seroprevalence
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["population_group = 'Total'", "estimate_type = 'Percent of population, crude'"]
+    uncertainty: {lower: seroprevalence_lower, upper: seroprevalence_upper}
+  - name: seroprevalence_by_subgroup
+    description: "Crude percent with antibody for one published subgroup (an age band, a sex, a race and Hispanic origin group, or a sex and age band), with its 95% interval and flag; the Total row is left out and nothing is added."
+    measure: seroprevalence
+    aggregation: none
+    exclude_total_rows: true
+    filters: ["estimate_type = 'Percent of population, crude'"]
+    uncertainty: {lower: seroprevalence_lower, upper: seroprevalence_upper}
+series:
+  - condition: "Herpes simplex virus type 1"
+    label: "HSV-1 antibody seroprevalence, adults 20-49 (NHANES, percent)"
+    metric: seroprevalence_all_adults_20_49
+    measure: percent
+    filters: {infection: "Herpes simplex virus type 1"}
+    place_coverage: "the United States (NHANES national sample, adults aged 20-49)"
+    time_dimension: cycle
+    case_definition: "Antibody to herpes simplex virus type 1 from tested sera (NCHS footnote FN_NHANESINFECTIOUS11)"
+  - condition: "Herpes simplex virus type 2"
+    label: "HSV-2 antibody seroprevalence, adults 20-49 (NHANES, percent)"
+    metric: seroprevalence_all_adults_20_49
+    measure: percent
+    filters: {infection: "Herpes simplex virus type 2"}
+    place_coverage: "the United States (NHANES national sample, adults aged 20-49)"
+    time_dimension: cycle
+    case_definition: "Antibody to herpes simplex virus type 2 from tested sera (NCHS footnote FN_NHANESINFECTIOUS12)"

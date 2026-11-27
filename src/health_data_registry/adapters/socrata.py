@@ -21,8 +21,9 @@ def page_url(api_url: str, *, limit: int, offset: int, fields: list[str] | None 
     parts = urlsplit(api_url)
     query = [(k, v) for k, v in parse_qsl(parts.query) if k not in ("$limit", "$offset", "$order", "$select")]
     if fields:
-        # Only the columns the contract reads: the rest are never used, so they aren't fetched.
-        query.append(("$select", ",".join(sorted(fields))))
+        # Only the columns the contract reads: the rest are never used, so they aren't fetched. Each name is quoted
+        # with backticks, so a publisher field named after a SoQL keyword (NHANES's `group`) is read as a field.
+        query.append(("$select", ",".join(f"`{f}`" for f in sorted(fields))))
     query += [("$order", ":id"), ("$limit", str(limit)), ("$offset", str(offset))]
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
 

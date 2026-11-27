@@ -22,7 +22,7 @@ _ID = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
 _SQL_IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
 # A publisher field name goes into generated SQL and dbt Jinja: braces, quotes, backslashes and control
 # characters are refused rather than escaped in every place it lands.
-_UNSAFE_FIELD = re.compile(r"[{}\\'\"\x00-\x1f\x7f]")
+_UNSAFE_FIELD = re.compile(r"[{}\\'\"`\x00-\x1f\x7f]")
 
 DUCKDB_TYPES = frozenset({"VARCHAR", "BIGINT", "INTEGER", "DOUBLE", "DATE", "BOOLEAN", "TIMESTAMP"})
 # The ODCS logicalType each physical type may carry: the two must say the same thing about a column.
@@ -568,6 +568,10 @@ class Column:
     # load (e.g. a field the publisher leaves empty in every row). Every other declared field must appear, and
     # it gets no fill-rate check (quality.fill_rate_rules).
     may_be_empty: bool = False
+    # customProperties.thousandsSeparator: the character the publisher groups digits with in a numeric text field
+    # ("1,234"), an exact structural fact of the publisher's text. Staging drops it only from a value written as
+    # whole groups of three digits, so "1,5" is never read as 15.
+    thousands_separator: str | None = None
 
     def partial_note(self, label: str) -> str | None:
         """The contract's note when this place label covers only part of the place it is named after."""
@@ -826,12 +830,22 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
         source_field = str(cp.get("sourceField") or name)
         if _UNSAFE_FIELD.search(source_field):
             raise RegistryError(
-                f"{expected_id}.{name}: sourceField {source_field!r} has a brace, quote, backslash or control "
-                "character, which generated SQL and dbt can't carry safely"
+                f"{expected_id}.{name}: sourceField {source_field!r} has a brace, quote, backtick, backslash or "
+                "control character, which generated SQL, dbt and a Socrata query can't carry safely"
             )
         may_be_empty = cp.get("mayBeEmpty", False)
         if not isinstance(may_be_empty, bool):
             raise RegistryError(f"{expected_id}.{name}: mayBeEmpty must be true or false")
+        sep = cp.get("thousandsSeparator")
+        if sep is not None and (
+            ptype not in ("BIGINT", "INTEGER", "DOUBLE")
+            or not isinstance(sep, str)
+            or sep not in (",", " ", "'")
+        ):
+            raise RegistryError(
+                f"{expected_id}.{name}: thousandsSeparator is one character (a comma, a space or an apostrophe) "
+                "on a numeric column"
+            )
         pairs = {k: _pairs(cp.get(k), f"{expected_id}.{name}.{k}") for k in _PAIR_PROPS}
         zero = cp.get("noCasesCode")
         if zero is not None and (cp.get("flagFor") is None or str(zero) not in dict(pairs["flagCodes"])):
@@ -856,6 +870,7 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
                 renamed_labels=pairs["renamedLabels"],
                 no_cases_code=None if zero is None else str(zero),
                 may_be_empty=may_be_empty,
+                thousands_separator=sep,
             )
         )
     if not cols:

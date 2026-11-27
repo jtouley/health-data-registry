@@ -1,0 +1,68 @@
+# Hand-written dbt unit tests for cdc_heptracker, one file per source like its siblings' staging tests.
+# 1. Staging (staging.typed_select): a count written with digit grouping reads whole ('4,966' is 4966), and where CDC
+#    wrote a code in place of a number the code stays in the flag column, as written, and the number is empty, never
+#    zero. A code CDC's column description doesn't list ('NA') and a value that isn't whole groups of three ('1,5')
+#    are kept as published in the flag, never read as a number and never a failed build. Inputs are SQL so the raw
+#    source needn't be loaded first.
+# 2. Intermediate: only CDC's nationwide 'Total' area row is a total, and each code gets its meaning from the
+#    contract's flagCodes ('—' is not reported, never a zero).
+# 3. The fact (marts): every row is kept, and each count and rate says whether it was published and, if not, why.
+version: 2
+unit_tests:
+- name: stg_cdc_heptracker_reads_grouped_counts_and_keeps_codes_beside_an_empty_number
+  model: stg_cdc_heptracker
+  given:
+  - input: source('raw', 'cdc_heptracker')
+    format: sql
+    rows: |
+      select 'Acute Hepatitis C' as "event", '2022' as "year", 'Area' as "character", 'Total' as "value", 'Case' as "type", '4,966' as "count", '1.5' as "rate", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select 'Acute Hepatitis C' as "event", '2022' as "year", 'Area' as "character", 'Alaska' as "value", 'Case' as "type", '—' as "count", '—' as "rate", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select 'Hepatitis C' as "event", '2022' as "year", 'Area' as "character", 'Wyoming' as "value", 'Death' as "type", 'S' as "count", 'UR' as "rate", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select 'Hepatitis C' as "event", '2022' as "year", 'HHS' as "character", '5' as "value", 'Death' as "type", '1,800' as "count", '7.0000000000000007E-2' as "rate", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select 'Acute Hepatitis C' as "event", '2022' as "year", 'MSM' as "character", 'Yes' as "value", 'Case' as "type", '12' as "count", cast(null as varchar) as "rate", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select 'Acute Hepatitis C' as "event", '2022' as "year", 'Area' as "character", 'Ohio' as "value", 'Case' as "type", 'NA' as "count", '1,5' as "rate", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+  expect:
+    rows:
+    - {stratum: Total, reported_count: 4966, count_flag: null, rate: 1.5, rate_flag: null, _snapshot_id: s1, _raw_sha256: h1}
+    - {stratum: Alaska, reported_count: null, count_flag: "—", rate: null, rate_flag: "—", _snapshot_id: s1, _raw_sha256: h1}
+    - {stratum: Wyoming, reported_count: null, count_flag: S, rate: null, rate_flag: UR, _snapshot_id: s1, _raw_sha256: h1}
+    - {stratum: "5", reported_count: 1800, count_flag: null, rate: 0.07, rate_flag: null, _snapshot_id: s1, _raw_sha256: h1}
+    - {stratum: "Yes", reported_count: 12, count_flag: null, rate: null, rate_flag: null, _snapshot_id: s1, _raw_sha256: h1}
+    - {stratum: Ohio, reported_count: null, count_flag: NA, rate: null, rate_flag: "1,5", _snapshot_id: s1, _raw_sha256: h1}
+- name: int_cdc_heptracker_flags_only_the_nationwide_total_and_explains_each_code
+  model: int_cdc_heptracker
+  given:
+  - input: ref('stg_cdc_heptracker')
+    rows:
+    - {condition: Acute Hepatitis C, year: 2022, grouping: Area, stratum: Total, data_type: Case, reported_count: 4966, count_flag: null, rate: 1.5, rate_flag: null}
+    - {condition: Acute Hepatitis C, year: 2022, grouping: Area, stratum: Alaska, data_type: Case, reported_count: null, count_flag: "—", rate: null, rate_flag: "—"}
+    - {condition: Hepatitis C, year: 2022, grouping: Area, stratum: Wyoming, data_type: Death, reported_count: null, count_flag: S, rate: null, rate_flag: UR}
+    - {condition: Acute Hepatitis C, year: 2022, grouping: Injection Drug Use, stratum: Missing/Unknown, data_type: Case, reported_count: 1500, count_flag: null, rate: null, rate_flag: null}
+    - {condition: Hepatitis C, year: 2022, grouping: HHS, stratum: Total, data_type: Death, reported_count: 10, count_flag: null, rate: null, rate_flag: NA}
+  expect:
+    rows:
+    - {stratum: Total, is_total_row: true, count_flag_meaning: null, rate_flag_meaning: null}
+    - {stratum: Alaska, is_total_row: false, count_flag_meaning: "not reported (CDC's column description); never a zero", rate_flag_meaning: "not reported (CDC's column description); never a zero"}
+    - {stratum: Wyoming, is_total_row: false, count_flag_meaning: "suppressed (CDC's column description)", rate_flag_meaning: "unreliable (CDC's column description)"}
+    - {stratum: Missing/Unknown, is_total_row: false, count_flag_meaning: null, rate_flag_meaning: null}
+    - {stratum: Total, is_total_row: false, count_flag_meaning: null, rate_flag_meaning: null}
+- name: fct_cdc_heptracker_keeps_every_row_and_says_why_a_number_is_missing
+  model: fct_cdc_heptracker
+  given:
+  - input: ref('int_cdc_heptracker')
+    rows:
+    - {condition: Acute Hepatitis C, year: 2022, grouping: Area, stratum: Total, data_type: Case, reported_count: 4966, count_flag: null, rate: 1.5, rate_flag: null, is_total_row: true, count_flag_meaning: null, rate_flag_meaning: null, _snapshot_id: s1, _raw_sha256: h1}
+    - {condition: Acute Hepatitis C, year: 2022, grouping: Area, stratum: Alaska, data_type: Case, reported_count: null, count_flag: "—", rate: null, rate_flag: "—", is_total_row: false, count_flag_meaning: "not reported (CDC's column description); never a zero", rate_flag_meaning: "not reported (CDC's column description); never a zero", _snapshot_id: s1, _raw_sha256: h1}
+    - {condition: Acute Hepatitis C, year: 2022, grouping: MSM, stratum: "Yes", data_type: Case, reported_count: 12, count_flag: null, rate: null, rate_flag: null, is_total_row: false, count_flag_meaning: null, rate_flag_meaning: null, _snapshot_id: s1, _raw_sha256: h1}
+    - {condition: Acute Hepatitis C, year: 2022, grouping: Area, stratum: Ohio, data_type: Case, reported_count: null, count_flag: NA, rate: 2.0, rate_flag: null, is_total_row: false, count_flag_meaning: null, rate_flag_meaning: null, _snapshot_id: s1, _raw_sha256: h1}
+  expect:
+    rows:
+    - {stratum: Total, reported_count: 4966, count_status: published, rate_status: published, is_total_row: true}
+    - {stratum: Alaska, reported_count: null, count_status: "not published: not reported (CDC's column description); never a zero", rate_status: "not published: not reported (CDC's column description); never a zero", is_total_row: false}
+    - {stratum: "Yes", reported_count: 12, count_status: published, rate_status: "not published: CDC gives no rate for this row", is_total_row: false}
+    - {stratum: Ohio, reported_count: null, count_status: "not published: CDC wrote 'NA', a code its column description does not list", rate_status: published, is_total_row: false}

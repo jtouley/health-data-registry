@@ -46,6 +46,19 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- New source, draft (contract not yet reviewed): `cdc_heptracker`, the data behind CDC's HepTracker dashboard
+  (data.cdc.gov jkcx-ndu8): hepatitis A, B and C cases reported to NNDSS and viral hepatitis deaths from NVSS,
+  2011 onward, nationwide and by state, with counts and rates per 100,000. Every row is shown with CDC's code where
+  no number was published (— not reported, U unavailable, N not reportable, S suppressed, UR unreliable); a code is
+  never a zero, and nothing is added.
+- New source, draft (contract not yet reviewed): `cdc_nhanes_id_prevalence`, NHANES herpes simplex virus type 1
+  and 2 antibody seroprevalence for US adults aged 20-49, 1999-2000 to 2017-2018 (data.cdc.gov v7tk-n6v3), with
+  NCHS's 95% confidence intervals and reliability flags returned on every row.
+- Staging reads a publisher field that holds either a number or a code in its place (HepTracker's counts and
+  rates): a flag column on the same field keeps the code as published and the number reads it as empty, so a new
+  code is kept and reported instead of stopping the load. A contract can declare a numeric field's digit grouping
+  (`thousandsSeparator`), and only a value written as whole groups of three loses it ("1,232" is 1232; "1,5" is
+  kept as published).
 - SchoolVaxView kindergarten coverage and exemptions (`cdc_schoolvaxview_kindergarten`, CDC data.cdc.gov
   ijqb-a7ye): the percent of kindergartners vaccinated, or with an exemption, by vaccine and dose or exemption
   type, state and school year, as each state reported it, read as published and never added up. Draft contract.
