@@ -6,6 +6,11 @@ from {{ ref('int_cdc_abcs_pneumococcal') }}
 where "bacteria" is not null and "bacteria" not in ('Streptococcus pneumoniae')
 group by "bacteria"
 union all
+select 'cdc_haicviz_mugsi' as dataset, "organism" as label, count(*) as row_count
+from {{ ref('int_cdc_haicviz_mugsi') }}
+where "organism" is not null and "organism" not in ('CRE', 'CRAB')
+group by "organism"
+union all
 select 'cdc_nhsn_ar_hai' as dataset, "phenotype" as label, count(*) as row_count
 from {{ ref('int_cdc_nhsn_ar_hai') }}
 where "phenotype" is not null and "phenotype" not in ('Aminoglycoside-resistant Pseudomonas aeruginosa', 'Carbapenem-resistant Acinetobacter', 'Carbapenem-resistant E.coli', 'Carbapenem-resistant Enterobacter', 'Carbapenem-resistant Enterobacterales', 'Carbapenem-resistant Klebsiella', 'Carbapenem-resistant Pseudomonas aeruginosa', 'Cefepime-resistant Enterobacter', 'Cephalosporin-resistant E.coli', 'Cephalosporin-resistant Klebsiella', 'Cephalosporin-resistant Pseudomonas aeruginosa', 'Daptomycin-resistant Enterococcus faecalis', 'Daptomycin-resistant Enterococcus faecium', 'Daptomycin-resistant MRSA', 'Fluoroquinolone-resistant E.coli', 'Fluoroquinolone-resistant MRSA', 'Fluoroquinolone-resistant Pseudomonas aeruginosa', 'Linezolid-resistant MRSA', 'MDR Acinetobacter', 'MDR E.coli', 'MDR Enterobacter', 'MDR Klebsiella', 'MDR Pseudomonas aeruginosa', 'Methicillin-resistant Staphylococcus aureus', 'Pip/Tazobactam-resistant Pseudomonas aeruginosa', 'Vancomycin-resistant coagulase-negative Staphylococci', 'Vancomycin-resistant Enterococcus faecalis', 'Vancomycin-resistant Enterococcus faecium', 'Vancomycin-resistant MRSA')
