@@ -69,7 +69,7 @@ All notable changes to this project are documented here. The format follows
 - Semantic series can list `asked_with` words: a series that names a disease but isn't a measure of it (a percent
   of deaths, vaccination coverage) answers only a question that uses one of them and also names the disease. A
   bare "vaccination" question gets none of them, and an empty entry is refused.
-- The first marts: `fct_cdc_nssp_lab_positivity` and `fct_nchs_resp_deaths_pct`, one fact per source with every
+- Marts `fct_cdc_nssp_lab_positivity` and `fct_nchs_resp_deaths_pct`, one fact per source with every
   row kept, the publisher's own notes as published, and a `value_status` that says why a value is empty
   ("suppressed" only where a count is empty too; else "not published").
 - New source, draft (contract not yet reviewed): `cdc_nssp_lab_positivity`, CDC's weekly NSSP commercial
@@ -77,6 +77,14 @@ All notable changes to this project are documented here. The format follows
   jqxy-cyu2), on the existing Socrata adapter. Read as published and never added; a count or percent CDC
   suppressed (under 10 tests or 10 positives) is no value, never zero. A national or county question is told the
   table is by state only.
+- New source, draft (contract not yet reviewed): `cdc_haicviz_isa`, CDC's Emerging Infections Program case and
+  death rates for invasive Staphylococcus aureus since 2005 (HAICViz iSA, data.cdc.gov ssz5-s49e), on the existing
+  Socrata adapter. Every rate is for the EIP sites combined, never called a state figure, and nothing is added;
+  whether the figures are MRSA only is an open question, so none is called an MRSA rate.
+- New source, draft (contract not yet reviewed): `cdc_haicviz_mugsi`, CDC's Emerging Infections Program case and
+  death rates for carbapenem-resistant Enterobacterales (CRE) and Acinetobacter baumannii (CRAB) since 2012
+  (HAICViz MuGSI, data.cdc.gov v4tm-h8pe), on the existing Socrata adapter. Every rate is for the EIP sites
+  combined, never called a state figure, and nothing is added.
 - The crawler factory's core (ADR 0016, step 1 and the types step 2 names). Every source is read by one generic
   adapter type chosen in its catalog entry (`type:`; the older `portal:` is read for one more release and `validate`
   warns about it), configured by that type's strict block, plus named extensions it opts in to. New types:
