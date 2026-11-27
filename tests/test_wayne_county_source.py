@@ -5,11 +5,9 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 import duckdb
 import pytest
@@ -90,7 +88,7 @@ def test_in_scope_onlyCheckedLayouts(url: str, want: bool) -> None:
     assert wc.in_scope(url) is want
 
 
-def test_pages_indexThenInScopeReports_rowsSayExcludesDetroitWhereTheReportDoes(ds: Dataset) -> None:
+def test_pages_indexThenInScopeReports_everyRowSaysExcludesDetroit(ds: Dataset) -> None:
     # Arrange
     site = FakeSite(_index(OLD, ANNUAL, OLD_ANNUAL, NEW), render(_report()))
 
@@ -102,7 +100,7 @@ def test_pages_indexThenInScopeReports_rowsSayExcludesDetroitWhereTheReportDoes(
     assert got[0].records == []  # the index page: provenance only
     rows = [r for p in got for r in p.records]
     assert len(rows) == 2 * 4 * 5
-    assert {r["area"] for r in rows} == {wc.AREA}  # these reports say "Out-Wayne" themselves
+    assert {r["area"] for r in rows} == {wc.AREA}
     assert "excluding the City of Detroit" in wc.AREA
     assert {(r["printed"], r["count"], r["suppressed"]) for r in rows if r["disease"] == "Pertussis"} >= {
         ("*", None, True)
@@ -167,6 +165,7 @@ def test_reportedCases_oneReportOneColumn_totalsExcluded_suppressionLeavesNoTota
         pytest.param({"period_column": "Q1 2024"}, [], id="every-report"),
         pytest.param({"report": NEW}, [], id="every-column"),
         pytest.param({"report": [NEW, ANNUAL], "period_column": "Q1 2024"}, [], id="two-reports"),
+        pytest.param({"period_column": "Q1 2024"}, ["report"], id="grouped-by-report"),
     ],
 )
 def test_reportedCases_acrossReportsOrColumns_refused(
@@ -177,291 +176,53 @@ def test_reportedCases_acrossReportsOrColumns_refused(
     assert e.value.code == "needs_single_value"
 
 
-def test_reportedCases_groupedByReport_oneRowEachNeverAdded(ds: Dataset) -> None:
-    con = _loaded(ds)
-    rows = _run(con, ds, "reported_cases", filters={"period_column": "Q1-Q4 2024 Total"}, group_by=["report"])
-    assert rows == [(ANNUAL, 57, 0, None), (NEW, 57, 0, None)]
-
-
 def test_contract_everyRowFramedOutWayne_neverStored(ds: Dataset) -> None:
     assert ds.entry.licence.redistribution is False
-    assert ds.entry.source.government_host  # paced at crawl.MIN_INTERVAL_S; a block still stops the read
+    assert ds.entry.source.min_interval_s >= 10
     assert any(c.startswith("Excludes Detroit") for c in ds.entry.caveats)
     area = ds.contract.column("area")
     assert area.required and area.partial_note("anything") is not None
     assert ds.contract.unreliable.kind == "publisher_suppressed" and ds.contract.unreliable.threshold == 6
 
 
-def test_policy_countyHost_pacedAtTheGovernmentHostInterval() -> None:
-    reg = load_registry(ROOT)
-    county = urlsplit(reg.get("wayne_cd_reports").entry.source.api_url)
-    assert county.scheme == "https" and county.hostname == "www.waynecountymi.gov"
-    assert crawl.policy_for(reg).paced >= {county.hostname}  # an exact host, never a substring of a URL
+def test_pacer_waitsTheDeclaredGapPerHost() -> None:
+    now = [100.0]
+    slept: list[float] = []
+
+    def sleep(s: float) -> None:
+        slept.append(s)
+        now[0] += s
+
+    pacer = crawl.Pacer({"www.waynecountymi.gov": 10.0}, sleep=sleep, clock=lambda: now[0])
+    pacer.wait(f"{BASE}/a.pdf")  # first request: no wait
+    now[0] += 4.0
+    pacer.wait(f"{BASE}/b.pdf")  # 4 s later: waits the other 6
+    pacer.wait("https://data.cdc.gov/resource/x.json")  # another host, no gap declared
+    now[0] += 11.0
+    pacer.wait(f"{BASE}/c.pdf")  # more than 10 s later: no wait
+    assert slept == [6.0]
 
 
-# --- review round fixes (PR #27) -----------------------------------------------------------------------
-
-FIVE = f"{BASE}/files/content/mainsite/v/10/government/statistics-reports/2021-2025-5-year-report.pdf"
-
-
-def _five_year() -> SynthReport:
-    rows = (
-        SynthRow(("Pertussis",), ("2", "4", "6", "3")),
-        SynthRow(("Varicella",), ("*", "7", "9", "4.5")),
-    )
-    return SynthReport(
-        title="Select Communicable Disease Case Counts 2021-2022",
-        headers=(("2021",), ("2022",), ("2021- 2022", "Total"), ("2-Year", "Average")),
-        groups=(SynthGroup("VPD", rows),),
-        group_style="repeat",
-        repeat_header=True,
-    )
+def test_pacer_forRegistry_takesTheLargestGapPerHost() -> None:
+    pacer = crawl.Pacer.for_registry(load_registry(ROOT))
+    assert pacer.intervals == {"www.waynecountymi.gov": 10.0}
 
 
-def _loaded_five(ds: Dataset) -> duckdb.DuckDBPyConnection:
-    site = FakeSite(_index(FIVE), render(_five_year()))
-    recs = [
-        {k: (None if v is None else str(v)) for k, v in r.items()}
-        for p in pages(ds.entry, site)
-        for r in p.records
-    ]
-    con = duckdb.connect()
-    load_live(con, ds, recs)
-    return con
-
-
-def test_reportedCases_averageColumn_neverReadAsSuppressedCounts(ds: Dataset) -> None:
-    con = _loaded_five(ds)
-    one = {"report": FIVE, "period_column": "2-Year Average"}
-    assert _run(con, ds, "reported_cases", filters=one) == [(None, 0, None)]  # no rows, no "suppressed" claim
-
-
-def test_multiYearAverageCases_readAsPrinted_neverSummed(ds: Dataset) -> None:
-    con = _loaded_five(ds)
-    got = _run(con, ds, "multi_year_average_cases", filters={"report": FIVE}, group_by=["disease"])
-    assert sorted(r[:2] for r in got) == [("Pertussis", 3.0), ("Varicella", 4.5)]
-
-
-def test_yearFilter_neverReturnsAMultiYearColumn(ds: Dataset) -> None:
-    con = _loaded_five(ds)
-    for column in ("2021- 2022 Total", "2-Year Average"):
-        one = {"report": FIVE, "period_column": column}
-        assert _run(con, ds, "reported_cases", filters=one, period={"start": 2021, "end": 2021}) == [
-            (None, 0, None)
-        ]
-    got = _run(
-        con, ds, "multi_year_average_cases", filters={"report": FIVE}, period={"start": 2021, "end": 2022}
-    )
-    assert got == []
-    year = {"report": FIVE, "period_column": "2021"}
-    assert _run(con, ds, "reported_cases", filters=year, period={"start": 2021, "end": 2021}) == [
-        (None, 1, "*")
-    ]
-
-
-def test_rows_carryTheirOwnReportsHashAndReadTime(ds: Dataset) -> None:
-    site = FakeSite(_index(ANNUAL, NEW), render(_report()))
-    got = list(pages(ds.entry, site))
-    for page in got[1:]:
-        assert {(r["report_url"], r["report_sha256"], r["report_retrieved_at"]) for r in page.records} == {
-            (page.fetch.url, page.fetch.sha256, page.fetch.retrieved_at.isoformat())
-        }
-    con = _loaded(ds)
-    assert con.execute(f"SELECT count(*) FROM {ds.id} WHERE report_retrieved_at IS NULL").fetchone() == (0,)
-
-
-def test_pages_maxReports_readsTheNewestAndSaysWhichWereLeft(ds: Dataset) -> None:
-    q1 = f"{BASE}/files/content/mainsite/2026-q1-public.pdf"
-    q4 = f"{BASE}/files/content/mainsite/fourth-quarter-2025.pdf"
-    site = FakeSite(_index(ANNUAL, q4, q1, NEW), render(_report()))
-    got = list(pages(ds.entry, site, max_reports=2))
-    assert site.asked == [ds.entry.source.api_url, q1, NEW]
-    assert got[0].note is not None
-    assert (
-        "2 newest of the 4" in got[0].note
-        and "quarterly-report-2024.pdf, fourth-quarter-2025.pdf" in got[0].note
-    )
-
-
-def test_pages_maxReportsNotReached_noNote(ds: Dataset) -> None:
-    got = list(pages(ds.entry, FakeSite(_index(ANNUAL, NEW), render(_report())), max_reports=2))
-    assert got[0].note is None and len(got) == 3
-
-
-def test_newest_tiesKeepPageOrder() -> None:
-    a, b, c = (f"{BASE}/files/content/mainsite/{n}.pdf" for n in ("x-2025", "y", "z-2025"))
-    assert wc.newest([a, b, c], 1) == [a]
-    assert wc.newest([b, a, c], 2) == [a, c]
-
-
-def _text_pdf(text: str) -> bytes:
-    import io
-
-    from reportlab.pdfgen import canvas
-
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf)
-    c.drawString(72, 720, text)
-    c.save()
-    return buf.getvalue()
-
-
-def test_pages_pdfWithoutADiseaseTable_skippedWithANote(ds: Dataset) -> None:
-    other = f"{BASE}/files/content/mainsite/overdose-quarterly-2026-q2.pdf"
-
-    class Site(FakeSite):
-        def __call__(self, url: str) -> RawFetch:
-            self.asked.append(url)
-            if url == other:
-                return _fetch(url, _text_pdf("Overdose deaths, second quarter 2026"))
-            return _fetch(url, self.index if url.endswith("Statistics-Reports") else self.pdf)
-
-    got = list(pages(ds.entry, Site(_index(other, NEW), render(_report()))))
-    assert [len(p.records) for p in got] == [0, 0, 4 * 5]
-    assert got[1].note == "overdose-quarterly-2026-q2.pdf has no disease table, so it was not read."
-
-
-def test_publisher_fields_checksEveryReport_aBrokenOneRaises(ds: Dataset) -> None:
-    broken = dataclasses.replace(_report(), headers=(("Q1 2024",), ("Mystery",), ("A",), ("B",), ("C",)))
-
-    class Site(FakeSite):
-        def __call__(self, url: str) -> RawFetch:
-            self.asked.append(url)
-            body = render(broken) if url == ANNUAL else self.pdf
-            return _fetch(url, self.index if url.endswith("Statistics-Reports") else body)
-
-    with pytest.raises(LayoutError):
-        publisher_fields(ds.entry, Site(_index(NEW, ANNUAL), render(_report())))
-
-
-def test_contract_qualityRules_holdOnParsedReports(ds: Dataset) -> None:
-    con = _loaded(ds)
-    five = _loaded_five(ds)
-    rules = [
-        q
-        for obj in ds.contract.raw["schema"]
-        for q in [*obj.get("quality", []), *(r for p in obj["properties"] for r in p.get("quality", []))]
-        if q.get("type") == "sql" and "mustBe" in q
-    ]
-    assert len(rules) >= 5
-    for c in (con, five):
-        for rule in rules:
-            sql = rule["query"].replace("{object}", ds.id)
-            assert c.execute(sql).fetchone() == (rule["mustBe"],), rule["id"]
-    required = [col.name for col in ds.contract.columns if col.required]
-    for col in required:
-        assert con.execute(f"SELECT count(*) FROM {ds.id} WHERE {col} IS NULL").fetchone() == (0,), col
-
-
-def test_contract_requiredColumns_eachHaveAFillRateCheck(ds: Dataset) -> None:
-    for prop in ds.contract.raw["schema"][0]["properties"]:
-        if prop.get("required"):
-            metrics = {q.get("metric") for q in prop.get("quality", [])}
-            assert "nullValues" in metrics, prop["name"]
-
-
-def _fake_fetch(monkeypatch: pytest.MonkeyPatch, seen: list[tuple[str, dict[str, Any]]]) -> None:
+def test_fetcher_pacesEveryRequest(monkeypatch: pytest.MonkeyPatch) -> None:
     from health_data_registry import fetch
+
+    calls: list[str] = []
 
     class Resp:
         status, content, sha256 = 200, b"x", hashlib.sha256(b"x").hexdigest()
         final_url, retrieved_at = f"{BASE}/a.pdf", datetime(2026, 11, 24, tzinfo=UTC)
 
-    def f(url: str, **kw: Any) -> Resp:
-        seen.append((url, kw))
-        return Resp()
+    monkeypatch.setattr(fetch, "fetch", lambda url, **_: Resp())
 
-    monkeypatch.setattr(fetch, "fetch", f)
+    class Recorder(crawl.Pacer):
+        def wait(self, url: str) -> None:
+            calls.append(url)
 
-
-def test_fetcher_pdfReportsAskedAsHtmlAndPdf_apisAsJson(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen: list[tuple[str, dict[str, Any]]] = []
-    _fake_fetch(monkeypatch, seen)
-    get = crawl.fetcher(load_registry(ROOT), robots=False)
-    get(f"{BASE}/files/content/mainsite/2026-q2-public.pdf")  # a report: not under a catalogued URL
-    assert "application/pdf" in seen[-1][1]["headers"]["Accept"]
-    get("https://data.cdc.gov/resource/x.json")
-    assert seen[-1][1]["headers"]["Accept"] == "application/json"
-
-
-@pytest.mark.parametrize(
-    ("outer_s", "code"),
-    [
-        pytest.param(None, "publisher_too_slow", id="own-budget"),
-        pytest.param(3600.0, "publisher_too_slow", id="inside-a-longer-hosted-call"),
-    ],
-)
-def test_obtain_liveReadPastItsBudget_plainRefusal(
-    ds: Dataset, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outer_s: float | None, code: str
-) -> None:
-    from contextlib import nullcontext
-
-    from health_data_registry import deadline, live
-    from health_data_registry.query import Engine
-
-    seen: list[float | None] = []
-
-    def slow(url: str) -> RawFetch:
-        seen.append(deadline.remaining())
-        time.sleep(0.06)  # past this read's own budget
-        raise deadline.DeadlineExceeded()
-
-    monkeypatch.setattr(live, "LIVE_READ_BUDGET_S", 0.05)
-    eng = Engine(registry=load_registry(ROOT), lake=tmp_path, hub=None, fetch_at_run_time=True, getter=slow)
-    with deadline.call_deadline(outer_s) if outer_s else nullcontext(), pytest.raises(QueryRefused) as e:
-        eng._obtain(ds)
-    assert e.value.code == code and "longer than one question" in str(e.value)
-    assert seen and seen[0] is not None and 0 < seen[0] <= 0.05  # read under its own budget
-
-
-def test_obtain_hostedCallOutOfTime_keepsItsOwnMessage(
-    ds: Dataset, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from health_data_registry import deadline
-    from health_data_registry.query import Engine
-
-    def slow(url: str) -> RawFetch:
-        raise deadline.DeadlineExceeded()
-
-    eng = Engine(registry=load_registry(ROOT), lake=tmp_path, hub=None, fetch_at_run_time=True, getter=slow)
-    with deadline.call_deadline(0.0), pytest.raises(deadline.DeadlineExceeded):
-        eng._obtain(ds)
-
-
-def test_liveRead_capsReportsAndKeepsTheNote(ds: Dataset) -> None:
-    from health_data_registry import live
-
-    links = [f"{BASE}/files/content/mainsite/r-{2020 + i}-q1.pdf" for i in range(live.LIVE_MAX_REPORTS + 2)]
-    site = FakeSite(_index(*links), render(_report()))
-    table = live.fetch_live(ds, site)
-    assert len(site.asked) == 1 + live.LIVE_MAX_REPORTS
-    assert any("newest" in n for n in table.manifest.notes)
-
-
-@pytest.mark.parametrize(
-    ("error", "code", "words"),
-    [
-        pytest.param(LayoutError("x"), "publisher_layout_unreadable", "report layout", id="layout"),
-        pytest.param(wc.ReconciliationError("x"), "publisher_layout_unreadable", "report layout", id="sums"),
-        pytest.param("robots_disallowed", "publisher_disallows_reading", "asks automated tools", id="robots"),
-        pytest.param("blocked", "publisher_blocked", "refused this program", id="blocked"),
-        pytest.param("deadline", "publisher_too_slow", "longer than one question", id="slow"),
-        pytest.param(RuntimeError("x"), "publisher_unreachable", "could not be reached", id="other"),
-    ],
-)
-def test_liveRefusal_saysWhatHappenedAndWhatToDo(ds: Dataset, error: Any, code: str, words: str) -> None:
-    from health_data_registry.deadline import DeadlineExceeded
-    from health_data_registry.fetch import FetchRefused
-    from health_data_registry.query import live_refusal
-
-    e = (
-        DeadlineExceeded()
-        if error == "deadline"
-        else FetchRefused(error, "m")
-        if isinstance(error, str)
-        else error
-    )
-    got = live_refusal(ds, e)
-    assert got.code == code and words in str(got)
-    if code != "publisher_unreachable":
-        assert "few minutes" not in str(got) and ds.entry.source.landing_url in str(got)
+    get = crawl.fetcher(load_registry(ROOT), robots=False, pacer=Recorder({}))
+    get(f"{BASE}/a.pdf")
+    assert calls == [f"{BASE}/a.pdf"]

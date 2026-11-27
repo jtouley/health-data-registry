@@ -1,17 +1,15 @@
 dataset: cdc_respnet
-# 0.2.0: rates and percents say in plain words that CDC's table gives no interval.
-version: 0.2.0
-# Seasons are separate periods (non_additive: false); each other dimension says why it can't be added.
+version: 0.1.0
 dimensions:
-  - {name: virus_network, column: surveillance_network, type: categorical, non_additive: true, non_additive_reason: "Combined sits beside COVID-19, influenza and RSV, which it already includes", description: "Which virus the hospitalizations are for, by surveillance network (from CDC's dataset description): COVID-NET is COVID-19, FluSurv-NET is influenza, RSV-NET is RSV, and Combined is the three together."}
-  - {name: season, column: season, type: categorical, non_additive: false, description: "Respiratory season, e.g. 2025-26."}
-  - {name: week_ending, column: date, type: time, non_additive: true, non_additive_reason: "season rows sit beside the weekly rows of the same season", description: "Week-ending date (YYYY-MM-DD) for weekly rows; the season for season rows."}
-  - {name: site, column: state, type: categorical, non_additive: true, non_additive_reason: "all sites combined sits beside each site", description: "RESP-NET surveillance site, named by state: the site's catchment area, not necessarily the whole state. Overall or a network name means all sites combined."}
-  - {name: age_group, column: age_category, type: categorical, non_additive: true, non_additive_reason: "all ages sits beside each age group", description: "Age group of hospitalized patients; Overall (rate rows) or All (clinical-outcome rows) for all ages. Labels differ between rate rows (e.g. '65+ yr') and clinical rows (e.g. '≥65 years'), so copy the label from the row type you filter."}
-  - {name: race_ethnicity, column: race, type: categorical, non_additive: true, non_additive_reason: "all groups sits beside each group", description: "Race and ethnicity group, or All. Labels differ between rate rows (e.g. 'Black, NH') and clinical-outcome rows (e.g. 'Non-Hispanic Black'), so copy the label from the row type you filter."}
-  - {name: sex, column: sex, type: categorical, non_additive: true, non_additive_reason: "both sexes combined sits beside female and male", description: "Sex of hospitalized patients: Female, Male, or All for both combined."}
-  - {name: estimate_kind, column: data_type, type: categorical, non_additive: true, non_additive_reason: "weekly rates, cumulative rates and outcome percents are different measures", description: "Weekly rate, cumulative rate, or a clinical outcome percent."}
-  - {name: rate_method, column: rate_type, type: categorical, non_additive: true, non_additive_reason: "observed, age-adjusted and estimated rates are different measures of the same patients", description: "Observed, age-adjusted or estimated."}
+  - {name: virus_network, column: surveillance_network, type: categorical, description: "COVID-NET, FluSurv-NET, RSV-NET or Combined."}
+  - {name: season, column: season, type: categorical, description: "Respiratory season, e.g. 2025-26."}
+  - {name: week_ending, column: date, type: time, description: "Week-ending date (YYYY-MM-DD) for weekly rows; the season for season rows."}
+  - {name: site, column: state, type: categorical, description: "RESP-NET surveillance site, named by state: the site's catchment area, not necessarily the whole state. Overall or a network name means all sites combined."}
+  - {name: age_group, column: age_category, type: categorical, description: "Age group of hospitalized patients; Overall (rate rows) or All (clinical-outcome rows) for all ages. Labels differ between rate rows (e.g. '65+ yr') and clinical rows (e.g. '≥65 years'), so copy the label from the row type you filter."}
+  - {name: race_ethnicity, column: race, type: categorical, description: "Race and ethnicity group, or All. Labels differ between rate rows (e.g. 'Black, NH') and clinical-outcome rows (e.g. 'Non-Hispanic Black'), so copy the label from the row type you filter."}
+  - {name: sex, column: sex, type: categorical, description: "Sex of hospitalized patients: Female, Male, or All for both combined."}
+  - {name: estimate_kind, column: data_type, type: categorical, description: "Weekly rate, cumulative rate, or a clinical outcome percent."}
+  - {name: rate_method, column: rate_type, type: categorical, description: "Observed, age-adjusted or estimated."}
 measures:
   - {name: hospitalization_rate, column: estimate, kind: rate, unit: "per 100,000 population", description: "Laboratory-confirmed hospitalizations per 100,000 catchment population."}
   - {name: clinical_outcome_percent, column: estimate, kind: percent, unit: "%", description: "Percent of hospitalized patients with the outcome."}
@@ -22,42 +20,30 @@ metrics:
     aggregation: none
     exclude_total_rows: false
     filters: ["date_type = 'Week Ending Date'", "data_type = 'Weekly Rate'", "rate_type = 'Observed'"]
-    uncertainty: none
-    uncertainty_reason: "CDC's RESP-NET table gives no confidence interval for these rates; we have not yet checked whether CDC publishes one elsewhere."
   - name: cumulative_hospitalization_rate
     description: "Crude (observed) cumulative season-to-date rate of laboratory-confirmed hospitalizations per 100,000 as of a week."
     measure: hospitalization_rate
     aggregation: none
     exclude_total_rows: false
     filters: ["date_type = 'Week Ending Date'", "data_type = 'Cumulative Rate'", "rate_type = 'Observed'"]
-    uncertainty: none
-    uncertainty_reason: "CDC's RESP-NET table gives no confidence interval for these rates; we have not yet checked whether CDC publishes one elsewhere."
   - name: age_adjusted_weekly_hospitalization_rate
     description: "Age-adjusted weekly hospitalization rate per 100,000 (standard population not yet confirmed; do not compare with GBD age-standardized rates)."
     measure: hospitalization_rate
     aggregation: none
     exclude_total_rows: false
     filters: ["date_type = 'Week Ending Date'", "data_type = 'Weekly Rate'", "rate_type = 'Age-Adjusted'"]
-    uncertainty: none
-    uncertainty_reason: "CDC's RESP-NET table gives no confidence interval for these rates; we have not yet checked whether CDC publishes one elsewhere."
   - name: percent_admitted_to_icu
     description: "Percent of hospitalized patients in the season who were admitted to intensive care."
     measure: clinical_outcome_percent
     aggregation: none
     exclude_total_rows: false
     filters: ["date_type = 'Season'", "data_type = 'Admitted to Intensive Care Unit'"]
-    uncertainty: none
-    # Structural: the contract has no interval column; whether CDC publishes one elsewhere is an open question there.
-    uncertainty_reason: "CDC's RESP-NET table gives no confidence interval for these percents; we have not yet checked whether CDC publishes one elsewhere."
   - name: percent_in_hospital_death
     description: "Percent of hospitalized patients in the season who died in hospital."
     measure: clinical_outcome_percent
     aggregation: none
     exclude_total_rows: false
     filters: ["date_type = 'Season'", "data_type = 'In-Hospital Death'"]
-    uncertainty: none
-    # Structural: the contract has no interval column; whether CDC publishes one elsewhere is an open question there.
-    uncertainty_reason: "CDC's RESP-NET table gives no confidence interval for these percents; we have not yet checked whether CDC publishes one elsewhere."
 series:
   - condition: "FluSurv-NET"
     label: "Influenza hospitalisations"
@@ -80,14 +66,6 @@ series:
     metric: weekly_hospitalization_rate
     measure: rate
     filters: {virus_network: "COVID-NET", age_group: "Overall", sex: "All", race_ethnicity: "All"}
-    location_dimension: site
-    time_dimension: week_ending
-    case_status: "laboratory-confirmed"
-# Any virus network in the catalog (conditions.labels): the weekly observed rate, as published, never added.
-generic_series:
-  - metric: weekly_hospitalization_rate
-    measure: rate
-    filters: {age_group: "Overall", sex: "All", race_ethnicity: "All"}
     location_dimension: site
     time_dimension: week_ending
     case_status: "laboratory-confirmed"

@@ -179,28 +179,6 @@ def test_unpinned_hub_resolves_newest_release(tmp_path: Path) -> None:
     assert hub.newest_release([]) is None
 
 
-def test_hosted_answers_carry_the_snapshot_notes(tmp_path: Path, reg: Registry, released: Path) -> None:
-    """A flag code the contract doesn't list shows on a hosted answer as it does on a lake answer."""
-    rel = json.loads((released / "manifest.json").read_text())
-    snap = rel["sources"]["toy_cases"]["snapshot"]
-    snap["notes"] = ["A note the maintainer's lake wrote."]
-    snap["silver"] = {"layout_version": "1", "row_count": 4, "unlisted_codes": {"n_flag": ["Z"]}}
-    (released / "manifest.json").write_text(json.dumps(rel))
-    _, m = Hub(url=str(released), cache=tmp_path / "c").snapshot(reg.get("toy_cases"))
-    unlisted = (
-        "The publisher's n_flag column holds the code 'Z', which the reviewed contract doesn't list, so what it "
-        "means is not known here."
-    )
-    assert m.notes == ["A note the maintainer's lake wrote.", unlisted]
-    # Notes the snapshot already carries are not repeated, and an older release with no silver section reads.
-    assert hub.hub_notes({"notes": [unlisted], "silver": snap["silver"]}) == [unlisted]
-    assert hub.hub_notes({}) == []
-    assert hub.hub_notes({"notes": None, "silver": {"unlisted_codes": {"a": ["X", "Y"]}}}) == [
-        "The publisher's a column holds the codes 'X', 'Y', which the reviewed contract doesn't list, so what "
-        "they mean is not known here."
-    ]
-
-
 def test_local_hub_copy_must_be_a_tagged_release(tmp_path: Path, reg: Registry, released: Path) -> None:
     rel = json.loads((released / "manifest.json").read_text())
     (released / "manifest.json").write_text(json.dumps(rel | {"tag": "main"}))
@@ -483,7 +461,6 @@ def test_fetcher_arguments_and_retries(tmp_path: Path, reg: Registry, monkeypatc
     get = crawl.fetcher(reg, None, sleep=sleeps.append, robots=False)
     with pytest.raises(fetch_mod.FetchRefused):
         get("https://data.cdc.gov/x")
-    # a plain open-data host keeps the short backoff; the 10 s pace is for the hosts the access policy targets
     assert len(seen) == crawl.RETRIES == 4 and sleeps == [2, 4, 8]
     url, kw = seen[0]
     assert url == "https://data.cdc.gov/x"
@@ -717,101 +694,3 @@ def test_latest_pointer_is_swapped_in_one_step(tmp_path: Path, reg: Registry, mo
     with pytest.raises(OSError):
         store._point_latest(lake, latest.parent.name, "20990101T000000Z-000000000000")
     assert latest.read_text() == before
-
-
-# ------------------------------------------------------------------- fix round: shared cache and deadlines
-
-
-def test_hubs_on_one_cache_never_evict_each_others_files(
-    tmp_path: Path, reg: Registry, released: Path
-) -> None:
-    other = tmp_path / "other-release"
-    shutil.copytree(released, other)
-    first = Hub(url=str(released), cache=tmp_path / "cache")
-    second = Hub(url=str(other), cache=tmp_path / "cache")
-    held, _ = first.snapshot(reg.get("toy_cases"))
-    first.snapshot(reg.get("toy_cases"))  # the same file twice is held once
-    assert held.resolve() in second.in_use()  # one registry for the whole cache
-    second.max_bytes = 1  # every download by the second hub tries to empty the cache
-    second.fetch("toy_listed/README.md")
-    assert held.is_file()  # the first hub's view still reads it
-    first.release_files()
-    assert held.resolve() not in second.in_use() and first._in_use == set()
-    second.fetch("manifest.json")
-    assert not held.exists()  # given back: evictable like any other file
-    first.release_files()  # nothing held: a no-op
-
-
-def test_a_closed_pinned_engine_gives_its_files_back(tmp_path: Path, reg: Registry, released: Path) -> None:
-    eng = engine(reg, tmp_path, released)
-    eng.manifest("toy_cases")
-    file = eng._hub_files["toy_cases"][0].resolve()
-    assert file in eng.hub.in_use()
-    eng.close(release_hub=False)  # another engine shares this hub: its files stay held
-    assert eng._con is None and file in eng.hub.in_use()
-    eng.close()
-    assert file not in eng.hub.in_use()
-    engine(reg, tmp_path, None).close()  # no hub: nothing to give back
-
-
-def test_a_hub_download_ends_by_the_call_deadline(tmp_path: Path, monkeypatch: Any) -> None:
-    import time
-
-    import huggingface_hub
-
-    from health_data_registry import deadline
-
-    seen: dict[str, Any] = {}
-
-    def slow(repo: str, filename: str, **kw: Any) -> str:
-        seen.update(kw)
-        time.sleep(2)
-        return "never"
-
-    monkeypatch.setattr(huggingface_hub, "hf_hub_download", slow)
-    h = Hub(url=f"hf://datasets/org/hub@release-{RUN}", cache=tmp_path)
-    start = time.monotonic()
-    with deadline.call_deadline(0.3), pytest.raises(deadline.DeadlineExceeded):
-        h.fetch("manifest.json")
-    assert time.monotonic() - start < 1.5  # not the 2 s the download would take
-    assert 0 < seen["etag_timeout"] <= 0.3 and seen["token"] is False
-
-
-def test_a_slow_release_lookup_ends_by_the_call_deadline(tmp_path: Path) -> None:
-    import time
-
-    from health_data_registry import deadline
-
-    class Slow:
-        def list_repo_refs(self, *a: Any, **kw: Any) -> Any:
-            time.sleep(2)
-
-    h = Hub(url="hf://datasets/org/hub", cache=tmp_path, api=Slow())
-    start = time.monotonic()
-    with deadline.call_deadline(0.2), pytest.raises(deadline.DeadlineExceeded):
-        h.revision()
-    assert time.monotonic() - start < 1.5 and h._rev is None
-
-
-def test_bounded_and_check_outside_and_inside_a_deadline(monkeypatch: Any) -> None:
-    import time
-
-    from health_data_registry import deadline
-
-    assert deadline.bounded(lambda: 7) == 7  # no deadline: just runs
-    deadline.check()
-    with deadline.call_deadline(5):
-        assert deadline.bounded(lambda: "ok") == "ok"
-        with pytest.raises(KeyError, match="boom"):
-            deadline.bounded(lambda: {}["boom"])  # the helper's own error comes back as is
-        deadline.check()
-    with deadline.call_deadline(0.05):
-        time.sleep(0.06)
-        with pytest.raises(deadline.DeadlineExceeded):
-            deadline.check()
-        with pytest.raises(deadline.DeadlineExceeded):
-            deadline.bounded(lambda: "too late")  # nothing left: never started
-    with deadline.call_deadline(0.05):
-        time.sleep(0.06)
-        with pytest.raises(deadline.DeadlineExceeded):
-            Engine(registry=Registry(root=Path("."), datasets={}), lake=Path("x"), hub=None).connect()

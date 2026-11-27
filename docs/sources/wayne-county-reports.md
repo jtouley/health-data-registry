@@ -42,16 +42,11 @@ than guesses:
 - A row of values outside the table's borders or below the grand total, a labelled cell with no values, a blank cell, two values in
   one column, an unknown column header or a header without a year all raise `LayoutError`.
 - Every row's quarters must add up to its year-to-date or annual total, and every year to the multi-year
-  total and average (rounded half up, as Word and Excel print it). Up to `MAX_FAILED_ROWS` (2) disease rows
-  may fail, counted as rows rather than checks; they keep a `failed_checks` note. More than that means a
-  misread, and the report is refused (`ReconciliationError`).
-- Subtotals are checked against their group's rows, and the grand total against all rows, every time a
-  report is read. A disagreement is kept in that total row's `failed_checks`, not raised. Example: the 2022
-  report prints Influenza Q3 as 103 in the disease row and 113 in the subtotal, and the grand total agrees
-  with 113.
-- A disease printed twice in one group is refused: the grain is one row per disease per group.
-- The PDF itself is untrusted: over 10 MB or 30 pages, or still parsing after 30 s, it is refused unread, and
-  anything the PDF library raises becomes a `LayoutError`.
+  total and average. Up to `MAX_FAILED_ROWS` (2) rows may fail; they keep a `failed_checks` note. More
+  than that means a misread, and the report is refused (`ReconciliationError`).
+- Subtotals are checked against their group's rows, and the grand total against all rows. Disagreements
+  are returned by `publisher_inconsistencies()`, not raised. Example: the 2022 report prints Influenza
+  Q3 as 103 in the disease row and 113 in the subtotal, and the grand total agrees with 113.
 
 Results on the nine reports available on 24 Nov 2026 (the files are not in the repo):
 
@@ -79,26 +74,16 @@ only by `make test-network`, once the source is catalogued.
   to `wayne_county.pages()`.
 - **Read at run time, never stored:** `redistribution: false`, so the server reads the reports live, holds
   them in memory and never puts them on the hub.
-- **Area as the report states it:** a record from a report that says it excludes Detroit carries `area`
-  "Wayne County, Michigan, excluding the City of Detroit (Out-Wayne)". A report that doesn't say (the 5-year
-  report) carries an area that says so instead, until a maintainer confirms it (hard rule 1).
-- **Each row cites its report:** `report_url`, `report_sha256` (the PDF's bytes) and `report_retrieved_at`.
+- **Excludes Detroit on every row:** each record carries `area` ("Wayne County, Michigan, excluding the City
+  of Detroit (Out-Wayne)"). `excludes_detroit` still says only what the report itself states.
 - **Never added across reports or columns:** `reported_cases` must be read at one report and one column, and
   the compiler refuses anything else. A `*` leaves its group with no total.
 - **Scope:** the index page, then only the reports in the layouts checked here: the 2021–2024 annual
   reports, everything under `/files/content/` (2025-on quarterly reports and the 2021–2025 5-year report).
-  A PDF with no disease table at all is skipped with a note; if a report in scope doesn't parse, the whole
-  source is refused, and the clinician is told the county's report layout couldn't be read and to open the
-  reports page instead.
-- **Live reads are bounded:** one question reads at most the three reports with the latest year in their
-  file names (`live.LIVE_MAX_REPORTS`), within 75 s in all (`live.LIVE_READ_BUDGET_S`); the answer's notes
-  name the reports left unread.
-- **Access:** the county's site is a government host (`source.government_host`), so under the maintainer's
-  access policy it is paced at least 10 s between requests, robots.txt included, by one access policy per
-  server process (`crawl.shared_robots`), with an honest user agent. Index and PDFs are requested as HTML and
-  PDF, not JSON. On 24 Nov 2026 the county's CDN answered 403 from the build environment; a 401 or 403 on a
-  page is a block, recorded and never worked around (a 429 is backed off), so check access before review. The government-host
-  fallback ladder is issue #36.
+  If a report in scope doesn't parse, the whole source is refused.
+- **Access:** an honest user agent, robots.txt honoured, and at least 10 s between requests
+  (`source.min_interval_s`, enforced by `crawl.Pacer`). On 24 Nov 2026 the county's CDN answered 403 from the
+  build environment, and a 403 robots.txt means "disallow everything", so check access before review.
 
 ## Still open
 

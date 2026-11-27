@@ -18,8 +18,7 @@ from __future__ import annotations
 
 import math
 import re
-import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 
 # A printed value: an integer with optional thousands commas, a decimal, or a suppression mark.
@@ -30,11 +29,6 @@ _HEADER_VOCAB = re.compile(r"^(?:Q[1-4]\b.*|YTD|Total|Average|5-Year|Disease|Gro
 _LINE_TOLERANCE = 2.0  # points: words whose tops differ by less than this share a line
 _MAX_BORDER = 2.0  # points: a filled box thinner than this is a border, not a shaded cell
 _RULE_MERGE = 2.5  # points: borders closer than this are one border (Word draws thick borders as two edges)
-# Limits on an untrusted PDF (it comes from a publisher's website and is parsed in the server's process): a
-# disease report is a few pages and well under a megabyte, so anything far past these is refused unread.
-MAX_PDF_BYTES = 10_000_000
-MAX_PDF_PAGES = 30
-MAX_PARSE_S = 30.0  # checked before each page, so one page can run past it but no document runs on
 
 
 class LayoutError(ValueError):
@@ -247,13 +241,10 @@ def _columns(page: PageGeometry, spec: TableSpec, header: _Header, header_top: f
     header.band_bottom = max((w.bottom for w in used), default=header_top)
 
 
-def _count_in(line: Sequence[Word], spec: TableSpec, left: float, *, years_are_header: bool = True) -> int:
-    """Values right of `left` on a line. In the header band (`years_are_header`), a line of bare years with no
-    label of its own is a header ("2024  2025"), so it counts 0; a data row of year-like counts (Chlamydia 2010
-    2045) has its disease label on the line and counts in full."""
+def _count_in(line: Sequence[Word], spec: TableSpec, left: float) -> int:
+    """Values right of `left` on a line; 0 for a line of bare years, which is a header (\"2024  2025\")."""
     values = [w for w in line if w.x0 > left and is_value_token(w.text, spec)]
-    labelled = any(w.x1 <= left and not _HEADER_VOCAB.match(w.text) for w in line)
-    if years_are_header and not labelled and values and all(_YEAR.match(w.text) for w in values):
+    if values and all(_YEAR.match(w.text) for w in values):
         return 0
     return len(values)
 
@@ -287,11 +278,7 @@ def parse_page(
 
     value_lines = _value_lines(page, spec, below, header.columns[0].left)
     need = math.ceil(len(header.columns) / 2)
-    # Below the header band every line of values is data, even one whose counts all look like years.
-    first = header.columns[0].left
-    value_lines = [
-        line for line in value_lines if _count_in(line, spec, first, years_are_header=False) >= need
-    ]
+    value_lines = [line for line in value_lines if _count_in(line, spec, header.columns[0].left) >= need]
     if not value_lines:
         return [], header
 
@@ -438,36 +425,15 @@ def parse_tables(pages: Sequence[PageGeometry], spec: TableSpec | None = None) -
     return rows
 
 
-def read_pdf(
-    content: bytes, *, clock: Callable[[], float] = time.monotonic, max_parse_s: float = MAX_PARSE_S
-) -> list[PageGeometry]:
-    """Word boxes and horizontal borders for every page (the only function that touches pdfplumber).
-
-    The PDF is untrusted: one past MAX_PDF_BYTES or MAX_PDF_PAGES, or still parsing after `max_parse_s`, is
-    refused, and anything the PDF library raises becomes a LayoutError, never a bare third-party exception.
-    """
-    if len(content) > MAX_PDF_BYTES:
-        raise LayoutError(f"the PDF is {len(content):,} bytes, more than a report ({MAX_PDF_BYTES:,})")
-    try:
-        return _read_pdf(content, clock() + max_parse_s, clock)
-    except LayoutError:
-        raise
-    except Exception as e:  # noqa: BLE001 - a broken or hostile PDF is a refusal, whatever the library raised
-        raise LayoutError(f"the PDF could not be read ({type(e).__name__})") from e
-
-
-def _read_pdf(content: bytes, deadline: float, clock: Callable[[], float]) -> list[PageGeometry]:
+def read_pdf(content: bytes) -> list[PageGeometry]:
+    """Word boxes and horizontal borders for every page (the only function that touches pdfplumber)."""
     import io
 
     import pdfplumber
 
     out = []
     with pdfplumber.open(io.BytesIO(content)) as pdf:
-        if len(pdf.pages) > MAX_PDF_PAGES:
-            raise LayoutError(f"the PDF has {len(pdf.pages)} pages, more than a report ({MAX_PDF_PAGES})")
         for i, page in enumerate(pdf.pages, start=1):
-            if clock() > deadline:
-                raise LayoutError(f"the PDF took too long to read (stopped before page {i})")
             words = tuple(
                 Word(
                     text=str(w["text"]),

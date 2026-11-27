@@ -1,20 +1,10 @@
 dataset: cdc_nndss_weekly
-# 0.2.0: weekly counts are added up for one condition label at a time, never across labels.
-version: 0.2.0
-# reporting_area is additive only because the contract's totalRows drops the summary areas from every sum that
-# excludes totals (its structural check: 51 state/DC rows + New York City = US RESIDENTS); validate refuses a summed
-# metric that keeps the total rows and adds areas. Weeks and years are separate periods; running totals are read at
-# one week (single_value_of).
+version: 0.1.0
 dimensions:
-  - {name: reporting_area, column: states, type: categorical, non_additive: false, description: "The jurisdiction that reported the cases (a state, New York City or a territory), a regional or US summary area, or non-US residents. A case is counted where it is submitted, by its country of usual residence; whether the regions are census divisions or HHS regions is an open question in the contract."}
-  - {name: mmwr_year, column: year, type: time, non_additive: false, description: "MMWR (epidemiological) year."}
-  - {name: mmwr_week, column: week, type: time, non_additive: false, description: "MMWR week within the year (1-52 or 53)."}
-  - name: condition
-    column: label
-    type: categorical
-    non_additive: true
-    non_additive_reason: "the labels overlap, as Confirmed + Probable = Total, and some are not cases in people, such as animal rabies"
-    description: "Nationally notifiable condition, e.g. Legionellosis or Candida auris, clinical."
+  - {name: reporting_area, column: states, type: categorical, description: "State, New York City, territory, census division or US summary area where the cases were reported (by residence)."}
+  - {name: mmwr_year, column: year, type: time, description: "MMWR (epidemiological) year."}
+  - {name: mmwr_week, column: week, type: time, description: "MMWR week within the year (1-52 or 53)."}
+  - {name: condition, column: label, type: categorical, description: "Nationally notifiable condition, e.g. Legionellosis or Candida auris, clinical."}
 measures:
   - {name: cases_this_week, column: m1, kind: count, unit: "cases", description: "Cases reported in the MMWR week."}
   - {name: max_weekly_cases_prior_52_weeks, column: m2, kind: maximum, unit: "cases", description: "Highest weekly count in the previous 52 weeks; a maximum, never added up."}
@@ -22,31 +12,32 @@ measures:
   - {name: cases_prior_year_to_date, column: m4, kind: running_count, unit: "cases", description: "Cumulative cases in the previous MMWR year up to the same week; a running total, added across places only at one week."}
 metrics:
   - name: weekly_cases
-    description: "Number of cases of one notifiable condition label reported in a given week, added across the chosen places and weeks; one row per label, never added across labels."
+    description: "Number of cases of a notifiable condition reported in a given week, added across the chosen places and weeks."
     measure: cases_this_week
     aggregation: sum
     exclude_total_rows: true
+    single_value_of: [condition]
     filters: []
   - name: year_to_date_cases
     description: "Cases so far this year as of one MMWR week (the compiler refuses it unless mmwr_week is filtered to one week, normally the latest; added across places only)."
     measure: cases_year_to_date
     aggregation: sum
     exclude_total_rows: true
-    single_value_of: [mmwr_week]
+    single_value_of: [mmwr_week, condition]
     filters: []
   - name: prior_year_to_date_cases
     description: "Cases in the previous year up to the same week, as revised in the current week's table (read at one mmwr_week, which the compiler requires)."
     measure: cases_prior_year_to_date
     aggregation: sum
     exclude_total_rows: true
-    single_value_of: [mmwr_week]
+    single_value_of: [mmwr_week, condition]
     filters: []
   - name: us_resident_year_to_date_cases
     description: "National year-to-date cases among US residents, read from the published US RESIDENTS row (excludes territories and non-US residents)."
     measure: cases_year_to_date
     aggregation: sum
     exclude_total_rows: false
-    single_value_of: [mmwr_week]
+    single_value_of: [mmwr_week, condition]
     filters: ["upper(states) IN ('US RESIDENTS', 'U.S. RESIDENTS')"]
   - name: annual_cases
     description: "Cases in an MMWR year, as two separate observations: year_end_ytd, the year's own year-to-date count at the last week of the year that has a number (provisional, labelled with that week); and subsequent_year_restatement, next year's prior-year year-to-date for the same year (unverified_restatement, not a final disease count). Neither is final until a domain reviewer approves that they count the same thing. Weekly counts are not added up because late reports are added to the running total, not to the week."
@@ -55,6 +46,7 @@ metrics:
     order_by: mmwr_week
     restated_by: {measure: cases_prior_year_to_date, resolution_policy: require_domain_review}
     exclude_total_rows: true
+    single_value_of: [condition]
     filters: []
   - name: us_resident_annual_cases
     description: "Annual cases among US residents from the published US RESIDENTS row, read the same way as annual_cases."
@@ -63,12 +55,14 @@ metrics:
     order_by: mmwr_week
     restated_by: {measure: cases_prior_year_to_date, resolution_policy: require_domain_review}
     exclude_total_rows: false
+    single_value_of: [condition]
     filters: ["upper(states) IN ('US RESIDENTS', 'U.S. RESIDENTS')"]
   - name: us_resident_weekly_cases
     description: "Cases among US residents reported in a given week, read from the published US RESIDENTS row and added across weeks."
     measure: cases_this_week
     aggregation: sum
     exclude_total_rows: false
+    single_value_of: [condition]
     filters: ["upper(states) IN ('US RESIDENTS', 'U.S. RESIDENTS')"]
   - name: max_weekly_cases_prior_52_weeks
     description: "Highest weekly case count in the previous 52 weeks for one place and condition, as published; never added up."
@@ -120,7 +114,7 @@ series:
     filters: {condition: "Legionellosis"}
     location_dimension: reporting_area
     time_dimension: mmwr_year
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
   - condition: "Legionellosis"
     label: "Legionellosis"
     metric: us_resident_annual_cases
@@ -128,7 +122,7 @@ series:
     filters: {condition: "Legionellosis"}
     location_dimension: reporting_area
     time_dimension: mmwr_year
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
   - condition: "Syphilis, Primary and secondary"
     label: "Syphilis (primary and secondary)"
     metric: annual_cases
@@ -136,7 +130,7 @@ series:
     filters: {condition: "Syphilis, Primary and secondary"}
     location_dimension: reporting_area
     time_dimension: mmwr_year
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
   - condition: "Syphilis, Primary and secondary"
     label: "Syphilis (primary and secondary)"
     metric: us_resident_annual_cases
@@ -144,7 +138,7 @@ series:
     filters: {condition: "Syphilis, Primary and secondary"}
     location_dimension: reporting_area
     time_dimension: mmwr_year
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
   - condition: "Syphilis, Congenital"
     label: "Congenital syphilis"
     metric: annual_cases
@@ -152,7 +146,7 @@ series:
     filters: {condition: "Syphilis, Congenital"}
     location_dimension: reporting_area
     time_dimension: mmwr_year
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
   - condition: "Syphilis, Congenital"
     label: "Congenital syphilis"
     metric: us_resident_annual_cases
@@ -160,7 +154,7 @@ series:
     filters: {condition: "Syphilis, Congenital"}
     location_dimension: reporting_area
     time_dimension: mmwr_year
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
   - condition: "Tuberculosis"
     label: "Tuberculosis"
     metric: annual_cases
@@ -168,7 +162,7 @@ series:
     filters: {condition: "Tuberculosis"}
     location_dimension: reporting_area
     time_dimension: mmwr_year
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
   - condition: "Tuberculosis"
     label: "Tuberculosis"
     metric: us_resident_annual_cases
@@ -176,7 +170,7 @@ series:
     filters: {condition: "Tuberculosis"}
     location_dimension: reporting_area
     time_dimension: mmwr_year
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
   # Weekly series feed check_signal only (get_series never adds weeks up into a year).
   - condition: "Candida auris, clinical"
     label: "C. auris (clinical cases)"
@@ -226,7 +220,7 @@ series:
     location_dimension: reporting_area
     time_dimension: mmwr_year
     week_dimension: mmwr_week
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
   - condition: "Legionellosis"
     label: "Legionellosis"
     metric: us_resident_weekly_cases
@@ -235,7 +229,7 @@ series:
     location_dimension: reporting_area
     time_dimension: mmwr_year
     week_dimension: mmwr_week
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
   - condition: "Syphilis, Primary and secondary"
     label: "Syphilis (primary and secondary)"
     metric: weekly_cases
@@ -244,7 +238,7 @@ series:
     location_dimension: reporting_area
     time_dimension: mmwr_year
     week_dimension: mmwr_week
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
   - condition: "Syphilis, Primary and secondary"
     label: "Syphilis (primary and secondary)"
     metric: us_resident_weekly_cases
@@ -253,7 +247,7 @@ series:
     location_dimension: reporting_area
     time_dimension: mmwr_year
     week_dimension: mmwr_week
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
   - condition: "Syphilis, Congenital"
     label: "Congenital syphilis"
     metric: weekly_cases
@@ -262,7 +256,7 @@ series:
     location_dimension: reporting_area
     time_dimension: mmwr_year
     week_dimension: mmwr_week
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
   - condition: "Syphilis, Congenital"
     label: "Congenital syphilis"
     metric: us_resident_weekly_cases
@@ -271,7 +265,7 @@ series:
     location_dimension: reporting_area
     time_dimension: mmwr_year
     week_dimension: mmwr_week
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
   - condition: "Tuberculosis"
     label: "Tuberculosis"
     metric: weekly_cases
@@ -280,7 +274,7 @@ series:
     location_dimension: reporting_area
     time_dimension: mmwr_year
     week_dimension: mmwr_week
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "as published (NNDSS does not split confirmed and probable here)"
   - condition: "Tuberculosis"
     label: "Tuberculosis"
     metric: us_resident_weekly_cases
@@ -289,29 +283,4 @@ series:
     location_dimension: reporting_area
     time_dimension: mmwr_year
     week_dimension: mmwr_week
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
-# Any condition label in the catalog (conditions.labels) reads through these templates, pinned on the condition
-# dimension: the same running-total rules as the named series above (read at one week, never weeks added up).
-generic_series:
-  - metric: annual_cases
-    measure: cases
-    location_dimension: reporting_area
-    time_dimension: mmwr_year
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
-  - metric: us_resident_annual_cases
-    measure: cases
-    location_dimension: reporting_area
-    time_dimension: mmwr_year
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
-  - metric: weekly_cases
-    measure: cases
-    location_dimension: reporting_area
-    time_dimension: mmwr_year
-    week_dimension: mmwr_week
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
-  - metric: us_resident_weekly_cases
-    measure: cases
-    location_dimension: reporting_area
-    time_dimension: mmwr_year
-    week_dimension: mmwr_week
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "as published (NNDSS does not split confirmed and probable here)"

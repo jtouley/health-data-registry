@@ -97,16 +97,7 @@ CAURIS = ["Candida auris, clinical", "Candida auris, screening"]
 
 
 @pytest.mark.parametrize(
-    "metric",
-    [
-        "weekly_cases",
-        "year_to_date_cases",
-        "prior_year_to_date_cases",
-        "annual_cases",
-        "us_resident_weekly_cases",
-        "us_resident_year_to_date_cases",
-        "us_resident_annual_cases",
-    ],
+    "metric", ["weekly_cases", "year_to_date_cases", "annual_cases", "us_resident_annual_cases"]
 )
 @pytest.mark.parametrize(
     ("filters", "group_by"),
@@ -120,21 +111,10 @@ def test_nndss_cauris_clinicalAndScreening_neverAddedTogether(
     metric: str, filters: dict[str, Any], group_by: list[str]
 ) -> None:
     ds = load_registry(ROOT).get("cdc_nndss_weekly")
-    if ds.semantic.metric(metric).aggregation == "cumulative_latest":
-        group_by = [
-            *group_by,
-            "mmwr_year",
-            "reporting_area",
-        ]  # read once per year and area; condition is under test
-    if "condition" in group_by:
-        # Grouped by condition: one row per condition, never a sum across them.
-        assert "GROUP BY" in compile_metric(ds, metric, filters=filters, group_by=group_by).sql
-        return
     with pytest.raises(QueryRefused) as e:
         compile_metric(ds, metric, filters=filters, group_by=group_by)
-    # condition is non_additive (#49): its labels overlap or count different things, so they are never added.
-    assert e.value.code in ("non_additive", "needs_single_value", "needs_grouping")
-    assert "condition" in str(e.value)
+    assert e.value.code == "needs_single_value"
+    assert "one condition" in str(e.value)
 
 
 def test_nndss_cauris_series_oneLabelEach_caseStatusCited() -> None:
@@ -151,7 +131,7 @@ def test_needsSingleValue_message_runningTotalOnlyForItsOrderDimension() -> None
     ds = load_registry(ROOT).get("cdc_nndss_weekly")
     with pytest.raises(QueryRefused) as e:
         compile_metric(ds, "weekly_cases", filters={"condition": CAURIS})
-    assert e.value.code == "non_additive"  # a plain count: never added across conditions
+    assert str(e.value).startswith("weekly_cases is read at one condition")
     with pytest.raises(QueryRefused) as e:
         compile_metric(ds, "year_to_date_cases", filters={"condition": "Legionellosis"})
     assert str(e.value).startswith("year_to_date_cases is a running total, so it is read at one mmwr_week")

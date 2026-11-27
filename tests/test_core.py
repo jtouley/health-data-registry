@@ -11,8 +11,7 @@ from health_data_registry import tools
 from health_data_registry.adapters import socrata, who_gho
 from health_data_registry.query import Engine, QueryRefused, compile_metric
 from health_data_registry.registry import Registry, RegistryError, load_registry
-from health_data_registry.staging import typed_select as select_list
-from health_data_registry.store import latest_snapshot
+from health_data_registry.store import latest_snapshot, select_list
 from tests.conftest import CATALOG, CONTRACT, SEMANTIC, raw_fetch, write_registry
 
 # ------------------------------------------------------------------ registry: strict by design
@@ -127,9 +126,7 @@ def test_rates_are_never_added_up(lake: Path, registry: Registry) -> None:
         group_by=["state", "year"],
         filters={"condition": "Legionellosis", "year": 2023},
     )
-    assert ok["rows"] == [
-        ["MICHIGAN", 2023, 3.1, False], ["OHIO", 2023, 3.4, False], ["US RESIDENTS", 2023, 2.7, False]
-    ]  # fmt: skip
+    assert ok["rows"] == [["MICHIGAN", 2023, 3.1], ["OHIO", 2023, 3.4], ["US RESIDENTS", 2023, 2.7]]
     assert "not summed" in ok["method"]
 
 
@@ -151,11 +148,11 @@ def test_compile_refusals(registry: Registry, kwargs: dict, code: str) -> None:
 @given(value=st.text(min_size=1, max_size=40))
 def test_filter_values_are_bound_never_spliced(registry: Registry, value: str) -> None:
     ds = registry.get("toy_cases")
-    cm = compile_metric(ds, "case_count", filters={"state": value, "condition": "Legionellosis"})
+    cm = compile_metric(ds, "case_count", filters={"state": value})
     assert (
-        cm.sql == compile_metric(ds, "case_count", filters={"state": "x", "condition": "Legionellosis"}).sql
+        cm.sql == compile_metric(ds, "case_count", filters={"state": "x"}).sql
     )  # SQL never depends on the value
-    assert cm.params == [value, "Legionellosis"]
+    assert cm.params == [value]
 
 
 def test_no_snapshot_is_a_plain_refusal(registry: Registry, tmp_path: Path) -> None:
@@ -180,9 +177,10 @@ def test_query_sql_guarded(lake: Path, registry: Registry) -> None:
 def test_search_datasets(registry: Registry) -> None:
     hit = tools.search_datasets(registry, topic="legionella in states", geography="state", fmt="json")
     assert hit["rows"][0][0] == "toy_cases"
-    assert "legionella" in hit["rows"][0][hit["columns"].index("why_it_fits")]
-    for kw in ({"topic": "cancer"}, {"geography": "county"}, {"year_start": 2030}):
-        assert tools.search_datasets(registry, fmt="json", **kw)["refused"] == "no_dataset_matched"
+    assert "legionella" in hit["rows"][0][-1]
+    assert tools.search_datasets(registry, topic="cancer", fmt="json")["rows"] == []
+    assert tools.search_datasets(registry, geography="county", fmt="json")["rows"] == []
+    assert tools.search_datasets(registry, year_start=2030, fmt="json")["rows"] == []
 
 
 def test_suggest_datasets_says_why_not(registry: Registry) -> None:
@@ -240,9 +238,8 @@ def test_get_series_mixed_measures_warns(lake: Path, registry: Registry) -> None
 
 def test_get_series_refusals(lake: Path, registry: Registry) -> None:
     eng = Engine(registry=registry, lake=lake)
-    assert tools.get_series(registry, eng, condition="mumps") == (
-        "No loaded source reports 'mumps'.\nNext step: Open describe_dataset for a source search_datasets lists, "
-        "pick one of its condition labels, and ask again with that label."
+    assert "Conditions available now: Legionellosis, Syphilis" in tools.get_series(
+        registry, eng, condition="mumps"
     )
     assert "both-sexes" in tools.get_series(registry, eng, condition="syphilis", sex="female")
 
@@ -376,24 +373,3 @@ def test_redistribution_needs_a_reviewed_licence() -> None:
     assert not Licence(id="CC-BY-NC-SA-3.0-IGO", redistribution=False, terms_url="x").redistribution
     with pytest.raises(ValidationError, match="reviewed list"):
         Licence(id="CC-BY-NC-SA-3.0-IGO", redistribution=True, terms_url="x")
-
-
-def test_hosting_defaults_to_private_and_public_needs_redistribution(tmp_path: Path) -> None:
-    """A source reaches the open release only through an explicit `hosting: public` in its catalog entry."""
-    public = load_registry(write_registry(tmp_path / "public")).get("toy_cases").entry
-    assert public.hosting == "public" and public.hosted
-    unset = CATALOG.replace("hosting: public\n", "")
-    private = load_registry(write_registry(tmp_path / "unset", catalog=unset)).get("toy_cases").entry
-    assert private.hosting == "private" and not private.hosted
-    with pytest.raises(RegistryError, match="hosting"):
-        load_registry(write_registry(tmp_path / "other", catalog=unset + "hosting: maybe\n"))
-    restricted = CATALOG.replace(
-        "redistribution: true, terms_url", "redistribution: false, terms_url"
-    ).replace("public-domain-us-federal", "CC-BY-NC-SA-3.0-IGO")
-    with pytest.raises(RegistryError, match="hosting: public needs a licence"):
-        load_registry(write_registry(tmp_path / "restricted", catalog=restricted))
-
-
-def test_real_catalog_hosts_only_redistributable_sources() -> None:
-    for ds in load_registry():
-        assert ds.entry.hosted == ds.entry.licence.redistribution, ds.id

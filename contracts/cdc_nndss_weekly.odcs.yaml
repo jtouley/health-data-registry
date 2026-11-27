@@ -66,7 +66,7 @@ schema:
         physicalType: BIGINT
         logicalType: integer
         required: true
-        description: "MMWR (epidemiological) year of the report."
+        description: "MMWR (epidemiological) year of the report. Published as text; cast to integer."
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: year}
@@ -91,7 +91,7 @@ schema:
         physicalType: BIGINT
         logicalType: integer
         required: false
-        description: "Cases reported for this condition and area in this MMWR week (publisher column 'Current week'). Empty when the flag column m1_flag holds a code; '-' means no reported cases."
+        description: "Cases reported for this condition and area in this MMWR week (publisher column 'Current week'). Empty when the flag column m1_flag holds a code; '-' means no reported cases. Published as text such as '31.0' from 2025; cast to integer."
         customProperties:
           - {property: role, value: measure}
           - {property: sourceField, value: m1}
@@ -127,7 +127,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: false
-        description: "Why the previous 52-week maximum (m2) is empty: the publisher's flag code."
+        description: "Flag for the previous 52-week maximum; same codes as m1_flag."
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: m2_flag}
@@ -146,7 +146,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: false
-        description: "Why the current-year year-to-date count (m3) is empty: the publisher's flag code."
+        description: "Flag for the current-year year-to-date count; same codes as m1_flag."
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: m3_flag}
@@ -166,7 +166,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: false
-        description: "Why the previous-year year-to-date count (m4) is empty: the publisher's flag code."
+        description: "Flag for the previous-year year-to-date count; same codes as m1_flag."
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: m4_flag}
@@ -219,7 +219,6 @@ customProperties:
       - "The provisional footnote names reporting years 2024 and 2025; the provisional status of 2026 and the finalization date of earlier years are not stated in the dataset metadata."
       - "Should the adapter normalize the 2025+ title-case reporting-area names to the 2022-2024 upper-case form, or the reverse? Filters on states are case-sensitive today."
       - "Mapping Candida auris screening (colonization) to GBD Candida spp. / Other infectious diseases is a coarse pairing; colonization is not disease. Keep, or map screening to no GBD cause?"
-      - "Three conditions are published under two spellings ('Salmonella Paratyphi infection' / 'SalmonellaParatyphi infection'; 'Hepatitis B, acute' / 'Hepatitis, B, acute'; 'Coccidioidomycosis, total' / 'Coccidioidomycosis, Total'), apparently in different years. Is each pair one condition, so the spellings can be read as one series? Until a maintainer declares it, every spelling is returned as its own series with a note naming the others, and they are never added."
       - "Earlier NNDSS weekly years (before 2022) sit in separate per-table Socrata datasets; not covered by this contract."
       - "Case definitions: which CSTE position statement and effective year applies to each condition and MMWR year (e.g. Candida auris clinical vs screening, Legionellosis, syphilis stages, TB)? Not in the data; list them as a caseDefinitions customProperty from https://ndc.services.cdc.gov/ after a maintainer reads it."
       - "Case status for conditions other than Candida auris: do these weekly counts include confirmed and probable cases together (per each condition's case definition)? The dataset does not say; until answered, counts must be described as 'reported cases' with status unspecified."

@@ -5,8 +5,7 @@ and annual reports, and a 5-year report, each with a table of case counts by dis
 
 What the reports say about their own numbers (carried to the contract as caveats, never "fixed" here):
 
-* The quarterly and annual reports say their area is Wayne County **excluding the city of Detroit**
-  ("Out-Wayne"); Detroit reports separately. The 5-year report doesn't say, so its rows don't claim it.
+* The area is Wayne County **excluding the city of Detroit** ("Out-Wayne"); Detroit reports separately.
 * Counts include confirmed and probable cases, from the Michigan Disease Surveillance System, and are
   preliminary: each report states the date the data were retrieved.
 * Newer reports print counts of 1-5 as "*"; older ones print every count. A "*" is kept as suppressed,
@@ -22,12 +21,9 @@ fetched at run time and never mirrored.
 
 from __future__ import annotations
 
-import hashlib
 import re
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from datetime import datetime
-from decimal import ROUND_HALF_UP, Decimal
 from html.parser import HTMLParser
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urljoin, urlsplit
@@ -43,22 +39,17 @@ INDEX_URL = (
     "Statistics-Reports"
 )
 HOST = "www.waynecountymi.gov"
-# The area a row covers, as its own report states it (hard rule 1). The quarterly and annual reports say in
-# their own words that they exclude Detroit ("excluding Detroit", "Out-Wayne"), so their rows say so. A report
-# that doesn't say (the 5-year report) is not labelled either way: whether it excludes Detroit is an open
-# question in the contract until a maintainer confirms it from the county.
+# The area every row covers. Wayne County's health department serves the county outside the City of Detroit,
+# which has its own health department; the quarterly and annual reports say so in their own words ("excluding
+# Detroit", "Out-Wayne"). Carried on every record so no count is ever read as all of Wayne County. Whether the
+# report itself states it is a separate field, `excludes_detroit` (None when the report is silent).
 AREA = "Wayne County, Michigan, excluding the City of Detroit (Out-Wayne)"
-AREA_UNSTATED = "Wayne County, Michigan (this report does not say whether the City of Detroit is included)"
 
 PeriodKind = Literal["quarter", "year_to_date", "year", "multi_year_total", "multi_year_average"]
 
 
-class ReconciliationError(LayoutError):
+class ReconciliationError(ValueError):
     """A parsed row's own totals don't add up, so the parse can't be trusted."""
-
-
-class NoDiseaseTable(LayoutError):
-    """The PDF has no Group/Disease table at all, so it isn't a communicable disease report."""
 
 
 @dataclass(frozen=True)
@@ -164,10 +155,8 @@ def reconcile(rows: Sequence[TableRow], periods: Sequence[Period]) -> list[str]:
                 continue
             expected = sum(v for v in vs if v is not None)
             if total.kind == "multi_year_average":
-                # Word and Excel round half up (2.5 prints as 3); Python's round() would make that 2.
-                step = Decimal(1).scaleb(-_decimals(row, periods, total))
-                average = (Decimal(str(expected)) / len(parts)).quantize(step, rounding=ROUND_HALF_UP)
-                if average != Decimal(str(t)).quantize(step, rounding=ROUND_HALF_UP):
+                decimals = _decimals(row, periods, total)
+                if round(expected / len(parts), decimals) != round(t, decimals):
                     problems.append(f"{row.label}: {total.header} {t} != {expected}/{len(parts)}")
             elif expected != t:
                 problems.append(
@@ -194,12 +183,8 @@ _EXCLUDES_DETROIT = re.compile(r"(excluding (the city of )?Detroit|Out-Wayne)", 
 _RETRIEVED = re.compile(r"Retrieved on (\d{1,2}/\d{1,2}/\d{4})", re.I)
 # Title forms seen: "Case Counts for 2023", "January-December (Q1-Q4) 2024", "Quarter 2 2026".
 _TITLE_YEAR = re.compile(r"(?:Counts for|\(Q1-Q4\)|Quarter [1-4])\s+(\d{4})", re.I)
-MAX_FAILED_ROWS = 2  # rows, not checks: one row can fail its YTD and its annual check
-# Total rows are known two ways, kept apart: the grand-total line below the table is structural (the parser
-# finds it outside the table's borders, TableRow.trailing_total); a subtotal inside the table is known only by
-# its printed label, which must *start* with Total, Totals or Subtotal, so a disease name that merely contains
-# the word is never taken for a total.
-TOTAL_LABEL = re.compile(r"^(?:sub)?totals?\b", re.I)
+MAX_FAILED_ROWS = 2
+TOTAL_LABEL = re.compile(r"\b(?:sub)?totals?\b", re.I)
 
 
 def report_facts(text: str, title: str) -> ReportFacts:
@@ -210,16 +195,6 @@ def report_facts(text: str, title: str) -> ReportFacts:
         data_retrieved_on=retrieved[1] if retrieved else None,
         report_year=years.pop() if len(years) == 1 else None,
     )
-
-
-def retrieved_date(printed: str | None) -> str | None:
-    """The report's data date as an ISO date, read only from the printed MM/DD/YYYY form."""
-    if printed is None:
-        return None
-    try:
-        return datetime.strptime(printed, "%m/%d/%Y").date().isoformat()  # noqa: DTZ007 - a date, no time
-    except ValueError:
-        raise LayoutError(f"data retrieved date {printed!r} is not a real MM/DD/YYYY date") from None
 
 
 def parse_report(content: bytes) -> tuple[list[TableRow], list[Period], ReportFacts]:
@@ -233,28 +208,17 @@ def parse_report(content: bytes) -> tuple[list[TableRow], list[Period], ReportFa
     facts = report_facts(text, title)
     rows = parse_tables(pages, TableSpec(trailing_total=TOTAL_LABEL))
     if not rows:
-        raise NoDiseaseTable("no disease table found")
+        raise LayoutError("no disease table found")
     headers = [c.column for c in rows[0].cells]
-    seen: set[tuple[str, str]] = set()
     for row in rows:
         if [c.column for c in row.cells] != headers:
             raise LayoutError(f"page {row.page}: columns changed mid-table")
-        # The table's grain is one row per disease in its group; a repeat (a group cell lost at a page
-        # break) would be counted twice in every sum.
-        if (row.group, row.label) in seen:
-            raise LayoutError(f"page {row.page}: {row.group} {row.label!r} appears twice in the table")
-        seen.add((row.group, row.label))
     periods = resolve_periods(headers, facts.report_year)
     # Rows that don't add up: one or two are the publisher's own slips (the 2022 report prints Influenza Q3
     # as 103 in the disease row and 113 in its subtotal). Those rows stay, flagged by `failed_checks`. More
     # than that means this parser misread the table, so nothing from the report is used.
-    problems: list[str] = []
-    failed_rows = 0
-    for row in rows:
-        if not is_total(row) and (found := reconcile([row], periods)):
-            problems += found
-            failed_rows += 1
-    if failed_rows > MAX_FAILED_ROWS:
+    problems = reconcile([r for r in rows if not is_total(r)], periods)
+    if len(problems) > MAX_FAILED_ROWS:
         raise ReconciliationError(
             "; ".join(problems[:10]) + (f" (+{len(problems) - 10} more)" if len(problems) > 10 else "")
         )
@@ -266,30 +230,15 @@ def failed_checks(row: TableRow, periods: Sequence[Period]) -> list[str]:
     return reconcile([row], periods)
 
 
-def is_total_label(row: TableRow) -> bool:
-    """The row's printed label starts with Total, Totals or Subtotal (a subtotal inside the table)."""
-    return bool(TOTAL_LABEL.search(row.label))
-
-
 def is_total(row: TableRow) -> bool:
-    """A publisher total: the structural grand-total line, or a row labelled as a subtotal."""
-    return row.trailing_total or is_total_label(row)
+    return bool(TOTAL_LABEL.search(row.label))
 
 
 def publisher_inconsistencies(rows: Sequence[TableRow], periods: Sequence[Period]) -> list[str]:
     """Subtotal rows whose own sums disagree, and subtotals that don't equal their group's rows."""
-    problems = reconcile([r for r in rows if is_total(r)], periods)
-    for found in total_mismatches(rows, periods).values():
-        problems += found
-    return problems
-
-
-def total_mismatches(rows: Sequence[TableRow], periods: Sequence[Period]) -> dict[int, list[str]]:
-    """Each total row (by position) whose printed values don't equal the sum of the rows it covers."""
-    out: dict[int, list[str]] = {}
-    for k, t in enumerate(rows):
-        if not is_total(t):
-            continue
+    totals = [r for r in rows if is_total(r)]
+    problems = reconcile(totals, periods)
+    for t in totals:
         # A group's subtotal covers its rows; the grand total below the table covers every disease row.
         members = [r for r in rows if not is_total(r) and (t.trailing_total or r.group == t.group)]
         if not members:
@@ -300,54 +249,38 @@ def total_mismatches(rows: Sequence[TableRow], periods: Sequence[Period]) -> dic
             if total is not None and all(v is not None for v in parts):
                 expected = sum(v for v in parts if v is not None)
                 if expected != total:
-                    out.setdefault(k, []).append(
+                    problems.append(
                         f"{t.group} {t.label}".strip()
                         + f": {period.header} {total} != sum of rows = {expected}"
                     )
-    return out
+    return problems
 
 
-_SINGLE_YEAR: frozenset[str] = frozenset({"quarter", "year_to_date", "year"})
-
-
-def records(content: bytes, *, report_url: str, retrieved_at: str | None = None) -> Iterator[dict[str, Any]]:
-    """One record per printed cell, keyed by the publisher's own labels. Nothing is renamed or filled.
-
-    Every record carries its own report's link, the sha256 of that report's bytes and when they were read, so a
-    number can always be traced to the one PDF it is printed in (hard rule 8).
-    """
+def records(content: bytes, *, report_url: str) -> Iterator[dict[str, Any]]:
+    """One record per printed cell, keyed by the publisher's own labels. Nothing is renamed or filled."""
     rows, periods, facts = parse_report(content)
-    sha256 = hashlib.sha256(content).hexdigest()
-    data_date = retrieved_date(facts.data_retrieved_on)
-    mismatches = total_mismatches(rows, periods)
-    for k, row in enumerate(rows):
-        total_label = is_total_label(row)
-        failed = failed_checks(row, periods) + mismatches.get(k, [])
+    for row in rows:
+        total_row = is_total(row)
+        failed = failed_checks(row, periods)
         for period, cell in zip(periods, row.cells, strict=True):
             yield {
                 "report_url": report_url,
-                "report_sha256": sha256,
-                "report_retrieved_at": retrieved_at,
-                "area": AREA if facts.excludes_detroit else AREA_UNSTATED,
+                "area": AREA,
                 "excludes_detroit": facts.excludes_detroit,
                 "data_retrieved_on": facts.data_retrieved_on,
-                "data_retrieved_date": data_date,
                 "page": row.page,
                 "disease_group": row.group,
                 "disease": row.label,
                 "column": period.header,
                 "period_kind": period.kind,
                 "period_year": period.year,
-                "calendar_year": period.year if period.kind in _SINGLE_YEAR else None,
                 "period_quarter": period.quarter,
                 "period_end_year": period.end_year,
                 "printed": cell.raw,
                 "count": cell.value if period.is_count else None,
                 "average": cell.value if not period.is_count else None,
                 "suppressed": cell.suppressed,
-                "printed_total_line": row.trailing_total,
-                "total_label": total_label,
-                "is_total_row": row.trailing_total or total_label,
+                "is_total_row": total_row,
                 "failed_checks": "; ".join(failed) or None,
             }
 
@@ -389,12 +322,10 @@ def discover_reports(index_html: bytes, *, base_url: str = INDEX_URL) -> list[st
 # Reports in the layouts the parser has been checked on (2021 onward): the annual reports
 # (quarterly-report-2021.pdf ... ) and everything under the county's current file store, /files/content/,
 # where the 2025-on quarterly reports and the 2021-2025 5-year report sit. Older reports (2014-2020) use
-# other layouts and are not read. A PDF in scope with no disease table at all is not a disease report and is
-# skipped with a note; one with a disease table that doesn't parse refuses the whole source.
+# other layouts and are not read; a report in scope that doesn't parse refuses the whole source.
 _IN_SCOPE_PATH = re.compile(r"^/files/content/mainsite/.+\.pdf$", re.I)
 _IN_SCOPE_ANNUAL = re.compile(r"/quarterly-report-20(?:2[1-9]|[3-9]\d)\.pdf$", re.I)
 MAX_REPORTS = 40  # more report links than this means the page changed; refuse rather than fetch them all
-_NAME_YEAR = re.compile(r"(?<!\d)(20\d\d)(?!\d)")
 
 
 def in_scope(url: str) -> bool:
@@ -403,55 +334,23 @@ def in_scope(url: str) -> bool:
     return bool(_IN_SCOPE_PATH.match(path) or _IN_SCOPE_ANNUAL.search(path))
 
 
-def _name(url: str) -> str:
-    return urlsplit(url).path.rsplit("/", 1)[-1]
-
-
-def _name_year(url: str) -> int:
-    """The latest year in a report's file name (0 if none): only for choosing which reports to read."""
-    return max((int(y) for y in _NAME_YEAR.findall(_name(url))), default=0)
-
-
-def newest(urls: Sequence[str], n: int) -> list[str]:
-    """The `n` reports with the latest year in their file names, kept in page order (ties: page order)."""
-    keep = set(sorted(urls, key=_name_year, reverse=True)[:n])
-    return [u for u in urls if u in keep]
-
-
-def pages(
-    entry: CatalogEntry, fetcher: Fetcher, *, max_rows: int | None = None, max_reports: int | None = None
-) -> Iterator[Page]:
+def pages(entry: CatalogEntry, fetcher: Fetcher, *, max_rows: int | None = None) -> Iterator[Page]:
     """The index page (kept for provenance, no records), then each in-scope report with its records.
 
     Fetched at run time only: the county states no terms of use, so nothing is stored (catalog
     licence.redistribution is false). A report in scope that can't be parsed raises: no partial table.
-    `max_reports` reads only that many reports, those with the latest year in their file names, and says so in
-    the index page's note (a live read per question must stay short).
     """
     from health_data_registry.adapters import Page
 
     index = fetcher(entry.source.api_url)
+    yield Page(fetch=index, records=[])
     urls = [u for u in discover_reports(index.content, base_url=entry.source.api_url) if in_scope(u)]
     if len(urls) > MAX_REPORTS:
         raise LayoutError(f"{len(urls)} report links on the index page; expected at most {MAX_REPORTS}")
-    note = None
-    if max_reports is not None and len(urls) > max_reports:
-        chosen = newest(urls, max_reports)
-        left = [_name(u) for u in urls if u not in chosen]
-        note = (
-            f"Only the {max_reports} newest of the {len(urls)} reports listed (by the year in each file name) "
-            f"were read for this answer, to keep the wait short; not read: {', '.join(left)}."
-        )
-        urls = chosen
-    yield Page(fetch=index, records=[], note=note)
     seen = 0
     for url in urls:
         raw = fetcher(url)
-        try:
-            recs = list(records(raw.content, report_url=url, retrieved_at=raw.retrieved_at.isoformat()))
-        except NoDiseaseTable:
-            yield Page(fetch=raw, records=[], note=f"{_name(url)} has no disease table, so it was not read.")
-            continue
+        recs = list(records(raw.content, report_url=url))
         if max_rows is not None:
             recs = recs[: max(0, max_rows - seen)]
         seen += len(recs)
@@ -461,19 +360,10 @@ def pages(
 
 
 def publisher_fields(entry: CatalogEntry, fetcher: Fetcher) -> set[str]:
-    """The fields every in-scope report yields today (the contract drift check).
-
-    Records are built with a fixed set of keys, so this can't find a renamed column by itself; what it checks is
-    that every in-scope report, old or new, still parses under the reviewed layout rules (one that no longer
-    parses raises). A PDF with no disease table is skipped, as the live read skips it.
-    """
+    """The fields the newest in-scope report yields today (the contract drift check)."""
     index = fetcher(entry.source.api_url)
     urls = [u for u in discover_reports(index.content, base_url=entry.source.api_url) if in_scope(u)]
-    fields: set[str] = set()
-    for url in urls:
-        try:
-            first = next(records(fetcher(url).content, report_url=url), None)
-        except NoDiseaseTable:
-            continue
-        fields |= set(first or {})
-    return fields
+    if not urls:
+        return set()
+    first = next(records(fetcher(urls[0]).content, report_url=urls[0]), None)
+    return set(first) if first else set()

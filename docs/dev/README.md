@@ -24,24 +24,18 @@ work is not committed to the PR branch: it stays uncommitted or goes on a separa
 
 `make help` lists every target.
 
-The README's images (`assets/readme/*.svg`, light and dark) come from one token set: edit and run
-`python3 -I tools/readme_svg/gen.py`, never the SVGs by hand.
-
 | Command | What it does |
 |---|---|
 | `make install` | `uv sync` |
-| `make check` | `lint`, `typecheck`, `test` and `mutate`: the quick local loop, not all of CI |
-| `make precheck` | The pre-PR gate's local half: the CI checks plus a docs-drift check, stopping at the first failure ([below](#the-pre-pr-gate)) |
+| `make check` | `lint`, `typecheck`, `test` and `mutate`: everything CI runs |
 | `make lint` / `make fmt` | Ruff lint and format check / fix |
 | `make typecheck` | mypy, strict |
 | `make test` | Offline tests with coverage; fails under 85% (`COV_FLOOR`) |
 | `make test-network` | Live publisher tests in `tests/integration` (marker `network`) |
-| `make smoke` | The C. auris in Michigan reference journey on a synthetic lake (marker `smoke`; see [Smoke journey](#smoke-journey)) |
 | `make mutate` | Mutation tests on modules changed since `BASE` (default `origin/main`); fails under 70% killed (`MUTATION_FLOOR`) |
 | `make docs` | Regenerate `docs/helpers.md` from `src/health_data_registry/helpers.py` |
 | `make refresh` | `health-data-registry refresh --all` into the local lake |
 | `make serve` | Run the MCP server on stdio |
-| `make serve-http` | The hosted read-only server over Streamable HTTP on port 7860 ([hosting.md](hosting.md)) |
 | `make check-contracts` | Check each publisher still serves the fields its contract reads |
 | `make eval` | Verify the sealed blind sets; with `--run`, score a client run against them |
 
@@ -81,59 +75,11 @@ fail), "rows_affected" (or null)}]}`. It is `{"tool": null, "results": []}` unti
 `get_provenance` also say how to add the source to a Claude project: the plugin (coming), the MCP server
 reading the pinned release, or attaching the downloaded file by hand.
 
-The scheduled refresh, crawls, sitemap snapshots, publishing and Space deploy run on GitHub Actions;
-[automation.md](automation.md) lists each workflow, its schedule and limits, and the secrets and variables it
-needs. Every Hugging Face repository is named by one convention, built in `naming.py`: see [naming.md](naming.md).
-
 To run the server in Claude Code from a checkout:
 
 ```bash
 claude mcp add health-data-registry -- uv run --directory "$PWD" health-data-registry serve
 ```
-
-## The pre-PR gate
-
-A pull request's CI should pass the first time. So a commit is checked twice before it reaches a PR branch:
-
-0. **Merge `origin/main` into the branch** (`git fetch origin main && git merge origin/main`). A PR's CI tests
-   the branch merged with current main (`refs/pull/<n>/merge`), while a pre-pr run tests the branch tip alone, so
-   the two agree only when the branch already contains main. If main moves after a green pre-pr run, merge it
-   again and repeat the steps below.
-1. **`make precheck`** runs the CI checks locally plus a docs-drift check, and stops at the first failure: all
-   pre-commit hooks (actionlint with shellcheck included), lint, typecheck, tests with the coverage floor, the
-   smoke journey, the Projects kit build, the docs drift check (`make docs`, then nothing may change), and
-   mutation tests on the modules changed since `BASE` (default `origin/main`), one step per shard as CI shards
-   them, then the 70% floor on the total. Each step prints a PASS or FAIL line, and a summary follows. It checks
-   the working tree, so commit first: CI checks the commit you push. It runs on macOS's bash 3.2 as well.
-2. **Push to `pre-pr/<branch>`** (`git push origin HEAD:pre-pr/<branch>`). CI and CodeQL run on every push to
-   `pre-pr/**`, mutation shards included, against `origin/main`. A newer push to the same pre-pr branch cancels
-   the older run. `make precheck` does not run CodeQL or the Python 3.13 test leg; CI runs them here, and again
-   on the PR.
-3. **When every check is green**, open the PR from that exact commit, or fast-forward the PR branch to it
-   (`git push origin <green sha>:<pr-branch>`).
-
-**The PR reuses the pre-pr mutation verdict.** The mutation shards are by far the dearest part of a CI run, and
-the account runs only a few jobs at once, so a PR does not mutate a commit the gate already mutated. On a
-`pull_request` event, the list job runs `scripts/mutation_reuse.py`, which asks the Actions API, with the run's own
-read-only `GITHUB_TOKEN` (`actions: read` on that job only), for a CI run that:
-
-- was triggered by a `push` to a `pre-pr/**` branch of this repository (not a fork), from `.github/workflows/ci.yml`;
-- is for exactly the PR's head SHA, taken from the event payload (`github.event.pull_request.head.sha`);
-- has a "Mutation tests (changed modules)" job, in its latest attempt, that completed with conclusion `success`;
-
-and only when the PR's base is `main`, the branch a pre-pr run compares with. If one exists, the list job lists no
-modules, the shards are skipped, and "Mutation tests (changed modules)" passes on the PR with a log line naming the
-reused run. A failed, cancelled, skipped or still-running verdict never counts, nor does one for another SHA, and
-an API error means no reuse, so the shards run as before. Lint, types, tests, smoke, the kit, pre-commit and
-CodeQL still run on the PR, and every required check still reports. So push the green pre-pr commit unchanged:
-any new commit on the PR branch has no pre-pr verdict and runs the shards.
-
-Red on the pre-pr branch? Fix it there, run `make precheck` again, and push again. Fix-round commits and merges
-of main take the same path.
-
-The actionlint and shellcheck hooks need `uv sync` first: both tools come from the locked dev environment
-(`actionlint-py` and `shellcheck-py`, pinned in `uv.lock`), and the `shellcheck-present` hook fails if shellcheck
-is missing, because actionlint would otherwise skip its shell checks silently.
 
 ## Architecture
 
@@ -154,9 +100,8 @@ The MCP surface (`server.py`):
 
 When a tool's name, parameters, columns or refusals change in `server.py` or `tools.py`, update
 [docs/tools.md](../tools.md) in the same PR; when a contract changes how a number is read (missing codes, total rows,
-provisional status, uncertainty, places), update [docs/data-conventions.md](../data-conventions.md). The tool table in
-README.md, docs/tools.md and CLAUDE.md is generated from the server's registry by `make docs`, and a test fails if it
-drifts; the rest of docs/tools.md, and all of docs/data-conventions.md, is written by hand.
+provisional status, uncertainty, places), update [docs/data-conventions.md](../data-conventions.md). Both are written
+by hand, unlike `docs/helpers.md`.
 
 Everything a clinician reads (tool descriptions, helpers, refusals) follows the writing rules in
 [ADR 0012](../adr/0012-built-for-clinicians.md): plain words, a next step, never a stack trace or an HTTP code.
@@ -169,67 +114,9 @@ Everything a clinician reads (tool descriptions, helpers, refusals) follows the 
   write nothing to disk and are marked `network`. `make test` and CI's test job leave them out; run
   `make test-network` when you change an adapter, a contract or the fetcher.
 - **Mutation tests.** `scripts/mutate_changed.py` runs mutmut on the modules changed since the merge base and
-  prints each mutant it did not kill. A survivor means the tests would not notice that change: add or sharpen a
-  test, or say in the PR why the mutant is equivalent. Every status but `killed` (and `caught by type check`)
-  lowers the score, `no tests` and `skipped` included. `make mutate` is part of `make check`. CI runs the same
-  check on every PR in shards: `--list` names the shards of the changed modules, one job per shard runs mutmut,
-  and the aggregate job applies the 70% floor to the summed counts and lists every mutant not killed. A module
-  is one shard, or, when its estimated mutants exceed a shard's size (`SHARD_TARGET`, smaller for
-  `registry.py`), several named `<module>#<k>of<n>@<split>`: split by function, and a big function by the last
-  digit of its mutant numbers, so each shard takes about 10 to 20 minutes (the job's limit is 40). The split
-  comes from the module's source alone, read with the same Python 3.12 in `--list` and in every shard; `<split>`
-  is a hash of it, and a shard refuses an id whose hash differs from its own split, so an edit made after
-  `--list` (in CI or during precheck) fails the shard instead of running the wrong mutants. Each shard also
-  checks that every mutant of its module falls in exactly one shard. Functions mutmut never mutates (under
-  `# pragma: no mutate`, for instance) carry no weight, and `@overload` stubs count with their function. It
-  fails if any shard failed its baseline, left mutants not checked, interrupted or crashed, found a mutant in no
-  shard, or left no report, or if only some shards of a module were expected. A module with no mutable
-  function, or a shard none of whose names matches a mutant, has nothing to mutate and passes, locally and in
-  CI.
+  prints each surviving mutant. A survivor means the tests would not notice that change: add or sharpen a test, or
+  say in the PR why the mutant is equivalent. `make mutate` is part of `make check`, and CI runs it on every PR.
 - **New features and fixes add tests.** A bug fix includes a test that fails without it.
-
-## Smoke journey
-
-`make smoke` runs the project spec's reference journey: a clinician asks about C. auris in Michigan in 2024.
-The spec itself is not in this repo; [docs/architecture.md](../architecture.md) describes the design it set
-out, and the journey is defined by `tests/smoke/test_c_auris_journey.py`. CI runs it on every pull request as
-the job "Smoke: C. auris journey". It is part of `make test` too.
-
-- **Offline, enforced.** `tests/smoke/conftest.py` makes any connection or DNS lookup off this machine fail the
-  test, so a stray fetch can't quietly read live data.
-- **What it drives.** The real MCP server (`server.build_server`) over the real `catalog/`, `contracts/` and
-  `semantic/`, reading a lake built at test time from hand-written rows in `tests/smoke/fixtures.py`. The
-  numbers are made up and unlike the published ones, and nothing is written to the repo.
-
-The steps, one test each (`test_stepN_...` in `tests/smoke/test_c_auris_journey.py`):
-
-1. `suggest_datasets` offers `cdc_nndss_weekly` and nothing else.
-2. `describe_dataset` names both C. auris series and the flag codes.
-3. `get_series` returns clinical and screening as separate series. Each has its year-end running total and
-   next year's unverified restatement. They are never added, and total rows are left out.
-4. A flagged place stays empty with its flag, never a zero.
-5. `get_rate` divides by the Census population, returns the 95% interval with each rate, and never adds the
-   two rates.
-6. `list_caveats` keeps NNDSS, CDC's tracking page and the AR Lab Network apart.
-7. An uncatalogued source shows no number, and only NNDSS is offered for it.
-8. `get_provenance` names the exact fetch.
-
-Every table's provenance line must be complete and carry the sha256 of the raw bytes.
-
-- **The DEV trial questions.** The eval has two splits: DEV (`eval/dev/dev.jsonl`), which anyone may read and
-  tune against, and TEST, which is held out and sealed ([eval/README.md](../../eval/README.md)). The smoke test
-  scores the four DEV questions tagged `source: trial` with `eval/scorer.py`. A scripted client
-  (`tests/smoke/client.py`) writes a reply from the tool responses only, and the reply must pass Class, Target,
-  Provenance and the fabrication gate. Three pass today: C. auris, measles and vaccination. HIV care waits on
-  #37 (see below). Replies that add clinical to screening, add two rates, or give a number no tool returned
-  must fail. The smoke test never reads the TEST split or `eval/sealed/`.
-- **Only NNDSS is catalogued for C. auris.** CDC's tracking page and the AR Lab Network have no catalog entry
-  yet, so their steps check that the server shows no number for them. When one is catalogued, add its series
-  to the journey.
-- **Behaviour still to come** is `xfail(strict=True, raises=AssertionError)`, naming its issue: HIV care
-  declined rather than offered RESP-NET (#37 item 9), the AR Lab Network question offered only NNDSS (#48), and
-  decline fields that a machine can read in csv (#37 item 3). When the fix lands the test fails as XPASS;
-  remove the mark in the same pull request.
 
 ## Adding a dataset
 

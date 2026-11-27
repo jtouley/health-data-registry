@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 import shutil
 import textwrap
 from datetime import UTC, datetime
@@ -61,8 +60,7 @@ def write_hub_registry(root: Path, *, areas: str = "[respiratory, stis]", licenc
         'terms_url: "https://www.cdc.gov/other/agencymaterials.html"}',
         f'licence: {{id: CC-BY-NC-SA-3.0-IGO, redistribution: false, terms_url: "{LISTED_TERMS}"}}',
     )
-    listed = listed.replace("hosting: public\n", "")
-    assert "redistribution: false" in listed and "hosting:" not in listed
+    assert "redistribution: false" in listed
     (root / "catalog" / "toy_listed.yaml").write_text(listed)
     (root / "contracts" / "toy_listed.odcs.yaml").write_text(CONTRACT.replace("toy_cases", "toy_listed"))
     (root / "semantic" / "toy_listed.yaml").write_text(SEMANTIC.replace("toy_cases", "toy_listed"))
@@ -96,29 +94,6 @@ def hub_registry(tmp_path: Path) -> Registry:
 @pytest.fixture
 def hub_lake(tmp_path: Path, hub_registry: Registry) -> Path:
     return make_lake(tmp_path / "lake", hub_registry, tmp_path)
-
-
-def test_export_leaves_private_tier_sources_out(tmp_path: Path) -> None:
-    root = write_hub_registry(tmp_path / "reg")
-    listed = (root / "catalog" / "toy_listed.yaml").read_text()
-    (root / "catalog" / "toy_private.yaml").write_text(
-        listed.replace("toy_listed", "toy_private") + "hosting: private\nprivate_store: true\n"
-    )
-    (root / "contracts" / "toy_private.odcs.yaml").write_text(
-        CONTRACT.replace("toy_cases", "toy_private").replace(
-            "customProperties:\n", "customProperties:\n  - {property: tier, value: private}\n", 1
-        )
-    )
-    (root / "semantic" / "toy_private.yaml").write_text(SEMANTIC.replace("toy_cases", "toy_private"))
-    reg = load_registry(root)
-    assert reg.get("toy_private").entry.tier == "private"
-    assert [ds.id for ds in publish.public_sources(reg)] == ["toy_cases", "toy_listed"]
-    lake = make_lake(tmp_path / "lake", reg, tmp_path)
-    out = tmp_path / "hub"
-    rel = export_public(reg, lake, str(out), run_date=RUN)
-    assert "toy_private" not in rel.hosted and "toy_private" not in rel.listed
-    assert not (out / "toy_private").exists()
-    assert "toy_private" not in json.loads((out / "manifest.json").read_text())["sources"]
 
 
 def test_export_to_directory_manifest_hashes_and_rows(
@@ -347,53 +322,11 @@ def test_snapshot_under_other_licence_or_partial_fails(tmp_path: Path, hub_regis
         export_public(hub_registry, lake2, str(tmp_path / "o2"), run_date=RUN)
 
 
-@pytest.mark.parametrize(
-    ("row_count", "problem"),
-    [
-        (0, "the snapshot has no rows; an empty table is never published"),
-        (-1, "the snapshot has no rows; an empty table is never published"),
-        (999, "rows but its snapshot's manifest says 999"),
-    ],
-)
-def test_empty_or_miscounted_snapshot_is_never_published(
-    tmp_path: Path, hub_registry: Registry, row_count: int, problem: str
-) -> None:
-    """build-data-pipeline: the rows published must match the snapshot's manifest, and never be zero."""
-    lake = make_lake(tmp_path / "lake", hub_registry, tmp_path)
-    snap_dir, manifest = latest_snapshot(lake, "toy_cases") or (tmp_path, None)
-    assert manifest is not None and manifest.row_count > 0
-    mpath = snap_dir / "manifest.json"
-    mpath.write_text(json.dumps(json.loads(mpath.read_text()) | {"row_count": row_count}))
-    with pytest.raises(PublishCheckFailed, match=re.escape(problem)):
-        export_public(hub_registry, lake, str(tmp_path / "o"), run_date=RUN)
-
-
 def test_no_snapshot_stops_the_export(tmp_path: Path, hub_registry: Registry) -> None:
     with pytest.raises(PublishCheckFailed, match=r"no snapshot .*health-data-registry fetch toy_cases"):
         export_public(hub_registry, tmp_path / "empty", str(tmp_path / "o"), run_date=RUN)
     with pytest.raises(PublishCheckFailed, match="YYYY-MM-DD"):
         export_public(hub_registry, tmp_path / "empty", str(tmp_path / "o"), run_date="24/11/2026")
-
-
-def test_private_hosting_is_listed_not_hosted_and_refused_if_staged(tmp_path: Path) -> None:
-    """A redistributable source that isn't `hosting: public` gets no data files, and staged ones are refused."""
-    root = write_hub_registry(tmp_path / "reg")
-    cat = root / "catalog" / "toy_cases.yaml"
-    cat.write_text(cat.read_text().replace("hosting: public\n", ""))
-    reg = load_registry(root)
-    assert reg.get("toy_cases").entry.hosting == "private"
-    lake = make_lake(tmp_path / "lake", reg, tmp_path)
-    out = tmp_path / "hub"
-    stage(reg, lake, out, run_date=RUN, repo=None)
-    assert not (out / "toy_cases" / "data").exists()
-    card = (out / "toy_cases" / "README.md").read_text()
-    assert "listed, not hosted" in card and "stays private until a maintainer" in card
-    assert check_release(reg, lake, out) == []
-    (out / "toy_cases" / "data").mkdir()
-    shutil.copyfile(lake / "datasets" / "toy_cases" / "LATEST", out / "toy_cases" / "data" / "x.parquet")
-    assert check_release(reg, lake, out) == [
-        "toy_cases: it is not `hosting: public` in its catalog entry but data files were staged"
-    ]
 
 
 def test_restricted_data_staged_by_mistake_fails(
@@ -590,13 +523,11 @@ def test_new_hub_has_no_releases(tmp_path: Path) -> None:
 def test_real_product_file_matches_catalog_and_contracts() -> None:
     reg = load_registry()
     ports = load_ports(reg.root)
-    # Private-tier sources (their own private stores) are not part of the public hub product.
-    public = publish.public_sources(reg)
-    assert set(ports) == {ds.contract.id for ds in public}
-    for ds in public:
+    assert set(ports) == {ds.contract.id for ds in reg}
+    for ds in reg:
         p = ports[ds.contract.id]
         assert p.name == ds.id and p.version == ds.contract.version
-        assert p.hosted == ds.entry.hosted
+        assert p.hosted == ds.entry.licence.redistribution
         assert p.product_id == "health-data-registry-hub"
         assert ds.entry.id_areas or "infectious_disease" not in ds.entry.research_areas, ds.id
     doc = yaml.safe_load((reg.root / "contracts" / "health-data-registry.odps.yaml").read_text())

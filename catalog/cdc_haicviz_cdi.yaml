@@ -34,14 +34,6 @@ gbd:
   location_column: null
   causes:
     - {condition: "Clostridioides difficile infection", cause: "Diarrheal diseases", pathogen: "Clostridium difficile"}
-conditions:
-  dimension: null
-  # Provenance: the contract's idDimensions (one condition throughout, no condition column).
-  source: "This source covers one condition only: Clostridioides difficile infection."
-  labels:
-    - "Clostridioides difficile infection"
-  aliases: []
 contract: contracts/cdc_haicviz_cdi.odcs.yaml
 semantic_model: semantic/cdc_haicviz_cdi.yaml
 status: draft
-hosting: public

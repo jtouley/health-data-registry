@@ -6,11 +6,6 @@ fetches the publisher's response over HTTPS when a question needs it, keeps the 
 most LIVE_TTL_S seconds (a short-lived in-memory cache, so one question's several reads hit the publisher
 once), and normalises them into an in-memory DuckDB table with the same contract-driven projection as the lake.
 Every answer that uses them carries the publisher's attribution, the licence and its terms URL.
-
-A dashboard read with the browser (``source.browser``) costs far more: one page load per catalogued view, at
-least 10 s apart (crawl.Robots), so a six-view dashboard takes a few minutes to read. Its parsed records are kept
-in memory for DASHBOARD_TTL_S instead, still never on disk, and every answer says so in its provenance notes, with
-the time of the read. Only the first question in that time waits for the dashboard.
 """
 
 from __future__ import annotations
@@ -24,42 +19,14 @@ from typing import Any
 import duckdb
 
 from health_data_registry.registry import Dataset
-from health_data_registry.staging import StagingReport, stage
-from health_data_registry.store import Manifest, RawFetch
+from health_data_registry.store import Manifest, RawFetch, select_list
 
 LIVE_TTL_S = 600.0  # how long parsed publisher records stay in memory; never written to disk
-# One question's live read is bounded: at most this long in total (pacing included), and at most this many
-# reports from a PDF-report source (the newest; the answer says which were left out).
-LIVE_READ_BUDGET_S = 75.0
-LIVE_MAX_REPORTS = 3
-# How long a browser-read dashboard's records stay in memory (never on disk): its read takes minutes, its data
-# change daily at most (weekly, annual or archived for the four Michigan dashboards).
-DASHBOARD_TTL_S = 3600.0
-
-
-def ttl_s(ds: Dataset) -> float:
-    """How long this source's live records are kept in memory."""
-    return DASHBOARD_TTL_S if ds.entry.source.browser else LIVE_TTL_S
-
-
-def kept_note(ds: Dataset, retrieved_at: str) -> str:
-    """The provenance note that says how long a live read is reused, in plain words."""
-    minutes = round(ttl_s(ds) / 60)
-    why = (
-        "a dashboard takes a few minutes to read, so "
-        if ds.entry.source.browser
-        else "so one question's several lookups read the publisher once, "
-    )
-    return (
-        f"Read live from the publisher at {retrieved_at[:16].replace('T', ' ')} UTC; {why}this read is kept in this "
-        f"server's memory (never on disk) for up to {minutes} minutes and reused by answers in that time."
-    )
 
 
 def is_live(ds: Dataset) -> bool:
-    """A source whose terms forbid redistribution is served live, unless it is kept in its own private store
-    (``private_store: true``, read through private.read_rows)."""
-    return ds.entry.tier == "live"
+    """A source whose terms forbid redistribution is served live only."""
+    return not ds.entry.licence.redistribution
 
 
 def attribution(ds: Dataset) -> str:
@@ -82,28 +49,20 @@ class LiveTable:
     records: list[dict[str, Any]]
     manifest: Manifest
     fetched: float  # time.monotonic() when fetched
-    dashboard: bool = False  # read with the browser: kept for DASHBOARD_TTL_S rather than LIVE_TTL_S
 
     def fresh(self, now: float | None = None) -> bool:
-        ttl = DASHBOARD_TTL_S if self.dashboard else LIVE_TTL_S
-        return ((now if now is not None else time.monotonic()) - self.fetched) < ttl
+        return ((now if now is not None else time.monotonic()) - self.fetched) < LIVE_TTL_S
 
 
 def fetch_live(ds: Dataset, get: Any) -> LiveTable:
     """Page through the publisher in memory and describe the result; nothing touches the disk."""
     from health_data_registry.adapters import pages
-    from health_data_registry.crawl import override_notes
 
     fields = sorted({c.source_field for c in ds.contract.columns})
     records: list[dict[str, Any]] = []
     fetches: list[RawFetch] = []
-    notes: list[str] = []
-    layouts: dict[str, str] = {}
-    for page in pages(ds.entry, get, fields=fields, max_reports=LIVE_MAX_REPORTS):
+    for page in pages(ds.entry, get, fields=fields):
         fetches.append(page.fetch)
-        layouts.update(page.layout)
-        if page.note:
-            notes.append(page.note)
         records += [{k: (None if v is None else str(v)) for k, v in r.items()} for r in page.records]
     if not fetches:
         raise ValueError(f"{ds.id}: the publisher returned nothing")
@@ -123,22 +82,16 @@ def fetch_live(ds: Dataset, get: Any) -> LiveTable:
         redistribution=False,
         partial=False,
         origin="publisher",
-        notes=[attribution(ds), kept_note(ds, retrieved.isoformat()), *override_notes(get), *notes],
-        layouts=layouts,
+        notes=[attribution(ds)],
     )
-    return LiveTable(records=records, manifest=m, fetched=time.monotonic(), dashboard=ds.entry.source.browser)
+    return LiveTable(records=records, manifest=m, fetched=time.monotonic())
 
 
-def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[str, Any]]) -> StagingReport:
-    """Stage records into an in-memory silver table named after the dataset (the same step as the lake).
+def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[str, Any]]) -> None:
+    """Normalise records into an in-memory table named after the dataset.
 
     Refuses a file-backed connection: the source's terms forbid keeping a copy (ADR 0009), so this checks the
     connection itself rather than trusting the caller. A table that can't be normalised leaves nothing behind.
-
-    The checks are the lake's, on purpose: an empty required value (a row with no country or year) or a declared
-    field that no record carries refuses the whole source for this session, as it would a stored load. Answering
-    from the other rows would drop rows from totals without saying so (hard rules 1 and 2); the refusal tells the
-    clinician the source is unavailable instead.
     """
     where = con.execute(
         "SELECT path FROM duckdb_databases() WHERE database_name = current_database()"
@@ -160,7 +113,6 @@ def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[st
                 f"INSERT INTO {q(raw)} VALUES ({marks})",  # noqa: S608 - quoted contract identifiers, bound values
                 [[r.get(f) for f in fields] for r in records],
             )
-        present = {k for r in records for k in r} or None
-        return stage(con, ds.contract, q(raw), table=ds.id, temp=True, present=present)
+        con.execute(f"CREATE TEMP TABLE {q(ds.id)} AS SELECT\n  {select_list(ds.contract)}\nFROM {q(raw)}")  # noqa: S608 - quoted contract identifiers
     finally:
         con.execute(f"DROP TABLE IF EXISTS {q(raw)}")
