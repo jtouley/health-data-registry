@@ -21,7 +21,3 @@ mutation-report/
 sitemaps/
 *.xml.gz
 .claude/worktrees/
-# Outside skills are installed per session in ~/.claude/skills and never committed (CLAUDE.md, "Skills and how to
-# use them"). Only our own fix-round skill is versioned here.
-.claude/skills/*
-!.claude/skills/fix-round/

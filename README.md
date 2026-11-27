@@ -146,7 +146,7 @@ You need [uv](https://docs.astral.sh/uv/) (it installs Python 3.12 or 3.13 if ne
 git clone https://github.com/jtouley/health-data-registry.git
 cd health-data-registry
 make install   # uv sync
-make check     # lint, type check, tests, mutation tests on changed functions
+make check     # lint, type check, tests, mutation tests on changed modules
 make serve     # the MCP server over stdio
 ```
 

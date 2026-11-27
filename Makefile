@@ -28,8 +28,8 @@ fmt: ## Fix lint findings and format the code
 typecheck: ## Type check with mypy (strict, settings in pyproject.toml)
 	$(UV) run mypy
 
-test: ## Offline tests with coverage, one worker per core (pytest-xdist; fails under COV_FLOOR, default 85%)
-	$(UV) run pytest -m "not network" -n auto --dist worksteal --cov --cov-report=term-missing --cov-fail-under=$(COV_FLOOR)
+test: ## Offline tests with coverage (fails under COV_FLOOR, default 85%)
+	$(UV) run pytest -m "not network" --cov --cov-report=term-missing --cov-fail-under=$(COV_FLOOR)
 
 test-network: ## Tests that hit live publishers (network marker)
 	$(UV) run pytest -m network
@@ -37,7 +37,7 @@ test-network: ## Tests that hit live publishers (network marker)
 smoke: ## The C. auris in Michigan journey on a synthetic lake, scored with eval/scorer.py (smoke marker; offline)
 	$(UV) run pytest -m smoke tests/smoke -rxX
 
-mutate: ## Mutation tests on the functions changed since BASE (default origin/main); fails under MUTATION_FLOOR
+mutate: ## Mutation tests on the modules changed since BASE (default origin/main); fails under MUTATION_FLOOR
 	$(UV) run python scripts/mutate_changed.py --base $(BASE) --floor $(MUTATION_FLOOR)
 
 docs: ## Regenerate docs/helpers.md, the template's skills, the plugin and the tool lists (README, docs/tools.md, CLAUDE.md)
@@ -49,7 +49,7 @@ kit: ## Build the Claude Projects kit into KIT_DIR (default dist/projects-kit, n
 fuzz-requirements: ## Regenerate fuzz/requirements.txt from uv.lock (hash-pinned, for the fuzz image's Python 3.11); needs PyPI
 	$(UV) run python scripts/fuzz_requirements.py write
 
-check: lint typecheck test mutate ## The quick local loop (not all of CI): lint, typecheck, test, mutation tests on changed functions
+check: lint typecheck test mutate ## The quick local loop (not all of CI): lint, typecheck, test, mutation tests on changed modules
 
 precheck: ## The pre-PR gate's local half: the CI checks plus docs drift (hooks, lint, types, tests, smoke, kit, docs drift, mutation shards); stops at the first failure
 	UV="$(UV)" MAKE="$(MAKE)" BASE="$(BASE)" COV_FLOOR="$(COV_FLOOR)" MUTATION_FLOOR="$(MUTATION_FLOOR)" bash scripts/precheck.sh

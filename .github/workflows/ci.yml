@@ -193,7 +193,6 @@ jobs:
       actions: read
     outputs:
       modules: ${{ steps.list.outputs.modules }}
-      merge_base: ${{ steps.list.outputs.merge_base }}
       reused_run: ${{ steps.reuse.outputs.run_id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -223,14 +222,12 @@ jobs:
             run_id=""
           fi
           echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
-      # Only the functions this change touches (spec: mutation tests on changed functions), compared with the merge
-      # base, as shard ids `<module>#<k>of<n>@<split hash>`; the hash covers exactly which functions each shard
-      # mutates. The script uses the standard library only (the split reads each module's source with ast) and
-      # rejects any other name. A pull request compares with its base branch; a push to pre-pr/** has no base_ref
-      # and compares with main, the branch its PR will target. fetch-depth 0 above fetched every branch, so
-      # origin/<base> exists; fail if it does not. The merge base is resolved once, here, and handed to every
-      # shard, so a shard scopes to the same functions even if main moves while the run waits.
-      - name: List changed functions
+      # Only the modules this change touches (spec: mutation tests on changed functions), as shard ids. The script
+      # uses the standard library only (the split reads each module's source with ast) and rejects any name that
+      # is not a plain module name or `<module>#<k>of<n>@<split hash>`. A pull request compares with
+      # its base branch; a push to pre-pr/** has no base_ref and compares with main, the branch its PR will
+      # target. fetch-depth 0 above fetched every branch, so origin/<base> exists; fail if it does not.
+      - name: List changed modules
         id: list
         env:
           BASE_REF: ${{ github.base_ref || 'main' }}
@@ -245,17 +242,9 @@ jobs:
             echo "The base branch origin/${BASE_REF} was not fetched, so the changed modules are unknown. Failing."
             exit 1
           fi
-          # `|| merge_base=""`: under bash -e a failing command substitution would end the step before the
-          # message below.
-          merge_base="$(git merge-base "origin/${BASE_REF}" HEAD)" || merge_base=""
-          if ! [[ "${merge_base}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "No merge base with origin/${BASE_REF}, so the changed functions are unknown. Failing."
-            exit 1
-          fi
-          modules="$(uv run --no-project python scripts/mutate_changed.py --list --base "${merge_base}")"
-          echo "Shards of the changed functions since ${merge_base}: ${modules}"
+          modules="$(uv run --no-project python scripts/mutate_changed.py --list --base "origin/${BASE_REF}")"
+          echo "Shards of the changed modules: ${modules}"
           echo "modules=${modules}" >> "$GITHUB_OUTPUT"
-          echo "merge_base=${merge_base}" >> "$GITHUB_OUTPUT"
 
   mutation:
     name: Mutation tests (${{ matrix.module }})
@@ -264,31 +253,21 @@ jobs:
       (github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pre-pr/'))
       && needs.mutation-list.outputs.modules != '[]'
     runs-on: ubuntu-latest
-    # Shards are sized from the mutant estimate to about 3 minutes of mutants each (SHARD_TARGET in
-    # scripts/mutate_changed.py, with the measurements behind it); setup (checkout, install, generating the module's
-    # mutants, mutmut's stats and clean test runs) comes on top: measured on scoped shards (PR #114's probe, CI run
-    # 45643738512), sql_guard took 7.5 minutes in all, about 6 of them setup, and registry.py 5.1. 12 minutes leaves
-    # about 4.5 minutes of headroom on the slowest; it still stops a hung baseline or stats run (mutmut gives those
-    # no timeout of its own) well before the old 40. The target is lower (#115): once the stats run is cached, bring
-    # this down with it. A shard that hits it leaves no report, so the aggregate below fails with "no shard report
-    # (the shard was cancelled, timed out or never ran)" and the shard's own job shows the timeout: lower its
-    # module's target in scripts/mutate_changed.py rather than raising this.
-    timeout-minutes: 12
+    # A shard holds about 500 estimated mutants (150 for registry.py, whose mutants run most of the suite each):
+    # measured 25 Nov 2026 (PR #49), setup took 3.5 to 6.5 minutes and mutants ran at 54 to 145 a minute (13 for
+    # registry.py), so a shard needs about 10 to 20 minutes. 40 is twice the slowest expected shard: it stops a
+    # hung baseline or stats run (mutmut gives those no timeout of its own) within 40 minutes instead of holding
+    # runners. A shard that hits it leaves no report and fails the check; lower its module's target in
+    # scripts/mutate_changed.py rather than raising this.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
-      # At most 6 shards of this run at a time, so one run takes at most 6 of the account's runners (about 20). The
-      # cap is per run, not per account: several mutation runs at once (other PRs, a pre-pr branch) can still hold
-      # more between them. A newer push to the same branch cancels this run (concurrency, above), queued shards
-      # included.
-      max-parallel: 6
       matrix:
         module: ${{ fromJSON(needs.mutation-list.outputs.modules) }}
     steps:
-      # fetch-depth 0: the shard diffs against the merge base the list job resolved, to scope to the same functions.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: "3.12"
@@ -297,18 +276,10 @@ jobs:
       # MODULE is a shard id (a module, or `<module>#<k>of<n>@<split hash>`); it is always quoted, and `#` and `@`
       # are valid in the report's file name and the artifact's name. The shard refuses a split hash that differs
       # from its own split of the source.
-      # mutmut runs one mutant per core (its --max-children defaults to the runner's CPU count).
       - name: Mutation tests on one shard
         env:
           MODULE: ${{ matrix.module }}
-          MERGE_BASE: ${{ needs.mutation-list.outputs.merge_base }}
-        run: |
-          if ! [[ "${MERGE_BASE}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "The list job gave no merge base, so this shard cannot scope to the changed functions. Failing."
-            exit 1
-          fi
-          uv run python scripts/mutate_changed.py --module "${MODULE}" --base "${MERGE_BASE}" \
-            --report "mutation-report/${MODULE}.json"
+        run: uv run python scripts/mutate_changed.py --module "${MODULE}" --report "mutation-report/${MODULE}.json"
       # Uploaded even when the shard failed, so the aggregate shows its counts; a missing report fails there.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
