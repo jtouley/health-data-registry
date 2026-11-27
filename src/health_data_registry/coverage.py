@@ -5,7 +5,7 @@ source whose coverage isn't declared covers "unknown", and an unknown never coun
 
 Where it reads today, in order:
 
-- places: the contract's ``conformedDimensions`` (the transform's conformed place keys: USA, US-<state FIPS>,
+- places: the contract's ``conformedDimensions`` (conformed place keys as geo defines them: USA, US-<state FIPS>,
   US-<state FIPS><county FIPS>, or a declared part of one, e.g. US-26163/detroit). Nothing else, and never the
   catalog's ``level`` or ``country``: those say who publishes a source, not where its rows are (a federal network
   can cover a few counties in some states, and an international abstract list covers no country). A source with no
@@ -92,8 +92,52 @@ GENERIC_WORDS = frozenset(
         "weekly",
         "year",
         "years",
+        # Words a question uses around its condition that never name one ("How many cases ...", "Did it rise ...").
+        "adults",
+        "among",
+        "children",
+        "decline",
+        "declining",
+        "did",
+        "fall",
+        "give",
+        "how",
+        "im",
+        "increase",
+        "increased",
+        "increasing",
+        "many",
+        "me",
+        "men",
+        "much",
+        "number",
+        "numbers",
+        "rise",
+        "risen",
+        "rising",
+        "rose",
+        "show",
+        "studying",
+        "what",
+        "women",
+        # Population groups a question may name: who, never what condition.
+        "asian",
+        "black",
+        "hispanic",
+        "white",
     ]
 )
+
+# Clinical abbreviations a question may use for a condition, read as the condition's own words. Routing only: an
+# abbreviation never changes which rows are returned or any number.
+ABBREVIATIONS: Mapping[str, str] = {
+    "tb": "tuberculosis",
+    "hcv": "hepatitis c",
+    "hbv": "hepatitis b",
+    "flu": "influenza",
+    "mrsa": "methicillin-resistant staphylococcus aureus",
+    "cdi": "clostridioides difficile",
+}
 
 
 @dataclass(frozen=True)
@@ -133,13 +177,37 @@ class Coverage:
 
 def words(text: str) -> set[str]:
     """Lower-case words, hyphenated ones also split ("influenza-associated" gives "influenza" too). A single
-    letter is kept with the word after it ("Q fever" gives "q fever", "C. auris" gives "c auris")."""
-    low = text.lower().replace(".", " ")
-    out: set[str] = {f"{a} {b}" for a, b in re.findall(r"(?<![a-z0-9])([b-hj-z])\s+([a-z][a-z\-]*)", low)}
+    letter is kept with the word next to it ("Q fever" gives "q fever", "C. auris" gives "c auris", "Hepatitis B,
+    acute" gives "hepatitis b")."""
+    low = text.lower().replace(".", " ").replace("'", "")
+    pairs = re.findall(r"(?<![a-z0-9])([b-hj-z])\s+([a-z][a-z\-]*)", low)  # "q fever"
+    pairs += re.findall(r"([a-z][a-z\-]*)\s+([b-hj-z])(?![a-z0-9])", low)  # "hepatitis b"
+    out: set[str] = {f"{a} {b}" for a, b in pairs if a not in GENERIC_WORDS and b not in GENERIC_WORDS}
     for w in re.findall(r"[a-z0-9][a-z0-9\-]*", low):
         out.add(w)
         out.update(p for p in w.split("-") if p)
     return {w for w in out if len(w) > 1}
+
+
+def question_words(text: str) -> set[str]:
+    """A question's words (words), with each clinical abbreviation it uses also read as the condition's words."""
+    got = words(text)
+    for short, full in ABBREVIATIONS.items():
+        if short in got:
+            got |= words(full)
+    return got
+
+
+def condition_hits(asked: set[str], declared: frozenset[str]) -> set[str]:
+    """The condition words a question shares with a source. A word the question qualifies with a letter
+    ("hepatitis c") is no hit on a source that declares it only with other letters ("hepatitis b")."""
+    hits = asked & declared
+    for w in list(hits):
+        letters = {x for x in asked if x.startswith(f"{w} ") and len(x) == len(w) + 2}
+        theirs = {x for x in declared if x.startswith(f"{w} ") and len(x) == len(w) + 2}
+        if letters and theirs and not letters & theirs:
+            hits.discard(w)
+    return hits
 
 
 def _conformed_places(ds: Dataset) -> list[str]:

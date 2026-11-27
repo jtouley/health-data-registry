@@ -100,7 +100,7 @@ schema:
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: "SUM(Cases) flag"}
-          - {property: mayBeEmpty, value: true, description: "The dashboard adapter writes this field only on a mark the dashboard shows suppressed (adapters/tableau.py), so a read with no suppressed count carries none of it (every yearly chart on 2026-11-25)."}
+          - {property: mayBeEmpty, value: true, description: "The dashboard adapter writes this field only on a mark the dashboard shows suppressed (adapters/tableau.py), so a read with no suppressed count carries none of it."}
           - {property: flagFor, value: cases}
           - {property: flagCodes, value: {"<6": "fewer than 6 cases: the marker the same dashboard's age charts show for a small count (AGG(Count Suppressed)); the count is suppressed and left empty"}}
     quality:

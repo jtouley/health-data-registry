@@ -74,9 +74,92 @@ def test_a_local_source_never_fits_a_place_it_does_not_cover(reg: Registry, ques
 def test_a_place_that_cant_be_read_is_unknown_never_a_fit(reg: Registry, question: str, place: str) -> None:
     out = _json(tools.suggest_datasets(reg, question, fmt="json"))
     assert not [r for r in out["rows"] if r[1] == "yes"]
-    assert any(f"Couldn't tell whether '{place}' is a place" in n for n in out["notes"])
+    assert any(
+        n.startswith(f"Next step: '{place}' isn't a place this server can look up") for n in out["notes"]
+    )
     nndss = verdicts(reg, question)["cdc_nndss_weekly"]
     assert nndss[0] != "yes" and f"'{place}'" in nndss[1]
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Did syphilis rise in Ohio in 2023?",  # a sentence's first word
+        "I'm studying syphilis among Black women in Michigan",  # a contraction, a population group
+        "Lyme disease in Ohio",  # a condition no source serves
+    ],
+)
+def test_a_capitalised_word_is_a_place_only_where_a_place_goes(reg: Registry, question: str) -> None:
+    out = _json(tools.suggest_datasets(reg, question, fmt="json"))
+    assert not any("look up" in r[2] for r in out["rows"]), out["rows"][:3]
+
+
+def test_lyme_is_a_condition_not_an_unreadable_place(reg: Registry) -> None:
+    out = _json(tools.suggest_datasets(reg, "Lyme disease in Ohio", fmt="json"))
+    assert out["notes"][0] == "Read as: condition words lyme, places Ohio, years any."
+    assert verdicts(reg, "Lyme disease in Ohio")["cdc_nndss_weekly"] == ("no", "doesn't cover this condition")
+
+
+def test_two_unreadable_places_are_named_in_plain_words(reg: Registry) -> None:
+    out = _json(tools.suggest_datasets(reg, "Compare legionellosis in Lagos and Brazil", fmt="json"))
+    assert verdicts(reg, "Compare legionellosis in Lagos and Brazil")["cdc_nndss_weekly"][1].startswith(
+        "'Lagos' and 'Brazil' aren't places this server can look up"
+    )
+    steps = [n for n in out["notes"] if n.startswith("Next step:")]
+    assert len(steps) == 1 and "US places only" in steps[0]
+
+
+def test_a_question_that_names_no_condition_says_so(reg: Registry) -> None:
+    out = _json(tools.suggest_datasets(reg, "How many cases in Michigan?", fmt="json"))
+    assert out["notes"][0] == "Read as: condition words none, places Michigan, years any."
+    assert not any(r[2].startswith("doesn't cover this condition") for r in out["rows"])
+    assert [n for n in out["notes"] if n.startswith("Next step:")] == [
+        "Next step: name the condition (a disease or pathogen) and ask again."
+    ]
+
+
+def test_tb_reaches_the_who_tuberculosis_source(reg: Registry) -> None:
+    got = verdicts(reg, "TB in Nigeria 2020")
+    assert got["who_gho_tb_incidence"][0] == "unknown"
+    for ds_id in (*ABSTRACTS, "census_county_pop"):
+        assert got[ds_id][0] == "no", (ds_id, got[ds_id])
+    assert (
+        got["census_county_pop"][1]
+        == "counts people, not cases: use it as the denominator of a rate (get_rate)"
+    )
+    assert got["idweek_abstracts"][1] == "lists conference abstracts, not counts or rates"
+
+
+def test_sti_and_hiv_is_a_data_question_not_the_world_congress(reg: Registry) -> None:
+    out = _json(tools.suggest_datasets(reg, "STI & HIV in Michigan 2023", fmt="json"))
+    assert "hand_off_to" not in out
+    lit = _json(tools.suggest_datasets(reg, "STI & HIV World Congress abstracts on doxy-PEP", fmt="json"))
+    assert lit["hand_off_to"] == ["pubmed", "openalex"]
+
+
+def test_a_hepatitis_b_label_is_no_hit_for_hepatitis_c() -> None:
+    assert coverage.words("Hepatitis B, acute") == {"hepatitis b", "hepatitis", "acute"}
+    hep_b = frozenset(coverage.words("Hepatitis B, acute"))
+    assert coverage.condition_hits(coverage.words("hepatitis c in ohio"), hep_b) == set()
+    assert coverage.condition_hits(coverage.words("hepatitis"), hep_b) == {"hepatitis"}
+    assert coverage.condition_hits(coverage.words("hepatitis c"), frozenset(coverage.words("Hepatitis C"))) == {
+        "hepatitis", "hepatitis c"
+    }  # fmt: skip
+
+
+def test_a_long_question_is_refused_at_once(reg: Registry) -> None:
+    import time
+
+    for attack in ("A'" * 50_000, "abstract " + "became " * 15_000):
+        t = time.perf_counter()
+        out = _json(tools.suggest_datasets(reg, attack, fmt="json"))
+        assert out["refused"] == "question_too_long"
+        assert time.perf_counter() - t < 1
+    # At the cap, the question's patterns stay linear.
+    for attack in ("in A'" * 400, "abstract " + "became " * 284):
+        t = time.perf_counter()
+        tools.suggest_datasets(reg, attack[: tools.MAX_QUESTION_CHARS], fmt="json")
+        assert time.perf_counter() - t < 5
 
 
 def test_a_gbd_measure_is_handed_to_the_gbd_connector(reg: Registry) -> None:
@@ -116,7 +199,8 @@ def test_a_literature_question_goes_to_the_abstracts_and_the_hand_off(reg: Regis
     assert out["notes"][0].startswith("Read as: a literature question")
     for row in out["rows"]:
         if row[0] in ABSTRACTS:
-            assert "the title, DOI and link of each" in row[3] and "query_sql" in row[3]
+            assert row[3].endswith("the title, DOI and link of each")
+    assert any(n.startswith("To search these abstracts now, use query_sql on ") for n in out["notes"])
 
 
 def test_the_hand_off_carries_the_topic_not_the_question_words(reg: Registry) -> None:
@@ -124,12 +208,14 @@ def test_the_hand_off_carries_the_topic_not_the_question_words(reg: Registry) ->
     out = _json(tools.suggest_datasets(reg, question, fmt="json"))
     assert out["notes"][0] == (
         "Read as: a literature question (papers, abstracts or prior work) about 'doxycycline post-exposure "
-        "prophylaxis', meetings ['IDWeek'], years [2024]."
+        "prophylaxis', meetings IDWeek, years 2024."
     )
     assert out["notes"][1] == (
-        "For published papers, search your PubMed connector, or OpenAlex if you have it, for 'doxycycline "
+        "For published papers, search your PubMed connector (or OpenAlex, if you have it) for 'doxycycline "
         "post-exposure prophylaxis'. This server lists conference abstracts (title, DOI and link), not papers."
     )
+    c_auris = _json(tools.suggest_datasets(reg, "Prior work on C. auris in Michigan", fmt="json"))
+    assert "about 'C. auris Michigan'" in c_auris["notes"][0]
 
 
 def test_a_named_meeting_narrows_to_its_own_abstracts(reg: Registry) -> None:
@@ -151,8 +237,8 @@ def test_a_meeting_with_no_table_here_goes_to_the_hand_off(reg: Registry) -> Non
     out = _json(tools.suggest_datasets(reg, "CROI abstracts on long-acting cabotegravir", fmt="json"))
     assert "yes" not in {r[1] for r in out["rows"]}
     assert (
-        "No abstract table here holds CROI: ask PubMed or OpenAlex for its abstracts and papers."
-        in out["notes"]
+        "No abstract table here holds CROI: for its abstracts and papers, search your PubMed connector (or "
+        "OpenAlex, if you have it)." in out["notes"]
     )
     assert out["hand_off_to"] == ["pubmed", "openalex"]
 
@@ -431,18 +517,42 @@ def live_engine(reg: Registry, tmp_path: Path) -> tuple[Engine, Getter]:
     return eng, get
 
 
-def test_a_live_source_is_not_read_for_a_place_it_does_not_cover(reg: Registry, tmp_path: Path) -> None:
-    eng, get = live_engine(reg, tmp_path)
-    out = _json(tools.get_series(reg, eng, condition="Tuberculosis", locations=["California"],
+def test_a_live_source_is_not_read_for_a_place_its_declaration_leaves_out(
+    reg: Registry, tmp_path: Path
+) -> None:
+    declared = _declaring(reg, "detroit_dhd_epi_annual", CONFORMED["value"]["place"])
+    eng, get = live_engine(declared, tmp_path)
+    out = _json(tools.get_series(declared, eng, condition="Tuberculosis", locations=["California"],
                                  source_id="detroit_dhd_epi_annual", fmt="json"))  # fmt: skip
     assert get.calls == []  # never read: its declared coverage doesn't hold California
     assert out["refused"] == "place_not_covered"
     assert out["message"] == (
-        "No source that reports 'Tuberculosis' covers California, so no numbers are shown. detroit_dhd_epi_annual "
-        "was not read for California: it is read live from City of Detroit Health Department (DHD), and which "
-        "places it covers isn't declared yet. Ask again without places to read it."
+        "The sources that report 'Tuberculosis' don't cover California, so no numbers are shown. "
+        "detroit_dhd_epi_annual was not read for California: it covers Detroit and Michigan only."
     )
-    assert out["next_step"].startswith("Ask suggest_datasets which sources cover that place")
+    assert out["next_step"] == "Ask again for a place one of these sources covers, as named above."
+
+
+@pytest.mark.parametrize("places", [["Detroit"], ["California"], ["Lagos"]])
+def test_a_live_source_with_no_declared_places_is_read(
+    reg: Registry, tmp_path: Path, places: list[str]
+) -> None:
+    """Undeclared coverage is unknown, never "not covered": the source is read (#185 review)."""
+    assert tools.not_read_live(reg.get("detroit_dhd_epi_annual"), places) is None
+    assert tools.not_read_live(reg.get("who_gho_tb_incidence"), ["United States"]) is None
+    eng, get = live_engine(reg, tmp_path)
+    tools.get_series(reg, eng, condition="Tuberculosis", locations=places, source_id="detroit_dhd_epi_annual",
+                     fmt="json")  # fmt: skip
+    assert len(get.calls) == 1
+
+
+def test_an_unnamed_place_never_unlocks_a_place_the_declaration_leaves_out(reg: Registry) -> None:
+    declared = _declaring(reg, "detroit_dhd_epi_annual", CONFORMED["value"]["place"]).get(
+        "detroit_dhd_epi_annual"
+    )
+    assert tools.not_read_live(declared, ["Texas", "zzz"]) is not None
+    assert tools.not_read_live(declared, ["Texas", "Detroit"]) is None
+    assert tools.not_read_live(declared, ["zzz"]) is None  # nothing it can check: read
 
 
 def test_a_live_source_that_fails_gives_one_refusal(reg: Registry, tmp_path: Path) -> None:
@@ -462,8 +572,10 @@ def test_a_detroit_read_with_no_suppressed_count_loads(reg: Registry) -> None:
          "SUM(Cases) (alias)": cases, "SUM(Rate)": rate}
         for place, cases, rate in (("Detroit Case Rate", "44", "6.8"), ("Michigan Case Rate", "150", "1.5"))
     ]  # fmt: skip
-    report = load_live(duckdb.connect(":memory:"), ds, rows).staging
-    assert report.row_count == 2
+    con = duckdb.connect(":memory:")
+    staged = load_live(con, ds, rows)
+    assert staged.staging.row_count == 2
+    _rules_ran_clean(staged, con, ds.id, ["cases_flag"])
 
 
 # --------------------------------------------------------------------------------------------- source_id
@@ -477,7 +589,9 @@ def test_get_series_honours_source_id(reg: Registry, tmp_path: Path) -> None:
     assert abstracts["refused"] == "source_has_no_series"
     assert abstracts["message"].startswith("IDWeek abstracts (Open Forum Infectious Diseases supplement) "
                                            "(idweek_abstracts) is a list of conference abstracts")  # fmt: skip
-    assert abstracts["next_step"].startswith("A tool for searching the abstracts is planned. For now, browse")
+    assert abstracts["next_step"].startswith(
+        "To search these abstracts now, use query_sql on idweek_abstracts"
+    )
     missing = _json(tools.get_series(reg, eng, condition="Candida auris", source_id="nope", fmt="json"))
     assert missing["refused"] == "unknown_dataset" and "There's no source called 'nope'" in missing["message"]
     census = _json(
@@ -486,19 +600,36 @@ def test_get_series_honours_source_id(reg: Registry, tmp_path: Path) -> None:
     assert census["refused"] == "unknown_condition"
     assert census["message"] == "census_county_pop doesn't report 'Candida auris'."
     assert not census.get("nearest_served")  # never another source's labels
+    assert census["next_step"].startswith("Use describe_dataset on census_county_pop to see the conditions")
 
 
 def test_query_sql_on_a_private_source_offers_no_other_tool(reg: Registry, tmp_path: Path) -> None:
     eng = Engine(registry=reg, lake=tmp_path / "lake", hub=None, fetch_at_run_time=False)
     out = _json(tools.query_sql(eng, "SELECT doi FROM idweek_abstracts", fmt="json"))
-    assert "No other tool can read idweek_abstracts yet" in out["message"]
+    assert out["refused"] in ("private_store_unavailable", "private_store_refused")
+    assert "No other tool reads idweek_abstracts yet. A tool" in out["message"]
     assert "other tools (get_series" not in out["message"]
-    assert out["next_step"].startswith("For now, browse the abstracts on https://")
+    assert out["next_step"].startswith("For now, browse the abstracts at https://")
+    # A refusal that has nothing to do with the private store keeps the general guidance.
+    other = _json(tools.query_sql(eng, "DELETE FROM idweek_abstracts", fmt="json"))
+    assert "No other tool reads" not in other["message"]
+
+
+def _rules_ran_clean(staged: Any, con: duckdb.DuckDBPyConnection, table: str, flags: list[str],
+                     expected_fail: frozenset[str] = frozenset()) -> None:  # fmt: skip
+    """Every contract rule ran on the flagless read (no rule error), the count-flag rule passed, only the named
+    rules failed, and each flag column is there and empty."""
+    assert staged.quality.rule_errors == ()
+    status = {r["test"]: r["status"] for r in staged.quality.results}
+    assert status["empty_count_only_where_flagged"] == "pass"
+    assert {t for t, s in status.items() if s != "pass"} == expected_fail
+    got = con.execute(f"SELECT {', '.join(flags)} FROM {table}").fetchall()
+    assert got and all(v is None for row in got for v in row)
 
 
 def test_detroit_contract_reads_the_flag_only_when_shown(reg: Registry) -> None:
     col = reg.get("detroit_dhd_epi_annual").contract.column("cases_flag")
-    assert col.may_be_empty
+    assert col.may_be_empty  # exercised by test_a_detroit_read_with_no_suppressed_count_loads
 
 
 def test_an_mdhhs_read_with_no_suppressed_county_loads(reg: Registry) -> None:
@@ -506,14 +637,21 @@ def test_an_mdhhs_read_with_no_suppressed_county_loads(reg: Registry) -> None:
     ds = reg.get("mdhhs_measles_county")
     rows = [
         {"view": "CaseMap", "worksheet": "Case By Cty Map", "County (alias)": county,
-         "c_Case Indicator (alias)": "Case", "SUM(c_Total Cases Reported) (alias)": total,
+         "c_Case Indicator (alias)": "Reported Case(s)", "SUM(c_Total Cases Reported) (alias)": total,
          "SUM(c_Outbreak Cases) (alias)": outbreak}
         for county, total, outbreak in (("Wayne", "3", "2"), ("Kent", "1", "0"))
     ]  # fmt: skip
-    assert load_live(duckdb.connect(":memory:"), ds, rows).staging.row_count == 2
+    con = duckdb.connect(":memory:")
+    staged = load_live(con, ds, rows)
+    assert staged.staging.row_count == 2
+    # Two synthetic counties, not Michigan's 83: every_county_once fails on purpose, and nothing else does.
+    _rules_ran_clean(
+        staged, con, ds.id, ["total_cases_flag", "outbreak_cases_flag"], frozenset({"every_county_once"})
+    )
 
 
-def test_a_live_state_source_is_not_read_for_a_city_it_does_not_declare(reg: Registry) -> None:
+def test_a_live_state_source_is_read_for_a_city_inside_it(reg: Registry) -> None:
+    """A state declaration says nothing about a city reported apart from it: unknown, so it is read."""
     from dataclasses import replace
 
     ds = reg.get("detroit_dhd_epi_annual")
@@ -522,10 +660,7 @@ def test_a_live_state_source_is_not_read_for_a_city_it_does_not_declare(reg: Reg
                                                                      "value": {"place": place}}]}  # fmt: skip
     state_only = replace(ds, contract=replace(ds.contract, raw={**ds.contract.raw, "schema": [schema]}))
     assert tools.not_read_live(state_only, ["Michigan"]) is None
-    assert tools.not_read_live(state_only, ["Detroit"]) == (
-        "detroit_dhd_epi_annual was not read for Detroit: it covers Michigan, and which cities it reports apart "
-        "from their states isn't declared. Ask again for the state, or without places."
-    )
+    assert tools.not_read_live(state_only, ["Detroit"]) is None
     assert tools.not_read_live(state_only, ["Ohio"]) == (
         "detroit_dhd_epi_annual was not read for Ohio: it covers Michigan only."
     )

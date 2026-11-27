@@ -100,7 +100,7 @@ schema:
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: "SUM(c_Total Cases Reported) flag"}
-          - {property: mayBeEmpty, value: true, description: "The dashboard adapter writes this field only on a mark the dashboard shows suppressed (adapters/tableau.py), so a read with no suppressed county carries none of it (the Case Map on 2026-11-25)."}
+          - {property: mayBeEmpty, value: true, description: "The dashboard adapter writes this field only on a mark the dashboard shows suppressed (adapters/tableau.py), so a read with no suppressed county carries none of it."}
           - {property: flagFor, value: total_cases}
       - name: outbreak_cases_flag
         physicalType: VARCHAR
@@ -110,7 +110,7 @@ schema:
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: "SUM(c_Outbreak Cases) flag"}
-          - {property: mayBeEmpty, value: true, description: "The dashboard adapter writes this field only on a mark the dashboard shows suppressed (adapters/tableau.py), so a read with no suppressed county carries none of it (the Case Map on 2026-11-25)."}
+          - {property: mayBeEmpty, value: true, description: "The dashboard adapter writes this field only on a mark the dashboard shows suppressed (adapters/tableau.py), so a read with no suppressed county carries none of it."}
           - {property: flagFor, value: outbreak_cases}
     quality:
       - id: every_county_once

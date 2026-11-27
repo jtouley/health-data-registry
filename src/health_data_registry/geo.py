@@ -78,20 +78,21 @@ def containing_state(text: str) -> Place | None:
 
 # --------------------------------------------------------------------------------------------- place keys
 
-# The transform's conformed place keys (dim_place): USA for the nation, US-<state FIPS> for a state,
-# US-<state FIPS><county FIPS> for a county, and <bigger place's key>/<name> for a declared part of one.
+# Conformed place keys: USA for the nation, US-<state FIPS> for a state, US-<state FIPS><county FIPS> for a county,
+# and <bigger place's key>/<name> for a declared part of one. This module is their only definition for now: no
+# dim_place model declares them yet, and when one does (#223) it becomes the one definition this module reads.
 NATION_KEY = "USA"
 
 
 @dataclass(frozen=True)
 class City:
     name: str
-    key: str  # its conformed key: the part of a bigger place it is (dim_place declares the City of Detroit)
+    key: str  # its conformed key: the part of a bigger place it is
     aliases: tuple[str, ...] = ()
 
 
-# Only the cities a catalogued source reports apart from its state. Detroit's key is dim_place's own; New York
-# City's says only that it is part of New York State, which is all a coverage check needs.
+# Only the cities a catalogued source reports apart from its state. Detroit's key names its county (Wayne); New
+# York City's says only that it is part of New York State, which is all a coverage check needs.
 CITIES: tuple[City, ...] = (
     City("Detroit", "US-26163/detroit", ("city of detroit",)),
     City("New York City", "US-36/nyc", ("nyc", "new york city")),
