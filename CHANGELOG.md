@@ -52,6 +52,9 @@ All notable changes to this project are documented here. The format follows
   CDC publishes ('60.3 to 68.3') and returned by `query_sql`; `get_series` shows it once a staging extension
   splits it into two numbers (#172). Ask by vaccine ("Tdap vaccination", "HPV vaccination", "MMR"): a question
   that names only the disease ("tetanus", "varicella") gets case counts, never a coverage percent.
+- New source, draft (contract not yet reviewed): `cdc_nrevss_positivity`, CDC's weekly national percent of laboratory tests
+  positive for COVID-19, influenza and RSV (NREVSS, data.cdc.gov seuz-s2cv), on the existing Socrata adapter. One
+  figure for the whole country each week; a question about a state or region is told so.
 - SchoolVaxView kindergarten coverage and exemptions (`cdc_schoolvaxview_kindergarten`, CDC data.cdc.gov
   ijqb-a7ye): the percent of kindergartners vaccinated, or with an exemption, by vaccine and dose or exemption
   type, state and school year, as each state reported it, read as published and never added up. Draft contract.
