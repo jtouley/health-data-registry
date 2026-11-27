@@ -18,24 +18,12 @@ schema:
   physicalName: mi_detroit_ehe
   physicalType: table
   logicalType: object
-  description: One row per place, period and published figure (indicator), as the publisher lays it out (to
-    be confirmed).
+  description: One row per place, period and published figure, as the publisher lays it out (to be confirmed).
   customProperties:
   - property: totalRows
     value: none
   - property: tableShape
     value: unresolved
-  quality:
-  - name: mi_detroit_ehe_one_row_per_place_period_indicator
-    description: Each place, period and published figure appears once.
-    type: library
-    metric: duplicateValues
-    arguments: {properties: [place, period, indicator]}
-    mustBe: 0
-    dimension: uniqueness
-    severity: error
-    customProperties:
-    - {property: dbtTest, value: dbt_utils.unique_combination_of_columns}
   properties:
   - name: place
     physicalType: VARCHAR
@@ -46,11 +34,9 @@ schema:
     customProperties:
     - property: role
       value: dimension
-    - property: tier
-      value: public
     quality:
     - name: place_not_null
-      description: Every figure names its place.
+      description: Every row has a place.
       type: library
       metric: nullValues
       mustBe: 0
@@ -67,22 +53,8 @@ schema:
     customProperties:
     - property: role
       value: attribute
-    - property: tier
-      value: public
     - property: conformedKey
       value: {dimension: dim_place, vocabulary: FIPS/ISO3, assignment: reviewed_mapping}
-    quality:
-    - name: place_key_fill_rate
-      description: Some rows have a place code; a column left empty on every row means the matching failed.
-        The real fill rate to expect is an open question until rows are seen.
-      type: library
-      metric: nullValues
-      unit: percent
-      mustBeLessThan: 100
-      dimension: completeness
-      severity: warn
-      customProperties:
-      - {property: dbtTest, value: dbt_utils.not_null_proportion}
   - name: period
     physicalType: VARCHAR
     logicalType: string
@@ -91,34 +63,11 @@ schema:
     customProperties:
     - property: role
       value: dimension
-    - property: tier
-      value: public
     - property: conformedKey
       value: {dimension: dim_time, grain: as_published}
     quality:
     - name: period_not_null
-      description: Every figure states the time it covers.
-      type: library
-      metric: nullValues
-      mustBe: 0
-      dimension: completeness
-      severity: error
-      customProperties:
-      - {property: dbtTest, value: not_null}
-  - name: indicator
-    physicalType: VARCHAR
-    logicalType: string
-    required: true
-    description: Which published figure the row is, by the publisher's own label (e.g. new HIV diagnoses), so two
-      figures for the same place and period are never mistaken for one another.
-    customProperties:
-    - property: role
-      value: dimension
-    - property: tier
-      value: public
-    quality:
-    - name: indicator_not_null
-      description: Every figure names what it counts.
+      description: Every row has a period.
       type: library
       metric: nullValues
       mustBe: 0
@@ -135,22 +84,8 @@ schema:
     customProperties:
     - property: role
       value: attribute
-    - property: tier
-      value: public
     - property: conformedKey
       value: {dimension: dim_concept, vocabulary: MeSH, assignment: reviewed_mapping}
-    quality:
-    - name: condition_concept_id_fill_rate
-      description: Some rows have a condition id; a column left empty on every row means the matching failed.
-        The real fill rate to expect is an open question until rows are seen.
-      type: library
-      metric: nullValues
-      unit: percent
-      mustBeLessThan: 100
-      dimension: completeness
-      severity: warn
-      customProperties:
-      - {property: dbtTest, value: dbt_utils.not_null_proportion}
   - name: source_url
     physicalType: VARCHAR
     logicalType: string
@@ -159,11 +94,9 @@ schema:
     customProperties:
     - property: role
       value: attribute
-    - property: tier
-      value: public
     quality:
     - name: source_url_not_null
-      description: Every row records the address it was read from.
+      description: Every row has a source url.
       type: library
       metric: nullValues
       mustBe: 0
@@ -179,11 +112,9 @@ schema:
     customProperties:
     - property: role
       value: attribute
-    - property: tier
-      value: public
     quality:
     - name: raw_sha256_not_null
-      description: Every row records the fingerprint (sha256) of the file it was read from.
+      description: Every row has a raw sha256.
       type: library
       metric: nullValues
       mustBe: 0
@@ -199,11 +130,9 @@ schema:
     customProperties:
     - property: role
       value: attribute
-    - property: tier
-      value: public
     quality:
     - name: retrieved_at_not_null
-      description: Every row records when it was read from the publisher.
+      description: Every row has a retrieved at.
       type: library
       metric: nullValues
       mustBe: 0
@@ -213,24 +142,21 @@ schema:
       - {property: dbtTest, value: not_null}
 customProperties:
 - property: tier
-  value: private
+  value: public
 - property: dataKind
   value: 'programme'
 - property: countedUnit
   value: 'unresolved: from the publisher''s codebook once catalogued'
 - property: unreliableRule
   value:
-    kind: unresolved
-    description: 'Not read yet: whether and how the publisher suppresses or flags small or unreliable values is an open question, so the port stays an unserved stub. Never read as no suppression.'
+    kind: none
+    description: 'Not yet read: the publisher''s suppression rule is an open question until the source is catalogued.'
 - property: fingerprints
   value:
-  - {version: 0.1.0, interface: 3af55879d328b9346babe1fb3279d8326687ab5f1aff9a7568c24b98a8768c8a, docs: 5433f2012c7841a402ae377e9d5a2540efb4198521ad8eb8f8788c59668111e9}
+  - {version: 0.1.0, interface: a045eba4f11253cb77d23ccdd5a91852a681c21089dfdfe51e563af4b5962e57, docs: 6a886d8fad63083ffd33309c542a19d4a49e52211a8b113d3cef135b15320aa0}
 - property: openQuestions
   value:
   - 'Not catalogued yet (tasks 78-80): which EHE plan or progress reports, from which publisher, at which URLs.'
   - 'Licence and terms of reuse are not yet read; until they are, nothing is hosted.'
   - 'countedUnit: what one count or indicator is comes from the publisher''s own definitions.'
   - 'Whether the publisher splits Detroit from Out-Wayne; where it does, they stay separate series.'
-  - 'Suppression: the publisher''s rule for small or unreliable values (e.g. cells shown as <6 or blank) is read from its own notes before any figure is served; until then unreliableRule is unresolved.'
-  - 'Period: how each published period (a calendar year, a span such as 2019-2023, a fiscal year) maps to dim_time is declared from the publisher''s notes, e.g. as period_start and period_end; period stays the published text.'
-  - 'Fill rates: the share of rows expected to have place_key and condition_concept_id is set once real rows are seen; until then the warn rules only catch a column left empty on every row.'

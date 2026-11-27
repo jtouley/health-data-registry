@@ -16,8 +16,8 @@ description:
     so a fellow can see prior work on a condition, place or year before planning a study, and follow each abstract
     to its source.
   usage: >-
-    Ask through the health-data-registry MCP server (find_prior_work). The index gives titles, authors, links and
-    DOIs (public once its sources' licences allow it); abstract text is quoted only as a short excerpt from the private tier, always with its link.
+    Ask through the health-data-registry MCP server (find_prior_work). The public index gives titles, authors,
+    links and DOIs; abstract text is quoted only as a short excerpt from the private tier, always with its link.
   limitations: >-
     An abstract is not a peer-reviewed paper. Every record keeps its conference, year and route (DOI metadata or
     the conference's own site) and its own licence. Text under a restrictive licence is private tier: never
@@ -61,7 +61,7 @@ inputPorts:
         description: CROI's searchable abstract database.
 outputPorts:
   - name: id_abstracts_index
-    description: Index of abstracts across conferences (titles, authors, links, DOIs; conference, year, route). Private tier and not hosted until a maintainer records that its sources' metadata may be published; then public. Draft stub.
+    description: Public index of abstracts across conferences (titles, authors, links, DOIs; conference, year, route). Draft stub, not hosted until its licence question is answered.
     type: tables
     version: 0.1.0
     contractId: id_abstracts_index
@@ -75,7 +75,7 @@ outputPorts:
       constraints:
         - constraint: Holds no abstract text; never read from the private-tier port.
     customProperties:
-      - {property: tier, value: private}
+      - {property: tier, value: public}
       - {property: hosting, value: none}
       - {property: stub, value: true}
       - {property: releaseTag, value: "release-<run date>"}
@@ -95,7 +95,7 @@ outputPorts:
           - {id: croi_abstracts_index, licence: croi-metadata-index, fillsFrom: "PR #30 (feat/croi-index)"}
       - property: openQuestions
         value:
-          - "May titles, authors, links and DOIs be published? Every source is catalogued redistribution false today (PR #29, PR #30); the port stays private tier and unhosted until a maintainer answers, and becomes public only when every source's licence allows a public copy."
+          - "May titles, authors, links and DOIs be published? Every source is catalogued redistribution false today (PR #29, PR #30); the port stays unhosted until a maintainer answers."
           - ESCMID and other conferences join as they are catalogued.
   - name: id_abstracts_text
     description: Abstract text where the licence restricts it (CROI, ESCMID and others). Private tier, only in private Hugging Face datasets, never public. Draft stub.

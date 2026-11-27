@@ -12,20 +12,13 @@ our own.
 | [`sitemaps.yml`](../../.github/workflows/sitemaps.yml) | Takes a weekly copy of the michigan.gov and kentcountymi.gov seed sitemaps, with the week's diff | Monday 04:43 | Private dataset `jtouley/health-data-registry-ops-sitemaps`; an issue when refused |
 | [`deploy-space.yml`](../../.github/workflows/deploy-space.yml) | Syncs `space/` to the Space that hosts the MCP server | Only on a release tag `vX.Y.Z` on main that passed CI | Space `jtouley/health-data-registry-mcp` |
 | [`drift-check.yml`](../../.github/workflows/drift-check.yml) | `check-contracts` against every publisher, opening or updating an issue on failure; re-enables the scheduled workflows | Friday 05:37 | Issues; workflow enabled state |
-| [`cflite_pr.yml`](../../.github/workflows/cflite_pr.yml) | ClusterFuzzLite: builds the Atheris harnesses in `fuzz/` and fuzzes what the change reaches, about 5 minutes per harness | On pull requests, and pushes to `pre-pr/**`, that touch `src/`, `fuzz/` or `.clusterfuzzlite/` | Run artifacts only |
-| [`cflite_batch.yml`](../../.github/workflows/cflite_batch.yml) | ClusterFuzzLite: fuzzes every harness for about 30 minutes each and keeps the grown corpus | Thursday 02:53 | Run artifacts only (the corpus) |
 
 CI, CodeQL, Scorecard, release and npm-publish are unchanged and described in their own files.
 
 Every action is pinned to a full commit SHA. Every workflow's top-level token is `contents: read`; `issues:
 write` is granted only to the jobs that open an issue, `actions: write` only to the keep-alive job and
-`actions: read` only to the deploy's verify job, the two fuzzing jobs (to read earlier runs' corpus
-artifacts) and CI's mutation list job (to find a green pre-pr verdict for the same commit, [the pre-PR
-gate](README.md#the-pre-pr-gate)). The ClusterFuzzLite actions are pinned by SHA too, but they pull OSS-Fuzz's runner images by their
-`v1` tag inside the action, which a workflow can't pin. Every checkout drops its credentials, and no workflow pushes to
-git. Each source has its own concurrency group, and no scheduled workflow's group cancels a running job. The PR
-fuzzing group (`cflite_pr.yml`) is the exception: a newer push to the same PR or `pre-pr/` branch cancels the
-fuzzing run it supersedes. `HF_TOKEN` is set only on
+`actions: read` only to the deploy's verify job. Every checkout drops its credentials, and no workflow pushes to
+git. Each source has its own concurrency group, and no group cancels a running job. `HF_TOKEN` is set only on
 the steps that talk to Hugging Face, never job-wide, so dependency installs, the browser and the crawlers'
 parsers never see it. Before every upload to a private or ops dataset, `python -m health_data_registry.naming
 assert-private <repo>` checks that the repo is a private or ops dataset of `HDR_PRIVATE_HF_OWNER`, creates it
@@ -42,7 +35,7 @@ ends green with a notice and does nothing. Each starts working on its next run a
 | `crawl-croi.yml` | `index-croi` (CROI crawler, `wip/croi-index`) | `health-data-registry index-croi --help` |
 | `crawl-doi.yml` | `scripts/crawl_doi.py` (DOI harvester, `feat/doi-harvest`) | the file exists |
 | `sitemaps.yml` | `browser_fetch.py` (browser fetcher, `feat/michigan-tableau`) | the module imports; until then it uses plain HTTPS, which michigan.gov refuses from cloud servers, so expect the "Sitemap refresh blocked" issue |
-| `deploy-space.yml` | `space/` (the hosted server) at the release tag | `space/README.md` exists at the tag |
+| `deploy-space.yml` | `space/` (HTTP server, `wip/http-server`) | `space/README.md` exists at the tag |
 
 ## What each workflow does
 
@@ -160,9 +153,8 @@ deploy job runs in the GitHub environment `space`, whose deployment rule allows 
 that commit; only then does the **deploy** job, which alone gets the token, upload `space/` to the Space as one
 commit. To redeploy a tag, run the workflow by hand with "Use workflow from" set to that tag; any other ref is
 refused. Files in the Space that aren't in `space/` are deleted, so `space/README.md` must hold the Space's
-config header. Before uploading, the deploy job writes the tag and its commit into `space/Dockerfile`'s empty
-`HDR_TAG` and `HDR_COMMIT`, and the Space's build checks the tag still names that commit; a release without
-`space/` skips with a notice.
+config header. `space/` comes from the HTTP-server work (`wip/http-server`) and **isn't on main yet**; until it
+is, the job skips with a notice.
 
 ### Drift check and keep-alive (`drift-check.yml`)
 
@@ -174,37 +166,6 @@ The keep-alive job re-enables each scheduled workflow through the API every week
 only). GitHub disables scheduled workflows in a public repository after 60 days with no repository activity.
 A workflow the maintainer disabled by hand is left alone. If the drift-check workflow itself has been disabled,
 re-enable it once in the Actions tab.
-
-### Fuzzing (`cflite_pr.yml`, `cflite_batch.yml`)
-
-ClusterFuzzLite builds `.clusterfuzzlite/Dockerfile` (OSS-Fuzz's Python builder, pinned by digest) and runs
-`.clusterfuzzlite/build.sh`, which bundles each `fuzz/fuzz_*.py` harness with PyInstaller, plus its seed corpus
-(`fuzz/corpus/<harness>/`, tiny hand-written inputs only), dictionary and libFuzzer options (10 s and 2 GB per
-input). `.dockerignore` keeps `lake/`, `.env*`, `.venv/`, `dist/` and `.git/` out of the image, also for a local
-build from a working copy. The image runs Python 3.11, so the build installs the hash-pinned
-`fuzz/requirements.txt` and bundles `src/` directly; a harness may import only modules that run on 3.11.
-`fuzz/requirements.txt` is generated from uv.lock (`make fuzz-requirements`: uv.lock's versions, PyPI's hashes
-for 3.11), so the fuzzer runs the DuckDB and sqlglot that production runs. Dependabot bumps only uv.lock; a test
-fails until `make fuzz-requirements` is run and its output committed.
-
-| Harness | Code under test | Property |
-|---|---|---|
-| `fuzz_sql_guard` | `sql_guard.guard_sql` | Refuses with `SqlRefused`, or what it accepts is, by DuckDB's own parse of the generated SQL, one SELECT reading catalogued tables or its CTEs, calling only allowlisted functions, joining only declared pairs, with a LIMIT no larger than the cap |
-| `fuzz_sitemap_parse` | `sitemaps.parse` | Pages or child sitemaps, or `SitemapError` |
-| `fuzz_https_csv` | `adapters/https_csv.records`, with and without the wide-to-long pivot | Text records, or `ValueError` |
-| `fuzz_json_adapters` | `adapters/socrata` and `adapters/who_gho` pages and field lists | Flat records, no more than `max_rows` in all, or `ValueError` |
-
-Any other exception, a timeout or running out of memory is a finding. File it as an issue with a minimal
-reproducer. A harness may skip a filed finding behind a `KNOWN_*` flag that names its issue, so it keeps finding
-new ones; set the flag to `False` with the fix. A skip matches only that issue's exact failure: the exception
-type, the function that raised it, its message and the input shape the reproducer needs. Any other failure, even
-of the same type, still fails the run, and `tests/test_fuzz_harnesses.py` checks that it does. Run a harness locally with Atheris installed (`pip install atheris`, on
-Python 3.11 to match the image): `PYTHONPATH=src python fuzz/fuzz_sql_guard.py -max_total_time=60
-fuzz/corpus/fuzz_sql_guard`. Point libFuzzer at an empty scratch directory first if you don't want it to add
-inputs to the seed corpus.
-
-Harnesses still to write when their code reaches main: the PDF table parser (`pdf_tables`, the Wayne County
-adapter, #27), the Tableau bootstrapSession parser (#19), and the HTML and DOCX parsers.
 
 ## Free-tier limits (checked against GitHub's docs, 24 Nov 2026)
 
@@ -218,7 +179,7 @@ adapter, #27), the Tableau bootstrapSession parser (#19), and the HTML and DOCX 
 | Artifacts and logs | Kept 90 days by default; 1 to 90 days in a public repo | Per-source lakes kept 7 days; publish checklist 30 days |
 | Schedule | Delayed under high load, especially at the top of the hour; runs only on the default branch; shortest interval 5 min | Every cron is off the hour; nothing relies on exact timing |
 | Inactive repos | Scheduled workflows are disabled after 60 days with no repository activity (public repos) | Weekly keep-alive job |
-| Concurrency groups | One run running and one pending per group; a newer pending run cancels the older pending one | `cancel-in-progress: false` in every scheduled workflow, so a running crawl, refresh or batch fuzzing run is never cancelled; a skipped pending slice is picked up by the next schedule. `cflite_pr.yml` sets `cancel-in-progress: true`, so a newer push cancels the PR fuzzing run it supersedes |
+| Concurrency groups | One run running and one pending per group; a newer pending run cancels the older pending one | `cancel-in-progress: false` everywhere, so a running crawl or refresh is never cancelled; a skipped pending slice is picked up by the next schedule |
 | `GITHUB_TOKEN` API rate | 1,000 requests per hour per repo | The issue, verify and keep-alive jobs make a handful |
 
 Sources: GitHub Docs, "Actions limits", "Events that trigger workflows" (schedule), "Dependency caching",
@@ -295,7 +256,7 @@ The same steps run locally from a checkout: `make refresh`, `make check-contract
 
 ## Open risks
 
-- `index-croi`, `scripts/crawl_doi.py` and `browser_fetch.py` aren't merged; their workflows skip or
+- `index-croi`, `scripts/crawl_doi.py`, `browser_fetch.py` and `space/` aren't merged; their workflows skip or
   fall back until they are. Check the CLI flags and step outputs still match when each merges.
 - The sitemap job installs Playwright through the `browser` extra; if the Michigan PR names the extra
   differently, that step fails and the blocked issue says so.

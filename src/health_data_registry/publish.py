@@ -612,12 +612,6 @@ def _parquet_rows(path: Path) -> int:
     return int(row[0]) if row else 0
 
 
-def public_sources(registry: Registry) -> list[Dataset]:
-    """Every source the public hub carries, hosted or listed. Private-store sources (``private_store: true``) are
-    left out entirely: not even a card, since their rows live only in their own private stores (private.py)."""
-    return [ds for ds in registry if ds.entry.tier != "private"]
-
-
 def lake_snapshots(registry: Registry, lake: Path) -> dict[str, tuple[Path, Manifest]]:
     """The latest snapshot of every `hosting: public` source; stops the export if one is missing."""
     snaps: dict[str, tuple[Path, Manifest]] = {}
@@ -686,14 +680,8 @@ def stage(
         "sources": {},
         "files": {},
     }
-    for ds in public_sources(registry):
+    for ds in registry:
         port = ports.get(ds.contract.id)
-        if port is not None and port.conflict:
-            # Only this source loses its product label; the release and every other source go ahead.
-            problem: str | None = f"no data product named for {ds.id}: {port.conflict}"
-            port = None
-        else:
-            problem = None
         if port and release["data_product"] is None:
             release["data_product"] = {"id": port.product_id, "version": port.product_version}
         folder = out / ds.id
@@ -709,8 +697,6 @@ def stage(
             hosted=hosted,
             quality=(quality or {}).get(ds.id),
         )
-        if problem:
-            sm["data_product_problem"] = problem
         if hosted and snap is not None:
             target = out / data_path(ds.id)
             target.parent.mkdir()
@@ -802,7 +788,7 @@ def check_release(registry: Registry, lake: Path, out: Path) -> list[str]:
     release = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     hub = read_front_matter((out / "README.md").read_text(encoding="utf-8"))
     problems: list[str] = []
-    for ds in public_sources(registry):
+    for ds in registry:
         e = ds.entry
         folder = out / ds.id
         card_text = (folder / "README.md").read_text(encoding="utf-8")

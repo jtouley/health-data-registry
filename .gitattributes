@@ -1,2 +1,0 @@
-# Vendored Bitol schemas are checked byte for byte (sha256); never rewrite their line endings.
-src/health_data_registry/schemas/** -text

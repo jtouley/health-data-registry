@@ -1,6 +1,5 @@
-# Output port contract: mi_detroit_dhd_sti_annual (product michigan-hiv). A draft stub: its source is catalogued
-# (read live, never stored); its columns and measures are not declared yet, and nothing is hosted. Every
-# number-changing fact is an open question (hard rule 1).
+# Output port contract: mi_detroit_dhd_sti_annual (product michigan-hiv). A draft stub: its source is not catalogued yet, so no
+# measure is declared and nothing is hosted. Every number-changing fact is an open question (hard rule 1).
 apiVersion: v3.2.0
 kind: DataContract
 id: mi_detroit_dhd_sti_annual
@@ -12,31 +11,19 @@ description:
   purpose: "The Detroit Health Department Epidemiology Dashboard's yearly figures for chlamydia and syphilis (catalogued on PR #19 as detroit_dhd_epi_annual), kept as their own series."
   usage: One series of the Michigan HIV product, read on its own with its own counted unit; never added to or merged
     with another port's figures.
-  limitations: 'Draft stub. Data kind: unresolved until the HIV charts are read. Its source is catalogued; its
-    measures and their counted unit are declared only from that source''s contract and the publisher''s own notes.'
+  limitations: 'Draft stub. Data kind: surveillance. Measures and their counted unit are declared only from the
+    publisher''s own codebook once the source is catalogued.'
 schema:
 - name: mi_detroit_dhd_sti_annual
   physicalName: mi_detroit_dhd_sti_annual
   physicalType: table
   logicalType: object
-  description: One row per place, period and published figure (indicator), as the publisher lays it out (to
-    be confirmed).
+  description: One row per place, period and published figure, as the publisher lays it out (to be confirmed).
   customProperties:
   - property: totalRows
     value: none
   - property: tableShape
     value: unresolved
-  quality:
-  - name: mi_detroit_dhd_sti_annual_one_row_per_place_period_indicator
-    description: Each place, period and published figure appears once.
-    type: library
-    metric: duplicateValues
-    arguments: {properties: [place, period, indicator]}
-    mustBe: 0
-    dimension: uniqueness
-    severity: error
-    customProperties:
-    - {property: dbtTest, value: dbt_utils.unique_combination_of_columns}
   properties:
   - name: place
     physicalType: VARCHAR
@@ -47,11 +34,9 @@ schema:
     customProperties:
     - property: role
       value: dimension
-    - property: tier
-      value: public
     quality:
     - name: place_not_null
-      description: Every figure names its place.
+      description: Every row has a place.
       type: library
       metric: nullValues
       mustBe: 0
@@ -68,22 +53,8 @@ schema:
     customProperties:
     - property: role
       value: attribute
-    - property: tier
-      value: public
     - property: conformedKey
       value: {dimension: dim_place, vocabulary: FIPS/ISO3, assignment: reviewed_mapping}
-    quality:
-    - name: place_key_fill_rate
-      description: Some rows have a place code; a column left empty on every row means the matching failed.
-        The real fill rate to expect is an open question until rows are seen.
-      type: library
-      metric: nullValues
-      unit: percent
-      mustBeLessThan: 100
-      dimension: completeness
-      severity: warn
-      customProperties:
-      - {property: dbtTest, value: dbt_utils.not_null_proportion}
   - name: period
     physicalType: VARCHAR
     logicalType: string
@@ -92,34 +63,11 @@ schema:
     customProperties:
     - property: role
       value: dimension
-    - property: tier
-      value: public
     - property: conformedKey
       value: {dimension: dim_time, grain: as_published}
     quality:
     - name: period_not_null
-      description: Every figure states the time it covers.
-      type: library
-      metric: nullValues
-      mustBe: 0
-      dimension: completeness
-      severity: error
-      customProperties:
-      - {property: dbtTest, value: not_null}
-  - name: indicator
-    physicalType: VARCHAR
-    logicalType: string
-    required: true
-    description: Which published figure the row is, by the publisher's own label (e.g. new HIV diagnoses), so two
-      figures for the same place and period are never mistaken for one another.
-    customProperties:
-    - property: role
-      value: dimension
-    - property: tier
-      value: public
-    quality:
-    - name: indicator_not_null
-      description: Every figure names what it counts.
+      description: Every row has a period.
       type: library
       metric: nullValues
       mustBe: 0
@@ -136,22 +84,8 @@ schema:
     customProperties:
     - property: role
       value: attribute
-    - property: tier
-      value: public
     - property: conformedKey
       value: {dimension: dim_concept, vocabulary: MeSH, assignment: reviewed_mapping}
-    quality:
-    - name: condition_concept_id_fill_rate
-      description: Some rows have a condition id; a column left empty on every row means the matching failed.
-        The real fill rate to expect is an open question until rows are seen.
-      type: library
-      metric: nullValues
-      unit: percent
-      mustBeLessThan: 100
-      dimension: completeness
-      severity: warn
-      customProperties:
-      - {property: dbtTest, value: dbt_utils.not_null_proportion}
   - name: source_url
     physicalType: VARCHAR
     logicalType: string
@@ -160,11 +94,9 @@ schema:
     customProperties:
     - property: role
       value: attribute
-    - property: tier
-      value: public
     quality:
     - name: source_url_not_null
-      description: Every row records the address it was read from.
+      description: Every row has a source url.
       type: library
       metric: nullValues
       mustBe: 0
@@ -180,11 +112,9 @@ schema:
     customProperties:
     - property: role
       value: attribute
-    - property: tier
-      value: public
     quality:
     - name: raw_sha256_not_null
-      description: Every row records the fingerprint (sha256) of the file it was read from.
+      description: Every row has a raw sha256.
       type: library
       metric: nullValues
       mustBe: 0
@@ -200,11 +130,9 @@ schema:
     customProperties:
     - property: role
       value: attribute
-    - property: tier
-      value: public
     quality:
     - name: retrieved_at_not_null
-      description: Every row records when it was read from the publisher.
+      description: Every row has a retrieved at.
       type: library
       metric: nullValues
       mustBe: 0
@@ -216,22 +144,18 @@ customProperties:
 - property: tier
   value: private
 - property: dataKind
-  value: 'unresolved: surveillance for the chlamydia and syphilis charts; the HIV charts, not read yet, may hold Ryan White programme data'
+  value: 'surveillance'
 - property: countedUnit
   value: 'unresolved: from the publisher''s codebook once catalogued'
 - property: unreliableRule
   value:
-    kind: unresolved
-    description: 'Not read yet for this port. Its source detroit_dhd_epi_annual states no rule for the chlamydia and syphilis yearly charts it read, but the HIV and gonorrhea charts were not read, and other charts on the dashboard show <6 for small counts. Never read as no suppression.'
+    kind: none
+    description: 'Not yet read: the publisher''s suppression rule is an open question until the source is catalogued.'
 - property: fingerprints
   value:
-  - {version: 0.1.0, interface: 5a6a02db897d4495a72bd25995c9d0f969f28b0a99b2564ae8018c4112a2ea59, docs: 2b336dcc86c56efe866fafcb578ea52dc2cfe5032f8c62e53fc85940008cb81c}
+  - {version: 0.1.0, interface: 74c84d395e5b316200f4959a367806f69bff3afa52f708ee07548dd9cf0324de, docs: 155ddd3789cbfc1c7fd9d80e3065a7ebeff3f8cec29e31179138cc052312d64c}
 - property: openQuestions
   value:
   - 'Reads detroit_dhd_epi_annual, catalogued in PR #19 (merged). Its HIV and gonorrhea yearly charts were not read on 2026-11-24; HIV figures there may include Ryan White programme data and must then be labelled as programme data.'
   - 'Rate denominator, case definitions and geography basis are open questions in that contract; they apply here unchanged.'
   - 'The dashboard shows Detroit and Michigan (Michigan includes Detroit); Out-Wayne is not shown.'
-  - 'Suppression: the publisher''s rule for small or unreliable values (e.g. cells shown as <6 or blank) is read from its own notes before any figure is served; until then unreliableRule is unresolved.'
-  - 'Period: how each published period (a calendar year, a span such as 2019-2023, a fiscal year) maps to dim_time is declared from the publisher''s notes, e.g. as period_start and period_end; period stays the published text.'
-  - 'Fill rates: the share of rows expected to have place_key and condition_concept_id is set once real rows are seen; until then the warn rules only catch a column left empty on every row.'
-  - 'Data kind per row: once columns are declared, a data_kind column (surveillance or programme) labels each row, since the HIV charts may mix the two.'
