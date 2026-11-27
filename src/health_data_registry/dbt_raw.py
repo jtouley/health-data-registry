@@ -10,8 +10,9 @@ When the lake has no load dbt can read, the source is empty and a plain warning 
 `dbt build` still builds every other model. That happens when the source was never refreshed, when LATEST names a
 partial sample (only full loads are kept for dbt), or when the load predates kept records.
 
-A load whose raw bytes no longer hash to the sha256s its snapshot names is refused (RawObjectCorrupt), never read:
-the source fails to load, so the models built on it fail and the release gate holds the build.
+A load whose raw bytes are missing, or no longer hash to the sha256s its snapshot names, is refused
+(RawObjectCorrupt), never read: the source fails to load, so the models built on it fail and the release gate holds
+the build. Only a lake with no raw/ directory at all (CI's synthetic fixtures) loads unchecked, with a warning.
 """
 
 from __future__ import annotations
@@ -48,8 +49,9 @@ def empty_sql(fields: Sequence[str]) -> str:
 
 
 def load_sql(lake: Path, dataset_id: str, fields: Sequence[str]) -> tuple[str, str | None]:
-    """The SQL that reads the load LATEST names, and a plain warning when there is none to read. Raises
-    RawObjectCorrupt when a raw object the load was parsed from no longer hashes to its name."""
+    """The SQL that reads the load LATEST names, and a plain warning when there is none to read or its raw files
+    can't be checked. Raises RawObjectCorrupt when a raw object the load was parsed from is missing or no longer
+    hashes to its name."""
     model = f"stg_{dataset_id}"
     try:
         found = latest_snapshot(lake, dataset_id)
@@ -76,15 +78,20 @@ def load_sql(lake: Path, dataset_id: str, fields: Sequence[str]) -> tuple[str, s
             f"{dataset_id}: LATEST names {sid}, whose records were not kept for dbt, so {model} is empty. "
             f"Run `health-data-registry refresh {dataset_id}` to keep them."
         )
-    # The sha256s every row will cite must still be true (issue #269): a stored raw object that no longer hashes to
-    # its name is refused, so the build fails rather than carry a false hash. A lake that keeps no raw bytes (CI's
-    # synthetic fixtures) is not refused here; the release gate holds a build whose raw objects are missing.
-    stored = [
-        s for s in manifest.raw_sha256 if (lake / "raw" / s).exists() or (lake / "raw" / s).is_symlink()
-    ]
-    if problems := raw_problems(lake, stored):
-        raise RawObjectCorrupt(
-            f"{dataset_id}: LATEST names {sid}, but {'; '.join(problems)}. {model} is not built from it."
+    # The raw pages' sha256s every row will cite must still be true (issue #269): a raw object that is missing or no
+    # longer hashes to its name is refused, so the build fails rather than carry a false hash. Only a lake with no
+    # raw/ directory at all (CI's synthetic fixtures) is let through, with a warning; the release gate checks those.
+    # The records file itself (raw_records/<id>/<snapshot>.ndjson) is not yet hashed (issue #278).
+    warning = None
+    if (lake / "raw").is_dir() or (lake / "raw").is_symlink():
+        if problems := raw_problems(lake, manifest.raw_sha256):
+            raise RawObjectCorrupt(
+                f"{dataset_id}: LATEST names {sid}, but {'; '.join(problems)}. {model} is not built from it."
+            )
+    else:
+        warning = (
+            f"{dataset_id}: the lake at {lake} keeps no raw files, so the sha256s on {model}'s rows can't be "
+            "checked here. The release gate holds a build whose raw files are missing."
         )
     columns = "{" + ", ".join(f"{_lit(f)}: 'VARCHAR'" for f in fields) + "}"
     select = ", ".join([*(_q(f) for f in fields), f"{_lit(sid)} AS {_q(SNAPSHOT_COLUMN)}"])
@@ -92,7 +99,7 @@ def load_sql(lake: Path, dataset_id: str, fields: Sequence[str]) -> tuple[str, s
     return (
         f"SELECT {select}, {_lit(sha)} AS {_q(SHA256_COLUMN)} "  # noqa: S608 - quoted identifiers and literals
         f"FROM read_json({_lit(str(path))}, format='newline_delimited', columns={columns})",
-        None,
+        warning,
     )
 
 

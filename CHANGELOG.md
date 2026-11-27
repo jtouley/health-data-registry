@@ -10,11 +10,9 @@ All notable changes to this project are documented here. The format follows
 
 - A stored raw file is never trusted for its name (#269). Whenever a refresh reuses `raw/<sha256>`, streamed
   pages included, the file is hashed again, and one that no longer matches is refused in plain words with a next
-  step. The transform refuses a load cut from such a file, and the release gate holds a build when any raw file a
-  `LATEST` snapshot names is missing or no longer matches, so no answer cites a false sha256.
-- The release gate's build id is now called the logical build id: it names what a build was made from (#271). The
-  build record (`ops/builds.jsonl`) also carries an artifact digest, the sha256 of each file the build wrote and one
-  sha256 over them, so two builds of the same inputs that produced different bytes can be told apart.
+  step. The transform refuses a load whose raw files are missing or no longer match, and the release gate holds a
+  build when any raw file a `LATEST` snapshot names is missing or no longer matches, so no hub release is served
+  whose answers would cite a false sha256. The local server does not re-check yet (#281).
 - Release blockers from #173, where the served path returned wrong numbers:
   - NNDSS's `-` (no reported cases) is read as not reported (the maintainer's declaration of 25 Nov 2026). It
     comes back empty with its flag, never as 0 and never as a rate: `get_rate` gives no rate, `compare_rates`
@@ -56,6 +54,7 @@ All notable changes to this project are documented here. The format follows
   saying why.
 ### Changed
 
+- The release gate's build id is now called the logical build id: it names what a build was made from (#271).
 - The README is rewritten for clinicians: five setup steps that each say what you'll see (the Start here
   helper is the check step), a C. auris in Michigan example checked against CDC with every year provisional and
   CDC's later count beside each, a short GBD and PubMed section, and light and dark images from
@@ -68,6 +67,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- The release gate's build record (`ops/builds.jsonl`) carries an artifact digest next to the logical build id: the
+  sha256 of the run record and manifest the gate judged, and one sha256 over them (#271). It identifies the run,
+  not its data, so it differs between any two runs. `gate --confirm` refuses when those files changed after the
+  pass, and the serve row and `SERVING` carry the digest. A content digest of the built tables is still to come.
 - New source, draft (contract not yet reviewed): `cdc_haicviz_isa`, CDC's Emerging Infections Program case and
   death rates for invasive Staphylococcus aureus since 2005 (HAICViz iSA, data.cdc.gov ssz5-s49e), on the existing
   Socrata adapter. Every rate is for the EIP sites combined, never called a state figure, and nothing is added;

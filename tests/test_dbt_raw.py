@@ -169,7 +169,15 @@ def test_a_load_whose_raw_bytes_no_longer_match_is_refused(tmp_path: Path) -> No
     )
     with pytest.raises(RawObjectCorrupt, match="stg_toy_cases is not built from it"):
         plugin.load(config)
-    # A lake that keeps no raw bytes at all (CI's synthetic fixtures) still loads; the gate checks those.
+    # A missing object is refused too: deleting a raw file never silences the check.
     raw.unlink()
+    with pytest.raises(RawObjectCorrupt, match=f"raw/{sha} is missing from the lake"):
+        load_sql(lake, "toy_cases", FIELDS)
+    # Only a lake with no raw/ directory at all (CI's synthetic fixtures) loads, with a warning; the gate checks it.
+    (lake / "raw").rename(tmp_path / "raw-elsewhere")
     sql, warning = load_sql(lake, "toy_cases", FIELDS)
-    assert warning is None and len(_rows(sql)) == len(RECORDS)
+    assert len(_rows(sql)) == len(RECORDS)
+    assert warning == (
+        f"toy_cases: the lake at {lake} keeps no raw files, so the sha256s on stg_toy_cases's rows can't be "
+        "checked here. The release gate holds a build whose raw files are missing."
+    )

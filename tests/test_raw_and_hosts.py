@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from health_data_registry import store
 from health_data_registry.crawl import refresh_dataset
 from health_data_registry.fetch import FetchRefused, validate_url
 from health_data_registry.registry import load_registry
@@ -83,6 +84,39 @@ def test_a_reused_raw_object_is_re_hashed_and_a_corrupt_one_refused(tmp_path: Pa
     write_raw(tmp_path, [good])  # the missing object is written again from fresh bytes
     assert stored.read_bytes() == good.content
     assert not list((tmp_path / "raw").glob("*.tmp")) and not list((tmp_path / "raw").glob(".*"))
+
+
+def test_a_linked_or_misnamed_raw_object_is_named_for_what_it_is(tmp_path: Path) -> None:
+    """A link at raw/<sha256> is refused as a link, not reported missing, and a name that is not a sha256 is never
+    used as a path, whether it comes from a manifest or a fetch."""
+    from health_data_registry.store import RawObjectCorrupt, raw_problem
+
+    good = raw_fetch("https://data.cdc.gov/x", RECORDS)
+    copy = tmp_path / "copy"
+    copy.write_bytes(good.content)
+    (tmp_path / "raw").mkdir()
+    (tmp_path / "raw" / good.sha256).symlink_to(copy)
+    why = raw_problem(tmp_path, good.sha256)
+    assert why is not None and "is a link to another file" in why and "missing" not in why
+    with pytest.raises(RawObjectCorrupt, match="is a link to another file"):
+        write_raw(tmp_path, [good])
+    outside = tmp_path / "outside"
+    outside.write_text("x")
+    for name in ("../outside", str(outside), "ABC"):
+        why = raw_problem(tmp_path, name)
+        assert why is not None and "which is not a sha256" in why
+        with pytest.raises(ValueError, match="which is not a sha256"):
+            write_raw(tmp_path, [RawFetch(good.url, b"", name, good.retrieved_at)])
+    unreadable = tmp_path / "raw" / ("0" * 64)
+    unreadable.write_bytes(b"x")
+    with pytest.MonkeyPatch.context() as mp:
+
+        def denied(path: Path) -> str:
+            raise PermissionError(13, "Permission denied", str(path))
+
+        mp.setattr(store, "file_sha256", denied)
+        why = raw_problem(tmp_path, "0" * 64)
+    assert why is not None and "can't be read (Permission denied)" in why and "PermissionError" not in why
 
 
 def test_refresh_refuses_a_corrupt_raw_object_in_plain_words(

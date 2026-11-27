@@ -26,8 +26,11 @@ sorted raw sha256s, each contract's version and file hash, the dbt vars and the 
 dbt's run id, its thread count or the clock, so the same inputs always give the same id. Because the rows a build
 writes carry their snapshot ids, one logical build id can name different physical outputs (the same bytes fetched
 again on another day). So the build record also carries an artifact digest (artifact_digest_of): the sha256 of each
-file the build wrote to dbt's target directory, and one sha256 over that list. The logical id says what a build was
-made from; the digest says which bytes it produced.
+file the gate judged (ARTIFACT_FILES: dbt's run_results.json and manifest.json) and one sha256 over them. It names
+this physical run, not its data: those files carry dbt's invocation id and timings, so the digest differs between
+any two runs, even of the same inputs, and it does not cover the built tables (a content digest of those is the
+open part of issue #271). The pass row repeats it, the confirm refuses unless the files are unchanged since the
+pass, and the serve row and SERVING carry it, so a served release names the exact run that was judged.
 
 Before judging the run, the gate re-hashes every raw object each stored dataset's LATEST snapshot names
 (raw_problems_of): one that is missing, or no longer hashes to its name, holds the build, since every answer built
@@ -61,6 +64,7 @@ from typing import Any
 
 BUILDS = "builds.jsonl"
 SERVING_LOG = "serving_log.jsonl"
+RAW_SHOWN = 3  # raw-file problems quoted in a hold reason; the build record keeps them all
 SERVING = "SERVING"
 BUILT_TYPES = ("model", "seed", "snapshot")  # resource types that build a relation
 TEST_TYPES = ("test", "unit_test")
@@ -101,7 +105,7 @@ def expected_from(registry: Any) -> Expected:
 
 
 def _sha256(path: Path) -> str:
-    """Streamed, so a large built file (the transform's DuckDB file) is never read into memory whole."""
+    """Streamed, so a large file (a contract, or a run record of many nodes) is never read into memory whole."""
     h = hashlib.sha256()
     with path.open("rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
@@ -159,37 +163,47 @@ def raw_problems_of(registry: Any, lake: Path) -> list[str]:
     for ds in stored(registry):
         try:
             found = latest_snapshot(lake, ds.id)
-        except (OSError, ValueError) as e:
-            problems.append(f"{ds.id}: its LATEST snapshot can't be read ({type(e).__name__})")
+        except (OSError, ValueError):  # Manifest.read turns a damaged manifest into ValueError too
+            problems.append(
+                f"{ds.id}: its LATEST pointer or that snapshot's manifest.json can't be read, so the raw files it "
+                f"cites can't be checked. Run `health-data-registry refresh {ds.id}` to rebuild it"
+            )
             continue
         if found is not None:
             problems += [f"{ds.id}: {why}" for why in raw_problems(lake, found[1].raw_sha256)]
     return problems
 
 
+# The files the gate judges, and so the files its artifact digest covers: dbt's run record and manifest, the only
+# files the weekly refresh hands the gate. A fixed list, so a local target/ full of compiled SQL, partial-parse state
+# and stale files from earlier runs means the same thing as CI's.
+ARTIFACT_FILES = ("manifest.json", "run_results.json")
+
+
 def artifact_sha256(target: Path) -> dict[str, str]:
-    """The sha256 of each file the build wrote to dbt's target directory, by its path there (symbolic links are
-    left out, never followed). In the weekly refresh that is run_results.json and manifest.json. Raises
-    GateInputMissing when one can't be read."""
+    """The sha256 of each file the gate judged (ARTIFACT_FILES), by its name in dbt's target directory. Raises
+    GateInputMissing when one is missing, can't be read or is a symbolic link: a link is never followed, so the
+    digest always covers the bytes the gate read."""
     files: dict[str, str] = {}
-    if not target.is_dir():
-        return files
-    for root, dirs, names in os.walk(target, followlinks=False):
-        dirs.sort()
-        for name in sorted(names):
-            p = Path(root) / name
-            if p.is_file() and not p.is_symlink():
-                try:
-                    files[p.relative_to(target).as_posix()] = _sha256(p)
-                except OSError as e:  # an output that can't be read can't be named: hold, never skip it
-                    raise GateInputMissing(
-                        f"{p}: a file the build wrote could not be read ({type(e).__name__}); the release is held"
-                    ) from e
+    for name in ARTIFACT_FILES:
+        p = target / name
+        if p.is_symlink():
+            raise GateInputMissing(
+                f"{p} is a link to another file, not the file dbt wrote, so the gate can't vouch for what it "
+                "judged; the release is held. Copy dbt's own file into the target directory and run the gate again"
+            )
+        try:
+            files[name] = _sha256(p)
+        except OSError as e:  # an output that can't be read can't be named: hold, never skip it
+            raise GateInputMissing(
+                f"{p}: a file the gate judges could not be read ({e.strerror or 'a read error'}); the release is "
+                "held. Run the transform again so dbt writes it"
+            ) from e
     return files
 
 
 def artifact_digest_of(files: Mapping[str, str]) -> str:
-    """One sha256 over each output file's path and sha256: changed bytes in any output give another digest."""
+    """One sha256 over each judged file's name and sha256: changed bytes in either file give another digest."""
     canonical = json.dumps(dict(files), sort_keys=True, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
 
@@ -210,7 +224,7 @@ class Build:
     incomplete: list[str] = field(default_factory=list)
     tests_passed: int = 0
     raw_objects: list[str] = field(default_factory=list)  # raw objects that don't hash to their name
-    # The physical outputs: path in dbt's target directory -> sha256, and one digest over them (artifact_digest_of).
+    # The files the gate judged (ARTIFACT_FILES): name -> sha256, and one digest over them (artifact_digest_of).
     artifact_sha256: dict[str, str] = field(default_factory=dict)
     artifact_digest: str = ""
 
@@ -230,9 +244,13 @@ class Build:
         """Why the build is held, in plain words; empty when it can be served."""
         parts = list(self.incomplete)
         if self.raw_objects:
+            shown = "; ".join(self.raw_objects[:RAW_SHOWN])
+            more = len(self.raw_objects) - RAW_SHOWN
+            if more > 0:  # the full list stays in the build record (ops/builds.jsonl, raw_objects)
+                shown += f"; and {more} more, listed under raw_objects in {BUILDS}"
             parts.append(
                 f"{len(self.raw_objects)} raw file(s) its snapshots cite are missing or no longer match their "
-                f"sha256 ({'; '.join(self.raw_objects)})"
+                f"sha256 ({shown})"
             )
         if self.model_errors:
             parts.append(f"{len(self.model_errors)} model(s) failed to build")
@@ -284,7 +302,7 @@ def read_build(
     With `expected`, every expected model must have built and every expected test must have passed (or warned,
     for a warn-severity rule). With `inputs`, the build id is their content hash (build_id_of); without, it is a
     hash of the run record (tests only). `raw_problems` (raw_problems_of) holds the build when not empty. The
-    build records the sha256 of every file in `target` and their artifact digest.
+    build records the sha256 of each file it judged (ARTIFACT_FILES) and their artifact digest.
     """
     results = _read(target / "run_results.json")
     manifest = _read(target / "manifest.json")
@@ -432,7 +450,8 @@ def _append(path: Path, row: Mapping[str, Any]) -> None:
 
 
 def serving(ops: Path) -> dict[str, Any] | None:
-    """The release in service now ({release_ref, build_id, since}), or None before the first served release."""
+    """The release in service now ({release_ref, build_id, invocation_id, artifact_digest, since}; releases served
+    before the digest was recorded carry only release_ref, build_id and since), or None before the first one."""
     p = ops / SERVING
     if not p.is_file():
         return None
@@ -509,6 +528,13 @@ def confirm(ops: Path, build: Build, release_ref: str, *, now: datetime | None =
             f"build {build.build_id} passed in dbt run {last.get('invocation_id')}, but this run record is from "
             f"{build.invocation_id}; only the run that was judged can be served"
         )
+    # The files judged must be the files confirmed, byte for byte. A pass recorded before the digest existed has
+    # none, and is refused too: the check runs again, never assumed.
+    if last.get("artifact_digest") != build.artifact_digest:
+        raise ValueError(
+            f"the run record or manifest of build {build.build_id} changed after the gate passed it, so what would "
+            "be served is not what was judged; run the gate check again"
+        )
     run_date = last.get("run_date")
     if not run_date:  # a pass with no run date could be served under any date's tag
         raise ValueError(
@@ -522,11 +548,21 @@ def confirm(ops: Path, build: Build, release_ref: str, *, now: datetime | None =
     at = _now(now)
     previous = serving(ops)
     row = {"at": at, "action": "serve", "release_ref": release_ref, "build_id": build.build_id,
+           "invocation_id": build.invocation_id, "artifact_digest": build.artifact_digest,
            "previous": previous["release_ref"] if previous else None, "warnings": len(build.warnings)}  # fmt: skip
     ops.mkdir(parents=True, exist_ok=True)
     tmp = ops / f".{SERVING}.{os.getpid()}.tmp"
     tmp.write_text(
-        json.dumps({"release_ref": release_ref, "build_id": build.build_id, "since": at}) + "\n",
+        json.dumps(
+            {
+                "release_ref": release_ref,
+                "build_id": build.build_id,
+                "invocation_id": build.invocation_id,
+                "artifact_digest": build.artifact_digest,
+                "since": at,
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
     os.replace(tmp, ops / SERVING)

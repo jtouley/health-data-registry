@@ -85,11 +85,14 @@ ends green with a notice and does nothing. Each starts working on its next run a
    `manifest.json`, as an artifact. The gate holds the release unless every model, seed and snapshot built, at
    least one test ran, nothing was skipped, every check ran and every error-severity test and unit test passed.
    It also re-hashes every raw file each `LATEST` snapshot names (`raw/<sha256>`), and holds the release when one
-   is missing or no longer matches its name; the transform refuses such a load too, and so does a refresh that
-   would reuse it. Each build is recorded under its **logical build id**, a hash of what it was made from (raw
-   sha256s, contracts, dbt vars, commit; never a snapshot id or the clock), next to its **artifact digest**, the
-   sha256 of each file the build wrote and one sha256 over them, which tells apart builds of the same inputs that
-   produced different bytes.
+   is missing or no longer matches its name. The transform refuses such a load too (only a lake with no `raw/` at
+   all, CI's synthetic fixtures, loads unchecked, with a warning), and so does a refresh that would reuse it. Each
+   build is recorded under its **logical build id**, a hash of what it was made from (raw sha256s, contracts, dbt
+   vars, commit; never a snapshot id or the clock), next to its **artifact digest**: the sha256 of the two files the
+   gate judged (`run_results.json` and `manifest.json`) and one sha256 over them. The digest identifies the run, not
+   its data: it differs between any two runs, even of the same inputs, and doesn't cover the built tables yet
+   ([#271](https://github.com/jtouley/health-data-registry/issues/271)). `gate --confirm` refuses when those files
+   changed after the pass, and the serve row and `SERVING` carry the digest.
    A pass records only the verdict. After `export-public` has uploaded the release, `gate --confirm <tag>`
    records the exact tag it created (`release-<date>`, or `release-<date>.N` for a correction) as served and
    swaps `SERVING` to it. The gate's state (`SERVING`, `builds.jsonl`, `serving_log.jsonl`) is restored at

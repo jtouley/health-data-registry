@@ -274,8 +274,10 @@ def test_a_clean_build_passes_and_is_served_only_once_confirmed(tmp_path: Path) 
     assert rg.serving(ops) is None  # a pass is not served: nothing has been uploaded yet
     served = rg.confirm(ops, build, "release-2026-11-25.2", now=T1)
     assert served == {"at": "2026-11-25T13:00:00+00:00", "action": "serve", "release_ref": "release-2026-11-25.2",
-                      "build_id": build.build_id, "previous": None, "warnings": 1}  # fmt: skip
+                      "build_id": build.build_id, "invocation_id": "inv-1",
+                      "artifact_digest": build.artifact_digest, "previous": None, "warnings": 1}  # fmt: skip
     assert rg.serving(ops) == {"release_ref": "release-2026-11-25.2", "build_id": build.build_id,
+                               "invocation_id": "inv-1", "artifact_digest": build.artifact_digest,
                                "since": "2026-11-25T13:00:00+00:00"}  # fmt: skip
     (logged,) = rg.read_log(ops, rg.BUILDS)
     assert (
@@ -472,6 +474,14 @@ def test_a_raw_object_that_no_longer_matches_its_name_holds_the_build(
     assert build.reason().startswith(
         "1 raw file(s) its snapshots cite are missing or no longer match their sha256"
     )
+    many = [f"toy_cases: problem {n}" for n in range(rg.RAW_SHOWN + 4)]
+    long = rg.read_build(good, expected=TOY, raw_problems=many)
+    assert long.raw_objects == many  # the build record keeps them all; the hold reason quotes a few
+    assert (
+        f"{len(many)} raw file(s)" in long.reason()
+        and "problem 2; and 4 more, listed under raw_objects" in (long.reason())
+    )
+    assert "problem 3" not in long.reason()
     passed, message = rg.run(good, ops, expected=TOY, run_date="2026-11-25", raw_problems=[problem])
     assert not passed and "is held: 1 raw file(s)" in message
     assert rg.read_log(ops, rg.SERVING_LOG)[-1]["action"] == "hold"
@@ -481,8 +491,16 @@ def test_a_raw_object_that_no_longer_matches_its_name_holds_the_build(
     raw.unlink()
     (missing,) = rg.raw_problems_of(reg, lake)
     assert "is missing from the lake" in missing
+    snapshot = next((lake / "datasets" / "toy_cases").glob("run_date=*/*/manifest.json"))
+    snapshot.write_text("[]")  # a damaged manifest: a plain hold, never a traceback
+    (damaged,) = rg.raw_problems_of(reg, lake)
+    assert damaged.startswith("toy_cases: its LATEST pointer or that snapshot's manifest.json can't be read")
+    with pytest.raises(rg.GateInputMissing, match="is not a snapshot manifest"):
+        rg.build_inputs(reg, lake, "c1")
     (lake / "datasets" / "toy_cases" / "LATEST").write_text("not a snapshot id\n")
-    assert rg.raw_problems_of(reg, lake) == ["toy_cases: its LATEST snapshot can't be read (ValueError)"]
+    (latest,) = rg.raw_problems_of(reg, lake)
+    assert latest.startswith("toy_cases: its LATEST pointer or that snapshot's manifest.json can't be read")
+    assert "Error" not in latest and "`health-data-registry refresh toy_cases`" in latest
 
     # The CLI re-hashes the lake it judges, so the command a refresh runs holds the release too.
     monkeypatch.setattr(rg, "expected_from", lambda registry: TOY)
@@ -494,43 +512,70 @@ def test_a_raw_object_that_no_longer_matches_its_name_holds_the_build(
 
 
 def test_the_logical_build_id_and_the_artifact_digest_are_recorded_apart(tmp_path: Path) -> None:
-    """Issue #271: the same inputs give the same logical build id, while the build record's artifact digest follows
-    the bytes the build wrote: changed output bytes give another digest under the same logical id."""
+    """Issue #271: the same inputs give the same logical build id, while the artifact digest follows the bytes of
+    the files the gate judged (dbt's run record and manifest): changed bytes give another digest under the same id.
+    The digest names the run, so the confirm refuses when those files changed after the pass."""
     inputs = {"commit": "c1", "datasets": {"a": {"raw_sha256": ["x"]}}}
     one = target(tmp_path, GOOD, invocation="run-a")
     two = target(tmp_path, GOOD, invocation="run-b")
     a, b = rg.read_build(one, inputs=inputs), rg.read_build(two, inputs=inputs)
     assert a.build_id == b.build_id == rg.build_id_of(inputs)  # the logical id: same inputs, same id
-    assert set(a.artifact_sha256) == {"manifest.json", "run_results.json"}
+    assert set(a.artifact_sha256) == set(rg.ARTIFACT_FILES) == {"manifest.json", "run_results.json"}
     assert a.artifact_sha256["manifest.json"] == rg._sha256(one / "manifest.json")
+    assert a.artifact_sha256["run_results.json"] == rg._sha256(one / "run_results.json")
     assert a.artifact_digest.startswith("sha256:") and len(a.artifact_digest) == 7 + 64
-    assert (
-        a.artifact_digest == rg.read_build(one, inputs=inputs).artifact_digest
-    )  # the same bytes, the same digest
-    assert a.artifact_digest != b.artifact_digest  # other bytes (another run's record), another digest
+    assert a.artifact_digest == rg.read_build(one, inputs=inputs).artifact_digest  # same bytes, same digest
+    assert a.artifact_digest != b.artifact_digest  # another run's record: another digest under the same id
+    # Only the judged files count: compiled SQL and other leftovers in a local target/ change nothing.
     (one / "compiled").mkdir()
     (one / "compiled" / "stg_a.sql").write_text("select 1")
-    (one / "link.json").symlink_to(two / "manifest.json")  # a link is never followed out of the target
+    (one / "target.duckdb").write_bytes(b"\0" * 10)
+    assert rg.read_build(one, inputs=inputs).artifact_digest == a.artifact_digest
+    edited = json.loads((one / "manifest.json").read_text())
+    edited["metadata"]["env"] = {"note": "rebuilt"}
+    (one / "manifest.json").write_text(json.dumps(edited))  # one judged file, other bytes
     c = rg.read_build(one, inputs=inputs)
     assert c.build_id == a.build_id and c.artifact_digest != a.artifact_digest
-    assert set(c.artifact_sha256) == {"manifest.json", "run_results.json", "compiled/stg_a.sql"}
-    (one / "compiled" / "stg_a.sql").write_text("select 2")  # the same files, one byte changed
-    assert rg.read_build(one, inputs=inputs).artifact_digest != c.artifact_digest
-    assert rg.artifact_sha256(tmp_path / "nowhere") == {}
-    with (
-        pytest.MonkeyPatch.context() as mp
-    ):  # an output that can't be read holds, never drops out of the list
+    # A judged file that is a link, or can't be read, holds the build; it never drops out of the digest.
+    linked = target(tmp_path, GOOD, invocation="run-c")
+    (linked / "run_results.json").unlink()
+    (linked / "run_results.json").symlink_to(two / "run_results.json")
+    with pytest.raises(rg.GateInputMissing, match="is a link to another file"):
+        rg.read_build(linked, inputs=inputs)
+    with pytest.raises(rg.GateInputMissing, match="a file the gate judges could not be read"):
+        rg.artifact_sha256(tmp_path / "nowhere")
+    with pytest.MonkeyPatch.context() as mp:
 
         def unreadable(path: Path) -> str:
-            raise PermissionError(path)
+            raise PermissionError(13, "Permission denied", str(path))
 
         mp.setattr(rg, "_sha256", unreadable)
-        with pytest.raises(rg.GateInputMissing, match="a file the build wrote could not be read"):
+        with pytest.raises(rg.GateInputMissing, match=r"could not be read \(Permission denied\)"):
             rg.artifact_sha256(one)
-    # Both are kept in the build record, and the pass names the bytes it judged.
+    # Both are kept in the build record, the pass names the bytes it judged, and so does what is served.
     ops = tmp_path / "ops"
     rg.decide(ops, c, now=T0, run_date="2026-11-25")
     record = rg.read_log(ops, rg.BUILDS)[-1]
     assert (record["build_id"], record["artifact_digest"]) == (c.build_id, c.artifact_digest)
     assert record["artifact_sha256"] == c.artifact_sha256
     assert rg.read_log(ops, rg.SERVING_LOG)[-1]["artifact_digest"] == c.artifact_digest
+    (one / "manifest.json").write_text(json.dumps(edited) + " ")  # changed between the check and the confirm
+    changed = rg.read_build(one, inputs=inputs)
+    assert changed.invocation_id == c.invocation_id and changed.artifact_digest != c.artifact_digest
+    with pytest.raises(ValueError, match="changed after the gate passed it"):
+        rg.confirm(ops, changed, "release-2026-11-25", now=T1)
+    assert rg.serving(ops) is None
+    served = rg.confirm(ops, c, "release-2026-11-25", now=T1)
+    assert (served["invocation_id"], served["artifact_digest"]) == (c.invocation_id, c.artifact_digest)
+    now_serving = rg.serving(ops)
+    assert now_serving is not None
+    assert now_serving == {"release_ref": "release-2026-11-25", "build_id": c.build_id,
+                           "invocation_id": c.invocation_id, "artifact_digest": c.artifact_digest,
+                           "since": "2026-11-25T13:00:00+00:00"}  # fmt: skip
+    # A pass recorded before the digest existed has none: refused, and the check runs again.
+    old = tmp_path / "old-ops"
+    old.mkdir()
+    (old / rg.SERVING_LOG).write_text(json.dumps({"action": "pass", "build_id": c.build_id,
+                                                  "invocation_id": c.invocation_id, "run_date": "2026-11-25"}) + "\n")  # fmt: skip
+    with pytest.raises(ValueError, match="changed after the gate passed it"):
+        rg.confirm(old, c, "release-2026-11-25", now=T1)

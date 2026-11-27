@@ -106,7 +106,13 @@ class Manifest:
 
     @staticmethod
     def read(path: Path) -> Manifest:
-        return Manifest(**json.loads(path.read_text(encoding="utf-8")))
+        """Raises ValueError (never TypeError) when manifest.json is not a manifest, so every caller that holds on
+        an unreadable snapshot holds on a damaged one too."""
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            return Manifest(**doc)
+        except TypeError as e:  # a JSON list, or a missing or unknown key
+            raise ValueError(f"{path} is not a snapshot manifest") from e
 
 
 def run_date_of(snapshot_id: str) -> str:
@@ -191,13 +197,15 @@ def _lit(value: str) -> str:
 
 
 _EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+_SHA256_NAME = re.compile(r"[0-9a-f]{64}")
 
 
 class RawObjectCorrupt(ValueError):
     """A stored raw object no longer hashes to its name (or is gone), so the sha256 it would carry is false."""
 
 
-def _file_sha256(path: Path) -> str:
+def file_sha256(path: Path) -> str:
+    """The sha256 of a file, streamed, so a large raw page is never read into memory whole."""
     h = hashlib.sha256()
     with path.open("rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
@@ -207,25 +215,36 @@ def _file_sha256(path: Path) -> str:
 
 def raw_problem(lake: Path, sha256: str) -> str | None:
     """Why the stored raw object `raw/<sha256>` can't be trusted, in plain words; None when its bytes hash to its
-    name. Re-hashes the stored file every time: a name is never taken on trust (issue #269)."""
+    name. Re-hashes the stored file every time: a name is never taken on trust (issue #269). A name that is not a
+    sha256 is reported as such and never used as a path."""
+    if not _SHA256_NAME.fullmatch(sha256):
+        return (
+            f"the snapshot cites {sha256[:80]!r} as a raw file, which is not a sha256, so its manifest.json is "
+            "damaged. Refresh the source again to rebuild the snapshot"
+        )
     path = lake / "raw" / sha256
-    if path.is_symlink() or not path.is_file():
+    if path.is_symlink():
+        return (
+            f"the raw file raw/{sha256} is a link to another file, not the stored bytes, and a link is never trusted "
+            "for its name. Replace it with the file itself from the private raw archive"
+        )
+    if not path.is_file():
         return (
             f"the raw file raw/{sha256} is missing from the lake at {lake}, so the sha256 its snapshot cites "
             "can't be checked. Restore it from the private raw archive, or refresh the source again"
         )
     try:
-        got = _file_sha256(path)
+        got = file_sha256(path)
     except OSError as e:
         return (
-            f"the raw file raw/{sha256} can't be read ({type(e).__name__}). Restore it from the private raw "
-            "archive"
+            f"the raw file raw/{sha256} can't be read ({e.strerror or 'a read error'}). Check the lake's file "
+            "permissions, or restore it from the private raw archive"
         )
     if got != sha256:
         return (
             f"the raw file raw/{sha256} no longer holds the bytes it is named for (they hash to {got[:12]}...), so "
-            "it may have been edited or cut short. Nothing was built from it. Restore it from the private raw "
-            "archive, or delete it and refresh the source again"
+            "it may have been edited or cut short. Restore it from the private raw archive, or delete it and "
+            "refresh the source again"
         )
     return None
 
@@ -249,6 +268,8 @@ def write_raw(lake: Path, fetches: Sequence[RawFetch]) -> None:
     raw = lake / "raw"
     raw.mkdir(parents=True, exist_ok=True)
     for f in fetches:
+        if not _SHA256_NAME.fullmatch(f.sha256):  # checked before it becomes a path, even with empty content
+            raise ValueError(f"the fetch of {f.url} carries {f.sha256[:80]!r}, which is not a sha256")
         target = raw / f.sha256
         if f.content and hashlib.sha256(f.content).hexdigest() != f.sha256:
             raise ValueError(f"sha256 mismatch for {f.url}")
