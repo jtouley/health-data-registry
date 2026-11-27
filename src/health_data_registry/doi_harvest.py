@@ -38,7 +38,6 @@ from pathlib import Path
 from typing import Any
 
 from health_data_registry import private, research_tags
-from health_data_registry.adapters import capabilities
 from health_data_registry.adapters import doi_abstracts as doi
 from health_data_registry.fetch import FetchRefused
 from health_data_registry.registry import (
@@ -89,7 +88,7 @@ def conferences(registry: Registry) -> dict[str, Dataset]:
     return {
         ds.entry.source.conference: ds
         for ds in registry
-        if capabilities(ds.entry).runner == "harvest" and ds.entry.source.conference
+        if ds.entry.source.portal == "doi" and ds.entry.source.conference
     }
 
 

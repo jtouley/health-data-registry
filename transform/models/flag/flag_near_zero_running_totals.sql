@@ -64,6 +64,5 @@ select
     || ' the year before: withdrawn, reset or not yet reported? Check with the publisher.' as reason
 from cur
 inner join prior on cur.states_key = prior.states_key and cur.label = prior.label and cur.year = prior.year
--- An empty year-to-date is treated as 0 only to choose rows for review; answers never count it as 0 (#173).
 where coalesce(cur.m3, 0) <= {{ var('near_zero_ytd_max') }}
     and prior.m3 >= {{ var('near_zero_prior_year_min') }}

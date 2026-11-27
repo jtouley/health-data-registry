@@ -16,24 +16,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import Field, ValidationError, field_validator, model_validator
-
-from health_data_registry.source_config import (
-    BLOCK_REQUIRED,
-    CONFIG_MODELS,
-    LEGACY_FIELDS,
-    PORTAL_TYPES,
-    REQUIRED_LEGACY,
-    ExtensionUse,
-    HtmlTableConfig,
-    HttpsFileConfig,
-    ODataConfig,
-    PdfTableConfig,
-    SocrataConfig,
-    Strict,
-    TypeName,
-    safe_pattern,
-)
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 _ID = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
 _SQL_IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
@@ -65,8 +48,8 @@ class UnknownDataset(KeyError):
         return str(self.args[0]) if self.args else "unknown dataset"
 
 
-# Every catalog model is strict (unknown keys refused, frozen): one base, shared with the adapter config blocks.
-_Strict = Strict
+class _Strict(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
 
 # --------------------------------------------------------------------------------------------- catalog
@@ -297,16 +280,7 @@ def is_government_host(host: str) -> bool:
 
 
 class Source(_Strict):
-    """Where and how a source is read: its adapter type, that type's config block, and the shared settings.
-
-    ``type`` names one adapter type (source_config.TYPE_NAMES); ``portal`` is its older name, read for one release
-    (``who_gho`` means ``odata``). An entry gives one of the two, never both. A type's own settings go in a block
-    named after it (``https_file: {...}``), checked by that type's strict config model; a block or a legacy field
-    of another type is refused, so each setting has one place.
-    """
-
-    portal: Literal["socrata", "who_gho", "https_csv", "tableau", "doi"] | None = None
-    type: TypeName | None = None
+    portal: Literal["socrata", "who_gho", "https_csv", "tableau", "doi"]
     host: str
     dataset: str
     landing_url: str
@@ -329,21 +303,6 @@ class Source(_Strict):
     # doi only: the conference's short key (``harvest-doi <conference>``) and its name on every row.
     conference: str | None = None
     conference_name: str | None = None
-    # The type blocks (ADR 0016): at most one, the one named by the source's type.
-    socrata: SocrataConfig | None = None
-    odata: ODataConfig | None = None
-    https_file: HttpsFileConfig | None = None
-    html_table: HtmlTableConfig | None = None
-    pdf_table: PdfTableConfig | None = None
-    # Named extensions this source opts in to (adapters.extensions.EXTENSIONS), in the order they run.
-    extensions: list[ExtensionUse] = Field(default_factory=list)
-    # A slower pace for this source than the access policy's own (e.g. a site whose terms ask for 120 s). It can
-    # only slow the crawl: the core waits the longest of this, 10 s on paced hosts, robots.txt's Crawl-delay or
-    # Request-rate, and an API's published rate.
-    min_interval_s: float | None = Field(default=None, gt=0, le=3_600, allow_inf_nan=False)
-    # Paths on this source's own host it may fetch beyond its catalogued URLs (index links, listing items), each
-    # matched whole against the normalised path. Empty: only the catalogued URLs and paths under them.
-    scope_paths: list[str] = Field(default_factory=list)
 
     @field_validator("host")
     @classmethod
@@ -351,13 +310,6 @@ class Source(_Strict):
         if not re.fullmatch(r"[a-z0-9.-]+", v):
             raise ValueError("host must be a bare lower-case DNS name")
         return v
-
-    @property
-    def kind(self) -> str:
-        """The adapter type this source is read by (``type``, or the type its older ``portal`` name means)."""
-        if self.type is not None:
-            return self.type
-        return PORTAL_TYPES[str(self.portal)]
 
     @property
     def hosts(self) -> frozenset[str]:
@@ -379,72 +331,38 @@ class Source(_Strict):
             raise ValueError("publisher URLs must be https")
         return v
 
-    @field_validator("scope_paths")
-    @classmethod
-    def _scope(cls, v: list[str]) -> list[str]:
-        return [safe_pattern(p) for p in v]
-
-    @field_validator("conference")
-    @classmethod
-    def _conference(cls, v: str | None) -> str | None:
-        if v is not None and not re.fullmatch(r"[a-z][a-z0-9_]{1,30}", v):
-            raise ValueError("a doi source names its conference key (lower case, e.g. idweek)")
-        return v
-
-    @field_validator("supplements")
-    @classmethod
-    def _years_once(cls, v: list[Supplement]) -> list[Supplement]:
-        years = [s.year for s in v]
-        if len(set(years)) != len(years):
-            raise ValueError("a doi source lists each conference year once")
-        return v
-
-    def config(self) -> Strict:
-        """This source's type config: its block, or the type's defaults when it gives none."""
-        block = getattr(self, self.kind) if self.kind in TYPE_BLOCKS else None
-        return block if isinstance(block, Strict) else CONFIG_MODELS[self.kind]()
-
     @model_validator(mode="after")
-    def _type_settings(self) -> Source:
-        if (self.portal is None) == (self.type is None):
+    def _csv_only(self) -> Source:
+        if self.portal != "https_csv" and (self.reshape is not None or self.encoding != "utf-8"):
+            raise ValueError("encoding and reshape apply only to the https_csv portal")
+        if (self.portal == "tableau") != (self.tableau is not None):
             raise ValueError(
-                "a source names its adapter type once: type (or, for one more release, portal), not both or neither"
+                "a tableau source lists its views (tableau.views), and only a tableau source does"
             )
-        kind = self.kind
-        for name in TYPE_BLOCKS:
-            if name != kind and getattr(self, name) is not None:
-                raise ValueError(f"the {name} block applies only to type {name}; this source is type {kind}")
-        if kind in BLOCK_REQUIRED and getattr(self, kind) is None:
-            raise ValueError(f"a {kind} source gives its settings in a {kind} block")
-        for name, owner in LEGACY_FIELDS.items():
-            default = Source.model_fields[name].get_default(call_default_factory=True)
-            if owner != kind and getattr(self, name) != default:
-                raise ValueError(f"{name} applies only to type {owner}; this source is type {kind}")
-        missing = [name for name in REQUIRED_LEGACY.get(kind, ()) if not getattr(self, name)]
-        if missing:
-            raise ValueError(f"a {kind} source gives {', '.join(missing)}")
         if self.government_host and not is_government_host(self.host):
             raise ValueError(
                 f"government_host is accepted only for hosts on the reviewed list of government suffixes and "
                 f"domains (registry.GOVERNMENT_HOST_SUFFIXES, GOVERNMENT_DOMAINS); {self.host} is not on it"
             )
+        doi_only = (self.supplements, self.enrich_hosts, self.conference, self.conference_name)
+        if self.portal != "doi" and any(doi_only):
+            raise ValueError("supplements, enrich_hosts and conference apply only to the doi portal")
+        if self.portal == "doi":
+            if not self.supplements:
+                raise ValueError("a doi source lists at least one supplement")
+            if not (self.conference and re.fullmatch(r"[a-z][a-z0-9_]{1,30}", self.conference)):
+                raise ValueError("a doi source names its conference key (lower case, e.g. idweek)")
+            if not self.conference_name:
+                raise ValueError("a doi source names its conference in full (conference_name)")
+            years = [s.year for s in self.supplements]
+            if len(set(years)) != len(years):
+                raise ValueError("a doi source lists each conference year once")
         if self.reshape is not None:
             try:
                 re.compile(self.reshape.wide_to_long.key_pattern)
             except re.error as e:
                 raise ValueError(f"reshape key_pattern is not a valid pattern: {e}") from e
-        from health_data_registry.adapters.extensions import check_uses
-
-        check_uses(kind, self.extensions)
-        if self.reshape is not None and any(u.hook == "staging" for u in self.extensions):
-            raise ValueError(
-                "a source reshapes its file once: the older reshape block (on load) or a staging extension, not both"
-            )
         return self
-
-
-# The type blocks on Source: one per adapter type with settings of its own.
-TYPE_BLOCKS: tuple[str, ...] = ("socrata", "odata", "https_file", "html_table", "pdf_table")
 
 
 class GbdCause(_Strict):
@@ -643,13 +561,9 @@ class Column:
     partial_places: tuple[tuple[str, str], ...] = ()
     # Labels the publisher renamed between years: (later label, the earlier label it continues).
     renamed_labels: tuple[tuple[str, str], ...] = ()
-    # The flag code the publisher's codebook defines as "no reported cases" (NNDSS: '-'). An empty count with it
-    # has no number and keeps that meaning: never counted as 0, added up or turned into a rate (issue #173).
+    # The flag code the publisher's codebook defines as "no reported cases" (NNDSS: '-'): an empty count with it
+    # is read as zero, labelled so; it is never stored as a number (hard rule 1).
     no_cases_code: str | None = None
-    # Condition labels whose counts are not new cases of disease in the population (NNDSS: C. auris screening,
-    # which counts colonisation found by screening), each with the reason in plain words: (label, why). Declared
-    # on the condition column; get_rate, compare_rates and get_trend on rates give no rate per 100,000 for them.
-    not_incidence: tuple[tuple[str, str], ...] = ()
     # customProperties.mayBeEmpty: true when the contract says this field can be absent or empty in a whole
     # load (e.g. a field the publisher leaves empty in every row). Every other declared field must appear, and
     # it gets no fill-rate check (quality.fill_rate_rules).
@@ -842,7 +756,7 @@ def _custom(props: Any) -> dict[str, Any]:
     return out
 
 
-_PAIR_PROPS = ("flagCodes", "partialPlaces", "renamedLabels", "notIncidence")
+_PAIR_PROPS = ("flagCodes", "partialPlaces", "renamedLabels")
 
 
 def _pairs(value: Any, where: str) -> tuple[tuple[str, str], ...]:
@@ -940,7 +854,6 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
                 flag_codes=pairs["flagCodes"],
                 partial_places=pairs["partialPlaces"],
                 renamed_labels=pairs["renamedLabels"],
-                not_incidence=pairs["notIncidence"],
                 no_cases_code=None if zero is None else str(zero),
                 may_be_empty=may_be_empty,
             )
@@ -1192,23 +1105,6 @@ class SemanticModel(_Strict):
                 )
             _check_uncertainty(metric, m, measures)
         dims = {d.name: d for d in self.dimensions}
-        # A running total kept within each period (cumulative_latest's order_by) makes that dimension one whose
-        # per-period counts never add up to the period (late reports reach only the running total): the model
-        # declares it non_additive, and every such metric names the same one (query.within_period reads it).
-        within = {
-            str(m.order_by) for m in self.metrics if m.aggregation == "cumulative_latest" and m.order_by
-        }
-        if len({dims[w].column for w in within}) > 1:
-            raise ValueError(
-                "cumulative_latest metrics keep running totals along different columns "
-                f"({', '.join(sorted(within))}); order them all by one"
-            )
-        for w in within:
-            if not dims[w].non_additive:
-                raise ValueError(
-                    f"dimension {w}: a cumulative_latest metric keeps a running total along it, so counts never "
-                    "add up across it; declare non_additive: true with a non_additive_reason"
-                )
         summed = [m.name for m in self.metrics if m.aggregation == "sum"]
         undeclared = [d.name for d in self.dimensions if d.non_additive is None]
         declared = len(undeclared) < len(self.dimensions)
@@ -1379,17 +1275,6 @@ class Dataset:
     def not_a_human_case_count(self, label: str) -> str | None:
         """Why this label's counts are not cases in people (so no rate per 100,000 people), or None."""
         return self.entry.conditions.not_a_human_case_count.get(label)
-
-    def not_incidence(self, label: str) -> str | None:
-        """Why this publisher label's counts are not new cases of disease (so no rate per 100,000 people), or None.
-
-        Read only from the contract's notIncidence on the condition column, never guessed from the label's words.
-        """
-        dim = self.entry.conditions.dimension
-        if dim is None:
-            return None
-        column = self.contract.column(self.semantic.dimension(dim).column)
-        return dict(column.not_incidence).get(label)
 
     def condition_series(self, label: str) -> list[Series]:
         """Series for one catalogued label: the generic templates pinned to it, or, for a dataset that is one
@@ -1604,64 +1489,11 @@ def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticMode
                 "overlap or count different things; filter each to one value"
             )
     _check_additive_needs_totals_excluded(entry.id, contract, semantic)
-    _check_load_metadata(entry, contract)
     for c in contract.columns:
         if c.flag_for is not None and c.flag_for not in cols:
             raise RegistryError(f"{entry.id}: {c.name} flags unknown column {c.flag_for}")
         if c.flag_codes and c.flag_for is None:
             raise RegistryError(f"{entry.id}: {c.name} lists flagCodes but flags no column (flagFor)")
-        if c.not_incidence:
-            label_col = dims[cond.dimension].column if cond.dimension in dims else None
-            if c.name != label_col:
-                raise RegistryError(
-                    f"{entry.id}: {c.name} declares notIncidence, which belongs on the condition column "
-                    f"({label_col or 'none: the catalog names no conditions.dimension'})"
-                )
-            unknown = [label for label, _ in c.not_incidence if label not in cond.labels]
-            if unknown:
-                raise RegistryError(
-                    f"{entry.id}: notIncidence names {unknown[0]!r}, which is not in the catalog's conditions.labels"
-                )
-
-
-def _check_load_metadata(entry: CatalogEntry, contract: Contract) -> None:
-    """What the adapter adds to each row, and the grain a staging step makes, are declared in the contract up front
-    (hard rule 15, ADR 0016): a type that adds per-row metadata (a document's provenance; ``failed_checks`` when
-    the source reconciles) needs a contract column reading each, typed; and a staging step that adds to the grain
-    (wide_to_long's ``key_field``) needs the contract's primary key to include it, so the staged model's
-    one-row-per-key test checks the grain the step makes instead of failing on good data."""
-    from health_data_registry.adapters import TYPES
-    from health_data_registry.adapters.extensions import resolved
-
-    by_field: dict[str, list[Column]] = {}
-    for c in contract.columns:
-        by_field.setdefault(c.source_field, []).append(c)
-    t = TYPES.get(entry.source.kind)
-    added = list(t.adds_fields) if t is not None else []
-    if getattr(entry.source.config(), "reconcile", None) is not None:
-        added.append("failed_checks")
-    missing = [f for f in added if f not in by_field]
-    if missing:
-        raise RegistryError(
-            f"{entry.id}: a {entry.source.kind} source adds {', '.join(missing)} to every row; its contract declares "
-            "a column reading each (sourceField), with its type, so the metadata is kept and typed in staging"
-        )
-    for c in by_field.get("document_retrieved_at", []) if "document_retrieved_at" in added else []:
-        if c.physical_type.upper() != "TIMESTAMP":
-            raise RegistryError(
-                f"{entry.id}: {c.name} reads document_retrieved_at, a time (UTC), so its physicalType is TIMESTAMP"
-            )
-    schema = (contract.raw.get("schema") or [{}])[0]
-    keyed = {str(p.get("name")) for p in schema.get("properties") or [] if p.get("primaryKey") is True}
-    for ext, args in resolved(entry.source.extensions, "staging"):
-        reads = list(ext.input_fields(args)) if ext.input_fields is not None else []
-        step = ext.run(args, "raw", reads)
-        for f in step.key_fields:
-            if not any(c.name in keyed for c in by_field.get(f, [])):
-                raise RegistryError(
-                    f"{entry.id}: staging extension {ext.name} makes one row per {f}, so the contract's primary key "
-                    f"includes the column reading {f}"
-                )
 
 
 def load_registry(root: Path | None = None) -> Registry:

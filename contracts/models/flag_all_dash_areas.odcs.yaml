@@ -7,7 +7,7 @@ status: draft
 domain: infectious_disease
 description:
   purpose: "Lists NNDSS reporting areas and conditions where every published week has an empty current-week count flagged '-' (no reported cases), the pattern behind issue #14, so a maintainer can check whether the area reports the condition at all."
-  usage: "A review queue for maintainers. It removes and changes nothing: each '-' stays as published, a count with no number and its flag (no reported cases). By the maintainer's declaration of 25 Nov 2026 (NNDSS contract, noCasesCode), '-' means not reported, never a reported zero, so no answer counts it as 0 (issues #14, #173)."
+  usage: "A review queue for maintainers. It removes and changes nothing: each '-' stays a reported zero for its own week only (the codebook), and never becomes a zero for a whole period on its own."
   limitations: "An area with truly no cases in every week looks the same as one that does not report the condition; only the publisher can tell them apart."
 schema:
   - name: flag_all_dash_areas
@@ -60,4 +60,4 @@ customProperties:
   - {property: unreliableRule, value: {kind: none, description: "None: a review queue, not published numbers."}}
   - property: openQuestions
     value:
-      - "Issue #14: for each pair here, does the area report the condition at all? '-' is read as not reported (maintainer's declaration of 25 Nov 2026), so no answer treats the period as zero; ask the publisher whether the area reports it."
+      - "Issue #14: for each pair here, does the area report the condition (true zeros) or not (no data)? Ask the publisher before any answer treats the period as zero."

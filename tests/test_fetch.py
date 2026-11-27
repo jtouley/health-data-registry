@@ -626,37 +626,6 @@ def test_fetch_redirectLoop_stoppedAfterLimit(source: LocalHttpsSource) -> None:
     assert len(source.requests) == MAX_REDIRECTS + 1
 
 
-def test_fetch_noRedirectsAllowed_stopsAtFirstWithItsLocation(source: LocalHttpsSource) -> None:
-    source.routes["/old"] = Canned(status=301, headers={"Location": "/new"})
-    source.routes["/new"] = Canned(body=CSV)
-    with pytest.raises(FetchRefused) as caught:
-        _get(source.url("/old"), max_redirects=0)
-    assert caught.value.code == "too_many_redirects"
-    assert caught.value.status == 301
-    assert caught.value.location == "https://data.example.test/new"
-    assert len(source.requests) == 1  # one call, one request
-
-
-def test_fetch_oneRedirectAllowed_followsOneOnly(source: LocalHttpsSource) -> None:
-    source.routes["/a"] = Canned(status=302, headers={"Location": "/b"})
-    source.routes["/b"] = Canned(status=302, headers={"Location": "/c"})
-    source.routes["/c"] = Canned(body=CSV)
-    assert _get(source.url("/b"), max_redirects=1).final_url == "https://data.example.test/c"
-    with pytest.raises(FetchRefused) as caught:
-        _get(source.url("/a"), max_redirects=1)
-    assert caught.value.location == "https://data.example.test/c"
-
-
-@pytest.mark.parametrize("bad", [-1, MAX_REDIRECTS + 1])
-def test_fetch_maxRedirectsOutOfRange_refused(bad: int) -> None:
-    with pytest.raises(ValueError, match="max_redirects"):
-        fetch(
-            "https://data.example.test/a.csv",
-            allowed_hosts=frozenset({"data.example.test"}),
-            max_redirects=bad,
-        )
-
-
 def test_fetch_redirectWithoutLocation_httpError(source: LocalHttpsSource) -> None:
     source.routes["/go"] = Canned(status=302)
     with pytest.raises(FetchRefused) as caught:

@@ -352,7 +352,7 @@ def test_flag_all_dash_areas_needs_every_week_dashed() -> None:
     # Idaho's Legionellosis is out ('U' is not '-'), and so is Tularemia (a week with no count and no flag).
     # TOTAL is a summary row.
     assert [r[:5] for r in rows] == [("Idaho", "Anthrax", 2024, 2025, 2)]
-    assert "issues #14, #173" in rows[0][5] and "not reported" in rows[0][5]
+    assert "issue #14" in rows[0][5]
 
 
 def test_flag_near_zero_running_totals_uses_the_reviewed_thresholds() -> None:

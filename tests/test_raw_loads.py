@@ -116,8 +116,12 @@ def test_refresh_keeps_the_browser_capture_url(tmp_path: Path, monkeypatch: pyte
         raw_fetch("https://data.cdc.gov/resource/a.json", RECORDS), capture_url="https://data.cdc.gov/capture"
     )
 
-    page = adapters.Page(fetch=page_fetch, records=RECORDS)
-    monkeypatch.setattr(adapters, "pages", lambda *a, **k: iter([page]))
+    class Page:
+        fetch = page_fetch
+        layout: dict[str, str] = {}
+        records = RECORDS
+
+    monkeypatch.setattr(adapters, "pages", lambda *a, **k: iter([Page()]))
     m = crawl.refresh_dataset(ds, tmp_path / "lake", lambda url: page_fetch)
     meta = json.loads(
         (tmp_path / "lake" / "raw_records" / "toy_cases" / f"{m.snapshot_id}.meta.json").read_text()

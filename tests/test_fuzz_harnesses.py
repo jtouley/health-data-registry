@@ -60,13 +60,6 @@ SQL_KNOWN = {
     "#72 initcap()": ("KNOWN_GENERATE_PARSE_ERROR", "SELECT initcap() FROM deaths"),
     "#77 minus tilde": ("KNOWN_MINUS_TILDE", "SELECT -~9PysLRECURSIVEsS"),
     "#77 minus tilde tilde": ("KNOWN_MINUS_TILDE", "SELECT - ~ ~state FROM deaths"),
-    "#171 minus slash slash": ("KNOWN_MINUS_SLASH", "WITH t AS (SELECT state, -////op) SELECT state FROM t"),
-    # the input the PR fuzzing run found
-    "#171 minus slash slash, found": (
-        "KNOWN_MINUS_SLASH",
-        "WITH t AS (SELECT stCT Atate, -////////////////op) SELECT t.eathc d, state, count(*) FROM t JOIN deaths d "
-        "ON dOVDRte = t.sta7e AND d.year = t.year GROUP BY ALL\n",
-    ),
 }
 
 

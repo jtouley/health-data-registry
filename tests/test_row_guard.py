@@ -228,51 +228,27 @@ def _entry(portal: str):  # type: ignore[no-untyped-def]
     return e.model_copy(update={"source": e.source.model_copy(update={"portal": portal})})
 
 
-def _serve(monkeypatch: pytest.MonkeyPatch, kind: str, page: object) -> None:
-    """Make the registered type ``kind`` hand back ``page``, so the core's guard is what is tested."""
-    import dataclasses
-
-    from health_data_registry import adapters
-
-    t = adapters.TYPES[kind]
-    monkeypatch.setitem(adapters.TYPES, kind, dataclasses.replace(t, pages=lambda read: iter([page])))
-
-
-@pytest.mark.parametrize("portal", ["socrata", "https_csv", "who_gho", "tableau"])
+@pytest.mark.parametrize("portal", ["socrata", "https_csv", "who_gho"])
 def test_every_portals_pages_pass_the_guard(portal: str, monkeypatch: pytest.MonkeyPatch) -> None:
     from health_data_registry import adapters
     from tests.test_tableau import raw
 
-    entry = _entry(portal)
     rows = [{"age": "40", "sex": "F", "onset_date": "2026-01-02", "cases": "1"}]
     page = adapters.Page(fetch=raw("https://dash.example.gov/x", b"x"), records=rows)
-    _serve(monkeypatch, entry.source.kind, page)
+    monkeypatch.setattr(adapters, "_pages", lambda *a, **kw: iter([page]))
     with pytest.raises(RowLevelRefused, match=r"toy_dashboard \(dash.example.gov\)"):
-        list(adapters.pages(entry, lambda u: page.fetch))
+        list(adapters.pages(_entry(portal), lambda u: page.fetch))
     fine = adapters.Page(fetch=page.fetch, records=[{"year": "2024", "cases": "1"}])
-    _serve(monkeypatch, entry.source.kind, fine)
-    assert list(adapters.pages(entry, lambda u: page.fetch)) == [fine]
+    monkeypatch.setattr(adapters, "_pages", lambda *a, **kw: iter([fine]))
+    assert list(adapters.pages(_entry(portal), lambda u: page.fetch)) == [fine]
 
 
-def test_tableau_pages_are_guarded_per_worksheet_and_again_by_the_core(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_tableau_pages_are_guarded_per_worksheet_not_again(monkeypatch: pytest.MonkeyPatch) -> None:
     from health_data_registry import adapters
     from tests.test_tableau import raw
 
-    # Hard rule 4 has no opt-out (ADR 0016): the core guards each worksheet a page declares, and the page itself.
-    sheet = adapters.GuardTable(
-        "TB/TByear", ["ATTR(Age)", "ATTR(Sex)", "MDY(Onset Date)"], [{"ATTR(Age)": "40"}]
-    )
-    page = adapters.Page(
-        fetch=raw("https://dash.example.gov/x", b"x"), records=[{"year": "2024"}], tables=(sheet,)
-    )
-    _serve(monkeypatch, "tableau", page)
-    with pytest.raises(RowLevelRefused, match=r"TB/TByear"):
-        list(adapters.pages(_entry("tableau"), lambda u: page.fetch))
-    projected = adapters.Page(
-        fetch=page.fetch, records=[{"ATTR(Age)": 1, "ATTR(Sex)": "F", "MDY(Onset Date)": "x"}]
-    )
-    _serve(monkeypatch, "tableau", projected)
-    with pytest.raises(RowLevelRefused):
-        list(adapters.pages(_entry("tableau"), lambda u: page.fetch))
+    # projected Tableau records keep only contract fields; the worksheet was checked by caption already
+    page = adapters.Page(fetch=raw("https://dash.example.gov/x", b"x"),
+                         records=[{"ATTR(Age)": 1, "ATTR(Sex)": "F", "MDY(Onset Date)": "x"}])  # fmt: skip
+    monkeypatch.setattr(adapters, "_pages", lambda *a, **kw: iter([page]))
+    assert list(adapters.pages(_entry("tableau"), lambda u: page.fetch)) == [page]

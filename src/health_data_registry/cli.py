@@ -22,7 +22,6 @@ def _fetcher(registry: Registry, log: FetchLog | None = None):  # type: ignore[n
 
 def refresh(registry: Registry, ids: Sequence[str], *, max_rows: int | None, lake: Path) -> int:
     from health_data_registry.crawl import LiveOnly, refresh_dataset
-    from health_data_registry.quality import sample_blocked_message
 
     failed = 0
     for dataset_id in ids:
@@ -35,11 +34,6 @@ def refresh(registry: Registry, ids: Sequence[str], *, max_rows: int | None, lak
         except Exception as e:  # report and carry on with the next dataset
             failed += 1
             print(f"FAIL {dataset_id}: {e}", file=sys.stderr)
-            continue
-        # A development sample is kept even when a blocking check fails on it, but the command still fails.
-        if m.partial and (why := sample_blocked_message(dataset_id, m.quality)):
-            failed += 1
-            print(f"FAIL {dataset_id}: {why}", file=sys.stderr)
             continue
         print(f"ok   {dataset_id}: {m.row_count} rows, snapshot {m.snapshot_id}")
     return 1 if failed else 0
@@ -55,11 +49,6 @@ def validate(registry: Registry, lake: Path) -> int:
         print(
             f"ok   {ds.id}: contract {ds.contract.version} ({ds.entry.status}), {len(ds.semantic.metrics)} metrics"
         )
-        if ds.entry.source.portal is not None:
-            print(
-                f"warn {ds.id}: source.portal is the older name of source.type and is read for one more release; "
-                f"write type: {ds.entry.source.kind}"
-            )
     engine = Engine(registry=registry, lake=lake, hub=None, fetch_at_run_time=False)
     failed = 0
     for ds_id, extra in unlisted_condition_labels(registry, engine).items():
@@ -131,13 +120,13 @@ def export_public(
 
 def check_contracts(registry: Registry) -> int:
     """Does each publisher still serve every field its contract reads? (The nightly drift check.)"""
-    from health_data_registry.adapters import capabilities, publisher_fields
+    from health_data_registry.adapters import publisher_fields
 
     get = _fetcher(registry)
     bad = 0
     for ds in registry:
-        if capabilities(ds.entry).checks_layout_on_read:
-            print(f"skip {ds.id}: its adapter type checks the publisher's layout on every read")
+        if ds.entry.source.portal == "doi":
+            print(f"skip {ds.id}: harvested by DOI; every harvest checks the APIs' answers as it reads them")
             continue
         try:
             served = publisher_fields(ds.entry, get)

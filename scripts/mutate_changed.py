@@ -95,16 +95,9 @@ SEP = "ǁ"
 # 2026, scoped shards): sql_guard took 7.5 minutes in all, of which checkout and install 14 s, generating its
 # mutants 3 s, mutmut's stats run 3.0 minutes and its clean test run 2.9 minutes over the 48 test files that reach
 # it, then 99 mutants in 1.2 minutes; registry.py took 5.1 minutes. Setup is now most of a shard; caching the stats
-# run is #115's work. The shard job's timeout-minutes in .github/workflows/mutation.yml is the hard stop: 12
-# minutes while mutation shards ran on every pull request, 60 since #122 made them nightly only. Under the 12-minute
-# stop (pre-pr run of the crawler-factory core, 25 Nov 2026), crawl.py's shards at 150 took 5 to 10.5 minutes,
-# registry.py's at 40 ran 7 minutes of mutants after 5 of setup, and some shards of fetch.py, staging.py and
-# store.py hit the stop. SHARD_TARGET went from 150 to 200 when that branch met main with #147: `--list --all` came
-# to 264 shards at 150, past MAX_SHARDS (main alone had 227), and is 217 at 200. At the slowest ordinary rate 200
-# mutants take under 4 minutes, and crawl.py's slowest shard scales to about 14 minutes, well inside 60. Add a
-# module here when its shards run long against that stop, and raise SHARD_TARGET when `--list --all` nears
-# MAX_SHARDS.
-SHARD_TARGET = 200
+# run is #115's work. The shard job's timeout-minutes (12) is the hard stop. Add a module here when its shards run
+# long.
+SHARD_TARGET = 150
 SHARD_TARGET_BY_MODULE = {"health_data_registry.registry": 40}
 # GitHub runs at most 256 jobs from one matrix.
 MAX_SHARDS = 256

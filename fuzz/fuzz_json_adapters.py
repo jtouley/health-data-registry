@@ -57,12 +57,12 @@ _WRONG_SHAPE: tuple[tuple[str, str, type[Exception], re.Pattern[str]], ...] = (
             r"|list indices must be integers or slices, not str|string indices must be integers, not 'str'"
         ),
     ),
-    ("odata.py", "_scalars", AttributeError, re.compile(r"'\w+' object has no attribute 'items'")),
-    ("odata.py", "pages", AttributeError, re.compile(r"'\w+' object has no attribute 'get'")),
-    ("odata.py", "publisher_fields", AttributeError, re.compile(r"'\w+' object has no attribute 'get'")),
-    ("odata.py", "publisher_fields", KeyError, re.compile(r"0")),
+    ("who_gho.py", "_scalars", AttributeError, re.compile(r"'\w+' object has no attribute 'items'")),
+    ("who_gho.py", "pages", AttributeError, re.compile(r"'\w+' object has no attribute 'get'")),
+    ("who_gho.py", "publisher_fields", AttributeError, re.compile(r"'\w+' object has no attribute 'get'")),
+    ("who_gho.py", "publisher_fields", KeyError, re.compile(r"0")),
     (
-        "odata.py",
+        "who_gho.py",
         "publisher_fields",
         TypeError,
         re.compile(r"'\w+' object is not (?:iterable|subscriptable)|unhashable type: '(?:dict|list)'"),
