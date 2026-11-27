@@ -46,6 +46,28 @@ schema:
       - property: footnoteKey
         value: "For Kindergartner Vaccination Coverage:  * The percentage of kindergartners surveyed may be <100%; shown as 100% based on available information on current enrollment among schools for which awardees had information. † Kindergarten coverage data collected from a sample and exemption data collected from a census of kindergartners. ‡ For 2014-15 through 2019-20, included some or all vaccine doses received regardless of ACIP recommended age and time interval; for all other years, included vaccine doses received regardless of ACIP recommended age and time interval. Vaccination coverage rates shown may be higher than those for valid doses. § Does not include some special types of schools. || Pertussis was not required in PA until 2017-18; coverage for DT was 90.8% in 2009-10, 91.1% in 2011-12, 90.7% in 2012-13, 88.3% in 2013-14, 93.9% in 2014-15, 96.3% in 2015-16, and 94.8% in 2016-17. ¶ Public school data only. ** May include preschool and pre-kindergarten students. †† HepB vaccine was not required in SD but 3-dose coverage was reported. Coverage rate shown may be an underestimate. ‡‡ Estimates represent coverage among children in kindergarten and 1st grade.  For Kindergartner Vaccination Exemptions: * Included both temporary and permanent medical exemptions. † Exemptions for philosophical reasons were not allowed. ‡ Exemptions for religious reasons were not allowed. § State did not report the number of children with exemptions but reported the number of exemptions for each vaccine, which would count some children more than once. Estimates shown represent the lower bounds of the percent of children with exemptions, estimated using individual vaccines with the highest number of exemptions. || Religious and philosophic exemptions were not reported separately. ¶ May include preschool and pre-kindergarten students. ** Exemptions due to medical reasons were allowed but not reported separately from other exemptions. †† Exemptions due to medical reasons were allowed but not reported. ‡‡ Public school data only. §§ Estimates represent coverage among children in kindergarten and 1st grade. < Indicates the number of children with an exemption is less than 0.1%."
         description: "CDC's footnote key, copied verbatim from the dataset metadata (custom_fields, Data Quality, Footnotes) on 2026-11-25. The same symbol means different things on coverage rows and exemption rows, and some published symbols (≥, >=, the replacement character �) are not in the key (open question 'Footnote symbols'). Rows keep their symbols as published; nothing here reads them into a number."
+    quality:
+      - id: rows_raw_to_staging
+        type: custom
+        engine: dbt-expectations
+        implementation: {check: row_count_matches, model: staging, compare: raw}
+        dimension: consistency
+        severity: error
+        description: "Staging has exactly as many rows as the raw load it types: staging drops and adds no row (an exact structural fact of the generated staging model)."
+      - id: rows_staging_to_intermediate
+        type: custom
+        engine: dbt-expectations
+        implementation: {check: row_count_matches, model: intermediate, compare: staging}
+        dimension: consistency
+        severity: error
+        description: "The intermediate model has exactly as many rows as staging: it only adds columns beside each staging row (an exact structural fact)."
+      - id: load_within_refresh
+        type: custom
+        engine: dbt-expectations
+        implementation: {check: load_within_sla, sla: frequency}
+        dimension: timeliness
+        severity: warn
+        description: "The latest load is no older than the annual cadence in slaProperties frequency. It times our copy, not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold."
     properties:
       - name: vaccine
         physicalType: VARCHAR
@@ -189,6 +211,13 @@ schema:
             query: "SELECT COUNT(*) FROM {object} WHERE number_of_exemptions IS NOT NULL AND vaccine <> 'Exemption'"
             mustBe: 0
             description: "The column is 'the number of vaccine exemptions', and 'exemptions only exist within Kindergartner data' (column descriptions): a count on a vaccine row would be a layout change. Every count published on 2026-11-25 is on an Exemption row."
+          - id: total_number_of_exemptions_staging_to_intermediate
+            type: custom
+            engine: dbt-expectations
+            implementation: {check: total_matches, model: intermediate, compare: staging}
+            dimension: consistency
+            severity: error
+            description: "The total of number_of_exemptions, a count, is the same in staging and the intermediate model: a checksum between layers, never an answer."
       - name: survey_type
         physicalType: VARCHAR
         logicalType: string
@@ -198,6 +227,8 @@ schema:
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: survey_type}
+slaProperties:
+  - {property: frequency, value: 1, unit: y, driver: analytics}
 customProperties:
   - {property: licence, value: public-domain-us-federal}
   - {property: citation, value: "Centers for Disease Control and Prevention, National Center for Immunization and Respiratory Diseases. Vaccination Coverage and Exemptions among Kindergartners, SchoolVaxView. https://data.cdc.gov/d/ijqb-a7ye"}
@@ -220,6 +251,8 @@ customProperties:
         - {vaccine: "Exemption", causes: [], note: "Exemptions have no cause."}
   - property: openQuestions
     value:
+      - "Freshness: the publisher's own last-update time is not stored, so load_within_refresh times our latest load against the annual cadence (slaProperties frequency), not the publisher's update. Store the publisher's update time (e.g. Socrata rowsUpdatedAt) in the snapshot manifest, then check that instead."
+      - "Freshness grace: how long past the annual cadence should a load count as stale? Nothing the publisher states sets a grace period, so load_within_refresh warns at exactly the cadence. Maintainer to decide."
       - "Survey type: survey_type differs by state and year (census, sample, voluntary response, mixed public/private). Can a sample-based state's estimate be set beside a census state's? CDC's methods must say so; until then answers show each row's survey type through query_sql and describe_dataset, and states are never ranked here."
       - "Footnote symbols: the footnote key (footnoteKey) gives the symbols' meanings, separately for coverage and exemption rows. Published symbols outside the key (≥, >=, and the replacement character where a symbol was garbled) have no stated meaning. A maintainer reads CDC's key and decides how each symbol is shown; nothing reads them into a number."
       - "Exemption count: is number_of_exemptions a count of children with an exemption, or of exemptions by type (medical, non-medical)? Footnote § says some states counted per vaccine, so a child can be counted more than once there."

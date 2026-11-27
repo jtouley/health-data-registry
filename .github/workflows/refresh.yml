@@ -214,6 +214,13 @@ jobs:
           pattern: lake-*
           path: lake/
           merge-multiple: true
+      # The dbt packages the generated tests use, at the exact versions in transform/package-lock.yml
+      # (metaplane/dbt_expectations 0.10.10, godatadriven/dbt_date 0.21.0). A failed install fails the job, so the
+      # build never runs without its data-quality tests.
+      - name: dbt deps (pinned packages)
+        env:
+          DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
+        run: uv run --no-sync --directory transform dbt deps --profiles-dir . --project-dir .
       # dbt's own exit status is not used: the gate in the publish job reads its run record, and a missing or
       # empty record holds the release.
       - name: dbt build (models, tests and unit tests)

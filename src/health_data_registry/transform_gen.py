@@ -44,6 +44,7 @@ from typing import Any
 import yaml
 
 from health_data_registry.dbt_raw import PROVENANCE, SHA256_COLUMN, SNAPSHOT_COLUMN
+from health_data_registry.dq_checks import dbt_test
 from health_data_registry.quality import condition_sql, measure_sql, rules_for
 from health_data_registry.registry import (
     Contract,
@@ -222,7 +223,13 @@ def _columns(contract: Contract, model: str) -> list[dict[str, Any]]:
 
 
 def _model_yml(
-    contract: Contract, model: str, contract_path: str, tags: list[str], *, provenance: bool = False
+    contract: Contract,
+    model: str,
+    contract_path: str,
+    tags: list[str],
+    *,
+    provenance: bool = False,
+    extra_tests: list[dict[str, Any]] | None = None,
 ) -> str:
     schema = (contract.raw.get("schema") or [{}])[0]
     pk = primary_key(contract)
@@ -243,6 +250,8 @@ def _model_yml(
         entry["data_tests"] = [
             {"one_row_per_key": {"name": f"{model}_one_row_per_{'_'.join(pk)}", "arguments": {"columns": pk}}}
         ]
+    if extra_tests:
+        entry["data_tests"] = entry.get("data_tests", []) + extra_tests
     entry["columns"] = _columns(contract, model)
     if provenance:
         entry["columns"] += [
@@ -258,7 +267,14 @@ def _model_yml(
 
 
 def staging_yml(ds: Dataset) -> str:
-    return _model_yml(ds.contract, f"stg_{ds.id}", ds.entry.contract, ["staging"], provenance=True)
+    return _model_yml(
+        ds.contract,
+        f"stg_{ds.id}",
+        ds.entry.contract,
+        ["staging"],
+        provenance=True,
+        extra_tests=dq_tests(ds, "staging"),
+    )
 
 
 def model_contracts(root: Path) -> list[tuple[Path, Contract]]:
@@ -411,6 +427,20 @@ def quality_tests(ds: Dataset) -> list[dict[str, Any]]:
     ]
 
 
+def dq_tests(ds: Dataset, model: str) -> list[dict[str, Any]]:
+    """The dbt-expectations tests the contract declares on one layer (staging or intermediate), as dbt config.
+
+    Each is a `custom` quality rule in the contract; dq_checks.CHECK_TYPES maps its check type to the test.
+    """
+    return [dbt_test(c, ds.id) for c in ds.contract.checks if c.model == model]
+
+
+def dq_test_severities(ds: Dataset) -> dict[str, str]:
+    """Every dbt-expectations test a source's contract declares, by test name, with its severity: the release
+    gate expects each one in a build's run record."""
+    return {f"{ds.id}_{c.id}": c.severity for c in ds.contract.checks}
+
+
 UNMAPPED_LABELS = MODELS_DIR / "flag" / "flag_unmapped_labels.sql"
 
 
@@ -467,7 +497,7 @@ def intermediate_yml(ds: Dataset) -> str:
             "contract_version": ds.contract.version,
             "contract_status": ds.contract.status,
         },
-        "data_tests": quality_tests(ds),
+        "data_tests": quality_tests(ds) + dq_tests(ds, "intermediate"),
         "columns": columns,
     }
     return _dump(HEADER.format(src=ds.entry.contract), {"version": 2, "models": [entry]})
@@ -483,6 +513,10 @@ def generate(registry: Registry) -> dict[Path, str]:
         out[INTERMEDIATE_DIR / f"int_{ds.id}.yml"] = intermediate_yml(ds)
     out[UNMAPPED_LABELS] = unmapped_labels_sql(registry)
     for path, contract in model_contracts(registry.root):
+        if contract.checks:
+            raise ValueError(
+                f"{contract.id}: dbt-expectations checks are declared on source contracts only, so far"
+            )
         layer = model_layer(contract)
         out[MODELS_DIR / layer / f"{contract.id}.yml"] = _model_yml(contract, contract.id, str(path), [layer])
     return out

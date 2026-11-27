@@ -721,6 +721,9 @@ class Contract:
     rate_denominator: str | None = None
     # The contract's quality rules (quality.Rule), run on every snapshot and live read and as named dbt tests.
     quality: tuple[Any, ...] = ()
+    # The contract's dbt-expectations checks (dq_checks.Check): reconciliation, freshness and value ranges, run as
+    # named dbt tests in the transform build only.
+    checks: tuple[Any, ...] = ()
     raw_load: RawLoad = field(default_factory=RawLoad)
 
     @property
@@ -879,6 +882,7 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
         geography_basis=_text(top_custom.get("geographyBasis")),
         rate_denominator=_text(top_custom.get("rateDenominator")),
         quality=_quality(doc, expected_id),
+        checks=_checks(doc, expected_id),
         raw_load=_raw_load(
             top_custom.get("rawLoad"),
             expected_id,
@@ -894,6 +898,15 @@ def _quality(doc: Mapping[str, Any], where: str) -> tuple[Any, ...]:
     try:
         return parse_rules(doc, where)
     except QualityRuleInvalid as e:
+        raise RegistryError(str(e)) from e
+
+
+def _checks(doc: Mapping[str, Any], where: str) -> tuple[Any, ...]:
+    from health_data_registry.dq_checks import CheckInvalid, parse_checks
+
+    try:
+        return parse_checks(doc, where)
+    except CheckInvalid as e:
         raise RegistryError(str(e)) from e
 
 

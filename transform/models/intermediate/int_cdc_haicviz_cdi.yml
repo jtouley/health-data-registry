@@ -41,6 +41,32 @@ models:
           contract: contracts/cdc_haicviz_cdi.odcs.yaml
           checks: 'No row has a value for the published number: a case count when topic is number of cases, cases
             per 100,000 population when topic is case rates, unconfirmed for strain type.'
+  - dbt_expectations.expect_table_row_count_to_equal_other_table:
+      name: cdc_haicviz_cdi_rows_staging_to_intermediate
+      arguments:
+        compare_model: ref('stg_cdc_haicviz_cdi')
+      config:
+        severity: error
+        meta:
+          dimension: consistency
+          rule: rows_staging_to_intermediate
+          check: row_count_matches
+          checks: 'The intermediate model has exactly as many rows as staging: it only adds columns beside each
+            staging row (an exact structural fact).'
+  - dbt_expectations.expect_row_values_to_have_recent_data:
+      name: cdc_haicviz_cdi_load_within_refresh
+      arguments:
+        column_name: strptime(left(_snapshot_id, 16), '%Y%m%dT%H%M%SZ')
+        datepart: year
+        interval: 1
+      config:
+        severity: warn
+        meta:
+          dimension: timeliness
+          rule: load_within_refresh
+          check: load_within_sla
+          checks: The latest load is no older than the annual cadence in slaProperties frequency. It times our copy,
+            not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold.
   columns:
   - name: yearname
     data_type: bigint

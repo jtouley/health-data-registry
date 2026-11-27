@@ -155,6 +155,59 @@ models:
           contract: contracts/cdc_nndss_weekly.odcs.yaml
           checks: No row has a value for publisher's row order key (year, week and area position); used only to
             keep the published table order.
+  - dbt_expectations.expect_table_row_count_to_equal_other_table:
+      name: cdc_nndss_weekly_rows_staging_to_intermediate
+      arguments:
+        compare_model: ref('stg_cdc_nndss_weekly')
+      config:
+        severity: error
+        meta:
+          dimension: consistency
+          rule: rows_staging_to_intermediate
+          check: row_count_matches
+          checks: 'The intermediate model has exactly as many rows as staging: it only adds columns beside each
+            staging row (an exact structural fact).'
+  - dbt_expectations.expect_row_values_to_have_recent_data:
+      name: cdc_nndss_weekly_load_within_refresh
+      arguments:
+        column_name: strptime(left(_snapshot_id, 16), '%Y%m%dT%H%M%SZ')
+        datepart: day
+        interval: 7
+      config:
+        severity: warn
+        meta:
+          dimension: timeliness
+          rule: load_within_refresh
+          check: load_within_sla
+          checks: The latest load is no older than the weekly cadence in slaProperties frequency. It times our copy,
+            not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold.
+  - dbt_expectations.expect_column_values_to_be_between:
+      name: cdc_nndss_weekly_week_in_range
+      arguments:
+        column_name: '"week"'
+        min_value: 1
+        max_value: 53
+        row_condition: '"week" is not null'
+      config:
+        severity: error
+        meta:
+          dimension: conformity
+          rule: week_in_range
+          check: values_between
+          checks: The codebook gives the MMWR week as 1-52, or 53 in 53-week years (the column description).
+  - dbt_expectations.expect_table_aggregation_to_equal_other_table:
+      name: cdc_nndss_weekly_total_m1_staging_to_intermediate
+      arguments:
+        expression: sum("m1")
+        compare_model: ref('stg_cdc_nndss_weekly')
+      config:
+        severity: error
+        meta:
+          dimension: consistency
+          rule: total_m1_staging_to_intermediate
+          check: total_matches
+          checks: 'The total of m1, a count, is the same in staging and the intermediate model: a checksum between
+            layers, never an answer.'
   columns:
   - name: states
     data_type: varchar

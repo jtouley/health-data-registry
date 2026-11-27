@@ -42,6 +42,28 @@ schema:
           period: year
           provisionalFlag: null
         description: "Condition is the HAI type (CLABSI, CAUTI, SSI). Organism and resistance are combined in the phenotype label (e.g. Methicillin-resistant Staphylococcus aureus); no separate antibiotic or mechanism column. NHSN HAI surveillance definitions are not in the data (see openQuestions). No case-status or provisional column. Period is calendar year."
+    quality:
+      - id: rows_raw_to_staging
+        type: custom
+        engine: dbt-expectations
+        implementation: {check: row_count_matches, model: staging, compare: raw}
+        dimension: consistency
+        severity: error
+        description: "Staging has exactly as many rows as the raw load it types: staging drops and adds no row (an exact structural fact of the generated staging model)."
+      - id: rows_staging_to_intermediate
+        type: custom
+        engine: dbt-expectations
+        implementation: {check: row_count_matches, model: intermediate, compare: staging}
+        dimension: consistency
+        severity: error
+        description: "The intermediate model has exactly as many rows as staging: it only adds columns beside each staging row (an exact structural fact)."
+      - id: load_within_refresh
+        type: custom
+        engine: dbt-expectations
+        implementation: {check: load_within_sla, sla: frequency}
+        dimension: timeliness
+        severity: warn
+        description: "The latest load is no older than the annual cadence in slaProperties frequency. It times our copy, not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold."
     properties:
       - name: source
         physicalType: VARCHAR
@@ -153,6 +175,14 @@ schema:
           - {property: role, value: measure}
           - {property: sourceField, value: isolates_tested}
           - {property: unit, value: "1"}
+        quality:
+          - id: total_isolates_tested_staging_to_intermediate
+            type: custom
+            engine: dbt-expectations
+            implementation: {check: total_matches, model: intermediate, compare: staging}
+            dimension: consistency
+            severity: error
+            description: "The total of isolates_tested, a count, is the same in staging and the intermediate model: a checksum between layers, never an answer."
       - name: resistant_isolates
         physicalType: BIGINT
         logicalType: integer
@@ -162,6 +192,14 @@ schema:
           - {property: role, value: measure}
           - {property: sourceField, value: resistant_isolates}
           - {property: unit, value: "1"}
+        quality:
+          - id: total_resistant_isolates_staging_to_intermediate
+            type: custom
+            engine: dbt-expectations
+            implementation: {check: total_matches, model: intermediate, compare: staging}
+            dimension: consistency
+            severity: error
+            description: "The total of resistant_isolates, a count, is the same in staging and the intermediate model: a checksum between layers, never an answer."
       - name: percent_resistant
         physicalType: DOUBLE
         logicalType: number
@@ -200,6 +238,13 @@ schema:
             description: "Pairing. Publisher: the bounds are given only when percent resistant is calculated, so a row with no percent has no bounds."
             query: "SELECT COUNT(*) FROM {object} WHERE percent_resistant IS NULL AND (lower_confidence_interval IS NOT NULL OR upper_confidence_interval IS NOT NULL)"
             mustBe: 0
+          - id: percent_resistant_in_range
+            type: custom
+            engine: dbt-expectations
+            implementation: {check: values_between, min: 0, max: 100}
+            dimension: conformity
+            severity: error
+            description: "A percent of tested isolates (resistant / tested x 100, column description), so it lies from 0 to 100."
       - name: suppressed
         physicalType: BOOLEAN
         logicalType: boolean
@@ -236,6 +281,8 @@ schema:
           - {property: role, value: measure}
           - {property: sourceField, value: upper_confidence_interval}
           - {property: unit, value: "%"}
+slaProperties:
+  - {property: frequency, value: 1, unit: y, driver: analytics}
 customProperties:
   - {property: licence, value: public-domain-us-federal}
   - {property: citation, value: "Centers for Disease Control and Prevention, National Healthcare Safety Network. National Healthcare Safety Network - Antimicrobial Resistance (2011-2025). https://data.cdc.gov/d/7wz3-n6um"}
@@ -247,6 +294,8 @@ customProperties:
   - {property: unreliableRule, value: {kind: publisher_suppressed, threshold: 20, description: "Publisher: resistant counts and percent resistant are shown only when at least 20 isolates were tested; smaller cells are empty (column descriptions of isolates_resistant and percent_resistant)."}}
   - property: openQuestions
     value:
+      - "Freshness: the publisher's own last-update time is not stored, so load_within_refresh times our latest load against the annual cadence (slaProperties frequency), not the publisher's update. Store the publisher's update time (e.g. Socrata rowsUpdatedAt) in the snapshot manifest, then check that instead."
+      - "Freshness grace: how long past the annual cadence should a load count as stale? Nothing the publisher states sets a grace period, so load_within_refresh warns at exactly the cadence. Maintainer to decide."
       - "Licence: no licence field in the Socrata metadata; public-domain-us-federal assumed from its being a CDC work."
       - "Dataset id stability: the title carries the year range (2011-2025) and the Socrata asset was created in November 2026. Does CDC publish a new 4x4 id each year? If so the adapter needs a lookup step."
       - "Rows with suppressed empty (NULL) have no counts at all. Does NULL mean suppressed for fewer than 20 tested, not reported, or no isolates? The methodology PDF (arpsp.cdc.gov) was not fetched; maintainer to read it and decide missingCodes."

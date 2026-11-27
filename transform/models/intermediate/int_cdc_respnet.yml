@@ -56,6 +56,32 @@ models:
           contract: contracts/cdc_respnet.odcs.yaml
           checks: 'No row has a value for point estimate: hospitalizations per 100,000 site catchment population
             (rates) or percent of hospitalized patients (clinical rows); unit given by estimate_type.'
+  - dbt_expectations.expect_table_row_count_to_equal_other_table:
+      name: cdc_respnet_rows_staging_to_intermediate
+      arguments:
+        compare_model: ref('stg_cdc_respnet')
+      config:
+        severity: error
+        meta:
+          dimension: consistency
+          rule: rows_staging_to_intermediate
+          check: row_count_matches
+          checks: 'The intermediate model has exactly as many rows as staging: it only adds columns beside each
+            staging row (an exact structural fact).'
+  - dbt_expectations.expect_row_values_to_have_recent_data:
+      name: cdc_respnet_load_within_refresh
+      arguments:
+        column_name: strptime(left(_snapshot_id, 16), '%Y%m%dT%H%M%SZ')
+        datepart: day
+        interval: 7
+      config:
+        severity: warn
+        meta:
+          dimension: timeliness
+          rule: load_within_refresh
+          check: load_within_sla
+          checks: The latest load is no older than the weekly cadence in slaProperties frequency. It times our copy,
+            not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold.
   columns:
   - name: surveillance_network
     data_type: varchar

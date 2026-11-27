@@ -151,6 +151,73 @@ models:
           rule: fill_rate_upper_confidence_interval
           contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
           checks: No row has a value for upper bound of the 95% mid-P exact confidence interval around percent resistant.
+  - dbt_expectations.expect_table_row_count_to_equal_other_table:
+      name: cdc_nhsn_ar_hai_rows_staging_to_intermediate
+      arguments:
+        compare_model: ref('stg_cdc_nhsn_ar_hai')
+      config:
+        severity: error
+        meta:
+          dimension: consistency
+          rule: rows_staging_to_intermediate
+          check: row_count_matches
+          checks: 'The intermediate model has exactly as many rows as staging: it only adds columns beside each
+            staging row (an exact structural fact).'
+  - dbt_expectations.expect_row_values_to_have_recent_data:
+      name: cdc_nhsn_ar_hai_load_within_refresh
+      arguments:
+        column_name: strptime(left(_snapshot_id, 16), '%Y%m%dT%H%M%SZ')
+        datepart: year
+        interval: 1
+      config:
+        severity: warn
+        meta:
+          dimension: timeliness
+          rule: load_within_refresh
+          check: load_within_sla
+          checks: The latest load is no older than the annual cadence in slaProperties frequency. It times our copy,
+            not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold.
+  - dbt_expectations.expect_table_aggregation_to_equal_other_table:
+      name: cdc_nhsn_ar_hai_total_isolates_tested_staging_to_intermediate
+      arguments:
+        expression: sum("isolates_tested")
+        compare_model: ref('stg_cdc_nhsn_ar_hai')
+      config:
+        severity: error
+        meta:
+          dimension: consistency
+          rule: total_isolates_tested_staging_to_intermediate
+          check: total_matches
+          checks: 'The total of isolates_tested, a count, is the same in staging and the intermediate model: a checksum
+            between layers, never an answer.'
+  - dbt_expectations.expect_table_aggregation_to_equal_other_table:
+      name: cdc_nhsn_ar_hai_total_resistant_isolates_staging_to_intermediate
+      arguments:
+        expression: sum("resistant_isolates")
+        compare_model: ref('stg_cdc_nhsn_ar_hai')
+      config:
+        severity: error
+        meta:
+          dimension: consistency
+          rule: total_resistant_isolates_staging_to_intermediate
+          check: total_matches
+          checks: 'The total of resistant_isolates, a count, is the same in staging and the intermediate model:
+            a checksum between layers, never an answer.'
+  - dbt_expectations.expect_column_values_to_be_between:
+      name: cdc_nhsn_ar_hai_percent_resistant_in_range
+      arguments:
+        column_name: '"percent_resistant"'
+        min_value: 0
+        max_value: 100
+        row_condition: '"percent_resistant" is not null'
+      config:
+        severity: error
+        meta:
+          dimension: conformity
+          rule: percent_resistant_in_range
+          check: values_between
+          checks: A percent of tested isolates (resistant / tested x 100, column description), so it lies from 0
+            to 100.
   columns:
   - name: source
     data_type: varchar

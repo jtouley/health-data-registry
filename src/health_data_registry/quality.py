@@ -35,6 +35,7 @@ from typing import Any
 
 import duckdb
 
+from health_data_registry.dq_checks import is_check
 from health_data_registry.sql_guard import SqlRefused, guard_sql, require_single_select
 
 DIMENSIONS = frozenset(
@@ -172,7 +173,8 @@ def parse_rules(doc: Mapping[str, Any], where: str) -> tuple[Rule, ...]:
     schema = (doc.get("schema") or [{}])[0]
     props = schema.get("properties") or []
     columns = frozenset(str(p.get("name")) for p in props)
-    rules = [_rule(q, None, where, columns) for q in schema.get("quality") or []]
+    # A custom rule is a dbt-expectations check (dq_checks.py): it runs in the dbt build, not here.
+    rules = [_rule(q, None, where, columns) for q in schema.get("quality") or [] if not is_check(q)]
     for p in props:
         name = str(p.get("name"))
         empty_ok = any(
@@ -182,8 +184,11 @@ def parse_rules(doc: Mapping[str, Any], where: str) -> tuple[Rule, ...]:
         rules += [
             replace(_rule(q, name, f"{where}.{name}", columns), may_be_empty=empty_ok)
             for q in p.get("quality") or []
+            if not is_check(q)
         ]
-    ids = [r.id for r in rules]
+    checks = [q.get("id") for q in schema.get("quality") or [] if is_check(q)]
+    checks += [q.get("id") for p in props for q in p.get("quality") or [] if is_check(q)]
+    ids = [r.id for r in rules] + [str(i) for i in checks]
     if len(set(ids)) != len(ids):
         raise QualityRuleInvalid(f"{where}: quality rule ids must be unique")
     if any(i.startswith(FILL_RATE_PREFIX) or i == HAS_ROWS for i in ids):

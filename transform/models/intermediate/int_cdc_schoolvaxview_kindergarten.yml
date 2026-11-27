@@ -199,6 +199,45 @@ models:
           checks: No row has a value for how the state or local area collected the data that year, as published,
             such as 'Census', 'Stratified 2-stage cluster sample', 'Voluntary response' or 'Census (public); Voluntary
             response (private)'.
+  - dbt_expectations.expect_table_row_count_to_equal_other_table:
+      name: cdc_schoolvaxview_kindergarten_rows_staging_to_intermediate
+      arguments:
+        compare_model: ref('stg_cdc_schoolvaxview_kindergarten')
+      config:
+        severity: error
+        meta:
+          dimension: consistency
+          rule: rows_staging_to_intermediate
+          check: row_count_matches
+          checks: 'The intermediate model has exactly as many rows as staging: it only adds columns beside each
+            staging row (an exact structural fact).'
+  - dbt_expectations.expect_row_values_to_have_recent_data:
+      name: cdc_schoolvaxview_kindergarten_load_within_refresh
+      arguments:
+        column_name: strptime(left(_snapshot_id, 16), '%Y%m%dT%H%M%SZ')
+        datepart: year
+        interval: 1
+      config:
+        severity: warn
+        meta:
+          dimension: timeliness
+          rule: load_within_refresh
+          check: load_within_sla
+          checks: The latest load is no older than the annual cadence in slaProperties frequency. It times our copy,
+            not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold.
+  - dbt_expectations.expect_table_aggregation_to_equal_other_table:
+      name: cdc_schoolvaxview_kindergarten_total_number_of_exemptions_staging_to_intermediate
+      arguments:
+        expression: sum("number_of_exemptions")
+        compare_model: ref('stg_cdc_schoolvaxview_kindergarten')
+      config:
+        severity: error
+        meta:
+          dimension: consistency
+          rule: total_number_of_exemptions_staging_to_intermediate
+          check: total_matches
+          checks: 'The total of number_of_exemptions, a count, is the same in staging and the intermediate model:
+            a checksum between layers, never an answer.'
   columns:
   - name: vaccine
     data_type: varchar

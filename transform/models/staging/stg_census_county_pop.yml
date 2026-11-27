@@ -15,6 +15,19 @@ models:
     contract_version: 0.1.0
     contract_status: draft
     primary_key: []
+  data_tests:
+  - dbt_expectations.expect_table_row_count_to_equal_other_table:
+      name: census_county_pop_rows_raw_to_staging
+      arguments:
+        compare_model: source('raw', 'census_county_pop')
+      config:
+        severity: error
+        meta:
+          dimension: consistency
+          rule: rows_raw_to_staging
+          check: row_count_matches
+          checks: 'Staging has exactly as many rows as the raw load it types: staging drops and adds no row (an
+            exact structural fact of the generated staging model).'
   columns:
   - name: sumlev
     data_type: varchar
