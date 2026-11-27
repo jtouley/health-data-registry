@@ -138,4 +138,9 @@ def test_a_coverage_question_is_routed_here(built: tuple[Registry, Engine]) -> N
         "vaccine exemptions among kindergartners",
     ):
         out = tools.suggest_datasets(reg, question, engine=eng, fmt="json")
-        assert {r["source_id"]: r["can_answer"] for r in _rows(out)}[DS] == "yes", question
+        rows = _rows(out)
+        # No source declares its places yet (#111), so the best a question gets is "unknown" for the place alone:
+        # it is offered first, with that one open question.
+        assert rows[0]["source_id"] == DS and rows[0]["can_answer"] == "unknown", question
+        assert rows[0]["why"].startswith("this source doesn't declare which places it covers yet"), question
+        assert ";" not in rows[0]["why"], question
