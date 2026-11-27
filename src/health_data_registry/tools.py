@@ -947,6 +947,11 @@ def suggest_datasets(
                     f"covers {cov.place_words}, but doesn't declare which cities it reports apart from their "
                     f"states, so not whether it reports {', '.join(cities)}"
                 )
+        elif cov.place_keys is None and named:
+            unknown.append(
+                "this source doesn't declare which places it covers yet, so it isn't known whether it covers "
+                + ", ".join(dict.fromkeys(n for n, _ in named))
+            )
         elif any(h is None for h in held.values()) or (not named and cov.place_keys is None):
             unknown.append("this source doesn't declare which places it covers yet")
         elif not named and not cov.nationwide:
@@ -960,10 +965,11 @@ def suggest_datasets(
         labels = [x for x in ds.condition_labels if coverage.words(x) & specific][:6]
         supports = "; ".join(dict.fromkeys(labels + listed))
         can = "no" if why_not else "unknown" if unknown else "yes"
-        rows.append([e.id, can, "; ".join(why_not + unknown) or "fits", supports, len(hits),
+        # A "no" gives only its reasons for no; what is unknown besides adds nothing a clinician can act on.
+        rows.append([e.id, can, "; ".join(why_not or unknown) or "fits", supports, (len(unknown), -len(hits)),
                      *provenance_fields(ds, engine).values()])  # fmt: skip
     rank = {"yes": 0, "unknown": 1, "no": 2}
-    rows.sort(key=lambda r: (rank[r[1]], -int(r[4]), r[0]))
+    rows.sort(key=lambda r: (rank[r[1]], r[4], r[0]))  # then fewest unknowns, most condition words matched
     notes = [
         f"Read as: condition words {sorted(topic_words)}, places {place_names or 'none'}, years {years or 'any'}.",
         "Public data shows what and where; your hospital's own data, kept in approved systems, answers why.",
@@ -979,7 +985,13 @@ def suggest_datasets(
             f"For {gbd_measure.group(0).lower()}, ask the IHME GBD connector: GBD models it, and this server holds "
             "observed data only."
         )
-    if not any(r[1] == "yes" for r in rows):
+    if not any(r[1] == "yes" for r in rows) and any(r[1] == "unknown" for r in rows):
+        notes.append(
+            "Next step: no source is marked as fitting because none declares all of what was asked yet. Open "
+            "describe_dataset for a source marked unknown to see its places, conditions and years, then ask "
+            "get_series."
+        )
+    elif not any(r[1] == "yes" for r in rows):
         notes.append("Next step: " + next_step_for("unknown_condition"))
         notes += [
             f"Outside this registry: {x}" for x in _gbd_causes_named(registry, " ".join(sorted(topic_words)))
@@ -1305,7 +1317,9 @@ def not_read_live(ds: Dataset, locations: Sequence[str]) -> str | None:
     if ds.entry.tier != "live" or not locations:
         return None
     cov = coverage.declared_coverage(ds)
-    if any(cov.holds(k) for k in (geo.key_for(loc) for loc in locations) if k is not None):
+    keys = [geo.key_for(loc) for loc in locations]
+    # A place this server can't name (a country) can't be checked against coverage, so it never stops the read.
+    if any(k is None or cov.holds(k) for k in keys):
         return None
     asked = ", ".join(locations)
     if cov.place_keys is None:

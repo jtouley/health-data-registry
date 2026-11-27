@@ -6,10 +6,10 @@ source whose coverage isn't declared covers "unknown", and an unknown never coun
 Where it reads today, in order:
 
 - places: the contract's ``conformedDimensions`` (the transform's conformed place keys: USA, US-<state FIPS>,
-  US-<state FIPS><county FIPS>, or a declared part of one, e.g. US-26163/detroit), else the catalog entry's own
-  declaration that a federal source covers its whole country (``level: federal``, ``country: US``) or that an
-  international source covers every country (``level: international``, no ``country``). Nothing else: a city or
-  state source with no conformed places declared covers "unknown".
+  US-<state FIPS><county FIPS>, or a declared part of one, e.g. US-26163/detroit). Nothing else, and never the
+  catalog's ``level`` or ``country``: those say who publishes a source, not where its rows are (a federal network
+  can cover a few counties in some states, and an international abstract list covers no country). A source with no
+  conformed places covers "unknown" until its coverage is declared (#223).
 - conditions: the catalog's condition labels and aliases, its GBD crosswalk, and the semantic model's series.
 - years: the catalog's ``years``.
 
@@ -98,11 +98,9 @@ GENERIC_WORDS = frozenset(
 
 @dataclass(frozen=True)
 class Coverage:
-    """A source's declared coverage. `place_keys` is None when no place coverage is declared (unknown);
-    `everywhere` when it declares every country."""
+    """A source's declared coverage. `place_keys` is None when no place coverage is declared (unknown)."""
 
     place_keys: frozenset[str] | None
-    everywhere: bool
     place_words: str  # the declared places in plain words, for answers
     condition_words: frozenset[str]  # the specific words of the conditions it declares; empty means unknown
     year_start: int
@@ -114,8 +112,6 @@ class Coverage:
         A city a publisher reports apart from its state (Detroit, New York City) is held only when the city itself
         is declared: a country or state declaration says which states a source reports, never which cities it
         reports apart from them, so a nationwide source is "unknown" for a city, never a fit (#111)."""
-        if self.everywhere:
-            return True
         if self.place_keys is None:
             return None
         if not any(geo.within(outer, key) for outer in self.place_keys):
@@ -132,7 +128,7 @@ class Coverage:
     @property
     def nationwide(self) -> bool:
         """Declares a whole country or more, so a question that names no place still fits it."""
-        return self.everywhere or geo.NATION_KEY in (self.place_keys or ())
+        return geo.NATION_KEY in (self.place_keys or ())
 
 
 def words(text: str) -> set[str]:
@@ -174,15 +170,7 @@ def declared_coverage(ds: Dataset) -> Coverage:
     """The source's declared coverage (see the module docstring for where each part is read)."""
     e = ds.entry
     keys = set(_conformed_places(ds))
-    everywhere = e.level == "international" and e.country is None
-    if e.level == "federal" and e.country == "US":
-        keys.add(geo.NATION_KEY)
-    if everywhere:
-        place_words = "every country"
-    elif keys:
-        place_words = " and ".join(sorted(_place_name(k) for k in keys))
-    else:
-        place_words = "no places declared yet"
+    place_words = " and ".join(sorted(_place_name(k) for k in keys)) if keys else "no places declared yet"
     parts = [*e.conditions.labels, *(a.alias for a in e.conditions.aliases)]
     parts += [f"{c.cause} {c.pathogen or ''}" for c in e.gbd.causes]
     parts += [s.label for s in ds.semantic.series]
@@ -192,8 +180,7 @@ def declared_coverage(ds: Dataset) -> Coverage:
     # publisher's full name is not dropped: it can name the conditions it covers ("RSV-NET", "respiratory").
     not_conditions = words(f"{e.agency} {place_words}") | GENERIC_WORDS
     return Coverage(
-        place_keys=frozenset(keys) if keys or everywhere else None,
-        everywhere=everywhere,
+        place_keys=frozenset(keys) if keys else None,
         place_words=place_words,
         condition_words=frozenset(w for w in words(" ".join(parts)) - not_conditions if not w.isdigit()),
         year_start=e.years.start,

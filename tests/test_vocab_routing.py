@@ -417,7 +417,7 @@ def test_discovery_carries_provenance(vocab: tuple[Registry, Engine]) -> None:
     assert row["retrieved_at"] == "2026-11-24T12:00:00" and row["contract_status"] == "draft"
     sug = _json(tools.suggest_datasets(reg, "Q fever in Ohio 2022", engine=eng, fmt="json"))
     srow = dict(zip(sug["columns"], sug["rows"][0], strict=True))
-    assert srow["can_answer"] == "yes" and srow["what_it_supports"].startswith(
+    assert srow["can_answer"] == "unknown" and srow["what_it_supports"].startswith(
         "Q fever, Acute; Q fever, Chronic"
     )
     assert srow["source_url"] == "https://data.cdc.gov/d/toy0-toy0" and sug["presentation_rules"]

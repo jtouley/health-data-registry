@@ -28,10 +28,15 @@ All notable changes to this project are documented here. The format follows
   marked surveillance sources "yes, fits" by word overlap. A named meeting narrows the answer to its own table; a
   meeting with no table here (CROI) goes to the hand-off; a question about how often abstracts became papers points
   to `get_publication_outlook`.
-- A source that declares only its country or state is "unknown" for a city reported apart from its state
-  (Detroit, New York City), never a fit: NNDSS no longer fits a Detroit question (#111). A question about
-  population reaches the Census denominator, and an RSV question reaches RESP-NET, whose condition words were
-  dropped with its publisher's name.
+- A source's places are never read from its catalog `level` or `country`: who publishes a source is not where
+  its rows are (a federal network such as RESP-NET covers selected counties in some states, and the abstract lists
+  cover no country). Until a source declares its places (#223), it is "unknown" for any place, never a fit, and
+  the reason names the place: NNDSS no longer fits a Detroit question, nor RESP-NET a Texas one (#111). A
+  declared country never holds a city reported apart from its state. A live source is still read for a place this
+  server can't name (a country), since its coverage can't be checked there.
+- An RSV question reaches RESP-NET, whose condition words were dropped with its publisher's name, and a question
+  about population reaches the Census denominator. Sources marked unknown are ranked by how few open questions
+  they leave.
 - The "Rows cover N condition labels" and "Rows mix measures" notes count only the rows returned, never series
   that matched but gave no rows (#112).
 - A summed count never adds up labels that overlap or count different things (hard rule 2). Semantic-model

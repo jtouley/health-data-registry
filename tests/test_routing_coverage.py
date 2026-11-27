@@ -189,94 +189,120 @@ def test_generic_words_alone_never_fit(reg: Registry) -> None:
     assert "yes" not in {v[0] for v in got.values()}
     assert got["cdc_nndss_weekly"] == (
         "unknown",
-        "the question names no specific condition (a disease or pathogen)",
+        "the question names no specific condition (a disease or pathogen); this source doesn't declare which "
+        "places it covers yet, so it isn't known whether it covers Ohio",
     )
 
 
-def test_a_covered_question_still_fits(reg: Registry) -> None:
-    got = verdicts(reg, "Chlamydia in California 2023")
-    assert got["cdc_nndss_weekly"] == ("yes", "fits")
-    # Detroit's dashboard declares no places yet, so it is unknown, not a fit and not a no.
-    assert got["detroit_dhd_epi_annual"] == (
+def _declaring(registry: Registry, ds_id: str, place: dict[str, Any]) -> Registry:
+    """The registry with one source's contract declaring its conformed places (as stage c's contracts will)."""
+    from dataclasses import replace
+
+    ds = registry.get(ds_id)
+    schema = {**ds.contract.raw["schema"][0], "customProperties": [{"property": "conformedDimensions",
+                                                                     "value": {"place": place}}]}  # fmt: skip
+    declared = replace(ds, contract=replace(ds.contract, raw={**ds.contract.raw, "schema": [schema]}))
+    return replace(registry, datasets={**registry.datasets, ds_id: declared})
+
+
+def test_a_question_fits_only_a_source_that_declares_its_place(reg: Registry) -> None:
+    declared = _declaring(reg, "detroit_dhd_epi_annual", CONFORMED["value"]["place"])
+    got = verdicts(declared, "Tuberculosis in Detroit 2023")
+    assert got["detroit_dhd_epi_annual"] == ("yes", "fits")
+    assert verdicts(declared, "Tuberculosis in Ohio 2023")["detroit_dhd_epi_annual"] == (
+        "no",
+        "covers Detroit and Michigan only, not Ohio",
+    )
+    # The same question against the contract as it is on main: unknown, never a fit.
+    assert verdicts(reg, "Tuberculosis in Detroit 2023")["detroit_dhd_epi_annual"] == (
         "unknown",
-        "this source doesn't declare which places it covers yet",
+        "this source doesn't declare which places it covers yet, so it isn't known whether it covers Detroit",
     )
-    assert verdicts(reg, "C. auris in Michigan in 2024")["cdc_nndss_weekly"][0] == "yes"
 
 
 @pytest.mark.parametrize(
-    ("question", "source"),
+    ("question", "source", "place"),
     [
-        ("Chlamydia in California 2023", "cdc_nndss_weekly"),
-        ("C. difficile infections in the United States 2020", "cdc_haicviz_cdi"),
-        ("Carbapenem-resistant Enterobacterales in Michigan 2021", "cdc_nhsn_ar_hai"),
-        ("RSV hospitalizations in Michigan 2024", "cdc_respnet"),  # "RSV" sits in the publisher's own name
-        ("Tuberculosis incidence by country 2020", "who_gho_tb_incidence"),
-        ("Population of Michigan in 2022", "census_county_pop"),
-        ("Population of Ohio counties 2023", "census_county_pop"),
+        ("Chlamydia in California 2023", "cdc_nndss_weekly", "California"),
+        ("C. difficile infections 2020", "cdc_haicviz_cdi", None),
+        ("Carbapenem-resistant Enterobacterales in Michigan 2021", "cdc_nhsn_ar_hai", "Michigan"),
+        (
+            "RSV hospitalizations in Michigan 2024",
+            "cdc_respnet",
+            "Michigan",
+        ),  # "RSV" is in the publisher's name
+        ("Tuberculosis incidence by country 2020", "who_gho_tb_incidence", None),
+        ("Population of Michigan in 2022", "census_county_pop", "Michigan"),
+        ("Tuberculosis in Detroit 2023", "detroit_dhd_epi_annual", "Detroit"),
+        ("COVID-19 cases in Detroit 2021", "detroit_dhd_covid_archive_daily", "Detroit"),
+        ("Influenza emergency department visits in Detroit 2026", "detroit_dhd_resp_ed_weekly", "Detroit"),
+        ("Measles in Michigan 2026", "mdhhs_measles_county", "Michigan"),
     ],
 )
-def test_a_question_reaches_its_source(reg: Registry, question: str, source: str) -> None:
-    out = _json(tools.suggest_datasets(reg, question, fmt="json"))
-    assert out["rows"][0][:3] == [source, "yes", "fits"], out["rows"][:3]
-
-
-@pytest.mark.parametrize(
-    ("question", "source"),
-    [
-        ("Tuberculosis in Detroit 2023", "detroit_dhd_epi_annual"),
-        ("COVID-19 cases in Detroit 2021", "detroit_dhd_covid_archive_daily"),
-        ("Influenza emergency department visits in Detroit 2026", "detroit_dhd_resp_ed_weekly"),
-        ("Measles in Michigan 2026", "mdhhs_measles_county"),
-    ],
-)
-def test_a_local_question_reaches_its_source_as_unknown_until_places_are_declared(
-    reg: Registry, question: str, source: str
-) -> None:
-    """The city and state dashboards declare no places yet, so they are offered as unknown: never left out, and
-    never ranked under a source that can't answer."""
+def test_a_question_reaches_its_source(reg: Registry, question: str, source: str, place: str | None) -> None:
+    """No source declares its places yet, so each is "unknown" for the place alone: offered, with the one open
+    question named, and never ranked under a source that can't answer."""
     rows = _json(tools.suggest_datasets(reg, question, fmt="json"))["rows"]
-    order = [r[0] for r in rows]
-    assert tuple(rows[order.index(source)][1:3]) == (
+    at = [r[0] for r in rows].index(source)
+    why = "this source doesn't declare which places it covers yet"
+    assert rows[at][1:3] == [
         "unknown",
-        "this source doesn't declare which places it covers yet",
+        f"{why}, so it isn't known whether it covers {place}" if place else why,
+    ]
+    assert all(r[1] != "no" for r in rows[:at])
+
+
+def test_a_federal_catchment_source_is_never_a_fit_for_a_state_it_may_not_cover(reg: Registry) -> None:
+    """RESP-NET is a CDC network of selected counties in some states: being federal says nothing about Texas."""
+    out = _json(tools.suggest_datasets(reg, "RSV hospitalizations in Texas 2024", fmt="json"))
+    got = {r[0]: (r[1], r[2]) for r in out["rows"]}
+    assert got["cdc_respnet"] == (
+        "unknown",
+        "this source doesn't declare which places it covers yet, so it isn't known whether it covers Texas",
     )
-    assert all(r[1] != "no" for r in rows[: order.index(source)])
+    assert "yes" not in {v[0] for v in got.values()}
+    assert any(
+        n.startswith("Next step: no source is marked as fitting because none declares") for n in out["notes"]
+    )
+    # The EIP sites pooled into one figure are not the whole country either.
+    cdi = verdicts(reg, "C. difficile infections in the United States 2020")["cdc_haicviz_cdi"]
+    assert cdi == (
+        "unknown",
+        "this source doesn't declare which places it covers yet, so it isn't known whether it covers United States",
+    )
 
 
-def test_a_nationwide_source_is_unknown_for_a_city(reg: Registry) -> None:
+def test_a_nationwide_declaration_is_unknown_for_a_city(reg: Registry) -> None:
     """A country declaration says nothing about which cities a source reports apart from their states."""
-    got = verdicts(reg, "Tuberculosis in Detroit 2023")
+    declared = _declaring(
+        reg, "cdc_nndss_weekly", {"match": "fixed", "fixed": {"name": "United States", "key": "USA"}}
+    )
+    cov = coverage.declared_coverage(declared.get("cdc_nndss_weekly"))
+    assert cov.nationwide and cov.holds("US-36") and cov.holds("US-36/nyc") is None
+    got = verdicts(declared, "Tuberculosis in Detroit 2023")
     assert got["cdc_nndss_weekly"] == (
         "unknown",
         "covers the United States, but doesn't declare which cities it reports apart from their states, so not "
         "whether it reports Detroit",
     )
-    assert got["cdc_respnet"][0] == "no" and "city" in got["cdc_respnet"][1]  # its levels stop at state
-    assert "cities" not in got["cdc_respnet"][1]
-    assert "yes" not in {v[0] for v in got.values()}
+    assert got["cdc_respnet"][0] == "no" and "cities" not in got["cdc_respnet"][1]  # its levels stop at state
 
 
-def test_a_source_without_declared_places_is_unknown(tmp_path: Path) -> None:
-    city = CATALOG.replace("level: federal", "level: city").replace(
+@pytest.mark.parametrize("level", ["city", "federal", "international"])
+def test_level_never_declares_places(tmp_path: Path, level: str) -> None:
+    """The publisher's jurisdiction is not the dataset's coverage: whatever the level, no places are declared."""
+    catalog = CATALOG.replace("level: federal", f"level: {level}").replace(
         "[nation, state]", "[nation, state, city]"
     )
-    registry = load_registry(write_registry(tmp_path / "reg", catalog=city))
+    registry = load_registry(write_registry(tmp_path / level, catalog=catalog))
     assert verdicts(registry, "syphilis in Ohio 2023")["toy_cases"] == (
+        "unknown",
+        "this source doesn't declare which places it covers yet, so it isn't known whether it covers Ohio",
+    )
+    assert verdicts(registry, "syphilis 2023")["toy_cases"] == (
         "unknown",
         "this source doesn't declare which places it covers yet",
     )
-    # A question that names no place: the same, never a fit.
-    assert verdicts(registry, "syphilis 2023")["toy_cases"][0] == "unknown"
-    # A federal source names no place either: it covers the whole country, so it fits.
-    federal = load_registry(write_registry(tmp_path / "fed"))
-    assert verdicts(federal, "syphilis 2023")["toy_cases"] == ("yes", "fits")
-    assert verdicts(federal, "syphilis in Lagos 2023")["toy_cases"][0] == "unknown"
-    # An international source that names its country does not cover every country: it declares no places.
-    intl = load_registry(
-        write_registry(tmp_path / "intl", catalog=CATALOG.replace("level: federal", "level: international"))
-    )
-    assert verdicts(intl, "syphilis in Ohio 2023")["toy_cases"][0] == "unknown"
 
 
 # --------------------------------------------------------------------------------------------- coverage
@@ -332,9 +358,9 @@ def test_a_fixed_place_is_declared_coverage(reg: Registry) -> None:
 
 def test_declared_coverage_from_the_catalog(reg: Registry) -> None:
     nndss = coverage.declared_coverage(reg.get("cdc_nndss_weekly"))
-    assert nndss.place_keys == {"USA"} and nndss.nationwide and nndss.holds("US-36")
-    assert nndss.holds("US-36/nyc") is None  # which cities it reports apart from their states isn't declared
-    assert nndss.place_words == "the United States"
+    assert (
+        nndss.place_keys is None and not nndss.nationwide and nndss.holds("US-36") is None
+    )  # level: federal
     assert {"legionella", "candida", "syphilis"} <= nndss.condition_words  # GBD crosswalk pathogens count too
     assert nndss.holds_years(2020, 2023) and nndss.holds_years(2030, None) and nndss.holds_years(2022, 2022)
     assert not nndss.holds_years(None, 2021) and not nndss.holds_years(2010, 2021)
@@ -342,7 +368,8 @@ def test_declared_coverage_from_the_catalog(reg: Registry) -> None:
     assert cdi.holds_years(2022, None) and not cdi.holds_years(2023, None)
     assert coverage.words("a TB e-x") == {"tb", "e-x"}  # single letters dropped
     who = coverage.declared_coverage(reg.get("who_gho_tb_incidence"))
-    assert who.everywhere and who.holds("NGA") and who.place_words == "every country"
+    assert who.place_keys is None and who.holds("NGA") is None  # level: international names no country
+    assert coverage.declared_coverage(reg.get("idweek_abstracts")).place_keys is None
     assert coverage.declared_coverage(reg.get("census_county_pop")).condition_words == frozenset()
     assert coverage.declared_coverage(reg.get("idweek_abstracts")).condition_words == frozenset()
     assert {"q fever", "c auris", "influenza", "associated"} & coverage.words(
