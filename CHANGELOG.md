@@ -96,6 +96,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- New source, draft (contract not yet reviewed): `cdc_haicviz_isa`, CDC's Emerging Infections Program case and
+  death rates for invasive Staphylococcus aureus since 2005 (HAICViz iSA, data.cdc.gov ssz5-s49e), on the existing
+  Socrata adapter. Every rate is for the EIP sites combined, never called a state figure, and nothing is added;
+  whether the figures are MRSA only is an open question, so none is called an MRSA rate.
+- New source, draft (contract not yet reviewed): `cdc_haicviz_mugsi`, CDC's Emerging Infections Program case and
+  death rates for carbapenem-resistant Enterobacterales (CRE) and Acinetobacter baumannii (CRAB) since 2012
+  (HAICViz MuGSI, data.cdc.gov v4tm-h8pe), on the existing Socrata adapter. Every rate is for the EIP sites
+  combined, never called a state figure, and nothing is added.
 - The crawler factory's core (ADR 0016, step 1 and the types step 2 names). Every source is read by one generic
   adapter type chosen in its catalog entry (`type:`; the older `portal:` is read for one more release and `validate`
   warns about it), configured by that type's strict block, plus named extensions it opts in to. New types:
