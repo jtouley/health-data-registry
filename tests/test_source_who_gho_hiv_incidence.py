@@ -179,16 +179,18 @@ def test_each_rule_fails_when_it_should(rule: str, status: str, rows: list[dict[
     assert _status(rows)[rule] == status
 
 
-def test_a_row_without_a_sex_refuses_the_source() -> None:
-    """Sex is part of the grain and both metrics select on it, so an empty one stops the read, never drops rows."""
+def test_a_row_without_a_sex_is_kept_and_named_in_a_caveat() -> None:
+    """Sex is part of the grain and both metrics select on it: a row without one fails a check, never refuses."""
     reg = load_registry(ROOT)
     rows = [*ROWS[:4], ROWS[4] | {"Dim1": None}]
-    with pytest.raises(Exception, match="dim1|Dim1"):
-        load_live(
-            duckdb.connect(),
-            reg.get(DS),
-            [{k: (None if v is None else str(v)) for k, v in r.items()} for r in rows],
-        )
+    got = load_live(
+        duckdb.connect(),
+        reg.get(DS),
+        [{k: (None if v is None else str(v)) for k, v in r.items()} for r in rows],
+    )
+    assert got.staging.row_count == len(rows)
+    assert {r["test"]: r["status"] for r in got.quality.results}["sex_given_on_every_row"] == "fail"
+    assert any("sex code is in no answer" in n for n in got.quality.caveats())
 
 
 def test_a_us_state_question_is_told_no() -> None:
