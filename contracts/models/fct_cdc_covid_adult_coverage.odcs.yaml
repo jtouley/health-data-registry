@@ -1,0 +1,131 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: fct_cdc_covid_adult_coverage
+name: "Fact - COVID-19 vaccination coverage and intent among adults (NIS-FRVM)"
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Every row of the NIS-FRVM adult COVID-19 coverage table (cdc_covid_adult_coverage) as one fact per place, group, measure, category and week, with CDC's suppression flag as published and a status that says why an estimate is empty."
+  usage: "Read one place, group, measure and week as published. Every row is kept, suppressed ones included; nothing is added across places, groups, categories or weeks."
+  limitations: "A telephone survey estimate, self-reported; cumulative within a season and recalculated each week."
+  authoritativeDefinitions:
+    - {type: businessDefinition, url: "contracts/cdc_covid_adult_coverage.odcs.yaml", description: "The source dataset's contract, whose descriptions and rules this fact carries"}
+schema:
+  - name: fct_cdc_covid_adult_coverage
+    physicalName: fct_cdc_covid_adult_coverage
+    physicalType: table
+    logicalType: object
+    description: "One row per published estimate: every row of int_cdc_covid_adult_coverage, none removed, each with value_status."
+    customProperties:
+      - {property: layer, value: marts}
+      - {property: totalRows, value: none}
+      - {property: tableShape, value: estimate_table}
+    properties:
+      - name: place
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "The place, as CDC names it ('National', 'Region 5', 'Michigan', 'Illinois-City of Chicago')."
+        customProperties: [{property: role, value: dimension}]
+      - name: place_kind
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "National, Region, State or Substate, as published."
+        customProperties: [{property: role, value: attribute}]
+      - name: group_kind
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "The kind of demographic group, as published."
+        customProperties: [{property: role, value: dimension}]
+      - name: demographic_group
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 3
+        description: "The demographic group, as published."
+        customProperties: [{property: role, value: dimension}]
+      - name: measure_kind
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 4
+        description: "Up-to-date (coverage) or 4-level vaccination and intent."
+        customProperties: [{property: role, value: dimension}]
+      - name: category
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 5
+        description: "Yes for coverage, or a vaccination and intent level."
+        customProperties: [{property: role, value: dimension}]
+      - name: week_end
+        physicalType: DATE
+        logicalType: date
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 6
+        description: "The date the survey week ends."
+        customProperties: [{property: role, value: dimension}]
+      - name: season
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The vaccination season, as CDC writes it."
+        customProperties: [{property: role, value: attribute}]
+      - name: estimate
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "The survey estimate, exactly as CDC publishes it; empty where CDC suppressed it, never zero."
+        customProperties: [{property: role, value: measure}]
+      - name: ci_half_width_95pct
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "CDC's 95% confidence interval half width, as published (percentage points)."
+        customProperties: [{property: role, value: attribute}]
+      - name: unweighted_sample_size
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "Survey respondents behind the estimate, before weighting."
+        customProperties: [{property: role, value: attribute}]
+      - name: suppression_flag
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "CDC's suppression flag, exactly as published ('1' or '0')."
+        customProperties: [{property: role, value: attribute}]
+      - name: value_status
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Why the estimate is or isn't there: 'published', or 'suppressed by CDC (small sample)' where the estimate is empty and CDC's flag is 1, or 'not published' where it is empty without the flag. It qualifies the row and removes nothing."
+        customProperties: [{property: role, value: attribute}]
+      - name: _snapshot_id
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The lake snapshot the row was read from (the dataset's LATEST load); its manifest gives the source address, retrieval time and dataset version."
+        customProperties: [{property: role, value: attribute}]
+      - name: _raw_sha256
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The sha256 fingerprint of each raw file the row was parsed from: the exact bytes the publisher sent."
+        customProperties: [{property: role, value: attribute}]
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None of its own: CDC's suppression rule in the source contract applies, and value_status says on each row why an estimate is empty."}}
+  - property: openQuestions
+    value:
+      - "value_status reads CDC's suppression_flag 1 as suppressed; the flag column has no description in the metadata, so a maintainer confirms that reading when the source contract is reviewed."

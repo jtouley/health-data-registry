@@ -1,0 +1,258 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: cdc_covid_adult_coverage
+name: "COVID-19 Vaccination Coverage, Overall and by Selected Demographics and Jurisdiction, Among Adults 18 Years and Older, by Season"
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Weekly cumulative COVID-19 vaccination coverage and vaccination intent among US adults 18 and older, by season, place (national, HHS region, state and parts of some states) and demographic group, from the National Immunization Survey-Fall Respiratory Virus Module, a random-digit-dial cellular telephone survey (dataset description, https://data.cdc.gov/api/views/ksfb-ug5d.json)."
+  usage: "Read one place, group and week's coverage as published, with its 95% half width. Never add percents, across places, groups, intent categories, weeks or seasons; a state and its parts sit side by side."
+  limitations: "Self-reported vaccination in a telephone survey, weighted; cumulative within a season and recalculated each week; suppressed for small samples."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://data.cdc.gov/d/ksfb-ug5d", description: "Publisher dataset page"}
+    - {type: businessDefinition, url: "https://data.cdc.gov/api/views/ksfb-ug5d.json", description: "Socrata metadata: dataset description, column descriptions and footnotes (custom_fields 'Data Quality' 'Footnotes'), read 2026-11-25"}
+servers:
+  - id: data_cdc_gov
+    server: data.cdc.gov
+    type: api
+    location: https://data.cdc.gov/resource/ksfb-ug5d.json
+    description: "Socrata SODA API; the adapter keeps only the columns listed in the schema."
+schema:
+  - name: cdc_covid_adult_coverage
+    physicalName: cdc_covid_adult_coverage
+    physicalType: table
+    logicalType: object
+    description: "One row per place, demographic group, measure, category and survey week."
+    dataGranularityDescription: "geography x demographic level x demographic group x measure (Up-to-date or 4-level vaccination and intent) x category x week ending"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://data.cdc.gov/api/views/ksfb-ug5d.json"}
+    customProperties:
+      - property: totalRows
+        value: none
+        description: "No total row is read as one: National, the HHS regions, the states and the parts of states sit side by side, and Overall sits beside the groups; every metric reads one published estimate (57,210 rows on 2026-11-25)."
+      - {property: tableShape, value: estimate_table}
+      - property: idDimensions
+        value:
+          condition: vaccine
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: null
+          period: week_ending
+          provisionalFlag: null
+        description: "Condition is the vaccine. These are survey estimates of vaccination, not cases, so there is no case definition or case status. Period is the survey week by its ending date; CDC recalculates earlier weeks each week (footnotes), and there is no per-row provisional column (#191)."
+    properties:
+      - name: vaccine
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The vaccine, as CDC labels it (column 'Vaccine')."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: vaccine}
+      - name: geographic_level
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The kind of place, as published: National, Region (HHS region), State, or Substate (a city or county reported apart from the rest of its state). The column description lists National, Region and State; Substate is published too."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: geographic_level}
+        quality:
+          - id: geography_levels
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["National", "Region", "State", "Substate"]}
+            mustBe: 0
+            description: "The kinds of place published on 2026-11-25 (the column description lists National, Region and State). A new kind is a new breakdown to review, not an error in the data."
+      - name: geographic_name
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "The place, as CDC names it: 'National', 'Region 1' to 'Region 10', a state, DC, Puerto Rico, or a part of a state such as 'Illinois-City of Chicago' and 'Illinois-Rest of State' (column 'Geography Name')."
+        examples: ["National", "Region 5", "Michigan", "Illinois-City of Chicago"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: geographic_name}
+      - name: demographic_level
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "The kind of group the estimate is for, as published: Overall, an age breakdown, race and ethnicity, sex, poverty status, health insurance, urbanicity, disability status, sexual orientation or chronic conditions (column 'Demographic Level')."
+        examples: ["Overall", "Race and Ethnicity", "Sex"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: demographic_level}
+      - name: demographic_name
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 3
+        description: "The group within that kind, as CDC labels it (column 'Demographic Name')."
+        examples: ["Female", "Hispanic", "Insured"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: demographic_name}
+      - name: indicator_label
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 4
+        description: "Which measure the row holds: 'Up-to-date' (vaccination coverage) or '4-level vaccination and intent' (column 'Intention Level')."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: indicator_label}
+        quality:
+          - id: indicator_labels
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["Up-to-date", "4-level vaccination and intent"]}
+            mustBe: 0
+            description: "The two measures published on 2026-11-25. The series read only the Up-to-date rows, so a new or renamed measure would leave them empty; it is a warning to review."
+      - name: indicator_category_label
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 5
+        description: "The category within the measure: 'Yes' for coverage, or one of the four vaccination and intent levels (column 'Specific Intention Category')."
+        examples: ["Yes", "Definitely will get a vaccine"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: indicator_category_label}
+      - name: month_week
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The week as CDC names it, month and week number (column 'Month and Week')."
+        examples: ["November Week 3"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: month_week}
+      - name: week_ending
+        physicalType: DATE
+        logicalType: date
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 6
+        description: "The date the survey week ends (column 'Week Ending Date'); the estimate is cumulative through that week."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: week_ending}
+      - name: estimate
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Percent of adults vaccinated (Up-to-date rows: received the season's COVID-19 vaccine), or in the vaccination and intent category, weighted to the population (column 'Estimate (%)'); cumulative through the week. Empty where CDC suppressed it, never zero."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: estimate}
+          - {property: unit, value: "%"}
+        quality:
+          - id: estimate_within_0_to_100
+            dimension: conformity
+            severity: error
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE estimate < 0 OR estimate > 100"
+            mustBe: 0
+            description: "The column is labelled 'Estimate (%)', so no value lies outside 0 to 100."
+      - name: ci_half_width_95pct
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Half the width of the estimate's 95% confidence interval, in percentage points (column '95% Confidence Interval Half Width'): the interval is the estimate minus and plus this value. Empty where the estimate is suppressed."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: ci_half_width_95pct}
+          - {property: unit, value: "percentage points"}
+        quality:
+          - id: half_width_not_negative
+            dimension: conformity
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE ci_half_width_95pct < 0"
+            mustBe: 0
+            description: "The column is a 95% confidence interval half width (column description), a distance, so it is never negative."
+          - id: interval_with_every_estimate
+            dimension: completeness
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE (estimate IS NULL) <> (ci_half_width_95pct IS NULL)"
+            mustBe: 0
+            description: "The footnotes say a confidence interval describes the uncertainty around each estimate, so an estimate and its half width are published together (as every row was on 2026-11-25)."
+      - name: unweighted_sample_size
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "Number of survey respondents behind the estimate, before weighting (column 'Unweighted Sample Size')."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: unweighted_sample_size}
+          - {property: unit, value: "respondents"}
+      - name: current_season_week_ending
+        physicalType: DATE
+        logicalType: date
+        required: true
+        description: "The matching week ending date in the current season's calendar, so the same point in different seasons can be set side by side (column 'Current Season Week Ending Date')."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: current_season_week_ending}
+      - name: covid_season
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The vaccination season the week belongs to, as CDC writes it ('2025-2026'); coverage counts vaccination since that season's vaccine became available (column 'COVID Season')."
+        examples: ["2024-2025", "2025-2026"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: covid_season}
+      - name: suppression_flag
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "CDC's suppression flag, exactly as published: '1' on rows whose estimate is empty, '0' otherwise (on 2026-11-25). The column has no description; the footnotes give the suppression rule (open question 'Suppression flag')."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: suppression_flag}
+          - {property: flagFor, value: estimate}
+        quality:
+          - id: flagged_rows_carry_no_estimate
+            dimension: consistency
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE suppression_flag = '1' AND estimate IS NOT NULL"
+            mustBe: 0
+            description: "A suppressed estimate is not published (footnotes), so a row flagged 1 with an estimate would mean the flag's meaning changed."
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: licenceSource, value: "Socrata metadata licence: Public Domain U.S. Government (https://www.usa.gov/government-works), read 2026-11-25."}
+  - {property: refresh, value: weekly}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "CDC recalculates earlier weeks each week from all interviews so far (footnotes), so each refresh stores the complete table as a dated, append-only load; older loads are never overwritten."
+  - {property: geographyBasis, value: "respondent residence: the household's state in a telephone survey (National Immunization Survey); not stated beyond that"}
+  - property: unreliableRule
+    value:
+      kind: none
+      description: "Footnotes: 'Cumulative vaccination coverage estimates are suppressed when the cumulative sample size is <30 or current week sample size is <5. Vaccination intent estimates for a given week are suppressed when the sample size for that week is <30.' CDC applies this itself: a suppressed estimate is empty, never zero, and suppression_flag is kept as published. No threshold is applied here."
+  - property: openQuestions
+    value:
+      - "Licence: the Socrata metadata licence is Public Domain U.S. Government; a maintainer confirms the wording."
+      - "Suppression flag: the suppression_flag column has no description. On 2026-11-25 it was '1' exactly where the estimate was empty. Its codes are kept as published and not given a meaning until a maintainer reads CDC's documentation."
+      - "Half width: the interval is the estimate minus and plus ci_half_width_95pct (both in percentage points, by the column names). get_series can't return a half width as lower and upper bounds yet, so the metrics say so and query_sql reads it; showing it as bounds waits for a declared staging extension (#172)."
+      - "Week ending day: 545 rows of the 2023-2024 season end on a Sunday, every other week on a Saturday. Kept as published; no rule asserts the weekday."
+      - "Up-to-date versus received: in the 4-level measure, 'Received a vaccination' differs from the Up-to-date 'Yes' estimate on 160 place, group and week combinations (2026-11-25). The series read the Up-to-date 'Yes' rows only; what makes the two differ is for CDC to say."
+      - "Places: 'National' covers the 50 states, DC, Puerto Rico and the US Virgin Islands (footnotes). Substate rows (city or county and 'Rest of State') sit beside their state; never added to it."
+      - "Seasons: coverage is cumulative from each season's vaccine availability (mid-September 2023, end of August 2024 and 2025: dataset description), so a week in one season is compared with another season only at current_season_week_ending, never added."
+      - "Grain: geography x demographic level x group x measure x category x week ending was unique over the whole table on 2026-11-25 (57,210 rows) and is declared as the key, so a repeat fails the build."
+      - "GBD mapping: none. A vaccination coverage percent is not a GBD measure; a maintainer decides whether to key it to the GBD cause COVID-19."

@@ -129,6 +129,20 @@ outputPorts:
     contractId: cdc_schoolvaxview_kindergarten
     customProperties:
       - {property: hosted, value: true}
+  - name: cdc_covid_adult_coverage
+    description: NIS-FRVM weekly cumulative COVID-19 vaccination coverage and intent among adults 18 and older, by season, place and demographic group.
+    type: tables
+    version: 0.1.0
+    contractId: cdc_covid_adult_coverage
+    customProperties:
+      - {property: hosted, value: true}
+  - name: cdc_rsv_adult_coverage
+    description: NIS-FRVM weekly cumulative RSV vaccination coverage and intent among adults 75 and older and 50-74 with high-risk conditions, national and by HHS region.
+    type: tables
+    version: 0.1.0
+    contractId: cdc_rsv_adult_coverage
+    customProperties:
+      - {property: hosted, value: true}
   - name: census_county_pop
     description: Census Bureau county and state resident population estimates, the denominator for rates.
     type: tables
