@@ -220,8 +220,25 @@ These come from the spec and [docs/adr/](docs/adr/README.md). A PR that breaks o
 1. **Facts that change a number** ([ADR 0007](docs/adr/0007-odcs-contracts-and-semantic-models.md), carried over
    from ADR017). A fact that changes a number comes only from the publisher's own codebook, an exact structural
    fact, or a maintainer's reviewed declaration. Anything else is an open question in the contract, never a guess.
-2. **Aggregation.** Frequency tables sum their count column and exclude total rows. Rates and estimates are never
-   summed. Published uncertainty ranges are returned, never dropped.
+2. **Show everything; qualify, don't decide** ([ADR 0018](docs/adr/0018-show-everything-qualify-dont-decide.md),
+   the maintainer's decision of 27 Nov 2026; it replaces the aggregation rule from ADR 0007).
+   - Every row the publisher sent is returned, each with its flag and what it means: `-` (not reported, never
+     turned into 0), suppressed cells, total rows, catchment areas, screening counts.
+   - Any figure we compute (a sum, a rate, a trend) is computed when asked.
+   - Where our contracts or data-quality findings say the figure may mislead, the answer says so in plain words
+     and puts the safer figure beside it. For example: "this adds the US total row to the states; without it: N";
+     "weekly counts undercount the year; CDC's year-to-date figure: N"; "catchment area only; the state
+     population overstates the denominator"; "screening detections, not incidence".
+   - Every qualification cites its source: a contract rule, a quality-rule result or a recorded finding
+     ([#225](https://github.com/jtouley/health-data-registry/issues/225)).
+   - Gaps are first-class data that a researcher can ask for
+     ([#223](https://github.com/jtouley/health-data-registry/issues/223)).
+   - Published uncertainty ranges are always returned.
+   - One thing still blocks: a quality check that never ran
+     ([#222](https://github.com/jtouley/health-data-registry/issues/222)). Telling physicians data was checked
+     when it wasn't breaks their trust; that is about our own honesty, not deciding for them.
+   - The code still refuses or leaves rows out in places; [#186](https://github.com/jtouley/health-data-registry/pull/186)
+     and its follow-ups bring it in line. New code follows this rule.
 3. **Review.** Contracts and semantic models may be drafted by inference or a model, but merge only after a
    maintainer reviews them. Until then `list_caveats` reports the contract as a draft.
 4. **No patient data.** No upload or local-file tool, ever. Tools read only catalogued public sources. Never join

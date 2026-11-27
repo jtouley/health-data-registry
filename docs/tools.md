@@ -64,6 +64,12 @@ The same list, as the server itself describes each tool to Claude:
   fingerprint (sha256) of each raw file, the snapshot and contract version, the contract's review status
   (`contract_status: draft` until a maintainer reviews it), the licence and how to cite it. [`get_provenance`](#get_provenance) gives the exact
   files.
+- **Everything the publisher sent, with notes where a figure may mislead.** Every row comes back with its flag
+  and what it means: empty cells, suppressed cells, total rows, catchment areas, screening counts. A figure you ask
+  for is worked out, and where the source's contract or a data-quality check says it may mislead, a note says so
+  in plain words, puts the safer figure beside it and names its source. Only a data check that never ran stops an
+  answer. Today some tools still refuse or leave rows out instead (see [When a tool says no](#when-a-tool-says-no));
+  [Data conventions](data-conventions.md#show-everything-qualify-dont-decide) has the rule and where today differs.
 - **Every number is labelled.** The `measure` column says whether it is a count, rate, percent or estimate, and
   `period_status`, on every row, says how final it is (provisional, a running total so far, incomplete, or what the
   publisher marks). See [Data conventions](data-conventions.md).
@@ -198,7 +204,8 @@ fetch time and case definition.
 `case_status`, `case_definition`, `source_id`, `retrieved_at`. Then notes: the method, the publisher's web
 address, the main caveats, whether the contract is still a draft, and whether the local copy is a partial sample.
 `lower` and `upper` are filled only where the publisher gives bounds; empty values are missing or suppressed, not
-zeros.
+zeros. (Today NNDSS's `-`, "no reported cases", is still read as 0 with its flag; see
+[Empty cells](data-conventions.md#empty-cells-suppression-and-missing-codes).)
 
 **Try:** "How many clinical C. auris cases did Michigan and Ohio report each year from 2022 to 2025?" The
 [README example](../README.md#example) charts CDC's figures for Michigan alone, each year-end count beside CDC's
@@ -407,12 +414,21 @@ Results are capped at 5,000 rows, in pages when they are long (see [pages](#long
 
 It refuses anything but a careful read: more than one statement, anything that writes or reads files, functions
 not on its allowlist, joins between tables that aren't declared, and queries that run too long. Prefer the named
-tools: they apply the contract's rules for you (which rows are totals, what can be added up), and `query_sql`
-leaves that to whoever writes the query.
+tools: they apply the contract's rules for you (which rows are totals, what a sum can and can't mean), and `query_sql`
+leaves that to whoever writes the query. A total row in a table you query is a row like any other, so a sum you
+write takes it in unless you leave it out; `describe_dataset` says which rows are totals.
 
 ## When a tool says no
 
 A tool never shows a stack trace or an error code to you. It says, in plain words, what happened and what to try.
+
+Under the rule [show everything; qualify, don't decide](data-conventions.md#show-everything-qualify-dont-decide),
+the only data problem that stops an answer is a data check that never ran; a figure that may mislead comes back
+with a note instead. Today some tools still refuse
+a sum or a running total asked the wrong way (the "can't be added up" and "running total" rows below). Those
+become answers with notes as the code catches up
+([#186](https://github.com/jtouley/health-data-registry/pull/186) and its follow-ups).
+
 The common ones:
 
 | What you see | What it means | What to do |
