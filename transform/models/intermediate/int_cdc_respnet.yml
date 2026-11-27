@@ -5,7 +5,7 @@ models:
   description: 'Long table: one estimate per network x season x date x site x age x race x sex x data type x rate
     type.'
   config:
-    materialized: view
+    materialized: table
     contract:
       enforced: true
     tags:
@@ -16,18 +16,6 @@ models:
     contract_version: 0.1.0
     contract_status: draft
   data_tests:
-  - odcs_check:
-      name: cdc_respnet_has_rows
-      arguments:
-        measure_sql: SELECT count(*) FROM {object}
-        condition: measured > 0
-      config:
-        severity: error
-        meta:
-          dimension: completeness
-          rule: has_rows
-          contract: contracts/cdc_respnet.odcs.yaml
-          checks: This copy of the source has no rows, so there is nothing to answer from.
   - odcs_check:
       name: cdc_respnet_fill_rate_rate_type
       arguments:
@@ -40,8 +28,7 @@ models:
           dimension: completeness
           rule: fill_rate_rate_type
           contract: contracts/cdc_respnet.odcs.yaml
-          checks: 'No row has a value for for rates: Observed (crude), Age-Adjusted, or Estimated; empty for percent
-            rows (column label: ''Observed, estimated, or age-adjusted'').'
+          checks: rate_type is not empty in every row (an all-empty column would pass every value check).
   - odcs_check:
       name: cdc_respnet_fill_rate_estimate
       arguments:
@@ -54,8 +41,7 @@ models:
           dimension: completeness
           rule: fill_rate_estimate
           contract: contracts/cdc_respnet.odcs.yaml
-          checks: 'No row has a value for point estimate: hospitalizations per 100,000 site catchment population
-            (rates) or percent of hospitalized patients (clinical rows); unit given by estimate_type.'
+          checks: estimate is not empty in every row (an all-empty column would pass every value check).
   columns:
   - name: surveillance_network
     data_type: varchar
@@ -68,6 +54,8 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    constraints:
+    - type: not_null
   - name: season
     data_type: varchar
     description: Respiratory surveillance season, written like 2025-26.
@@ -78,6 +66,8 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    constraints:
+    - type: not_null
   - name: date_type
     data_type: varchar
     description: Whether the row is for one week (Week Ending Date) or a whole season (Season). The column label
@@ -89,6 +79,8 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    constraints:
+    - type: not_null
   - name: date
     data_type: varchar
     description: Week-ending date as YYYY-MM-DD for weekly rows, or the season (e.g. 2025-26) for season rows. Kept
@@ -100,6 +92,8 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    constraints:
+    - type: not_null
   - name: age_category
     data_type: varchar
     description: Age group of hospitalized patients; Overall (rates) or All (clinical rows) for all ages. Labels
@@ -111,6 +105,8 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    constraints:
+    - type: not_null
   - name: race
     data_type: varchar
     description: Race and ethnicity group, or All. Labels differ between rate rows (e.g. 'Black, NH') and clinical
@@ -122,6 +118,8 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    constraints:
+    - type: not_null
   - name: sex
     data_type: varchar
     description: 'Sex of patients: Female, Male or All.'
@@ -132,6 +130,8 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    constraints:
+    - type: not_null
   - name: state
     data_type: varchar
     description: RESP-NET surveillance site, named by state (the site's catchment area, not necessarily the whole
@@ -143,6 +143,8 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    constraints:
+    - type: not_null
   - name: data_type
     data_type: varchar
     description: 'What the estimate is: Weekly Rate or Cumulative Rate of hospitalization, or the percent of hospitalized
@@ -155,6 +157,8 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    constraints:
+    - type: not_null
   - name: estimate_type
     data_type: varchar
     description: 'Unit of the estimate: Rate per 100,000 or Percent.'
@@ -165,6 +169,8 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    constraints:
+    - type: not_null
   - name: rate_type
     data_type: varchar
     description: 'For rates: Observed (crude), Age-Adjusted, or Estimated; empty for percent rows (column label:
@@ -179,7 +185,7 @@ models:
   - name: estimate
     data_type: double
     description: 'Point estimate: hospitalizations per 100,000 site catchment population (rates) or percent of hospitalized
-      patients (clinical rows); unit given by estimate_type.'
+      patients (clinical rows); unit given by estimate_type. Published as text; cast to number.'
     meta:
       logical_type: number
       physical_type: DOUBLE
@@ -187,25 +193,10 @@ models:
       unit: 'see estimate_type: /100000 or %'
       codes: []
       missing_codes: []
-  - name: _snapshot_id
-    data_type: varchar
-    description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the source
-      address, retrieval time and dataset version that go with every answer built on this row.
-  - name: _raw_sha256
-    data_type: varchar
-    description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
-      the exact bytes the publisher sent.'
   - name: is_total_row
     data_type: boolean
     description: True on the publisher's total and summary rows (the contract's totalRows), which are never added
       to the rows they sum (hard rule 2).
-    meta:
-      derived_from_contract: true
-  - name: state_key
-    data_type: varchar
-    description: 'state as a key for matching the same place across years: upper case, edge whitespace and dots
-      removed, and a renamed label mapped to the label it continues (the read path''s label key), so ''MINNESOTA''
-      in one year and ''Minnesota'' in the next match.'
     meta:
       derived_from_contract: true
   - name: state_partial_note

@@ -6,7 +6,7 @@ version: 0.1.0
 status: draft
 domain: infectious_disease
 description:
-  purpose: "Lists NNDSS area, condition and year combinations whose year-to-date count at the year's latest week is at or below a small number while the year before had passed a larger one by the same MMWR week: a running total that may have been withdrawn, reset or left unreported (the Minnesota C. auris 2025 pattern in the NNDSS contract's open questions). A year in progress is compared week for week, so January is not set against a whole prior year."
+  purpose: "Lists NNDSS area, condition and year combinations whose year-to-date count at the year's latest week is at or below a small number while the year before ended well above it: a running total that may have been withdrawn, reset or left unreported (the Minnesota C. auris 2025 pattern in the NNDSS contract's open questions)."
   usage: "A review queue for maintainers. It removes and changes nothing. The two thresholds are the dbt variables near_zero_ytd_max and near_zero_prior_year_min in transform/dbt_project.yml; they choose what to look at, never a number in an answer."
   limitations: "A real fall to zero looks the same; only the publisher can say which it is."
 schema:
@@ -14,7 +14,7 @@ schema:
     physicalName: flag_near_zero_running_totals
     physicalType: table
     logicalType: object
-    description: "One row per reporting area (summary rows such as TOTAL and the census divisions left out), condition and MMWR year flagged as above; an area is matched across years ignoring case, edge spaces and dots, with renamed labels joined."
+    description: "One row per reporting area, condition and MMWR year flagged as above."
     customProperties:
       - {property: layer, value: flag}
       - {property: totalRows, value: none}
@@ -24,7 +24,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "Reporting area, as NNDSS publishes it in that year."
+        description: "Reporting area, as NNDSS publishes it."
         customProperties: [{property: role, value: dimension}]
       - name: label
         physicalType: VARCHAR
@@ -60,7 +60,7 @@ schema:
         physicalType: BIGINT
         logicalType: integer
         required: true
-        description: "The year before's year-to-date count at the same MMWR week (or its last published week before it), as published."
+        description: "The year before's year-to-date count at its own latest week, as published."
         customProperties: [{property: role, value: attribute}]
       - name: reason
         physicalType: VARCHAR

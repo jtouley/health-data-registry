@@ -1,1 +1,0 @@
-SELECT CAST(year AS VARCHAR) || upper(cause), date_trunc('month', DATE '2020-05-03'), [1, 2][1], {'a': 1}.a FROM deaths

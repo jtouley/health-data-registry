@@ -18,11 +18,9 @@ models:
     primary_key: &id001
     - mmwr_year
     - mmwr_week
-  data_tests:
-  - one_row_per_key:
-      name: mmwr_calendar_one_row_per_mmwr_year_mmwr_week
-      arguments:
-        columns: *id001
+  constraints:
+  - type: primary_key
+    columns: *id001
   columns:
   - name: mmwr_year
     data_type: bigint

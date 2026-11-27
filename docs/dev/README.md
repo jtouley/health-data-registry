@@ -24,9 +24,6 @@ work is not committed to the PR branch: it stays uncommitted or goes on a separa
 
 `make help` lists every target.
 
-The README's images (`assets/readme/*.svg`, light and dark) come from one token set: edit and run
-`python3 -I tools/readme_svg/gen.py`, never the SVGs by hand.
-
 | Command | What it does |
 |---|---|
 | `make install` | `uv sync` |
@@ -41,7 +38,6 @@ The README's images (`assets/readme/*.svg`, light and dark) come from one token 
 | `make docs` | Regenerate `docs/helpers.md` from `src/health_data_registry/helpers.py` |
 | `make refresh` | `health-data-registry refresh --all` into the local lake |
 | `make serve` | Run the MCP server on stdio |
-| `make serve-http` | The hosted read-only server over Streamable HTTP on port 7860 ([hosting.md](hosting.md)) |
 | `make check-contracts` | Check each publisher still serves the fields its contract reads |
 | `make eval` | Verify the sealed blind sets; with `--run`, score a client run against them |
 
@@ -102,7 +98,7 @@ A pull request's CI should pass the first time. So a commit is checked twice bef
 1. **`make precheck`** runs the CI checks locally plus a docs-drift check, and stops at the first failure: all
    pre-commit hooks (actionlint with shellcheck included), lint, typecheck, tests with the coverage floor, the
    smoke journey, the Projects kit build, the docs drift check (`make docs`, then nothing may change), and
-   mutation tests on the modules changed since `BASE` (default `origin/main`), one step per shard as CI shards
+   mutation tests on the modules changed since `BASE` (default `origin/main`), one step per module as CI shards
    them, then the 70% floor on the total. Each step prints a PASS or FAIL line, and a summary follows. It checks
    the working tree, so commit first: CI checks the commit you push. It runs on macOS's bash 3.2 as well.
 2. **Push to `pre-pr/<branch>`** (`git push origin HEAD:pre-pr/<branch>`). CI and CodeQL run on every push to
@@ -111,22 +107,6 @@ A pull request's CI should pass the first time. So a commit is checked twice bef
    on the PR.
 3. **When every check is green**, open the PR from that exact commit, or fast-forward the PR branch to it
    (`git push origin <green sha>:<pr-branch>`).
-
-**The PR reuses the pre-pr mutation verdict.** The mutation shards are by far the dearest part of a CI run, and
-the account runs only a few jobs at once, so a PR does not mutate a commit the gate already mutated. On a
-`pull_request` event, the list job runs `scripts/mutation_reuse.py`, which asks the Actions API, with the run's own
-read-only `GITHUB_TOKEN` (`actions: read` on that job only), for a CI run that:
-
-- was triggered by a `push` to a `pre-pr/**` branch of this repository (not a fork), from `.github/workflows/ci.yml`;
-- is for exactly the PR's head SHA, taken from the event payload (`github.event.pull_request.head.sha`);
-- has a "Mutation tests (changed modules)" job, in its latest attempt, that completed with conclusion `success`;
-
-and only when the PR's base is `main`, the branch a pre-pr run compares with. If one exists, the list job lists no
-modules, the shards are skipped, and "Mutation tests (changed modules)" passes on the PR with a log line naming the
-reused run. A failed, cancelled, skipped or still-running verdict never counts, nor does one for another SHA, and
-an API error means no reuse, so the shards run as before. Lint, types, tests, smoke, the kit, pre-commit and
-CodeQL still run on the PR, and every required check still reports. So push the green pre-pr commit unchanged:
-any new commit on the PR branch has no pre-pr verdict and runs the shards.
 
 Red on the pre-pr branch? Fix it there, run `make precheck` again, and push again. Fix-round commits and merges
 of main take the same path.
@@ -172,20 +152,11 @@ Everything a clinician reads (tool descriptions, helpers, refusals) follows the 
   prints each mutant it did not kill. A survivor means the tests would not notice that change: add or sharpen a
   test, or say in the PR why the mutant is equivalent. Every status but `killed` (and `caught by type check`)
   lowers the score, `no tests` and `skipped` included. `make mutate` is part of `make check`. CI runs the same
-  check on every PR in shards: `--list` names the shards of the changed modules, one job per shard runs mutmut,
-  and the aggregate job applies the 70% floor to the summed counts and lists every mutant not killed. A module
-  is one shard, or, when its estimated mutants exceed a shard's size (`SHARD_TARGET`, smaller for
-  `registry.py`), several named `<module>#<k>of<n>@<split>`: split by function, and a big function by the last
-  digit of its mutant numbers, so each shard takes about 10 to 20 minutes (the job's limit is 40). The split
-  comes from the module's source alone, read with the same Python 3.12 in `--list` and in every shard; `<split>`
-  is a hash of it, and a shard refuses an id whose hash differs from its own split, so an edit made after
-  `--list` (in CI or during precheck) fails the shard instead of running the wrong mutants. Each shard also
-  checks that every mutant of its module falls in exactly one shard. Functions mutmut never mutates (under
-  `# pragma: no mutate`, for instance) carry no weight, and `@overload` stubs count with their function. It
-  fails if any shard failed its baseline, left mutants not checked, interrupted or crashed, found a mutant in no
-  shard, or left no report, or if only some shards of a module were expected. A module with no mutable
-  function, or a shard none of whose names matches a mutant, has nothing to mutate and passes, locally and in
-  CI.
+  check on every PR in shards: `--list` names the changed modules, one job per module runs mutmut (60 minutes
+  each; the largest module needs about 17), and the aggregate job applies the 70% floor to the summed counts and
+  lists every mutant not killed. It fails if any shard failed its baseline, left mutants not checked, interrupted
+  or crashed, or left no report. A module with no mutable function has nothing to mutate and passes, locally and
+  in CI.
 - **New features and fixes add tests.** A bug fix includes a test that fails without it.
 
 ## Smoke journey

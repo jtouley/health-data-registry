@@ -1,5 +1,5 @@
-"""Command line: serve [--http], refresh, fetch, export-public, check-contracts, validate, eval,
-publication-outlook, sitemaps snapshot, harvest-doi, and the analysis tools."""
+"""Command line: serve, refresh, fetch, export-public, check-contracts, validate, eval, publication-outlook,
+sitemaps snapshot, and the analysis tools."""
 
 from __future__ import annotations
 
@@ -69,9 +69,7 @@ def validate(registry: Registry, lake: Path) -> int:
     return 1 if failed else 0
 
 
-def export_public(
-    registry: Registry, to: str, *, lake: Path, run_date: str | None, tag_file: Path | None = None
-) -> int:
+def export_public(registry: Registry, to: str, *, lake: Path, run_date: str | None) -> int:
     from health_data_registry.publish import PublishCheckFailed, export_public
 
     try:
@@ -81,8 +79,6 @@ def export_public(
         return 1
     for line in result.summary():
         print(line)
-    if tag_file is not None and result.tag:  # only a hub upload is tagged; the gate confirms this exact tag
-        tag_file.write_text(result.tag + "\n", encoding="utf-8")
     return 0
 
 
@@ -93,9 +89,6 @@ def check_contracts(registry: Registry) -> int:
     get = _fetcher(registry)
     bad = 0
     for ds in registry:
-        if ds.entry.source.portal == "doi":
-            print(f"skip {ds.id}: harvested by DOI; every harvest checks the APIs' answers as it reads them")
-            continue
         try:
             served = publisher_fields(ds.entry, get)
         except Exception as e:
@@ -109,34 +102,6 @@ def check_contracts(registry: Registry) -> int:
         else:
             print(f"ok   {ds.id}: all {len(ds.contract.columns)} contract fields served")
     return 1 if bad else 0
-
-
-def harvest_doi(
-    registry: Registry,
-    conference: str,
-    *,
-    year: int | None,
-    max_records: int | None,
-    enrich: bool,
-    lake: Path,
-) -> int:
-    """One conference year's DOI-published abstracts into its private store (doi_harvest.py)."""
-    from health_data_registry.adapters.doi_abstracts import ApiLayoutError
-    from health_data_registry.doi_harvest import HarvestRefused, harvest
-    from health_data_registry.fetch import FetchRefused
-    from health_data_registry.private import PrivateRefused
-
-    try:
-        summary = harvest(registry, lake, conference, year=year, max_records=max_records, enrich=enrich)
-    except (HarvestRefused, PrivateRefused, ApiLayoutError) as e:
-        print(f"harvest stopped: {e}", file=sys.stderr)
-        return 1
-    except FetchRefused as e:
-        print(f"harvest stopped: {e.message}", file=sys.stderr)
-        return 1
-    for line in summary.lines():
-        print(line)
-    return 0
 
 
 def run_eval(sealed: Path, run: Path | None) -> int:
@@ -162,20 +127,11 @@ def run_eval(sealed: Path, run: Path | None) -> int:
 
 
 ANALYSIS_COMMANDS = ("get-rate", "compare-rates", "get-trend", "age-adjust", "check-signal")
-ROW_COMMANDS = ("get-series", "get-aligned-with-gbd", "get-provenance", "query-sql")
-_YEARS: list[tuple[str, dict[str, Any]]] = [
-    ("--location", {"action": "append"}), ("--year-start", {"type": int}), ("--year-end", {"type": int})
-]  # fmt: skip
 
 
 def _add_analysis_commands(sub: Any) -> None:
-    """The row-returning tools on the command line: the same functions the MCP tools call, the same output and
-    the same pages (--page N, with --pin from the previous page's Next line)."""
+    """The analysis tools on the command line: the same functions the MCP tools call, the same output."""
     specs: dict[str, list[tuple[str, dict[str, Any]]]] = {
-        "get-series": [*_YEARS, ("--measure", {}), ("--source-id", {})],
-        "get-aligned-with-gbd": list(_YEARS),
-        "get-provenance": [("--year", {"type": int})],
-        "query-sql": [],
         "get-rate": [("--year", {"type": int, "required": True}), ("--location", {"action": "append"})],
         "compare-rates": [("--location", {"required": True}), ("--year", {"type": int, "required": True}),
                           ("--other-location", {}), ("--other-year", {"type": int})],
@@ -186,54 +142,40 @@ def _add_analysis_commands(sub: Any) -> None:
         "check-signal": [("--location", {"required": True}), ("--year", {"type": int, "required": True}),
                          ("--week", {"type": int, "required": True})],
     }  # fmt: skip
-    first = {"get-provenance": "source_id", "query-sql": "sql"}
     for name, opts in specs.items():
-        sp = sub.add_parser(name, help=f"{name.replace('-', '_')} (same as the MCP tool, same pages)")
-        sp.add_argument(first.get(name, "condition"))
+        sp = sub.add_parser(name, help=f"analysis: {name.replace('-', '_')} (same as the MCP tool)")
+        sp.add_argument("condition")
         for flag, kw in opts:
             sp.add_argument(flag, **kw)
-        sp.add_argument("--page", type=int, default=None, help="page of a long answer (1-based)")
-        sp.add_argument("--pin", default=None, help="the pin from the previous page's Next line")
         sp.add_argument("--json", action="store_true", help="structured output instead of CSV")
 
 
 def run_analysis(registry: Registry, a: argparse.Namespace) -> int:
     import json
 
-    from health_data_registry import analysis, tools
+    from health_data_registry import analysis
     from health_data_registry.query import Engine
 
     eng = Engine(registry=registry, lake=lake_root())
     fmt: Literal["csv", "json"] = "json" if a.json else "csv"
-    pg: dict[str, Any] = {"page": a.page, "pin": a.pin, "fmt": fmt}
     calls: dict[str, Callable[[], Any]] = {
         "get-rate": lambda: analysis.get_rate(
-            registry, eng, condition=a.condition, year=a.year, locations=a.location or [], **pg
+            registry, eng, condition=a.condition, year=a.year, locations=a.location or [], fmt=fmt
         ),
         "compare-rates": lambda: analysis.compare_rates(
             registry, eng, condition=a.condition, location=a.location, year=a.year,
-            other_location=a.other_location, other_year=a.other_year, **pg,
+            other_location=a.other_location, other_year=a.other_year, fmt=fmt,
         ),
         "get-trend": lambda: analysis.get_trend(
             registry, eng, condition=a.condition, location=a.location, year_start=a.year_start,
-            year_end=a.year_end, include_provisional=a.include_provisional, fit_on=a.fit_on, **pg,
+            year_end=a.year_end, include_provisional=a.include_provisional, fit_on=a.fit_on, fmt=fmt,
         ),
         "age-adjust": lambda: analysis.age_adjust(
-            registry, eng, condition=a.condition, location=a.location, year=a.year, **pg
+            registry, eng, condition=a.condition, location=a.location, year=a.year, fmt=fmt
         ),
         "check-signal": lambda: analysis.check_signal(
-            registry, eng, condition=a.condition, location=a.location, year=a.year, week=a.week, **pg
+            registry, eng, condition=a.condition, location=a.location, year=a.year, week=a.week, fmt=fmt
         ),
-        "get-series": lambda: tools.get_series(
-            registry, eng, condition=a.condition, locations=a.location or [], year_start=a.year_start,
-            year_end=a.year_end, measure=a.measure, source_id=a.source_id, **pg,
-        ),
-        "get-aligned-with-gbd": lambda: tools.get_aligned_with_gbd(
-            registry, eng, condition=a.condition, locations=a.location or [], year_start=a.year_start,
-            year_end=a.year_end, **pg,
-        ),
-        "get-provenance": lambda: tools.get_provenance(registry, eng, source_id=a.source_id, year=a.year, **pg),
-        "query-sql": lambda: tools.query_sql(eng, a.sql, **pg),
     }  # fmt: skip
     out = calls[a.cmd]()
     print(
@@ -266,16 +208,7 @@ def publication_outlook(a: argparse.Namespace) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="health-data-registry", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
-    sv = sub.add_parser(
-        "serve", help="run the MCP server on stdio, or with --http the hosted read-only server"
-    )
-    sv.add_argument(
-        "--http", action="store_true", help="Streamable HTTP for the hosted connector (hub releases only)"
-    )
-    sv.add_argument(
-        "--host", default="127.0.0.1", help="with --http: address to listen on (0.0.0.0 serves publicly)"
-    )
-    sv.add_argument("--port", type=int, default=7860, help="with --http: port (a Space's app_port)")
+    sub.add_parser("serve", help="run the MCP server on stdio")
     r = sub.add_parser("refresh", help="fetch datasets from their publishers into the local lake")
     r.add_argument("datasets", nargs="*")
     r.add_argument("--all", action="store_true")
@@ -293,12 +226,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     ex.add_argument("--to", required=True, help="hf://datasets/<org>/<name>, or a local directory")
     ex.add_argument("--run-date", default=None, help="YYYY-MM-DD; defaults to today (UTC)")
-    ex.add_argument(
-        "--tag-file",
-        type=Path,
-        default=None,
-        help="write the release tag to this file once the release is uploaded and tagged (or already published)",
-    )
     sub.add_parser("check-contracts", help="check each publisher still serves the fields its contract reads")
     sub.add_parser("validate", help="load and cross-check every catalog entry, contract and semantic model")
     ev = sub.add_parser(
@@ -307,14 +234,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     ev.add_argument("--sealed", type=Path, default=Path("eval/sealed"))
     ev.add_argument("--run", type=Path, default=None, help="JSON lines of a client's answers")
     _add_analysis_commands(sub)
-    hd = sub.add_parser(
-        "harvest-doi",
-        help="harvest one conference year's abstracts by DOI (Crossref, OpenAlex, Europe PMC) into its private store",
-    )
-    hd.add_argument("conference", help="the catalog's conference key: idweek, shea, apic, icid, ...")
-    hd.add_argument("--year", type=int, default=None, help="conference year; default the latest catalogued")
-    hd.add_argument("--max-records", type=int, default=None, help="stop after this many DOIs (a sample)")
-    hd.add_argument("--no-enrich", action="store_true", help="Crossref only; skip OpenAlex and Europe PMC")
     po = sub.add_parser(
         "publication-outlook",
         help="how often presented abstracts became full papers, per conference and stage (base rate only)",
@@ -336,24 +255,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     g = sub.add_parser(
         "gate", help="serve a hub release only if its transform build passed every error-severity test"
     )
+    g.add_argument("release", help="the release reference to serve (e.g. release-2026-11-25)")
     g.add_argument("--target", type=Path, default=Path("transform/target"), help="dbt's target directory")
     g.add_argument("--ops", type=Path, default=None, help="where builds and the serving log live (lake/ops)")
-    g.add_argument(
-        "--confirm",
-        metavar="TAG",
-        default=None,
-        help="after the upload: record the tag export-public created as served (only a build that passed)",
-    )
     a = p.parse_args(argv)
     if a.cmd == "publication-outlook":  # reads only the packaged base rates, not the registry
         return publication_outlook(a)
     if a.cmd == "gate":  # reads only dbt's run record and the ops log, not the registry
-        from health_data_registry.release_gate import run, run_confirm
+        from health_data_registry.release_gate import run as gate
 
-        ops = a.ops or lake_root() / "ops"
-        ok, message = run_confirm(a.target, ops, a.confirm) if a.confirm else run(a.target, ops)
-        print(message, file=sys.stdout if ok else sys.stderr)
-        return 0 if ok else 1
+        served, message = gate(a.target, a.ops or lake_root() / "ops", a.release)
+        print(message, file=sys.stdout if served else sys.stderr)
+        return 0 if served else 1
     if a.cmd == "sitemaps":  # reads only the seed list, not the registry
         return sitemaps.snapshot(a, error=snap.error)
     try:
@@ -361,11 +274,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     except RegistryError as e:
         print(f"registry error: {e}", file=sys.stderr)
         return 2
-    if a.cmd == "serve" and a.http:
-        from health_data_registry.hosted import main as serve_http
-
-        serve_http(host=a.host, port=a.port)
-        return 0
     if a.cmd == "serve":
         from health_data_registry.server import main as serve
 
@@ -375,17 +283,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return validate(registry, lake_root())
     if a.cmd == "eval":
         return run_eval(a.sealed, a.run)
-    if a.cmd in ANALYSIS_COMMANDS + ROW_COMMANDS:
+    if a.cmd in ANALYSIS_COMMANDS:
         return run_analysis(registry, a)
     if a.cmd == "check-contracts":
         return check_contracts(registry)
-    if a.cmd == "harvest-doi":
-        return harvest_doi(
-            registry, a.conference, year=a.year, max_records=a.max_records, enrich=not a.no_enrich,
-            lake=lake_root(),
-        )  # fmt: skip
     if a.cmd == "export-public":
-        return export_public(registry, a.to, lake=lake_root(), run_date=a.run_date, tag_file=a.tag_file)
+        return export_public(registry, a.to, lake=lake_root(), run_date=a.run_date)
     if a.cmd == "fetch":
         return refresh(registry, [a.source], max_rows=a.max_rows, lake=lake_root())
     ids = sorted(registry.datasets) if a.all else list(a.datasets)

@@ -112,7 +112,7 @@ schema:
         mustBeGreaterThan: 0
       - id: some_rates_present
         dimension: completeness
-        severity: warn
+        severity: error
         type: sql
         description: "Fill rate for the published rate (every row carried one on 2026-11-24)."
         query: "SELECT COUNT(*) FROM {object} WHERE rate IS NOT NULL"
@@ -133,8 +133,7 @@ schema:
         mustBe: 0
       - id: detroit_and_michigan_each_year
         dimension: coverage
-        severity: warn
-
+        severity: error
         type: sql
         description: "Each chart has one Detroit row and one Michigan row for every year it shows (12 or 14 rows per chart, 2 per year, on 2026-11-24)."
         query: "SELECT COUNT(*) FROM (SELECT worksheet, year FROM {object} GROUP BY worksheet, year HAVING COUNT(*) <> 2)"

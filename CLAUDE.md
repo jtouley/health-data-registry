@@ -25,7 +25,6 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 | `make docs` | Regenerate `docs/helpers.md`, `template/.claude/skills/`, `plugin/` and the marketplace from `helpers.py`, and the tool lists in README.md, docs/tools.md and this file from the server |
 | `make kit` | Build the Claude Projects kit into `dist/projects-kit/` ([docs/dev/distribution.md](docs/dev/distribution.md)) |
 | `make refresh` / `make serve` | Fetch every source into the lake / run the MCP server on stdio |
-| `make serve-http` | The hosted read-only server (Streamable HTTP, hub releases only; [docs/dev/hosting.md](docs/dev/hosting.md)) |
 | `make check-contracts` | Check each publisher still serves the fields its contract reads |
 | `make contracts` | Regenerate `transform/`'s raw sources, staging models and every model's schema from `contracts/`; CI fails if the committed files differ |
 | `make transform` | `dbt build` (models and tests) on the synthetic fixtures in `tests/fixtures/transform/`, as CI runs it |
@@ -45,10 +44,7 @@ One review round, one fix round, merge, then follow-ups. We don't get stuck in r
    - `make precheck` passes locally: the CI checks plus a docs-drift check, stopping at the first failure.
    - Then push the commit to `pre-pr/<branch>` and wait until every CI check there is green. If one is red, fix it
      on the pre-pr branch, run `make precheck` again, and push again.
-   - Only then open the PR, or fast-forward the PR branch, to that exact green commit. The PR's CI then reuses the
-     pre-pr mutation verdict instead of running the shards again: only a completed, successful "Mutation tests
-     (changed modules)" from a push to `pre-pr/**` in this repository, for exactly the PR's head SHA, on a PR into
-     main, counts; anything else runs the shards as usual. Every other check still runs on the PR.
+   - Only then open the PR, or fast-forward the PR branch, to that exact green commit.
    - Fix-round pushes follow the same path. Merging main into a branch is a change like any other: precheck, then
      pre-pr, then the PR branch.
 
@@ -84,7 +80,7 @@ One review round, one fix round, merge, then follow-ups. We don't get stuck in r
 
 ```text
 src/health_data_registry/
-  cli.py          serve [--http], refresh <dataset>|--all, fetch <source>, export-public --to, check-contracts, validate,
+  cli.py          serve, refresh <dataset>|--all, fetch <source>, export-public --to, check-contracts, validate,
                   eval, gate, publication-outlook, and the analysis tools (get-rate, compare-rates, get-trend,
                   age-adjust, check-signal)
   server.py       the MCP server (stdio): registers the tools (listed below) and the helper prompts; wraps
@@ -109,21 +105,14 @@ src/health_data_registry/
   staging.py      the one contract-driven typed projection (names, types, missing codes, required, code
                   lists); the lake, the live read and the generated dbt staging models all use it
   transform_gen.py  `make contracts`: writes transform/'s raw sources, staging and intermediate models,
-                  every model schema, the contract rules as dbt tests and the unmapped-labels queue; deletes
-                  only its own stale files in staging/ and refuses on anything hand-written there
-  dbt_raw.py      the dbt-duckdb plugin: each raw source is the full load LATEST names, with snapshot id and
-                  raw sha256 on every row; empty, with a warning, when there is none
-  quality.py      runs each contract's ODCS quality rules (with dimension and severity), a has-rows check and
-                  fill-rate checks on every snapshot and live read; rule SQL passes sql_guard and runs read-only;
-                  data failures become caveats, rule errors stay apart for maintainers
-  release_gate.py the release gate: passes a hub release only after a complete, clean dbt build, and records it
-                  served only after its upload; ops/builds.jsonl, ops/serving_log.jsonl and ops/SERVING, kept in
-                  the private ops dataset health-data-registry-ops-release-gate
+                  every model schema, the contract rules as dbt tests and the unmapped-labels queue
+  quality.py      runs each contract's ODCS quality rules (with dimension and severity) and fill-rate
+                  checks on every snapshot and live read; data failures become caveats, rule errors
+                  stay apart for maintainers
+  release_gate.py the release gate: serves a hub release only after a clean dbt build; ops/builds.jsonl,
+                  ops/serving_log.jsonl and ops/SERVING under the lake
   crawl.py        fetch one source into a lake (refresh, fetch, and run-time fetches)
   publish.py      export-public to the open data hub: cards, licence, manifest, pre-publish checks, tag
-  hosted.py       serve --http: stateless Streamable HTTP for the claude.ai connector; hub releases and live only,
-                  rate limits per session and overall, result cap, no request content in any log
-  deadline.py     one deadline per hosted tool call, capping every fetch, retry and download
   hub.py          hosted read path: immutable hub release, sha256 and contract checks, bounded cache
   live.py         restricted sources (WHO GHO) read live per question, in memory only, never stored
   product.py      the ODPS data product (contracts/health-data-registry.odps.yaml)
@@ -136,11 +125,10 @@ contracts/        one ODCS v3.2.0 contract per dataset, the ODPS data product, a
                   model computed in dbt (e.g. the MMWR calendar)
 semantic/         one dbt-style semantic model per dataset
 transform/        the dbt project on DuckDB (dbt-duckdb): models/staging/ generated from contracts/ (never edit),
-                  then intermediate/ (generated: total rows, place keys, renamed labels, partial places, flag
-                  meanings, every contract rule as a named dbt test), flag/ (review queues that remove nothing)
-                  and marts (dims, one fact per source). Every input is a raw source or a control-plane export
-                  with an ODCS contract: no seeds, no data files (a test enforces it); CI's synthetic lake is
-                  tests/fixtures/transform/
+                  then intermediate/ (generated: total rows, renamed labels, partial places, flag meanings,
+                  every contract rule as a named dbt test), flag/ (review queues that remove nothing) and
+                  marts (dims, one fact per source). Every input is a raw source or a control-plane export with an ODCS contract: no
+                  seeds, no data files (a test enforces it); CI's synthetic raw records are in tests/fixtures/
 eval/sealed/      held-out blind sets, hash-sealed, when present; don't read them while developing
 tests/            synthetic data only; tests/golden holds golden SQL; tests/integration the live `network` checks
 scripts/          mutate_changed.py, write_template.py (make docs, make kit)
@@ -256,9 +244,8 @@ Left out: DuckDB's duckdb-skills (rated 1; DuckDB's own docs are more useful), w
 (rated 2; the changes made with it were reverted), and HashiCorp terraform-style-guide (rated 1.5).
 
 The transform layer is a real dbt project on DuckDB (`transform/`, owner decision of 25 Nov): raw → staging →
-intermediate → marts. Staging is generated from each ODCS contract (`make contracts`); it only types the load
-the dataset's LATEST pointer names, keeps every row, and fails a test on a repeated key. Business rules live in
-intermediate models, and every contract quality rule becomes a named dbt test. The MCP server stays the read
-layer on top. The dbt skills apply
+intermediate → marts. Staging is generated from each ODCS contract (`make contracts`); it only types, dedupes on
+the contract's primary key and picks the latest raw load. Business rules live in intermediate models, and every
+contract quality rule becomes a named dbt test. The MCP server stays the read layer on top. The dbt skills apply
 to `transform/`, to `semantic/` (dbt-style metric YAML), to `registry.py`, which loads and cross-checks the
 models, and to `query.py`, which compiles their metrics to SQL.

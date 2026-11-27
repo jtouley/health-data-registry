@@ -141,7 +141,7 @@ schema:
         physicalType: DOUBLE
         logicalType: number
         required: false
-        description: "Point estimate: hospitalizations per 100,000 site catchment population (rates) or percent of hospitalized patients (clinical rows); unit given by estimate_type."
+        description: "Point estimate: hospitalizations per 100,000 site catchment population (rates) or percent of hospitalized patients (clinical rows); unit given by estimate_type. Published as text; cast to number."
         customProperties:
           - {property: role, value: measure}
           - {property: sourceField, value: estimate}
@@ -167,5 +167,4 @@ customProperties:
       - "Should the adapter split date into a DATE week_ending column plus season rows, or keep text?"
       - "Some rows have an empty estimate (27 on 2026-11-24, Estimated cumulative rates for the current season). Missing or not yet estimated? No missing code is published."
       - "Is a Combined rate an unduplicated count of patients with any of the three viruses? Not stated."
-      - "Clinical-outcome percents (ICU admission, in-hospital death): the table has no confidence-interval or other uncertainty column. Does CDC publish an interval for them elsewhere (RESP-NET methods or interactive dashboards)? Until a maintainer checks, the metrics say uncertainty: none."
       - "Case definition: what laboratory tests and admission window define a RESP-NET case, by network and season? Not in the data; add as caseDefinitions after a maintainer reads the RESP-NET methods page."

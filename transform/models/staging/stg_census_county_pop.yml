@@ -129,15 +129,3 @@ models:
       missing_codes: []
     constraints:
     - type: not_null
-  - name: _snapshot_id
-    data_type: varchar
-    description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the source
-      address, retrieval time and dataset version that go with every answer built on this row.
-    constraints:
-    - type: not_null
-  - name: _raw_sha256
-    data_type: varchar
-    description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
-      the exact bytes the publisher sent.'
-    constraints:
-    - type: not_null

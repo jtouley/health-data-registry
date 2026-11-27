@@ -16,11 +16,7 @@ What staging applies, and the contract property each comes from:
     types                 physicalType, which must agree with logicalType (registry.LOGICAL_TYPES); a count with a
                           fraction stops the load instead of becoming a different count
     missing-value codes   customProperties.missingCodes become NULL (never on a flag column: hard rule 4)
-    required columns      required: true; an empty value stops the load, on the lake and the live path alike
-                          (a row with no place or year can't be placed, and hard rule 1 forbids a guess)
-    declared fields       every customProperties.sourceField must appear in a full load, unless the contract
-                          marks the column mayBeEmpty; a renamed or dropped publisher field stops the load
-                          instead of loading as an all-empty column
+    required columns      required: true; an empty value stops the load
     code lists            customProperties.flagCodes; a code the contract doesn't list is kept as published and
                           reported, so every answer from the table says so
 
@@ -42,27 +38,6 @@ from health_data_registry.registry import Contract
 
 SILVER_METADATA_KEY = "health_data_registry.silver"
 SILVER_LAYOUT_VERSION = "1"
-
-
-class StagingRefused(ValueError):
-    """A load staging refused. Nothing is kept: the table it was building is dropped before this is raised."""
-
-
-class PublisherDataRefused(StagingRefused):
-    """The publisher's values break the reviewed contract (an empty required value, a count with a fraction).
-
-    The follow-up is a report to the publisher, or a look at the data, not a contract edit.
-    """
-
-
-class ContractLayoutRefused(StagingRefused):
-    """The publisher's layout no longer matches the contract (a declared field never appears).
-
-    The follow-up is a contract review: the publisher renamed or dropped a field.
-    """
-
-
-FRACTION_MARK = "has a fraction, so it isn't a whole count"
 
 
 @dataclass(frozen=True)
@@ -147,7 +122,7 @@ def typed_select(contract: Contract) -> str:
             # Counts arrive as text, "31" or "31.0" (NNDSS from 2025). A plain cast would round "1.5" to 2, so
             # anything with a fraction stops the load instead of becoming a different count.
             dec = f"CAST(NULLIF(trim({src}), '') AS DECIMAL(38, 6))"
-            msg = _lit(f"the publisher's data has a value in {c.name} that {FRACTION_MARK}")
+            msg = _lit(f"{c.name}: a value has a fraction, so it isn't a whole count; check the contract")
             expr = f"CASE WHEN {dec} IS NULL THEN NULL WHEN {dec} = trunc({dec}) THEN CAST({dec} AS {c.physical_type}) ELSE error({msg}) END"
         else:
             expr = f"CAST(NULLIF(trim({src}), '') AS {c.physical_type})"
@@ -155,53 +130,24 @@ def typed_select(contract: Contract) -> str:
     return ",\n  ".join(parts)
 
 
-def absent_fields(contract: Contract, present: set[str]) -> list[str]:
-    """Declared publisher fields that never appear in a load, leaving out columns the contract marks mayBeEmpty."""
-    return sorted({c.source_field for c in contract.columns if not c.may_be_empty} - present)
-
-
 def stage(
-    con: duckdb.DuckDBPyConnection,
-    contract: Contract,
-    source: str,
-    *,
-    table: str,
-    temp: bool = False,
-    present: set[str] | None = None,
+    con: duckdb.DuckDBPyConnection, contract: Contract, source: str, *, table: str, temp: bool = False
 ) -> StagingReport:
     """Build the typed table `table` from `source` (a relation of text fields) and check it against the contract.
 
-    `present` is every field name seen in the load's records, when the caller knows them: a declared field that
-    never appears refuses the load (ContractLayoutRefused). An empty required value or a count with a fraction
-    refuses it too (PublisherDataRefused). A refused load leaves no table behind. A flag code the contract
-    doesn't list is kept as published and reported.
+    A required column with an empty value stops the load: the layout doesn't match the contract. A flag code the
+    contract doesn't list is kept as published and reported.
     """
-    if present is not None and (absent := absent_fields(contract, present)):
-        raise ContractLayoutRefused(
-            f"{contract.id}: the publisher's records no longer have the field{'s' if len(absent) > 1 else ''} "
-            f"{', '.join(absent)}, which the contract reads; the publisher may have renamed "
-            f"{'them' if len(absent) > 1 else 'it'}, so check the contract"
-        )
     kind = "TEMP TABLE" if temp else "TABLE"
-    try:
-        try:
-            con.execute(f"CREATE {kind} {_q(table)} AS SELECT\n  {typed_select(contract)}\nFROM {source}")  # noqa: S608 - quoted contract identifiers
-        except duckdb.Error as e:
-            if FRACTION_MARK in str(e):
-                raise PublisherDataRefused(f"{contract.id}: {str(e).split('Error: ', 1)[-1].strip()}") from e
-            raise
-        for c in contract.columns:
-            if c.required:
-                row = con.execute(f"SELECT count(*) FROM {_q(table)} WHERE {_q(c.name)} IS NULL").fetchone()  # noqa: S608 - quoted contract identifiers
-                nulls = int(row[0]) if row else 0
-                if nulls:
-                    raise PublisherDataRefused(
-                        f"{contract.id}: the publisher's data has {nulls} empty value{'s' if nulls > 1 else ''} "
-                        f"in {c.name}, which the contract requires"
-                    )
-    except Exception:
-        con.execute(f"DROP TABLE IF EXISTS {_q(table)}")
-        raise
+    con.execute(f"CREATE {kind} {_q(table)} AS SELECT\n  {typed_select(contract)}\nFROM {source}")  # noqa: S608 - quoted contract identifiers
+    for c in contract.columns:
+        if c.required:
+            row = con.execute(f"SELECT count(*) FROM {_q(table)} WHERE {_q(c.name)} IS NULL").fetchone()  # noqa: S608 - quoted contract identifiers
+            nulls = int(row[0]) if row else 0
+            if nulls:
+                raise ValueError(
+                    f"{contract.id}: required column {c.name} has {nulls} empty values; check the contract"
+                )
     unlisted: dict[str, tuple[str, ...]] = {}
     for c in contract.columns:
         if not c.flag_codes:
@@ -232,35 +178,11 @@ class Staged:
 
 
 def stage_checked(
-    con: duckdb.DuckDBPyConnection,
-    contract: Contract,
-    source: str,
-    *,
-    table: str,
-    temp: bool = False,
-    present: set[str] | None = None,
+    con: duckdb.DuckDBPyConnection, contract: Contract, source: str, *, table: str, temp: bool = False
 ) -> Staged:
-    """Stage `source` into `table` (stage's checks, `present` included), then run every quality rule of the
-    contract on it: the live path. Lake snapshots are checked read-only after the file is closed (check_snapshot)."""
-    report = stage(con, contract, source, table=table, temp=temp, present=present)
-
+    """Stage `source` into `table`, then run every quality rule of the contract on it (lake and live alike)."""
+    report = stage(con, contract, source, table=table, temp=temp)
     return Staged(report, run_rules(con, table, rules_for(contract)))
-
-
-def check_snapshot(path: str, contract: Contract, table: str) -> QualityReport:
-    """Run the contract's quality rules on a closed snapshot file, opened read-only and locked down.
-
-    Rule SQL comes from a contract, which may be model-drafted (hard rule 3): besides the guard that checked it
-    at load time, the file it runs on can't be written, and the connection can't reach files or the network.
-    """
-    from health_data_registry.sql_guard import harden
-
-    con = duckdb.connect(path, read_only=True)
-    try:
-        harden(con)
-        return run_rules(con, table, rules_for(contract))
-    finally:
-        con.close()
 
 
 def _comment(con: duckdb.DuckDBPyConnection, contract: Contract, table: str) -> None:

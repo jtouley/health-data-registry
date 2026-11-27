@@ -75,33 +75,18 @@ flowchart LR
    `datasets/<id>/<snapshot_id>/`: `data.parquet`, `data.duckdb` and a `manifest.json` that lists the raw hashes, source URLs, `retrieved_at`, and the contract and semantic model versions. Snapshots live
    in the lake (`$HDR_LAKE`, default `./lake`, ignored by git) and, for redistributable sources, may be published to a public
    Hugging Face dataset ([ADR 0009](adr/0009-licences-decide-mirroring.md)).
-   The typed projection lives in one place (`staging.py`). The same checks refuse a load on the lake path and
-   the live path alike: an empty required value or a count with a fraction (a publisher data failure), or a
-   declared field that no record carries (a layout change, so the contract needs review; a column the contract
-   marks `mayBeEmpty` is exempt). A refused load leaves no table behind. A live source refused this way is
-   unavailable for the session rather than answered from the rows that passed, which would change totals
-   without saying so.
-   The dbt project in `transform/` (dbt-duckdb) reads the full load each dataset's `LATEST` pointer names, from
-   `raw_records/<id>/<snapshot_id>.ndjson` (`dbt_raw.py`, a dbt-duckdb plugin). Every staging row carries its
-   snapshot id and raw sha256. A source with no load to read is empty, with a warning, so the rest still
-   builds. Staging models are generated from the contracts by `make contracts` and only type: no row is dropped
-   or deduplicated, and a declared key that repeats fails a test. Business rules go in intermediate models (also
-   generated from the contracts), review queues in `flag_*` models, and dimensions and one fact per source in
-   marts. Each raw load is written once in the lake it lands in, records first, then a
-   `<snapshot_id>.meta.json` naming its fetches (URL, route, the browser capture URL for a dashboard, time,
-   sha256), robots overrides and its load mode (`rawLoad`: snapshot; an incremental load is refused until
-   staging supports it). In the weekly refresh each run starts from a fresh lake, so the records and their
-   metadata outlive the run only in the private raw archive (`HDR_RAW_DATASET`), beside the raw bytes and fetch
-   logs.
+   The typed projection lives in one place (`staging.py`). The dbt project in `transform/` (dbt-duckdb) reads
+   the same full loads from `raw_records/<id>/<snapshot_id>.ndjson`: its staging models are generated from
+   the contracts by `make contracts` and only type, dedupe on the contract's primary key and keep the latest
+   load; business rules go in intermediate models (also generated from the contracts), review queues in
+   `flag_*` models, and dimensions and one fact per source in marts. Every raw load is kept once, with a
+   `<snapshot_id>.meta.json` naming its fetches (URL, route, time, sha256, status, robots overrides) and its
+   load mode (`rawLoad`: snapshot today; incremental needs a reviewed row key).
    Each contract's quality rules run on every snapshot and live read (`quality.py`) and, as named dbt tests,
-   in the transform build. Contract SQL passes the same single-SELECT guard as `query_sql` when the contract
-   loads, and snapshots are checked on a read-only connection. A failed data check is a caveat on answers; a
-   rule that can't run, or returns no number, is kept apart for maintainers. The weekly refresh publishes a
-   hub release only when the release gate (`release_gate.py`) finds a complete build (every model, seed and
-   snapshot built, at least one test run) with no failed or skipped node, no check that couldn't run and no
-   failed error-severity test or unit test; otherwise the release already served stays. The gate's state
-   (`SERVING`, `builds.jsonl`, `serving_log.jsonl`) is kept between runs in the private ops dataset
-   `<owner>/health-data-registry-ops-release-gate` (docs/dev/automation.md).
+   in the transform build. A failed data check is a caveat on answers; a rule that can't run is kept apart for
+   maintainers. The weekly refresh publishes a hub release only when the release gate (`release_gate.py`)
+   finds no failed model, no check that couldn't run and no failed error-severity check; otherwise the
+   release already served stays.
 5. **DuckDB read-only views.** `store.py` builds views over the snapshot from the contract. Connections are
    read-only.
 6. **Tools.** `get_series`, `get_aligned_with_gbd` and the other tools compile semantic-model metrics to SQL over

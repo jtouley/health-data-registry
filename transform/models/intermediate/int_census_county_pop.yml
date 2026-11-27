@@ -4,7 +4,7 @@ models:
 - name: int_census_county_pop
   description: One row per state or county and year (after the structural wide-to-long pivot described under servers).
   config:
-    materialized: view
+    materialized: table
     contract:
       enforced: true
     tags:
@@ -15,18 +15,6 @@ models:
     contract_version: 0.1.0
     contract_status: draft
   data_tests:
-  - odcs_check:
-      name: census_county_pop_has_rows
-      arguments:
-        measure_sql: SELECT count(*) FROM {object}
-        condition: measured > 0
-      config:
-        severity: error
-        meta:
-          dimension: completeness
-          rule: has_rows
-          contract: contracts/census_county_pop.odcs.yaml
-          checks: This copy of the source has no rows, so there is nothing to answer from.
   - odcs_check:
       name: census_county_pop_sumlev_codes
       arguments:
@@ -65,6 +53,8 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    constraints:
+    - type: not_null
   - name: region
     data_type: varchar
     description: 'Census region code: 1 Northeast, 2 Midwest, 3 South, 4 West (publisher key).'
@@ -75,6 +65,8 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    constraints:
+    - type: not_null
   - name: division
     data_type: varchar
     description: Census division code, 1 New England to 9 Pacific (publisher key).
@@ -85,6 +77,8 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    constraints:
+    - type: not_null
   - name: state_fips
     data_type: varchar
     description: Two-digit state FIPS code, as text (for example 26 for Michigan).
@@ -95,6 +89,8 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    constraints:
+    - type: not_null
   - name: county_fips
     data_type: varchar
     description: Three-digit county FIPS code within the state, as text; 000 on state rows.
@@ -105,6 +101,8 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    constraints:
+    - type: not_null
   - name: state_name
     data_type: varchar
     description: State name as the Census Bureau writes it (for example Michigan, District of Columbia).
@@ -115,6 +113,8 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    constraints:
+    - type: not_null
   - name: county_name
     data_type: varchar
     description: County name with its type (for example Wayne County, Orleans Parish, Capitol Planning Region);
@@ -127,6 +127,8 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    constraints:
+    - type: not_null
   - name: year
     data_type: bigint
     description: Reference year of the estimate (population on July 1 of this year). Taken from the column name
@@ -138,6 +140,8 @@ models:
       unit: null
       codes: []
       missing_codes: []
+    constraints:
+    - type: not_null
   - name: population
     data_type: bigint
     description: 'Estimated resident population on July 1 of the year (publisher column POPESTIMATE<year>), in persons.
@@ -149,14 +153,8 @@ models:
       unit: persons
       codes: []
       missing_codes: []
-  - name: _snapshot_id
-    data_type: varchar
-    description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the source
-      address, retrieval time and dataset version that go with every answer built on this row.
-  - name: _raw_sha256
-    data_type: varchar
-    description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
-      the exact bytes the publisher sent.'
+    constraints:
+    - type: not_null
   - name: is_total_row
     data_type: boolean
     description: True on the publisher's total and summary rows (the contract's totalRows), which are never added

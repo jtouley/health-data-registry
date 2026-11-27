@@ -42,7 +42,7 @@ from typing import Any
 import duckdb
 
 from health_data_registry.registry import Dataset
-from health_data_registry.staging import Staged, check_snapshot, stage, write_parquet
+from health_data_registry.staging import stage_checked, write_parquet
 
 _SNAPSHOT_ID = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{12}$")
 
@@ -213,14 +213,7 @@ def build_snapshot(
     digest = hashlib.sha256(inputs.encode()).hexdigest()[:12]
     snapshot_id = f"{retrieved:%Y%m%dT%H%M%SZ}-{digest}"
     out = snapshot_dir(lake, ds.id, snapshot_id)
-
-    def keep() -> None:
-        if not partial and ds.entry.licence.redistribution:
-            meta = load_metadata(ds, snapshot_id, fetches, robots_overrides=robots_overrides)
-            keep_raw_records(lake, ds, snapshot_id, records_files, meta)
-
     if (out / "manifest.json").is_file():  # the same inputs were snapshotted already: never overwrite
-        keep()  # a load kept before its metadata was recorded gets it now
         _point_latest(lake, ds.id, snapshot_id)
         return Manifest.read(out / "manifest.json")
     tmp = Path(tempfile.mkdtemp(prefix=f".{ds.id}-", dir=lake))
@@ -231,16 +224,10 @@ def build_snapshot(
         con = duckdb.connect(str(tmp / "data.duckdb"))
         try:
             raw = f"read_json({files}, format='newline_delimited', columns={cols})"
-            # A full load must carry every declared field: read_json fills a missing one with NULL, so a renamed
-            # publisher field would otherwise load as an all-empty column. A partial sample is not checked.
-            report = stage(
-                con, ds.contract, raw, table=ds.id, present=None if partial else fields_in(con, files)
-            )
+            staged = stage_checked(con, ds.contract, raw, table=ds.id)
             write_parquet(con, ds.contract, ds.id, str(tmp / "data.parquet"))
         finally:
             con.close()
-        # The contract's rules run only after the file is closed for writing, on a read-only connection.
-        staged = Staged(report, check_snapshot(str(tmp / "data.duckdb"), ds.contract, ds.id))
         manifest = Manifest(
             dataset=ds.id,
             snapshot_id=snapshot_id,
@@ -265,9 +252,15 @@ def build_snapshot(
     finally:
         if tmp.exists():
             shutil.rmtree(tmp, ignore_errors=True)
-    keep()
+    if not partial:
+        keep_raw_records(
+            lake,
+            ds.id,
+            snapshot_id,
+            records_files,
+            load_metadata(ds, snapshot_id, fetches, robots_overrides=robots_overrides),
+        )
     _point_latest(lake, ds.id, snapshot_id)
-
     return manifest
 
 
@@ -288,6 +281,8 @@ def load_metadata(
                 "capture_url": f.capture_url,
                 "retrieved_at": f.retrieved_at.astimezone(UTC).isoformat(),
                 "sha256": f.sha256,
+                "status": "ok",
+                "archive_captured_at": None,  # no catalogued source is read from a web archive yet
             }
             for f in fetches
         ],
@@ -295,50 +290,32 @@ def load_metadata(
     }
 
 
-def fields_in(con: duckdb.DuckDBPyConnection, files: str) -> set[str] | None:
-    """Every field name in a load's records (`files` is a SQL list of paths), or None when it has no records."""
-    rows = con.execute(
-        f"SELECT DISTINCT unnest(json_keys(json)) FROM read_ndjson_objects({files})"  # noqa: S608 - quoted paths
-    ).fetchall()
-    return {str(r[0]) for r in rows} or None
-
-
 def keep_raw_records(
     lake: Path,
-    ds: Dataset,
+    dataset_id: str,
     snapshot_id: str,
     records_files: Sequence[Path],
     metadata: Mapping[str, Any] | None = None,
 ) -> Path:
-    """Keep one full load's parsed records where the dbt staging models read them, with its metadata beside them.
+    """Keep one load's parsed records where the dbt staging models read them, with its metadata beside them.
 
-    Raw is append-only: a load is written once under its snapshot id and never rewritten or deleted. The records
-    are written first and the metadata last, so metadata exists only for a complete load; a load kept before it
-    had metadata gets it on the next run with the same snapshot id (the metadata itself is never rewritten).
-    Refuses a source whose licence forbids keeping a copy (ADR 0009), whatever the caller checked. A failed copy
-    leaves no temporary file behind.
+    Raw is append-only: a load is written once under its snapshot id and never rewritten or deleted.
     """
-    if not ds.entry.licence.redistribution:
-        raise ValueError(
-            f"{ds.id}: its licence forbids keeping a copy, so its records are never kept on disk"
-        )
-    target = lake / "raw_records" / ds.id / f"{snapshot_id}.ndjson"
+    target = lake / "raw_records" / dataset_id / f"{snapshot_id}.ndjson"
+    if target.is_file():
+        return target
     target.parent.mkdir(parents=True, exist_ok=True)
-    if not target.is_file():
-        tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-        try:
-            with tmp.open("wb") as out:
-                for p in records_files:
-                    with p.open("rb") as fh:
-                        shutil.copyfileobj(fh, out)
-            os.replace(tmp, target)
-        finally:
-            tmp.unlink(missing_ok=True)
-    meta = target.with_name(f"{snapshot_id}.meta.json")
-    if metadata is not None and not meta.is_file():
+    if metadata is not None:
+        meta = target.with_name(f"{snapshot_id}.meta.json")
         tmp_meta = meta.with_name(f".{meta.name}.{os.getpid()}.tmp")
         tmp_meta.write_text(json.dumps(dict(metadata), indent=2, sort_keys=True) + "\n", encoding="utf-8")
         os.replace(tmp_meta, meta)
+    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    with tmp.open("wb") as out:
+        for p in records_files:
+            with p.open("rb") as fh:
+                shutil.copyfileobj(fh, out)
+    os.replace(tmp, target)
     return target
 
 

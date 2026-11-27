@@ -1,8 +1,8 @@
 dataset: detroit_dhd_covid_archive_daily
 version: 0.1.0
 dimensions:
-  - {name: case_status, column: case_status, type: categorical, non_additive: true, non_additive_reason: "the daily bars sit beside the 7-day average line of the same days", description: "The case status label on the daily bars ('Confirmed'); empty on the 7-day average line."}
-  - {name: disease_date, column: disease_date, type: time, non_additive: false, description: "The day the dashboard places the cases on (its disease date)."}
+  - {name: case_status, column: case_status, type: categorical, description: "The case status label on the daily bars ('Confirmed'); empty on the 7-day average line."}
+  - {name: disease_date, column: disease_date, type: time, description: "The day the dashboard places the cases on (its disease date)."}
 measures:
   - {name: cases, column: cases, kind: count, unit: "cases", description: "COVID-19 cases in Detroit on the day; empty where the dashboard shows '<16'."}
 metrics:

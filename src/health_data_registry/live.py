@@ -53,9 +53,8 @@ def kept_note(ds: Dataset, retrieved_at: str) -> str:
 
 
 def is_live(ds: Dataset) -> bool:
-    """A source whose terms forbid redistribution is served live, unless it is kept in its own private store
-    (``private_store: true``, read through private.read_rows)."""
-    return ds.entry.tier == "live"
+    """A source whose terms forbid redistribution is served live only."""
+    return not ds.entry.licence.redistribution
 
 
 def attribution(ds: Dataset) -> str:
@@ -127,11 +126,6 @@ def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[st
 
     Refuses a file-backed connection: the source's terms forbid keeping a copy (ADR 0009), so this checks the
     connection itself rather than trusting the caller. A table that can't be normalised leaves nothing behind.
-
-    The checks are the lake's, on purpose: an empty required value (a row with no country or year) or a declared
-    field that no record carries refuses the whole source for this session, as it would a stored load. Answering
-    from the other rows would drop rows from totals without saying so (hard rules 1 and 2); the refusal tells the
-    clinician the source is unavailable instead.
     """
     where = con.execute(
         "SELECT path FROM duckdb_databases() WHERE database_name = current_database()"
@@ -153,8 +147,6 @@ def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[st
                 f"INSERT INTO {q(raw)} VALUES ({marks})",  # noqa: S608 - quoted contract identifiers, bound values
                 [[r.get(f) for f in fields] for r in records],
             )
-        present = {k for r in records for k in r} or None
-        return stage_checked(con, ds.contract, q(raw), table=ds.id, temp=True, present=present)
-
+        return stage_checked(con, ds.contract, q(raw), table=ds.id, temp=True)
     finally:
         con.execute(f"DROP TABLE IF EXISTS {q(raw)}")

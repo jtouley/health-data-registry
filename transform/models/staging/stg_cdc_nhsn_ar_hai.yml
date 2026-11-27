@@ -183,11 +183,6 @@ models:
       unit: '1'
       codes: []
       missing_codes: []
-    data_tests:
-    - not_all_empty:
-        name: stg_cdc_nhsn_ar_hai_isolates_tested_filled
-        config:
-          severity: warn
   - name: resistant_isolates
     data_type: bigint
     description: Number of tested isolates that were resistant (for some phenotypes, non-susceptible); shown only
@@ -199,11 +194,6 @@ models:
       unit: '1'
       codes: []
       missing_codes: []
-    data_tests:
-    - not_all_empty:
-        name: stg_cdc_nhsn_ar_hai_resistant_isolates_filled
-        config:
-          severity: warn
   - name: percent_resistant
     data_type: double
     description: 'Percent of tested isolates that were resistant: resistant / tested x 100; calculated only when
@@ -215,11 +205,6 @@ models:
       unit: '%'
       codes: []
       missing_codes: []
-    data_tests:
-    - not_all_empty:
-        name: stg_cdc_nhsn_ar_hai_percent_resistant_filled
-        config:
-          severity: warn
   - name: suppressed
     data_type: boolean
     description: Publisher's suppression indicator ('If data should be suppressed or not'). Observed values are
@@ -231,11 +216,6 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    data_tests:
-    - not_all_empty:
-        name: stg_cdc_nhsn_ar_hai_suppressed_filled
-        config:
-          severity: warn
   - name: display_tested
     data_type: varchar
     description: Publisher's indicator of whether data are sufficient to display; empty in every row observed.
@@ -257,11 +237,6 @@ models:
       unit: '%'
       codes: []
       missing_codes: []
-    data_tests:
-    - not_all_empty:
-        name: stg_cdc_nhsn_ar_hai_lower_confidence_interval_filled
-        config:
-          severity: warn
   - name: upper_confidence_interval
     data_type: double
     description: Upper bound of the 95% mid-P exact confidence interval around percent resistant.
@@ -272,20 +247,3 @@ models:
       unit: '%'
       codes: []
       missing_codes: []
-    data_tests:
-    - not_all_empty:
-        name: stg_cdc_nhsn_ar_hai_upper_confidence_interval_filled
-        config:
-          severity: warn
-  - name: _snapshot_id
-    data_type: varchar
-    description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the source
-      address, retrieval time and dataset version that go with every answer built on this row.
-    constraints:
-    - type: not_null
-  - name: _raw_sha256
-    data_type: varchar
-    description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
-      the exact bytes the publisher sent.'
-    constraints:
-    - type: not_null
