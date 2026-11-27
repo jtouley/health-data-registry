@@ -65,7 +65,9 @@ def _rows(out: Any) -> list[dict[str, str]]:
 def test_a_plain_question_about_invasive_staph_aureus_routes_here() -> None:
     rows = _rows(tools.suggest_datasets(load_registry(ROOT), "invasive Staphylococcus aureus rates"))
     row = next(r for r in rows if r["source_id"] == DS)
-    assert row["can_answer"] == "yes", row
+    # The EIP sites pooled are a catchment whose places aren't declared (#223): offered first, never a "yes".
+    assert row["can_answer"] == "unknown", row
+    assert row["why"] == "this source doesn't declare which places it covers yet", row
     assert rows.index(row) < 3
 
 
