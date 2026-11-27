@@ -44,6 +44,11 @@ def test_a_readme_only_change_runs_no_dbt_and_no_pytest(ci: ModuleType) -> None:
     )
 
 
+def test_a_changelog_fragment_is_docs_only(ci: ModuleType) -> None:
+    got = run(ci, "changelog.d/source-x.md", "changelog.d/README.md")
+    assert got["full"] is False and got["dbt"] is False and got["tests"] == "none"
+
+
 def test_helpers_md_runs_only_its_drift_test(ci: ModuleType) -> None:
     got = run(ci, "docs/helpers.md")
     assert got["tests"] == ["tests/test_workflows.py"] and got["dbt"] is False

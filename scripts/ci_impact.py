@@ -25,8 +25,8 @@ plus untracked files when run locally):
 3. Data and generated files (contracts/, semantic/, catalog/, transform/, template/, plugin/, fuzz/, assets/,
    ...): every project module whose source names the changed file, its folder, or the file's name is treated as
    changed (rule 2 then follows its importers). contracts/, semantic/, catalog/ and transform/ also run dbt.
-4. Documentation (README and the other root *.md files, docs/, LICENSE, NOTICE, CITATION.cff): only the docs
-   checks, which always run in the Checks job (pre-commit, docs drift from `make docs`, the kit), plus
+4. Documentation (README and the other root *.md files, docs/, changelog.d/, LICENSE, NOTICE, CITATION.cff): only
+   the docs checks, which always run in the Checks job (pre-commit, docs drift from `make docs`, the kit), plus
    tests/test_workflows.py when docs/helpers.md changes. No dbt, no other test.
 
 CI narrows a pull request's run with this map only while main has a merge queue (scripts/merge_queue.py), which
@@ -96,7 +96,7 @@ DOC_FILES = frozenset(
         ".dockerignore",
     }
 )
-DOC_TOPS = ("docs/",)
+DOC_TOPS = ("docs/", "changelog.d/")
 # The docs file a test checks (docs/helpers.md is generated from helpers.py; the test fails on drift).
 DOC_TESTS = {"docs/helpers.md": "tests/test_workflows.py"}
 

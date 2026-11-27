@@ -83,6 +83,7 @@ if [ -n "$(git status --porcelain=v1 --untracked-files=all)" ]; then
   echo "pushing to pre-pr/<branch>."
 fi
 
+step "changelog fragment (scripts/changelog.py check)" python3 scripts/changelog.py check --base origin/main
 step "pre-commit (all files)" "${UV}" run pre-commit run --all-files --show-diff-on-failure
 step "lint" "${MAKE}" --no-print-directory lint
 step "typecheck" "${MAKE}" --no-print-directory typecheck

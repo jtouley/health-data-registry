@@ -35,6 +35,10 @@ publishers and are left out of `make test`; run them with `make test-network`.
 - CI is green before the pull request: merge `origin/main`, `make precheck` passes, then the commit goes green
   on `pre-pr/<branch>`, and only that commit goes to the PR branch ([the pre-PR gate](docs/dev/README.md#the-pre-pr-gate)).
 - **New features and bug fixes add tests.** A bug fix includes a test that fails without it.
+- **Add a `changelog.d/` fragment; never edit CHANGELOG.md directly.** One small file per pull request, named after
+  the branch (`changelog.d/source-cdc_lyme_county.md`), with an `### Added`, `### Changed` or `### Fixed` heading
+  and a bullet ([changelog.d/README.md](changelog.d/README.md)). CI fails a pull request that touches `src/`,
+  `catalog/`, `contracts/` or `semantic/` without one. The fragments go into CHANGELOG.md at release time.
 - No data is committed. Snapshots live in the Hugging Face dataset, and only for sources whose terms allow it
   (see [licenses/README.md](licenses/README.md)). Small hand-written fixtures in `tests/` are the exception.
 - No patient data, anywhere: not in issues, tests, fixtures or examples.

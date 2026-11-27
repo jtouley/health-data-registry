@@ -1,6 +1,6 @@
 # Developer and CI entry points. `make help` lists the targets.
 .DEFAULT_GOAL := help
-.PHONY: help install lint fmt typecheck test test-network smoke mutate docs kit fuzz-requirements check precheck refresh serve check-contracts eval hooks serve-http contracts transform ratchet
+.PHONY: help install lint fmt typecheck test test-network smoke mutate docs kit fuzz-requirements check precheck refresh serve check-contracts eval hooks serve-http contracts transform ratchet changelog
 
 UV ?= uv
 COV_FLOOR ?= 85
@@ -51,6 +51,10 @@ fuzz-requirements: ## Regenerate fuzz/requirements.txt from uv.lock (hash-pinned
 
 ratchet: ## The Trusted gate's ratchet on HEAD against BASE (default origin/main); required checks are checked in CI only
 	$(UV) run python -m health_data_registry.ratchet --base $(BASE) --head HEAD
+
+changelog: ## Release only: fold changelog.d/ fragments into CHANGELOG.md as VERSION (e.g. make changelog VERSION=0.3.0)
+	@test -n "$(VERSION)" || { echo "Set VERSION, e.g. make changelog VERSION=0.3.0"; exit 1; }
+	python3 scripts/changelog.py assemble "$(VERSION)"
 
 check: lint typecheck test mutate ## The quick local loop (not all of CI): lint, typecheck, test, mutation tests on changed functions
 

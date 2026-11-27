@@ -173,6 +173,29 @@ The actionlint and shellcheck hooks need `uv sync` first: both tools come from t
 (`actionlint-py` and `shellcheck-py`, pinned in `uv.lock`), and the `shellcheck-present` hook fails if shellcheck
 is missing, because actionlint would otherwise skip its shell checks silently.
 
+## Changelog fragments
+
+Pull requests never edit `CHANGELOG.md`: each adds one small file in `changelog.d/`, named after its branch, with
+`### Added`, `### Changed` or `### Fixed` (or Deprecated, Removed, Security) and its bullets. The format is in
+[changelog.d/README.md](../../changelog.d/README.md). Separate files don't conflict, so one merge no longer makes
+every other open pull request conflict on the same CHANGELOG lines
+([#268](https://github.com/jtouley/health-data-registry/issues/268)); GitHub's merge check ignores `.gitattributes`
+merge drivers, so `merge=union` couldn't fix that.
+
+- **The check.** `python3 scripts/changelog.py check --base <merge base>` runs in CI's Checks job and as the first
+  step of `make precheck` (against `origin/main`). It reads committed changes only and fails when the change touches
+  `src/`, `catalog/`, `contracts/` or `semantic/` but adds or changes no fragment, when it edits `CHANGELOG.md`
+  without deleting fragments, or when any fragment can't be assembled. On main, the merge queue and nightly the
+  merge base is empty and it checks nothing. The step has no `if:`, so the required Checks job gains no condition.
+- **At release.** The release PR, which bumps the versions ([distribution.md](distribution.md)), runs
+  `make changelog VERSION=X.Y.Z` (`scripts/changelog.py assemble`). It moves whatever is under `## [Unreleased]`
+  and every fragment's bullets, section by section and in file-name order, into a new `## [X.Y.Z] - <date>`
+  section, leaves `## [Unreleased]` empty above it, updates the link references at the end and deletes the
+  fragments. It refuses, changing nothing, on a malformed fragment, a version that already has a section or nothing
+  to release. Commit the result in the release PR; `release.yml` then reads that section as the release notes.
+- **Fixing a released entry.** Do it in a release PR, since the check fails a hand edit of `CHANGELOG.md` that
+  deletes no fragment.
+
 ## The Trusted gate
 
 A pull request's own CI runs the pull request's copy of `ci.yml`, the Makefile, `scripts/` and `pyproject.toml`,
@@ -350,7 +373,8 @@ Mutation tests are in none of these: they run nightly on main ([Nightly mutation
 - **Changes** (seconds): whether main has a merge queue (`scripts/merge_queue.py`: a `merge_queue` rule in effect
   on main; any doubt answers no), what the change can affect, and on a PR whether a green pre-pr run already
   checked this exact tree (then every other job is skipped).
-- **Checks**: budgets only tighten, generated files current (`make docs`, `make contracts`), then in parallel every
+- **Checks**: budgets only tighten, a changelog fragment where one is needed ([Changelog
+  fragments](#changelog-fragments)), generated files current (`make docs`, `make contracts`), then in parallel every
   pre-commit hook (ruff, mypy, actionlint and the rest), the Claude Projects kit, and `dbt build` on the fixtures
   when dbt inputs or the Python dbt imports changed.
 - **Tests**: `pytest -n auto` (one worker per core). A README-only change runs no test; a change to a module runs

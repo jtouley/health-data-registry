@@ -23,6 +23,7 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 | `make smoke` | The C. auris in Michigan journey through the MCP server on a synthetic lake, scored with `eval/scorer.py` (marker `smoke`; [docs/dev/README.md](docs/dev/README.md#smoke-journey)) |
 | `make mutate` | Mutation tests on the functions changed since `BASE` (`scripts/mutate_changed.py`, floor 70%); CI runs them nightly on main |
 | `make docs` | Regenerate `docs/helpers.md`, `template/.claude/skills/`, `plugin/` and the marketplace from `helpers.py`, and the tool lists in README.md, docs/tools.md and this file from the server |
+| `make changelog VERSION=X.Y.Z` | Release PR only: fold the `changelog.d/` fragments into CHANGELOG.md under `## [X.Y.Z]` and delete them |
 | `make kit` | Build the Claude Projects kit into `dist/projects-kit/` ([docs/dev/distribution.md](docs/dev/distribution.md)) |
 | `make refresh` / `make serve` | Fetch every source into the lake / run the MCP server on stdio |
 | `make serve-http` | The hosted read-only server (Streamable HTTP, hub releases only; [docs/dev/hosting.md](docs/dev/hosting.md)) |
@@ -73,6 +74,9 @@ One review round, one fix round, merge, then follow-ups. We don't get stuck in r
      that changes nothing else.
 
    Every commit carries the required trailers, and the PR body names the skills used and what each changed.
+   Add a `changelog.d/` fragment; never edit CHANGELOG.md directly ([changelog.d/README.md](changelog.d/README.md)).
+   The Checks job fails a PR that touches `src/`, `catalog/`, `contracts/` or `semantic/` without one; the
+   release PR folds the fragments into CHANGELOG.md with `make changelog VERSION=X.Y.Z`.
    Every commit, by people, agents and the lead, goes through the pre-commit hooks (`make hooks`); `--no-verify`
    is never used. Unfinished work is not committed to the PR branch: it stays uncommitted or goes on a separate WIP
    branch until it passes the hooks.

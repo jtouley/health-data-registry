@@ -166,6 +166,14 @@ jobs:
         env:
           MERGE_BASE: ${{ needs.changes.outputs.merge_base }}
         run: python3 scripts/ci_budget.py ratchet --base "${MERGE_BASE}"
+      # A change to src/, catalog/, contracts/ or semantic/ adds or changes a changelog.d/ fragment, CHANGELOG.md is
+      # never edited by hand, and every fragment parses (scripts/changelog.py). The merge base is empty on main,
+      # the merge queue and nightly, and then the script checks nothing; no step `if:`, so the required Checks job
+      # gains no condition.
+      - name: Changelog fragment
+        env:
+          MERGE_BASE: ${{ needs.changes.outputs.merge_base }}
+        run: python3 scripts/changelog.py check --base "${MERGE_BASE}"
       # docs/helpers.md, the template's skills, the plugin and the tool lists (make docs), and the dbt staging
       # models (make contracts), must be exactly what their generators write; an uncommitted output is drift too.
       - name: Generated files are current

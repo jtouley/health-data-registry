@@ -107,7 +107,7 @@ ignore = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src", "eval", "tools", "scripts/branch_hygiene.py"]
+files = ["src", "eval", "tools", "scripts/branch_hygiene.py", "scripts/changelog.py"]
 exclude = ["^eval/sealed/"]
 strict = true
 ignore_missing_imports = true

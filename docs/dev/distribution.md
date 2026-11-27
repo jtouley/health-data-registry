@@ -16,7 +16,10 @@ PyPI is the only place the server's code is published. Every other channel is a 
 
 Versions move together: `pyproject.toml`, `npm/package.json`, `packaging/server.json` (top level and each
 package) and `packaging/mcpb/manifest.json`. `npm test` and the `test` job of `npm-publish.yml` fail when they
-drift. Bump all four in the same PR as the CHANGELOG section.
+drift. Bump all four in the release PR, which also writes the CHANGELOG section:
+`make changelog VERSION=X.Y.Z` folds every `changelog.d/` fragment, and anything still under `## [Unreleased]`,
+into a new `## [X.Y.Z] - <date>` section and deletes the fragments ([Changelog fragments](README.md#changelog-fragments)).
+`release.yml` takes that section as the release notes and fails without it.
 
 ### The launcher (`npm/lib/launcher.js`)
 
