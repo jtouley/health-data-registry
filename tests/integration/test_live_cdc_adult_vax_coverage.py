@@ -74,15 +74,34 @@ def test_the_grain_is_unique(live):
 
 
 def test_codebook_facts_hold_on_the_slice(live):
+    """Facts the column descriptions state: the estimate is a percent, and every number has its 95% interval."""
     _cat, con, _sem, rows, _ = live
     codes = _codes(con)
     for r in rows:
         v = r.get("coverage_estimate")
         if v in codes or v in (None, ""):
-            assert not r.get("_95_ci"), r
             continue
         assert 0 <= float(v) <= 100, r
         assert r.get("_95_ci"), r
+
+
+def test_observed_no_symbol_has_an_interval_on_the_slice(live):
+    """An observation from 2026-11-25, not a publisher statement: a symbol comes without an interval."""
+    _cat, con, _sem, rows, _ = live
+    codes = _codes(con)
+    for r in rows:
+        if r.get("coverage_estimate") in codes or r.get("coverage_estimate") in (None, ""):
+            assert not r.get("_95_ci"), r
+
+
+def test_no_row_leaves_out_the_estimate_or_the_dose(live):
+    """The whole table: estimate_as_published is required (a row without it refuses the load), and the series
+    match dose '' exactly (open question 'Dose'), so neither field may be left out."""
+    cat, _con, _sem, _rows, _ = live
+    for field in ("coverage_estimate", "dose"):
+        query = {"$query": f"SELECT count(*) AS n WHERE {field} IS NULL"}
+        (got,) = _live.get_json(cat, _live.with_query(cat["source"]["api_url"], query))
+        assert int(got.get("n", 0)) == 0, (field, got)
 
 
 def test_latest_michigan_pneumococcal_two_ways(live):

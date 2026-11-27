@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import pytest
 
 from health_data_registry import tools
@@ -131,7 +132,7 @@ def test_a_symbol_is_kept_as_published(real: tuple[Registry, Engine, Path, Any])
 
 def test_an_undeclared_symbol_refuses_the_load(tmp_path: Path) -> None:
     """Fail closed (#188): a symbol the contract doesn't declare is never guessed at or read as a number."""
-    with pytest.raises(Exception, match="(?i)convert|N/A"):
+    with pytest.raises(duckdb.ConversionException, match=r"'N/A' to DOUBLE"):
         _build(tmp_path, [*RECORDS, rec("Tetanus", "Ohio", "2022", "N/A", dose="Tdap", age=">=18 Years")])
 
 
@@ -149,22 +150,44 @@ def test_every_rule_passes_on_publisher_shaped_rows(real: tuple[Registry, Engine
     assert m.quality["rule_errors"] == []
 
 
-def test_each_rule_fires_on_the_case_it_is_written_for(tmp_path: Path) -> None:
-    bad = [
-        *RECORDS,
-        rec("Influenza", "Ohio", "2022", "40.0"),
-        {**rec("Pneumococcal", "Ohio", "2021-2022", "40.0"), "geography_type": "Tribal"},
-        {k: v for k, v in rec("Pneumococcal", "Ohio", "2021", "41.0").items() if k != "_95_ci"},
-    ]
-    _, _, _, m = _build(tmp_path, bad)
+def _no_dose(r: dict[str, str]) -> dict[str, str]:
+    return {k: v for k, v in r.items() if k != "dose"}
+
+
+def _no_interval(r: dict[str, str]) -> dict[str, str]:
+    return {k: v for k, v in r.items() if k != "_95_ci"}
+
+
+@pytest.mark.parametrize(
+    ("rule", "row"),
+    [
+        ("vaccine_labels", rec("Influenza", "Ohio", "2021", "40.0")),
+        ("geography_types", {**rec("Pneumococcal", "Ohio", "2021", "40.0"), "geography_type": "Tribal"}),
+        ("survey_year_is_a_year", rec("Pneumococcal", "Ohio", "2021-2022", "40.0")),
+        ("interval_with_every_number", _no_interval(rec("Pneumococcal", "Ohio", "2021", "41.0"))),
+        ("interval_with_every_number", {**rec("Pneumococcal", "Ohio", "2021", "NR"), "_95_ci": "1.0 to 2.0"}),
+        ("dose_is_never_left_out", _no_dose(rec("Pneumococcal", "Ohio", "2021", "41.0"))),
+        ("dose_only_for_tetanus", rec("Pneumococcal", "Ohio", "2021", "41.0", dose="Tdap")),
+    ],
+)
+def test_each_rule_fires_on_the_case_it_is_written_for(
+    tmp_path: Path, rule: str, row: dict[str, str]
+) -> None:
+    """One bad row per case: its own rule warns, and every other check still passes."""
+    _, _, _, m = _build(tmp_path, [*RECORDS, row])
     status = {r["test"]: r["status"] for r in m.quality["results"]}
-    for rule in ("vaccine_labels", "geography_types", "survey_year_is_a_year", "interval_with_every_number"):
-        assert status[rule] == "warn", rule
+    assert status[rule] == "warn", status
+    assert {t for t, st in status.items() if st != "pass"} == {rule}, status
 
 
 def test_a_percent_over_100_blocks_the_copy(tmp_path: Path) -> None:
     with pytest.raises(QualityBlocked, match="coverage_is_a_percent"):
         _build(tmp_path, [*RECORDS, rec("Pneumococcal", "Ohio", "2021", "100.5")])
+
+
+def test_a_negative_percent_blocks_the_copy(tmp_path: Path) -> None:
+    with pytest.raises(QualityBlocked, match="coverage_is_a_percent"):
+        _build(tmp_path, [*RECORDS, rec("Pneumococcal", "Ohio", "2021", "-0.5")])
 
 
 def test_a_county_question_is_answered_by_place_code_only() -> None:

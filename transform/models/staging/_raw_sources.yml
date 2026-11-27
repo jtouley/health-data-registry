@@ -42,7 +42,8 @@ sources:
         Empty where CDC published a symbol instead of a number; the symbol is kept in estimate_as_published.); estimate_as_published
         (The estimate exactly as CDC published it, number or symbol: ''*'' (CDC''s description: data not collected,
         its text cut short) and ''NR'' (published, not defined). Kept so a symbol is never lost when coverage_estimate
-        is empty.)'
+        is empty. Required: a row with no estimate at all refuses the load (none on 2026-11-25, checked by the live
+        test); an empty text ('''') is kept as sent.)'
     - name: dimension
       data_type: varchar
       description: 'Publisher field dimension, as text; read into dimension (The group within that age group, as
@@ -58,8 +59,8 @@ sources:
       data_type: varchar
       description: 'Publisher field dose, as text; read into dose (The kind of tetanus shot counted, as published:
         ''Td or Tdap'' or ''Tdap'' (column description: ''The type of Tetanus shot''); an empty text ('''') for
-        pneumococcal and zoster rows, as Socrata serves it (a row that left the field out would read as empty, open
-        question ''Dose'').)'
+        pneumococcal and zoster rows, as Socrata serves it (a row that left the field out would read as NULL, not
+        '''', open question ''Dose'').)'
     - name: fips
       data_type: varchar
       description: 'Publisher field fips, as text; read into fips (The place''s code, as published: two digits for

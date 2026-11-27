@@ -42,7 +42,9 @@ models:
     - type: not_null
   - name: dose
     data_type: varchar
-    description: Td or Tdap, or Tdap, for tetanus; an empty text for the other vaccines.
+    description: 'The kind of tetanus shot counted: ''Td or Tdap'' or ''Tdap'' for tetanus; an empty text ('''')
+      for the other vaccines. Nullable like the source contract: a row that left the field out reads as NULL, which
+      the source''s warn rule dose_is_never_left_out reports (open question ''Dose'').'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -50,11 +52,15 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
+    data_tests:
+    - not_all_empty:
+        name: fct_cdc_adult_vax_coverage_dose_filled
+        config:
+          severity: warn
   - name: place_code
     data_type: varchar
-    description: The place's code (state or county FIPS, or CDC's code for the nation and regions), as published.
+    description: 'The place''s code, as published: two digits for a state, five for a county, and CDC''s own codes
+      for the nation (''100''), HHS regions (''101'' to ''110'') and local areas.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -90,7 +96,8 @@ models:
     - type: not_null
   - name: survey_year
     data_type: varchar
-    description: The survey year, as published.
+    description: The survey year, as published, a four-digit year (a warn rule in the source contract reports any
+      other form).
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -102,7 +109,9 @@ models:
     - type: not_null
   - name: age_group
     data_type: varchar
-    description: The age group, as published in dimension_type.
+    description: The age group the estimate is for, as published ('>=18 Years', '>=65 Years', '18-64 Years at Increased
+      Risk', '>=60 Years' and others). CDC's column description calls this field the sociodemographic category (Age
+      or Race/ethnicity), but the published values are age groups (open question 'Dimensions' in the source contract).
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -126,7 +135,8 @@ models:
     - type: not_null
   - name: estimate_as_published
     data_type: varchar
-    description: The estimate exactly as CDC published it, number or symbol.
+    description: The estimate exactly as CDC published it, number or symbol ('*' or 'NR'; what each means is in
+      the source contract's missingCodes and open question 'Estimate codes').
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -153,12 +163,13 @@ models:
           severity: warn
   - name: coverage_percent
     data_type: double
-    description: Percent of adults vaccinated, as published; empty where CDC published a symbol, never zero.
+    description: Percent of adults vaccinated, as published; empty where CDC published a symbol instead of a number
+      (a symbol is never stored as zero; a published 0 stays 0).
     meta:
       logical_type: number
       physical_type: DOUBLE
       source_field: coverage_percent
-      unit: null
+      unit: '%'
       codes: []
       missing_codes: []
     data_tests:
@@ -173,7 +184,7 @@ models:
       logical_type: integer
       physical_type: BIGINT
       source_field: sample_size
-      unit: null
+      unit: respondents
       codes: []
       missing_codes: []
     data_tests:
@@ -183,8 +194,9 @@ models:
           severity: warn
   - name: value_status
     data_type: varchar
-    description: 'Why coverage_percent is or isn''t there: ''published'', or ''not a number: CDC published'' and
-      the symbol it published (''*'' or ''NR''). It qualifies the row and removes nothing.'
+    description: 'Why coverage_percent is or isn''t there: ''published''; ''not a number: CDC published'' and the
+      symbol it published, trimmed (''*'' or ''NR''); or ''not a number: CDC published nothing'' where CDC sent
+      an empty text. It qualifies the row and removes nothing; a warn test lists any other value.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -209,8 +221,8 @@ models:
     - type: not_null
   - name: _raw_sha256
     data_type: varchar
-    description: 'The sha256 fingerprint of each raw file the row was parsed from: the exact bytes the publisher
-      sent.'
+    description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+      the exact bytes the publisher sent.'
     meta:
       logical_type: string
       physical_type: VARCHAR

@@ -68,11 +68,26 @@ schema:
         required: false
         primaryKey: true
         primaryKeyPosition: 2
-        description: "The kind of tetanus shot counted, as published: 'Td or Tdap' or 'Tdap' (column description: 'The type of Tetanus shot'); an empty text ('') for pneumococcal and zoster rows, as Socrata serves it (a row that left the field out would read as empty, open question 'Dose')."
+        description: "The kind of tetanus shot counted, as published: 'Td or Tdap' or 'Tdap' (column description: 'The type of Tetanus shot'); an empty text ('') for pneumococcal and zoster rows, as Socrata serves it (a row that left the field out would read as NULL, not '', open question 'Dose')."
         examples: ["", "Td or Tdap", "Tdap"]
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: dose}
+        quality:
+          - id: dose_is_never_left_out
+            dimension: completeness
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE dose IS NULL"
+            mustBe: 0
+            description: "Watches open question 'Dose', not a codebook fact: on 2026-11-25 every row carried dose, '' outside tetanus. The series match dose '' exactly, so a row that left the field out (NULL) would drop out of every series without this warning; the fill-rate check can't see it while tetanus rows fill the column."
+          - id: dose_only_for_tetanus
+            dimension: consistency
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE vaccine <> 'Tetanus' AND coalesce(trim(dose), '') <> ''"
+            mustBe: 0
+            description: "The column is the type of tetanus shot (column description: 'The type of Tetanus shot'), so a pneumococcal or zoster row with a dose is a change to review: the series for those vaccines read dose ''."
       - name: geography_type
         physicalType: VARCHAR
         logicalType: string
@@ -173,7 +188,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "The estimate exactly as CDC published it, number or symbol: '*' (CDC's description: data not collected, its text cut short) and 'NR' (published, not defined). Kept so a symbol is never lost when coverage_estimate is empty."
+        description: "The estimate exactly as CDC published it, number or symbol: '*' (CDC's description: data not collected, its text cut short) and 'NR' (published, not defined). Kept so a symbol is never lost when coverage_estimate is empty. Required: a row with no estimate at all refuses the load (none on 2026-11-25, checked by the live test); an empty text ('') is kept as sent."
         examples: ["65.6", "NR", "*"]
         customProperties:
           - {property: role, value: attribute}
@@ -194,7 +209,7 @@ schema:
             type: sql
             query: "SELECT COUNT(*) FROM {object} WHERE (coverage_estimate IS NULL) <> (nullif(trim(ci_95), '') IS NULL)"
             mustBe: 0
-            description: "The column is the 95% confidence interval of the estimate (column description), so every numeric estimate has one, and a symbol has none (as on 2026-11-25)."
+            description: "The column is the 95% confidence interval of the estimate (column description), so every numeric estimate has one, and a symbol has none. The first half follows from the column description; the second is only what the table showed on 2026-11-25, an observation, not a publisher statement."
       - name: population_sample_size
         physicalType: BIGINT
         logicalType: integer
@@ -215,7 +230,7 @@ customProperties:
   - {property: unreliableRule, value: {kind: none, description: "None stated in the metadata. Some estimates are published as a symbol ('*' or 'NR') instead of a number; each is kept as published and read as no value, never as zero."}}
   - property: openQuestions
     value:
-      - "Dose: pneumococcal and zoster rows carry an empty text ('') in dose, which the series match exactly. If CDC ever leaves the field out instead, those rows would read as NULL and the series would miss them; the fill-rate check and the live test watch for it."
+      - "Dose: pneumococcal and zoster rows carry an empty text ('') in dose, which the series match exactly. If CDC ever leaves the field out instead, those rows would read as NULL and the series would miss them. The warn rule dose_is_never_left_out reports it on every load and live read, and the live test checks the whole table; the fact (fct_cdc_adult_vax_coverage) keeps dose nullable like this contract, so such a row is reported, not a failed build."
       - "Estimate codes: '*' is defined only by a column description that stops mid-sentence ('These symbols indicate if data were not collected,'); NR (2,766 rows on 2026-11-25) is not defined. What do they mean (not reported, too few respondents)? Until answered each is stored as no value, with the symbol kept in estimate_as_published; a new symbol refuses the load (#188)."
       - "Dimensions: CDC describes dimension_type as the sociodemographic category ('Age' or 'Race/ethnicity') and dimension as the group, but dimension_type holds age groups and dimension holds 'Overall' or a race and Hispanic origin group. Kept as published; the series read dimension 'Overall' within one age group."
       - "Interval: ci_95 packs the lower and upper bounds into one text ('59.5 to 71.7'). It is kept as text and returned with query_sql; showing it as lower and upper bounds waits for a declared staging extension (#172)."

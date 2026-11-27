@@ -44,7 +44,7 @@ models:
     data_type: varchar
     description: 'The kind of tetanus shot counted, as published: ''Td or Tdap'' or ''Tdap'' (column description:
       ''The type of Tetanus shot''); an empty text ('''') for pneumococcal and zoster rows, as Socrata serves it
-      (a row that left the field out would read as empty, open question ''Dose'').'
+      (a row that left the field out would read as NULL, not '''', open question ''Dose'').'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -160,7 +160,8 @@ models:
     data_type: varchar
     description: 'The estimate exactly as CDC published it, number or symbol: ''*'' (CDC''s description: data not
       collected, its text cut short) and ''NR'' (published, not defined). Kept so a symbol is never lost when coverage_estimate
-      is empty.'
+      is empty. Required: a row with no estimate at all refuses the load (none on 2026-11-25, checked by the live
+      test); an empty text ('''') is kept as sent.'
     meta:
       logical_type: string
       physical_type: VARCHAR

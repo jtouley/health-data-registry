@@ -44,6 +44,35 @@ models:
           checks: Every vaccine label published on 2026-11-25. A new label is a new series to catalogue, and it
             also shows in the flag_unmapped_labels review queue; it is a warning so that queue still builds.
   - odcs_check:
+      name: cdc_adult_vax_coverage_dose_is_never_left_out
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE dose IS NULL
+        condition: measured = 0
+      config:
+        severity: warn
+        meta:
+          dimension: completeness
+          rule: dose_is_never_left_out
+          contract: contracts/cdc_adult_vax_coverage.odcs.yaml
+          checks: 'Watches open question ''Dose'', not a codebook fact: on 2026-11-25 every row carried dose, ''''
+            outside tetanus. The series match dose '''' exactly, so a row that left the field out (NULL) would drop
+            out of every series without this warning; the fill-rate check can''t see it while tetanus rows fill
+            the column.'
+  - odcs_check:
+      name: cdc_adult_vax_coverage_dose_only_for_tetanus
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE vaccine <> 'Tetanus' AND coalesce(trim(dose), '') <> ''
+        condition: measured = 0
+      config:
+        severity: warn
+        meta:
+          dimension: consistency
+          rule: dose_only_for_tetanus
+          contract: contracts/cdc_adult_vax_coverage.odcs.yaml
+          checks: 'The column is the type of tetanus shot (column description: ''The type of Tetanus shot''), so
+            a pneumococcal or zoster row with a dose is a change to review: the series for those vaccines read dose
+            ''''.'
+  - odcs_check:
       name: cdc_adult_vax_coverage_geography_types
       arguments:
         measure_sql: SELECT CASE WHEN count(*) FILTER (WHERE NOT ("geography_type" IS NULL OR trim(CAST("geography_type"
@@ -98,7 +127,8 @@ models:
           rule: interval_with_every_number
           contract: contracts/cdc_adult_vax_coverage.odcs.yaml
           checks: The column is the 95% confidence interval of the estimate (column description), so every numeric
-            estimate has one, and a symbol has none (as on 2026-11-25).
+            estimate has one, and a symbol has none. The first half follows from the column description; the second
+            is only what the table showed on 2026-11-25, an observation, not a publisher statement.
   - odcs_check:
       name: cdc_adult_vax_coverage_fill_rate_dose
       arguments:
@@ -113,7 +143,8 @@ models:
           contract: contracts/cdc_adult_vax_coverage.odcs.yaml
           checks: 'No row has a value for the kind of tetanus shot counted, as published: ''Td or Tdap'' or ''Tdap''
             (column description: ''The type of Tetanus shot''); an empty text ('''') for pneumococcal and zoster
-            rows, as Socrata serves it (a row that left the field out would read as empty, open question ''Dose'').'
+            rows, as Socrata serves it (a row that left the field out would read as NULL, not '''', open question
+            ''Dose'').'
   - odcs_check:
       name: cdc_adult_vax_coverage_fill_rate_coverage_estimate
       arguments:
@@ -172,7 +203,7 @@ models:
     data_type: varchar
     description: 'The kind of tetanus shot counted, as published: ''Td or Tdap'' or ''Tdap'' (column description:
       ''The type of Tetanus shot''); an empty text ('''') for pneumococcal and zoster rows, as Socrata serves it
-      (a row that left the field out would read as empty, open question ''Dose'').'
+      (a row that left the field out would read as NULL, not '''', open question ''Dose'').'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -266,7 +297,8 @@ models:
     data_type: varchar
     description: 'The estimate exactly as CDC published it, number or symbol: ''*'' (CDC''s description: data not
       collected, its text cut short) and ''NR'' (published, not defined). Kept so a symbol is never lost when coverage_estimate
-      is empty.'
+      is empty. Required: a row with no estimate at all refuses the load (none on 2026-11-25, checked by the live
+      test); an empty text ('''') is kept as sent.'
     meta:
       logical_type: string
       physical_type: VARCHAR

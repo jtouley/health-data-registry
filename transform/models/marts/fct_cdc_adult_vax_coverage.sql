@@ -1,7 +1,8 @@
 -- Fact: Vaccination coverage among adults, BRFSS (contracts/models/fct_cdc_adult_vax_coverage.odcs.yaml).
 -- Every row of the intermediate model, none removed and no value changed; the estimate's published text and the
 -- interval are carried as sent, and value_status names the symbol CDC published instead of a number, without
--- interpreting it.
+-- interpreting it. The symbol is named trimmed, and an empty text reads 'nothing', so a status never ends in a blank.
+-- A business rule in the mart because intermediate models are generated (open question in the fact's contract).
 select
     vaccine,
     dose,
@@ -17,7 +18,7 @@ select
     population_sample_size as sample_size,
     case
         when coverage_estimate is not null then 'published'
-        else 'not a number: CDC published ' || coalesce(estimate_as_published, 'nothing')
+        else 'not a number: CDC published ' || coalesce(nullif(trim(estimate_as_published), ''), 'nothing')
     end as value_status,
     _snapshot_id,
     _raw_sha256

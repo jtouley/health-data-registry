@@ -69,7 +69,9 @@ All notable changes to this project are documented here. The format follows
 - Semantic series can list `asked_with` words: a series that names a disease but isn't a measure of it
   (vaccination coverage, a percent of deaths) answers only a question that uses one of them.
 - Mart `fct_cdc_adult_vax_coverage`: every row kept, the published estimate and interval as sent, and a
-  `value_status` that names the symbol CDC published instead of a number.
+  `value_status` that names the symbol CDC published instead of a number (trimmed, or 'nothing' for an empty text).
+  Two warnings watch the `dose` field the series match exactly: a row that leaves it out, and a dose on a
+  non-tetanus row.
 - The crawler factory's core (ADR 0016, step 1 and the types step 2 names). Every source is read by one generic
   adapter type chosen in its catalog entry (`type:`; the older `portal:` is read for one more release and `validate`
   warns about it), configured by that type's strict block, plus named extensions it opts in to. New types:

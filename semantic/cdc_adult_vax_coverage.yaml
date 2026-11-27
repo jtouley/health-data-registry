@@ -7,11 +7,11 @@ dataset: cdc_adult_vax_coverage
 version: 0.1.0
 dimensions:
   - {name: vaccine, column: vaccine, type: categorical, non_additive: true, non_additive_reason: "each vaccine's coverage is its own percent", description: "Pneumococcal, Tetanus or Zoster (Shingles)."}
-  - {name: dose, column: dose, type: categorical, non_additive: true, non_additive_reason: "Tdap is part of Td or Tdap", description: "Td or Tdap, or Tdap, for tetanus; empty for the other vaccines."}
+  - {name: dose, column: dose, type: categorical, non_additive: true, non_additive_reason: "Tdap is part of Td or Tdap", description: "'Td or Tdap' or 'Tdap' for tetanus; an empty text ('') for the other vaccines."}
   - {name: place_kind, column: geography_type, type: categorical, non_additive: true, non_additive_reason: "the nation, regions, states and counties overlap", description: "HHS Regions/National, States/Local Areas or Counties."}
   - {name: place, column: geography, type: categorical, non_additive: true, non_additive_reason: "the nation, regions, states, local areas and counties overlap", description: "United States, an HHS region, a state or territory, a local area, or a county."}
-  - {name: place_code, column: fips, type: categorical, non_additive: true, non_additive_reason: "the nation, regions, states, local areas and counties overlap", description: "The place's code: a state or county FIPS code, or CDC's code for the nation and HHS regions."}
-  - {name: survey_year, column: year_season, type: time, non_additive: false, description: "Survey year, e.g. 2022."}
+  - {name: place_code, column: fips, type: categorical, non_additive: true, non_additive_reason: "the nation, regions, states, local areas and counties overlap", description: "The place's code: a state or county FIPS code, or CDC's own code for the nation ('100'), HHS regions ('101' to '110') and local areas."}
+  - {name: survey_year, column: year_season, type: time, non_additive: false, description: "The survey year, a four-digit year such as 2022."}
   - {name: age, column: dimension_type, type: categorical, non_additive: true, non_additive_reason: "age groups overlap (65 and older is inside 18 and older)", description: "The age group, such as '>=65 Years'."}
   - {name: group, column: dimension, type: categorical, non_additive: true, non_additive_reason: "Overall sits beside the race and Hispanic origin groups", description: "Overall, or a race and Hispanic origin group."}
 measures:
