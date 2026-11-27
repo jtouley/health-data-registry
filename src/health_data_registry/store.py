@@ -41,7 +41,13 @@ from typing import Any
 
 import duckdb
 
-from health_data_registry.quality import QualityBlocked, QualityReport, blocked_message, expected_ids
+from health_data_registry.quality import (
+    WHOLE_RUN,
+    QualityBlocked,
+    QualityReport,
+    blocked_message,
+    expected_ids,
+)
 from health_data_registry.registry import Dataset
 from health_data_registry.staging import Staged, check_snapshot, stage, write_parquet
 
@@ -225,8 +231,11 @@ def build_snapshot(
         existing = Manifest.read(out / "manifest.json")
         # The stored verdict may be missing (a snapshot from before the rules) or stale (rules edited since):
         # the contract's current rules run again on the kept file, which is never rewritten.
-        _promote(lake, ds, replace(existing, quality=judge_snapshot(out, ds)))
-        return existing
+        # The caller gets that fresh verdict too, so a refresh never reports a stale record (the file on disk keeps
+        # the one written at build time).
+        judged = replace(existing, quality=judge_snapshot(out, ds))
+        _promote(lake, ds, judged)
+        return judged
     tmp = Path(tempfile.mkdtemp(prefix=f".{ds.id}-", dir=lake))
     try:
         sources = sorted({c.source_field for c in ds.contract.columns})
@@ -360,8 +369,8 @@ def judge_snapshot(snapshot: Path, ds: Dataset) -> dict[str, Any]:
             raise FileNotFoundError(f"{db.name} is missing from the snapshot")
         return check_snapshot(str(db), ds.contract, ds.id).as_dict()
     except (OSError, duckdb.Error) as e:
-        error = {"test": "contract-rules", "error": (str(e).splitlines() or [type(e).__name__])[0]}
-        return QualityReport((), (error,)).as_dict()
+        error = {"test": WHOLE_RUN, "error": (str(e).splitlines() or [type(e).__name__])[0]}
+        return QualityReport((), (error,), expected_ids(ds.contract)).as_dict()
 
 
 def _promote(lake: Path, ds: Dataset, manifest: Manifest) -> None:

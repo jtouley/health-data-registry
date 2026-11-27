@@ -1279,9 +1279,9 @@ def list_caveats(
                 [
                     ds.id,
                     "data checks",
-                    "No quality rules declared: the contract sets no checks of its own on these numbers, so only "
-                    "the general checks run (the table has rows; columns are not left empty). Compare with the "
-                    "publisher's page before relying on them.",
+                    "This source's contract sets no checks of its own on these numbers. Only the general checks "
+                    "run: that the table has rows, and a warning when an optional column is empty in every row. "
+                    "Compare with the publisher's page before relying on them.",
                 ]
             )
         if ds.entry.status != "reviewed":

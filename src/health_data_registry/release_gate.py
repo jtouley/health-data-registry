@@ -59,7 +59,9 @@ NOT_EVALUATED = "not evaluated:"  # odcs_check's error for a value rule with not
 RELEASE_TAG = re.compile(r"release-\d{4}-\d{2}-\d{2}(\.[2-9]|\.[1-9]\d+)?")
 
 
-NO_RESULT = "expected by the contracts, no result"  # an expected test missing from the run: not evaluated
+# An expected test missing from the run: not evaluated. Its item carries "reason": "no_result", which reason()
+# reads, so rewording this text never moves a test under another label.
+NO_RESULT = "expected by the contracts, no result"
 
 
 class GateInputMissing(FileNotFoundError):
@@ -171,17 +173,14 @@ class Build:
             )
         if self.rule_errors:
             parts.append(f"{len(self.rule_errors)} check(s) could not run")
-        empty = [f["test"] for f in self.not_evaluated if f.get("error") != NO_RESULT]
+        empty = [f["test"] for f in self.not_evaluated if f.get("reason") != "no_result"]
         if empty:
             parts.append(
                 f"{len(empty)} check(s) could not be judged, having no values to check ({', '.join(empty)})"
             )
-        absent = [f["test"] for f in self.not_evaluated if f.get("error") == NO_RESULT]
+        absent = [f["test"] for f in self.not_evaluated if f.get("reason") == "no_result"]
         if absent:
-            parts.append(
-                f"{len(absent)} check(s) the contracts expect returned no result, so they were never judged "
-                f"({', '.join(absent)})"
-            )
+            parts.append(f"{len(absent)} check(s) the contracts expect have no result ({', '.join(absent)})")
         if self.data_failures:
             names = ", ".join(f["test"] for f in self.data_failures)
             parts.append(f"{len(self.data_failures)} error-severity check(s) failed ({names})")
@@ -341,7 +340,7 @@ def _check_expected(
     for name, severity in sorted(expected.tests.items()):
         got = status.get(name)
         if got is None:
-            unjudged.append({"test": name, "type": "test", "error": NO_RESULT})
+            unjudged.append({"test": name, "type": "test", "error": NO_RESULT, "reason": "no_result"})
         elif got == "warn" and severity != "warn":  # the run downgraded an error-severity rule
             failures.append(
                 {"test": name, "type": "test", "severity": severity, "dimension": None, "failures": None}

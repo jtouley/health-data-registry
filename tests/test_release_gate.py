@@ -94,11 +94,19 @@ def test_every_test_the_contracts_expect_must_run(tmp_path: Path) -> None:
         not missing.servable
         and missing.rule_errors == []
         and missing.not_evaluated
-        == [{"test": "fill_a", "type": "test", "error": "expected by the contracts, no result"}]
+        == [
+            {
+                "test": "fill_a",
+                "type": "test",
+                "error": "expected by the contracts, no result",
+                "reason": "no_result",
+            }
+        ]
     )
-    assert missing.reason() == (
-        "1 check(s) the contracts expect returned no result, so they were never judged (fill_a)"
-    )
+    # The label comes from the structured reason, never the error text, so rewording the text moves nothing.
+    reworded = replace(missing, not_evaluated=[{**missing.not_evaluated[0], "error": "x"}])
+    assert reworded.reason() == missing.reason()
+    assert missing.reason() == ("1 check(s) the contracts expect have no result (fill_a)")
     no_model = rg.read_build(target(tmp_path, GOOD[1:], invocation="no-model"), expected=TOY)
     assert no_model.model_errors == [
         {"model": "stg_a", "type": "model", "error": "expected by the contracts, not built"}

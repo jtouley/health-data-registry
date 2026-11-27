@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import duckdb
 import pytest
@@ -307,7 +307,7 @@ def test_a_value_rule_with_nothing_to_judge_is_not_evaluated_and_blocks() -> Non
         "A data check on this source could not be judged: Codes from the codebook (no row has a value in that "
         "column, so there was nothing to check). Compare with the publisher's page before relying on these numbers."
     ]
-    assert q.blocked_message("x", report.as_dict()) == (
+    assert q.blocked_message("x", report.as_dict(), expected=()) == (
         "x: the error-severity check flag_codes could not be judged (no values to check), so this copy is not "
         "served or published and the copy before it stays. Compare the data with the publisher's page, then "
         "refresh, or have a maintainer fix the contract."
@@ -411,7 +411,7 @@ def test_a_failed_error_rule_blocks_latest_and_publishing(tmp_path: Path) -> Non
         export_public(load_registry(tmp_path / "reg"), lake, str(tmp_path / "out"), run_date="2026-11-25")
 
     record = {"tool": "contract-rules", "results": [], "rule_errors": [{"test": "a"}, {"test": "b"}]}
-    assert q.blocked_message("x", record) == (
+    assert q.blocked_message("x", record, expected=()) == (
         "x: the checks a, b could not run, so this copy is not served or published and the copy before it stays. "
         "Compare the data with the publisher's page, then refresh, or have a maintainer fix the contract."
     )
@@ -420,10 +420,13 @@ def test_a_failed_error_rule_blocks_latest_and_publishing(tmp_path: Path) -> Non
         "x: no data checks have run on this copy, so it is not served or published and the copy before it "
         "stays. Refresh it, or have a maintainer check the contract."
     )
-    assert q.blocked_message("x", None) == unchecked
-    assert q.blocked_message("x", {}) == unchecked
-    assert q.blocked_message("x", {"results": [], "rule_errors": []}) == unchecked
-    assert q.blocked_message("x", {"tool": "contract-rules", "results": [], "rule_errors": []}) == unchecked
+    assert q.blocked_message("x", None, expected=()) == unchecked
+    assert q.blocked_message("x", {}, expected=()) == unchecked
+    assert q.blocked_message("x", {"results": [], "rule_errors": []}, expected=()) == unchecked
+    assert (
+        q.blocked_message("x", {"tool": "contract-rules", "results": [], "rule_errors": []}, expected=())
+        == unchecked
+    )
 
 
 def test_a_kept_snapshot_is_judged_by_the_current_rules_not_its_stored_record(tmp_path: Path) -> None:
@@ -462,11 +465,16 @@ def test_a_kept_snapshot_is_judged_by_the_current_rules_not_its_stored_record(tm
     assert judged["rule_errors"] == [
         {"test": "contract-rules", "error": "data.duckdb is missing from the snapshot"}
     ]
-    assert q.blocked_message("toy_cases", judged) == (
-        "toy_cases: the check contract-rules could not run, so this copy is not served or published and the copy "
-        "before it stays. Compare the data with the publisher's page, then refresh, or have a maintainer fix the "
-        "contract."
+    assert judged["expected_checks"] == list(q.expected_ids(strict.get("toy_cases").contract))
+    # One cause, one label: the whole-run error stands for every check, which are not also listed as missing.
+    whole = (
+        "toy_cases: the data checks could not run at all (data.duckdb is missing from the snapshot), so this copy "
+        "is not served or published and the copy before it stays. Compare the data with the publisher's page, "
+        "then refresh, or have a maintainer fix the contract."
     )
+    expected = q.expected_ids(strict.get("toy_cases").contract)
+    assert q.blocked_message("toy_cases", judged, expected=expected) == whole
+    assert q.blocked_message("toy_cases", {**judged, "expected_checks": []}, expected=expected) == whole
 
 
 def test_a_warn_rule_does_not_block_latest(tmp_path: Path) -> None:
@@ -524,7 +532,7 @@ def _drop(test: str) -> Any:
         return q.QualityReport(
             tuple(r for r in real.results if r["test"] != test),
             real.rule_errors,
-            tuple(i for i in real.expected if i != test),
+            tuple(i for i in real.expected_checks if i != test),
         )
 
     return probe
@@ -537,8 +545,8 @@ def _drop(test: str) -> Any:
         (lambda *_: q.QualityReport((), (), ("has_rows",)), NO_CHECKS_RAN),
         (
             _drop("has_rows"),
-            "toy_cases: the check has_rows returned no result (never judged), so this copy is not served or "
-            "published and the copy before it stays. Compare the data with the publisher's page, then refresh, or "
+            "toy_cases: the check has_rows has no result (this copy was checked against an older contract), so "
+            "this copy is not served or published and the copy before it stays. Compare the data with the publisher's page, then refresh, or "
             "have a maintainer fix the contract.",
         ),
     ],
@@ -569,16 +577,20 @@ def test_checks_with_no_result_block_latest_and_publishing(
         build_snapshot(lake, ds, [raw_fetch("https://data.cdc.gov/resource/a.json", RECORDS)], [page])
     assert latest.read_text() == good.snapshot_id + "\n"
     # export-public re-judges LATEST and refuses it too.
-    with pytest.raises(PublishCheckFailed, match=r"toy_cases: .*(no data checks have run|never judged)"):
+    with pytest.raises(PublishCheckFailed, match=r"toy_cases: .*(no data checks have run|has no result)"):
         export_public(reg, lake, str(tmp_path / "out"), run_date="2026-11-25")
 
 
 def test_a_record_cannot_drop_a_check_the_contract_expects() -> None:
     record = {"tool": "contract-rules", "results": [{"test": "a", "status": "pass"}], "rule_errors": [],
-              "expected": ["a"]}  # fmt: skip
-    assert q.blocked_message("x", record) is None
-    assert "the check b returned no result" in str(q.blocked_message("x", record, expected=("a", "b")))
-    assert "the check b returned no result" in str(q.sample_blocked_message("x", record, expected=("a", "b")))
+              "expected_checks": ["a"]}  # fmt: skip
+    assert q.blocked_message("x", record, expected=()) is None
+    stale = "the check b has no result (this copy was checked against an older contract)"
+    assert stale in str(q.blocked_message("x", record, expected=("a", "b")))
+    assert stale in str(q.sample_blocked_message("x", record, expected=("a", "b")))
+    # A record from before expected_checks can't say which checks it was run against: the check has no result.
+    old = {k: v for k, v in record.items() if k != "expected_checks"}
+    assert "the check b has no result, so" in str(q.blocked_message("x", old, expected=("a", "b")))
     # Every check reported, as a result or a rule error: nothing is missing.
     assert not q.QualityReport(
         ({"test": "a", "status": "pass"},), ({"test": "b", "error": "x"},), ("a", "b")
@@ -599,14 +611,15 @@ def test_a_rule_error_a_data_failure_and_a_missing_result_are_named_apart() -> N
             }
         ],
         "rule_errors": [{"test": "b", "error": "column gone"}],
-        "expected": ["a", "b", "c"],
+        "expected_checks": ["a", "b", "c"],
     }
-    assert q.blocked_message("x", record) == (
-        "x: the error-severity check a failed and the check b could not run and the check c returned no result "
-        "(never judged), so this copy is not served or published and the copy before it stays. Compare the data "
-        "with the publisher's page, then refresh, or have a maintainer fix the contract."
+    assert q.blocked_message("x", record, expected=()) == (
+        "x: the error-severity check a failed and the check b could not run and the check c has no result, so "
+        "this copy is not served or published and the copy before it stays. Compare the data with the "
+        "publisher's page, then refresh, or have a maintainer fix the contract."
     )
-    report = q._report(record)
+    report = q._report(record, ())
+    assert report is not None
     assert report.never_ran == ("c",) and [e["test"] for e in report.rule_errors] == ["b"]
     assert [r["test"] for r in report.results if r["status"] == "fail"] == ["a"]
     # A rule error is never a caveat about the numbers; a data failure is.
@@ -626,17 +639,87 @@ def test_a_contract_with_no_rules_of_its_own_is_served_with_a_caveat(tmp_path: P
     m = build_snapshot(lake, ds, [raw_fetch("https://data.cdc.gov/resource/a.json", RECORDS)], [page])
     assert latest_snapshot(lake, "toy_cases") is not None  # not blocked
     assert (
-        m.quality["expected"]
+        m.quality["expected_checks"]
         == list(q.expected_ids(ds.contract))
         == [r["test"] for r in m.quality["results"]]
     )
     assert q.blocked_message("toy_cases", m.quality, expected=q.expected_ids(ds.contract)) is None
     rows = tools.list_caveats(reg, source_id="toy_cases", fmt="json")["rows"]
     assert [r[1:] for r in rows if r[1] == "data checks"] == [
-        ["data checks", "No quality rules declared: the contract sets no checks of its own on these numbers, so "
-         "only the general checks run (the table has rows; columns are not left empty). Compare with the "
-         "publisher's page before relying on them."]
+        ["data checks", "This source's contract sets no checks of its own on these numbers. Only the general "
+         "checks run: that the table has rows, and a warning when an optional column is empty in every row. "
+         "Compare with the publisher's page before relying on them."]
     ]  # fmt: skip
     ruled = load_registry(write_registry(tmp_path / "ruled", contract=RULED))
     rows = tools.list_caveats(ruled, source_id="toy_cases", fmt="json")["rows"]
     assert not [r for r in rows if r[1] == "data checks"]
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["skipped", "error", None, "PASS", "warn"],  # "warn" on an error-severity rule is a status no run writes
+)
+def test_a_result_with_a_status_no_run_writes_is_never_a_pass(status: Any) -> None:
+    """The statuses that count are an allowlist: anything else is not evaluated, and that blocks (sharp edges)."""
+    exp = ("has_rows", "a")
+    record = {"tool": "contract-rules", "rule_errors": [], "expected_checks": list(exp),
+              "results": [{"test": "has_rows", "status": "pass", "severity": "error"},
+                          {"test": "a", "status": status, "severity": "error"}]}  # fmt: skip
+    assert q.blocked_message("x", record, expected=exp) == (
+        "x: the check a has no result, so this copy is not served or published and the copy before it stays. "
+        "Compare the data with the publisher's page, then refresh, or have a maintainer fix the contract."
+    )
+    assert q.unchecked_message("x", record, expected=exp) is not None
+    assert q._report(record, exp).caveats() == []  # it blocks; it is not a caveat about the numbers
+    # A warn-severity rule that measured outside its bound is a warning, which never blocks.
+    record["results"][1] = {"test": "a", "status": "warn", "severity": "warn"}
+    assert q.blocked_message("x", record, expected=exp) is None
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"expected_checks": "has_rows"},
+        {"results": {"test": "has_rows", "status": "pass"}},
+        {"rule_errors": "boom"},
+        {"results": ["has_rows"]},
+    ],
+    ids=["expected-a-string", "results-a-mapping", "errors-a-string", "a-result-not-a-mapping"],
+)
+def test_a_malformed_record_is_read_as_no_checks(bad: dict[str, Any]) -> None:
+    record = {"tool": "contract-rules", "results": [{"test": "has_rows", "status": "pass"}], "rule_errors": [],
+              **bad}  # fmt: skip
+    assert q.blocked_message("x", record, expected=()) == (
+        "x: no data checks have run on this copy, so it is not served or published and the copy before it "
+        "stays. Refresh it, or have a maintainer check the contract."
+    )
+    assert "no data checks have run" in str(q.sample_blocked_message("x", record, expected=()))
+    assert q.unchecked_message("x", record, expected=()) is not None
+
+
+def test_the_contracts_checks_must_be_passed_explicitly() -> None:
+    """Failing closed never hangs on an optional argument: the caller names the checks, or () on purpose."""
+    for judge in (q.blocked_message, q.sample_blocked_message, q.unchecked_message):
+        with pytest.raises(TypeError):
+            cast(Any, judge)("x", {})
+
+
+def test_a_rerun_of_a_sample_reports_the_current_rules_not_the_stored_record(tmp_path: Path) -> None:
+    """The same bytes refreshed again after a rule was added: the returned manifest carries the fresh verdict,
+    so the refresh reports what the rules found now, never a check missing from the stored record."""
+    page = tmp_path / "p.ndjson"
+    write_ndjson(page, RECORDS)
+    lake = tmp_path / "lake"
+    lake.mkdir()
+    fetch = raw_fetch("https://data.cdc.gov/resource/a.json", RECORDS)
+    loose = load_registry(write_registry(tmp_path / "loose")).get("toy_cases")
+    first = build_snapshot(lake, loose, [fetch], [page], partial=True)
+    strict = load_registry(write_registry(tmp_path / "reg", contract=RULED)).get("toy_cases")
+    again = build_snapshot(lake, strict, [fetch], [page], partial=True)
+    assert again.snapshot_id == first.snapshot_id
+    assert again.quality["expected_checks"] == list(q.expected_ids(strict.contract))
+    why = q.sample_blocked_message("toy_cases", again.quality, expected=q.expected_ids(strict.contract))
+    assert why is not None and "cases_under_5000 failed" in why and "no result" not in why
+    # The kept file's stored record is never rewritten.
+    (manifest_path,) = (lake / "datasets" / "toy_cases").rglob("manifest.json")
+    assert Manifest.read(manifest_path).quality == first.quality

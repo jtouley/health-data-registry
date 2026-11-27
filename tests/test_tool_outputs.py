@@ -256,9 +256,9 @@ def test_provenance_and_caveats_exact(registry: Registry, lake: Path) -> None:
         [
             "toy_cases",
             "data checks",
-            "No quality rules declared: the contract sets no checks of its own on these numbers, so only the "
-            "general checks run (the table has rows; columns are not left empty). Compare with the publisher's "
-            "page before relying on them.",
+            "This source's contract sets no checks of its own on these numbers. Only the general checks run: "
+            "that the table has rows, and a warning when an optional column is empty in every row. Compare with "
+            "the publisher's page before relying on them.",
         ],
         ["toy_cases", "review", "Contract is a draft; no maintainer has reviewed it yet."],
     ]
