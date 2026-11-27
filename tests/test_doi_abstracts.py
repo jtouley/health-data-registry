@@ -979,7 +979,7 @@ def test_check_contracts_and_refresh_skip_doi_sources(registry: Any, tmp_path: P
     ds = registry.get("apic_abstracts")
     with pytest.raises(crawl.PrivateTier, match="harvest-doi apic --year"):
         crawl.refresh_dataset(ds, tmp_path, lambda u: raw(u, b""))
-    with pytest.raises(ValueError, match="checked by the parser"):
+    with pytest.raises(ValueError, match="checks its layout itself on every read"):
         publisher_fields(ds.entry, lambda u: raw(u, b""))  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="not read through a portal adapter"):
         list(pages(ds.entry, lambda u: raw(u, b"")))  # type: ignore[arg-type]
