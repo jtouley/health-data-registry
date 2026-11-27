@@ -1,0 +1,62 @@
+id: cdc_haicviz_mugsi
+title: HAICViz - MuGSI
+agency: CDC
+publisher: "Centers for Disease Control and Prevention, Emerging Infections Program, Healthcare-Associated Infections Community Interface (HAIC), Multi-site Gram-negative Surveillance Initiative (MuGSI)"
+level: federal
+country: US
+research_areas: [infectious_disease]
+id_areas: [hais_amr]
+years: {start: 2012, end: null}
+# EIP catchment areas pooled, like cdc_haicviz_cdi: the one figure per year is never a state's, and every series
+# names the EIP sites in place_coverage.
+geography: [nation]
+shape: rate_table
+grain: "One row is one year, one organism (carbapenem-resistant Enterobacterales, CRE, or carbapenem-resistant Acinetobacter baumannii, CRAB) and one published rate for the Emerging Infections Program sites combined: the case rate or death rate for all cases, or the case rate for one age group, sex, culture source or (CRE only) organism."
+refresh: annual
+licence:
+  # No licence field in the dataset's Socrata metadata (checked 2026-11-25). A CDC dataset on data.cdc.gov is a
+  # US federal work (17 USC 105); a maintainer confirms the wording on review (see the contract's open questions).
+  id: public-domain-us-federal
+  redistribution: true
+  terms_url: https://www.usa.gov/government-works
+citation: "Centers for Disease Control and Prevention, Emerging Infections Program Healthcare-Associated Infections Community Interface. HAICViz - MuGSI. https://data.cdc.gov/d/v4tm-h8pe (accessed <retrieved_at>)."
+source:
+  portal: socrata
+  host: data.cdc.gov
+  dataset: v4tm-h8pe
+  landing_url: https://data.cdc.gov/d/v4tm-h8pe
+  api_url: https://data.cdc.gov/resource/v4tm-h8pe.json
+codebook_url: https://www.cdc.gov/healthcare-associated-infections/php/haic-eip/mugsi.html
+caveats:
+  - "Population-based surveillance in the Emerging Infections Program sites, not all US states; the figures are pooled across sites and give no state values."
+  - "CRE and CRAB are different organisms; each figure is for one of them and the two are never added."
+  - "Rates are never added. The age, sex, culture-source and organism groups each cover the same cases again, beside their 'All cases' row."
+  - "The table states no unit; CDC's MuGSI page gives MuGSI incidence as cases per 100,000 persons, and which population and sites make up the denominator each year is not in the data."
+  - "Coverage after 2022 is unknown: the latest data year is 2022 (checked 2026-11-25), while CDC's MuGSI page reports 2023. Later years may not be published here yet."
+gbd:
+  # No GBD keys proposed: MuGSI counts carbapenem-resistant isolates from any normally sterile site or urine, which
+  # spans several GBD causes (see the contract's open questions). location_column is null: the EIP sites are a
+  # catchment, never 'United States of America'.
+  location_column: null
+  causes: []
+conditions:
+  dimension: organism
+  # Provenance: every distinct value of the organism column at https://data.cdc.gov/resource/v4tm-h8pe.json, read
+  # 2026-11-25 (two values).
+  source: "CDC's short names for the two organisms in this HAICViz table, exactly as published on data.cdc.gov (checked 25 Nov 2026); spelled out on CDC's MuGSI page."
+  labels:
+    - "CRE"
+    - "CRAB"
+  aliases:
+    - alias: "carbapenem-resistant Enterobacterales"
+      label: "CRE"
+      source: "https://www.cdc.gov/healthcare-associated-infections/php/haic-eip/mugsi.html (MuGSI conducts surveillance for carbapenem-resistant Enterobacterales (CRE))"
+      review: publisher_codebook
+    - alias: "carbapenem-resistant Acinetobacter baumannii"
+      label: "CRAB"
+      source: "https://www.cdc.gov/healthcare-associated-infections/php/haic-eip/mugsi.html (carbapenem-resistant Acinetobacter baumannii (CRAB))"
+      review: publisher_codebook
+contract: contracts/cdc_haicviz_mugsi.odcs.yaml
+semantic_model: semantic/cdc_haicviz_mugsi.yaml
+status: draft
+hosting: public
