@@ -24,7 +24,7 @@ schema:
     physicalType: table
     logicalType: object
     description: "Long table: one count and one rate per 100,000 per viral hepatitis condition x year x grouping x group x cases or deaths, each a number or CDC's code in its place."
-    dataGranularityDescription: "condition x year x grouping x stratum x data_type (the primary key, unique on the full table, 8,588 rows, 2026-11-25)"
+    dataGranularityDescription: "condition x year x grouping x stratum x case_or_death (the primary key, unique on the full table, 8,588 rows, 2026-11-25)"
     authoritativeDefinitions:
       - {type: businessDefinition, url: "https://data.cdc.gov/api/views/jkcx-ndu8.json"}
     customProperties:
@@ -100,7 +100,7 @@ schema:
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: value}
-      - name: data_type
+      - name: case_or_death
         physicalType: VARCHAR
         logicalType: string
         required: true
@@ -143,14 +143,14 @@ schema:
             severity: error
             type: sql
             description: "Fill rate for the case rows counts_not_negative reads: an all-empty subset passes it, so at least one case count must be published (5,425 of 6,535 were on 2026-11-25)."
-            query: "SELECT COUNT(*) FROM {object} WHERE data_type = 'Case' AND reported_count IS NOT NULL"
+            query: "SELECT COUNT(*) FROM {object} WHERE case_or_death = 'Case' AND reported_count IS NOT NULL"
             mustBeGreaterThan: 0
           - id: death_counts_present
             dimension: completeness
             severity: warn
             type: sql
             description: "Fill rate for the death rows: at least one death count is published (1,848 of 2,053 were on 2026-11-25)."
-            query: "SELECT COUNT(*) FROM {object} WHERE data_type = 'Death' AND reported_count IS NOT NULL"
+            query: "SELECT COUNT(*) FROM {object} WHERE case_or_death = 'Death' AND reported_count IS NOT NULL"
             mustBeGreaterThan: 0
       - name: count_flag
         physicalType: VARCHAR
@@ -200,7 +200,7 @@ schema:
             severity: warn
             type: sql
             description: "Fill rate for the nationwide case rates the headline series read: at least one is published (every year of the six conditions with rates was on 2026-11-25)."
-            query: "SELECT COUNT(*) FROM {object} WHERE data_type = 'Case' AND grouping = 'Area' AND stratum = 'Total' AND rate IS NOT NULL"
+            query: "SELECT COUNT(*) FROM {object} WHERE case_or_death = 'Case' AND grouping = 'Area' AND stratum = 'Total' AND rate IS NOT NULL"
             mustBeGreaterThan: 0
       - name: rate_flag
         physicalType: VARCHAR
@@ -233,7 +233,7 @@ schema:
         severity: error
         type: sql
         description: "Grain: one count and rate per condition, year, grouping, group and case or death (an exact structural fact of the full table, 8,588 rows, on 2026-11-25). A repeat would mean two figures for one cell."
-        query: "SELECT COUNT(*) FROM (SELECT condition, year, grouping, stratum, data_type FROM {object} GROUP BY condition, year, grouping, stratum, data_type HAVING COUNT(*) > 1)"
+        query: "SELECT COUNT(*) FROM (SELECT condition, year, grouping, stratum, case_or_death FROM {object} GROUP BY condition, year, grouping, stratum, case_or_death HAVING COUNT(*) > 1)"
         mustBe: 0
       - id: a_count_or_a_code
         dimension: consistency

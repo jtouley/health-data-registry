@@ -105,7 +105,7 @@ sources:
         publisher sent no rate at all.)'
     - name: type
       data_type: varchar
-      description: 'Publisher field type, as text; read into data_type (Case (reported to NNDSS) or Death (from
+      description: 'Publisher field type, as text; read into case_or_death (Case (reported to NNDSS) or Death (from
         NVSS death certificates) (Type: ''Indicates Whether Case Surveillance or Death Data'').)'
     - name: value
       data_type: varchar

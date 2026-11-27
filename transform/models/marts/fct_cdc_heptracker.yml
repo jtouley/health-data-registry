@@ -3,7 +3,7 @@ version: 2
 models:
 - name: fct_cdc_heptracker
   description: 'One row per published cell of cdc_heptracker: every row of the latest load, none removed, none added.
-    Grain: condition x year x grouping x stratum x data_type, unique on the full table (8,588 rows, 2026-11-25).'
+    Grain: condition x year x grouping x stratum x case_or_death, unique on the full table (8,588 rows, 2026-11-25).'
   config:
     materialized: table
     contract:
@@ -20,10 +20,10 @@ models:
     - year
     - grouping
     - stratum
-    - data_type
+    - case_or_death
   data_tests:
   - one_row_per_key:
-      name: fct_cdc_heptracker_one_row_per_condition_year_grouping_stratum_data_type
+      name: fct_cdc_heptracker_one_row_per_condition_year_grouping_stratum_case_or_death
       arguments:
         columns: *id001
   columns:
@@ -76,13 +76,13 @@ models:
       missing_codes: []
     constraints:
     - type: not_null
-  - name: data_type
+  - name: case_or_death
     data_type: varchar
     description: Case (reported to NNDSS) or Death (NVSS).
     meta:
       logical_type: string
       physical_type: VARCHAR
-      source_field: data_type
+      source_field: case_or_death
       unit: null
       codes: []
       missing_codes: []

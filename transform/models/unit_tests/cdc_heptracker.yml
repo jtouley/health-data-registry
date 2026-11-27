@@ -39,11 +39,11 @@ unit_tests:
   given:
   - input: ref('stg_cdc_heptracker')
     rows:
-    - {condition: Acute Hepatitis C, year: 2022, grouping: Area, stratum: Total, data_type: Case, reported_count: 4966, count_flag: null, rate: 1.5, rate_flag: null}
-    - {condition: Acute Hepatitis C, year: 2022, grouping: Area, stratum: Alaska, data_type: Case, reported_count: null, count_flag: "—", rate: null, rate_flag: "—"}
-    - {condition: Hepatitis C, year: 2022, grouping: Area, stratum: Wyoming, data_type: Death, reported_count: null, count_flag: S, rate: null, rate_flag: UR}
-    - {condition: Acute Hepatitis C, year: 2022, grouping: Injection Drug Use, stratum: Missing/Unknown, data_type: Case, reported_count: 1500, count_flag: null, rate: null, rate_flag: null}
-    - {condition: Hepatitis C, year: 2022, grouping: HHS, stratum: Total, data_type: Death, reported_count: 10, count_flag: null, rate: null, rate_flag: NA}
+    - {condition: Acute Hepatitis C, year: 2022, grouping: Area, stratum: Total, case_or_death: Case, reported_count: 4966, count_flag: null, rate: 1.5, rate_flag: null}
+    - {condition: Acute Hepatitis C, year: 2022, grouping: Area, stratum: Alaska, case_or_death: Case, reported_count: null, count_flag: "—", rate: null, rate_flag: "—"}
+    - {condition: Hepatitis C, year: 2022, grouping: Area, stratum: Wyoming, case_or_death: Death, reported_count: null, count_flag: S, rate: null, rate_flag: UR}
+    - {condition: Acute Hepatitis C, year: 2022, grouping: Injection Drug Use, stratum: Missing/Unknown, case_or_death: Case, reported_count: 1500, count_flag: null, rate: null, rate_flag: null}
+    - {condition: Hepatitis C, year: 2022, grouping: HHS, stratum: Total, case_or_death: Death, reported_count: 10, count_flag: null, rate: null, rate_flag: NA}
   expect:
     rows:
     - {stratum: Total, is_total_row: true, count_flag_meaning: null, rate_flag_meaning: null}
@@ -56,10 +56,10 @@ unit_tests:
   given:
   - input: ref('int_cdc_heptracker')
     rows:
-    - {condition: Acute Hepatitis C, year: 2022, grouping: Area, stratum: Total, data_type: Case, reported_count: 4966, count_flag: null, rate: 1.5, rate_flag: null, is_total_row: true, count_flag_meaning: null, rate_flag_meaning: null, _snapshot_id: s1, _raw_sha256: h1}
-    - {condition: Acute Hepatitis C, year: 2022, grouping: Area, stratum: Alaska, data_type: Case, reported_count: null, count_flag: "—", rate: null, rate_flag: "—", is_total_row: false, count_flag_meaning: "not reported (CDC's column description); never a zero", rate_flag_meaning: "not reported (CDC's column description); never a zero", _snapshot_id: s1, _raw_sha256: h1}
-    - {condition: Acute Hepatitis C, year: 2022, grouping: MSM, stratum: "Yes", data_type: Case, reported_count: 12, count_flag: null, rate: null, rate_flag: null, is_total_row: false, count_flag_meaning: null, rate_flag_meaning: null, _snapshot_id: s1, _raw_sha256: h1}
-    - {condition: Acute Hepatitis C, year: 2022, grouping: Area, stratum: Ohio, data_type: Case, reported_count: null, count_flag: NA, rate: 2.0, rate_flag: null, is_total_row: false, count_flag_meaning: null, rate_flag_meaning: null, _snapshot_id: s1, _raw_sha256: h1}
+    - {condition: Acute Hepatitis C, year: 2022, grouping: Area, stratum: Total, case_or_death: Case, reported_count: 4966, count_flag: null, rate: 1.5, rate_flag: null, is_total_row: true, count_flag_meaning: null, rate_flag_meaning: null, _snapshot_id: s1, _raw_sha256: h1}
+    - {condition: Acute Hepatitis C, year: 2022, grouping: Area, stratum: Alaska, case_or_death: Case, reported_count: null, count_flag: "—", rate: null, rate_flag: "—", is_total_row: false, count_flag_meaning: "not reported (CDC's column description); never a zero", rate_flag_meaning: "not reported (CDC's column description); never a zero", _snapshot_id: s1, _raw_sha256: h1}
+    - {condition: Acute Hepatitis C, year: 2022, grouping: MSM, stratum: "Yes", case_or_death: Case, reported_count: 12, count_flag: null, rate: null, rate_flag: null, is_total_row: false, count_flag_meaning: null, rate_flag_meaning: null, _snapshot_id: s1, _raw_sha256: h1}
+    - {condition: Acute Hepatitis C, year: 2022, grouping: Area, stratum: Ohio, case_or_death: Case, reported_count: null, count_flag: NA, rate: 2.0, rate_flag: null, is_total_row: false, count_flag_meaning: null, rate_flag_meaning: null, _snapshot_id: s1, _raw_sha256: h1}
   expect:
     rows:
     - {stratum: Total, reported_count: 4966, count_status: published, rate_status: published, is_total_row: true}

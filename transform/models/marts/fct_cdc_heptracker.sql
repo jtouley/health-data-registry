@@ -6,7 +6,7 @@ select
   year,
   grouping,
   stratum,
-  data_type,
+  case_or_death,
   reported_count,
   count_flag,
   case when reported_count is not null then 'published' when count_flag is not null then 'not published: ' || coalesce(count_flag_meaning, 'CDC wrote ''' || count_flag || ''', a code its column description does not list') else 'not published: the publisher''s cell is empty' end as count_status,

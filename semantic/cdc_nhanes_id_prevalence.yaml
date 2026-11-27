@@ -58,3 +58,9 @@ series:
     place_coverage: "the United States (NHANES national sample, adults aged 20-49)"
     time_dimension: cycle
     case_definition: "Antibody to herpes simplex virus type 2 from tested sera (NCHS footnote FN_NHANESINFECTIOUS12)"
+# Any catalogued infection label (catalog conditions.labels): the Total estimate with its interval, never added.
+generic_series:
+  - metric: seroprevalence_all_adults_20_49
+    measure: percent
+    place_coverage: "the United States (NHANES national sample, adults aged 20-49)"
+    time_dimension: cycle

@@ -23,8 +23,8 @@ dimensions:
     non_additive: true
     non_additive_reason: "the nationwide Total sits beside the states, and CDC doesn't say the groups add up to it"
     description: "The value of the grouping: a state or the nationwide Total, an age group, a sex, a race and ethnicity group, a region number, or Yes, No or Missing/Unknown for a risk exposure."
-  - name: data_type
-    column: data_type
+  - name: case_or_death
+    column: case_or_death
     type: categorical
     non_additive: true
     non_additive_reason: "reported cases and deaths are different measures"
@@ -38,13 +38,13 @@ metrics:
     measure: hep_count
     aggregation: none
     exclude_total_rows: false
-    filters: ["data_type = 'Case'", "grouping = 'Area'", "stratum = 'Total'"]
+    filters: ["case_or_death = 'Case'", "grouping = 'Area'", "stratum = 'Total'"]
   - name: national_case_rate
     description: "Reported cases of one condition per 100,000 nationwide, from CDC's 'Total' area row, with CDC's code where no rate was published; never added."
     measure: hep_rate
     aggregation: none
     exclude_total_rows: false
-    filters: ["data_type = 'Case'", "grouping = 'Area'", "stratum = 'Total'"]
+    filters: ["case_or_death = 'Case'", "grouping = 'Area'", "stratum = 'Total'"]
     uncertainty: none
     # Structural: the contract has no interval column.
     uncertainty_reason: "CDC's HepTracker table gives no confidence interval for these rates."
@@ -53,13 +53,13 @@ metrics:
     measure: hep_count
     aggregation: none
     exclude_total_rows: true
-    filters: ["data_type = 'Case'", "grouping = 'Area'"]
+    filters: ["case_or_death = 'Case'", "grouping = 'Area'"]
   - name: state_case_rate
     description: "Reported cases of one condition per 100,000 in one state or DC, with CDC's code where no rate was published; never added."
     measure: hep_rate
     aggregation: none
     exclude_total_rows: true
-    filters: ["data_type = 'Case'", "grouping = 'Area'"]
+    filters: ["case_or_death = 'Case'", "grouping = 'Area'"]
     uncertainty: none
     # Structural: the contract has no interval column.
     uncertainty_reason: "CDC's HepTracker table gives no confidence interval for these rates."
@@ -68,13 +68,13 @@ metrics:
     measure: hep_count
     aggregation: none
     exclude_total_rows: false
-    filters: ["data_type = 'Death'", "grouping = 'Area'", "stratum = 'Total'"]
+    filters: ["case_or_death = 'Death'", "grouping = 'Area'", "stratum = 'Total'"]
   - name: national_death_rate
     description: "Deaths from one viral hepatitis condition per 100,000 nationwide, from CDC's 'Total' area row, with CDC's code where no rate was published; never added."
     measure: hep_rate
     aggregation: none
     exclude_total_rows: false
-    filters: ["data_type = 'Death'", "grouping = 'Area'", "stratum = 'Total'"]
+    filters: ["case_or_death = 'Death'", "grouping = 'Area'", "stratum = 'Total'"]
     uncertainty: none
     # Structural: the contract has no interval column.
     uncertainty_reason: "CDC's HepTracker table gives no confidence interval for these rates."
@@ -83,13 +83,13 @@ metrics:
     measure: hep_count
     aggregation: none
     exclude_total_rows: true
-    filters: ["data_type = 'Death'", "grouping = 'Area'"]
+    filters: ["case_or_death = 'Death'", "grouping = 'Area'"]
   - name: state_death_rate
     description: "Deaths from one viral hepatitis condition per 100,000 in one state or DC, with CDC's code (often UR, unreliable) where no rate was published; never added."
     measure: hep_rate
     aggregation: none
     exclude_total_rows: true
-    filters: ["data_type = 'Death'", "grouping = 'Area'"]
+    filters: ["case_or_death = 'Death'", "grouping = 'Area'"]
     uncertainty: none
     # Structural: the contract has no interval column.
     uncertainty_reason: "CDC's HepTracker table gives no confidence interval for these rates."
@@ -366,3 +366,10 @@ series:
     location_dimension: stratum
     time_dimension: year
     case_definition: "Deaths from death certificates (NVSS); cause-of-death coding in CDC's Technical Notes, not yet in the contract"
+# Any catalogued condition label (catalog conditions.labels): the nationwide case count, as published, never added.
+# Every label also has named series, so this is reached only through a label's other spellings.
+generic_series:
+  - metric: national_case_count
+    measure: cases
+    place_coverage: "the nationwide 'Total' row CDC publishes (each state and DC, per the dataset's geographic coverage)"
+    time_dimension: year
