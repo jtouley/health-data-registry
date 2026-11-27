@@ -34,7 +34,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
-from health_data_registry.adapters import Fetcher, Page
+from health_data_registry.adapters import Fetcher, GuardTable, LayoutError, Page
 from health_data_registry.adapters.row_guard import check_grain
 from health_data_registry.registry import CatalogEntry
 
@@ -52,7 +52,7 @@ WORKSHEET_FIELD: Final = "worksheet"
 VIEW_FIELD: Final = "view"
 
 
-class TableauLayoutError(ValueError):
+class TableauLayoutError(LayoutError):
     """The dashboard's answer is not what the catalog entry describes (a redesign, or not a bootstrapSession)."""
 
 
@@ -315,6 +315,7 @@ def pages(
         sheets = read_worksheets(raw.content)
         recs: list[dict[str, Any]] = []
         layout: dict[str, str] = {}
+        tables: list[GuardTable] = []
         for ws_name, expected in view.worksheets.items():
             ws = sheets.get(ws_name)
             if ws is None:
@@ -327,7 +328,10 @@ def pages(
                     f"{entry.id}: the worksheet {ws_name!r} in view {view.view} was redesigned (its columns are "
                     f"now {', '.join(c.caption for c in ws.columns)}); the contract needs review before it is read"
                 )
+            # Guarded here, by its captions, before anything is projected; adapters.pages guards it again, with
+            # the page, through the core (hard rule 4 has no opt-out).
             check_grain(f"{entry.id}: {view.view}/{ws_name}", ws.captions, ws.by_caption())
+            tables.append(GuardTable(f"{view.view}/{ws_name}", ws.captions, ws.by_caption()))
             layout[f"{view.view}/{ws_name}"] = ws.layout_hash
             for r in ws.records:
                 rec = {
@@ -341,7 +345,7 @@ def pages(
                 recs.append(rec)
         if left is not None:
             recs, left = recs[: max(0, left)], max(0, left - len(recs))
-        yield Page(fetch=raw, records=recs, layout=layout)
+        yield Page(fetch=raw, records=recs, layout=layout, tables=tuple(tables))
         if left == 0:
             break  # the row limit is used up: no more views are opened
 

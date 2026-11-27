@@ -40,4 +40,5 @@ select
     || ') at the latest week; issue #16 saw this where the two looked swapped. Check against CDC before any change.'
     as reason
 from ytd
+-- An empty screening count is treated as 0 only to choose rows for review; answers never count it as 0 (#173).
 where clinical_ytd > coalesce(screening_ytd, 0)
