@@ -6,8 +6,8 @@ version: 0.1.0
 status: draft
 domain: infectious_disease
 description:
-  purpose: "Every row of the NSSP commercial laboratory table (cdc_nssp_lab_positivity) as one fact per virus, week and state, with clinical column names and a status that says why a value is empty."
-  usage: "Read one virus, state and week, or one virus in one state over the weeks. Every row is kept, suppressed ones included; nothing is added across states, viruses or weeks."
+  purpose: "Every row of the NSSP commercial laboratory table (cdc_nssp_lab_positivity) as one fact per virus, week and place, with clinical column names and a status that says why a value is empty."
+  usage: "Read one virus, place and week, or one virus in one place over the weeks. Every row is kept, suppressed ones included; nothing is added across places, viruses or weeks."
   limitations: "Commercial laboratories only; tests, not people; suppressed below 10 tests or 10 positives; by state only."
   authoritativeDefinitions:
     - {type: businessDefinition, url: "contracts/cdc_nssp_lab_positivity.odcs.yaml", description: "The source dataset's contract, whose descriptions and rules this fact carries"}
@@ -16,7 +16,7 @@ schema:
     physicalName: fct_cdc_nssp_lab_positivity
     physicalType: table
     logicalType: object
-    description: "One row per virus, MMWR week and state: every row of int_cdc_nssp_lab_positivity, none removed, each with value_status."
+    description: "One row per virus, MMWR week and place (a state or territory so far): every row of int_cdc_nssp_lab_positivity, none removed, each with value_status."
     customProperties:
       - {property: layer, value: marts}
       - {property: totalRows, value: none}
@@ -28,7 +28,7 @@ schema:
         required: true
         primaryKey: true
         primaryKeyPosition: 1
-        description: "The virus tested for: COVID-19, Influenza or RSV, as CDC labels it."
+        description: "The virus tested for, by NAAT only: COVID-19, Influenza or RSV, as CDC labels it."
         customProperties: [{property: role, value: dimension}]
       - name: week_end
         physicalType: DATE
@@ -42,21 +42,27 @@ schema:
         physicalType: DATE
         logicalType: date
         required: true
-        description: "The Sunday that starts that MMWR week."
+        description: "The Sunday that starts the MMWR week the specimens were collected in."
         customProperties: [{property: role, value: attribute}]
-      - name: state
+      - name: place
         physicalType: VARCHAR
         logicalType: string
         required: true
         primaryKey: true
         primaryKeyPosition: 3
-        description: "The state or territory, as CDC's two-letter postal code (MI, OH, PR)."
+        description: "The place, as CDC labels it: a two-letter postal code for each of the 50 states, DC, Puerto Rico (PR), Guam (GU) and the US Virgin Islands (VI), by the patient's ZIP code of residence, or the ordering provider's where that is missing. place_kind says what kind of place it is."
         customProperties: [{property: role, value: dimension}]
+      - name: place_kind
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The kind of place, as published: 'state' in every row so far (a state or territory). Any other kind, such as a national or regional row, is kept and shows here."
+        customProperties: [{property: role, value: attribute}]
       - name: tests
         physicalType: BIGINT
         logicalType: integer
         required: false
-        description: "NAAT tests classified positive or negative, as published; empty where CDC suppressed it."
+        description: "NAAT tests for the virus classified positive or negative, as published: the denominator of percent_positive. Unknown, indeterminate and uninterpretable results are excluded. Empty where CDC suppressed it."
         customProperties: [{property: role, value: measure}]
       - name: positive_tests
         physicalType: BIGINT
@@ -68,13 +74,13 @@ schema:
         physicalType: DOUBLE
         logicalType: number
         required: false
-        description: "Percent of the tests that were positive, as published; empty where suppressed or no test was reported, never zero."
+        description: "Percent of the NAAT tests that were positive, as published (positives divided by tests classified positive or negative, times 100). Counts tests, not people. Empty where CDC suppressed it or no test was published; an empty value is never shown as 0, and a published 0 is a real 0."
         customProperties: [{property: role, value: measure}]
       - name: value_status
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "Why percent_positive is or isn't there, read from the published counts and CDC's suppression rule: 'published', 'no test reported' (tests published as 0), or 'suppressed by CDC (fewer than 10 tests or 10 positives)'. It qualifies the row and removes nothing."
+        description: "Why percent_positive is or isn't there, read from the published counts and CDC's suppression rule: 'published'; '0 tests published (nothing to divide by)', where tests is published as 0 (whether that is no test or no report is an open question in the source contract); 'suppressed by CDC (fewer than 10 tests or 10 positives)', where a count is empty too, since CDC suppresses the counts and the percent together; or 'not published', where both counts are published and the percent is still empty. It qualifies the row and removes nothing."
         customProperties: [{property: role, value: attribute}]
       - name: _snapshot_id
         physicalType: VARCHAR
@@ -86,10 +92,10 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "The sha256 fingerprint of each raw file the row was parsed from: the exact bytes the publisher sent."
+        description: "The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order: the exact bytes the publisher sent."
         customProperties: [{property: role, value: attribute}]
 customProperties:
   - {property: unreliableRule, value: {kind: none, description: "None of its own: the source contract's suppression rule applies, and value_status says on each row why a value is empty."}}
   - property: openQuestions
     value:
-      - "value_status reads an empty percent beside a non-zero published test count as suppressed (CDC's rule: fewer than 10 positives); a maintainer confirms that reading when the source contract is reviewed."
+      - "value_status reads an empty percent beside an empty count as suppressed (CDC suppresses the counts and the percent together); a maintainer confirms that reading when the source contract is reviewed."

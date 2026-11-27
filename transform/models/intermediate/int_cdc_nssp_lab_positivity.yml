@@ -145,6 +145,21 @@ models:
           checks: The dataset description suppresses the counts and the percent together, so a percent published
             beside a suppressed count would mean the rule changed.
   - odcs_check:
+      name: cdc_nssp_lab_positivity_counts_published_with_their_percent
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE percent_pos IS NULL AND test_count > 0 AND positive_count
+          IS NOT NULL
+        condition: measured = 0
+      config:
+        severity: warn
+        meta:
+          dimension: consistency
+          rule: counts_published_with_their_percent
+          contract: contracts/cdc_nssp_lab_positivity.odcs.yaml
+          checks: 'The other direction of the same rule: the dataset description suppresses the counts and the percent
+            together and does not suppress zeros, so both counts published, with tests to divide by, and no percent
+            would mean the rule changed (none on 2026-11-27).'
+  - odcs_check:
       name: cdc_nssp_lab_positivity_fill_rate_test_count
       arguments:
         measure_sql: SELECT CASE WHEN count(*) = 0 THEN 0.0 ELSE count(*) FILTER (WHERE ("test_count" IS NULL OR
@@ -268,7 +283,8 @@ models:
     data_type: double
     description: 'Percent of the week''s NAAT tests for the virus in the state that were positive: positives divided
       by tests classified positive or negative, times 100 (dataset description). Counts tests, not people. Empty
-      where CDC suppressed it or no test was reported, never zero.'
+      where CDC suppressed it or no test was reported; an empty value is never shown as 0, and a published 0 is
+      a real 0 (zeros are not suppressed).'
     meta:
       logical_type: number
       physical_type: DOUBLE

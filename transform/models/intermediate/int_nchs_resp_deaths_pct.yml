@@ -74,6 +74,41 @@ models:
           checks: The column description lists Age, Race/Ethnicity and Sex; Age is published as 'Age Group'. A new
             kind of group is a new breakdown to review.
   - odcs_check:
+      name: nchs_resp_deaths_pct_demographic_groups
+      arguments:
+        measure_sql: SELECT CASE WHEN count(*) FILTER (WHERE NOT ("demographic_values" IS NULL OR trim(CAST("demographic_values"
+          AS VARCHAR)) = '')) = 0 THEN NULL ELSE count(*) FILTER (WHERE NOT ("demographic_values" IS NULL OR trim(CAST("demographic_values"
+          AS VARCHAR)) = '') AND "demographic_values" NOT IN ('0-17 years', '18-64 years', '65+ years', 'AI/AN,
+          NH', 'Asian/NHOPI, NH', 'Black, NH', 'Hispanic', 'Multiple/Other, NH', 'Not Available', 'White, NH', 'Female',
+          'Male')) END FROM {object}
+        condition: measured = 0
+        nothing_to_judge: true
+      config:
+        severity: warn
+        meta:
+          dimension: conformity
+          rule: demographic_groups
+          contract: contracts/nchs_resp_deaths_pct.odcs.yaml
+          checks: The twelve groups as published on 2026-11-27 (1,852 rows each). Every series filters on an age
+            group's exact label, so a renamed or new group is a breakdown to review before a series silently returns
+            nothing.
+  - odcs_check:
+      name: nchs_resp_deaths_pct_every_age_series_has_a_percent
+      arguments:
+        measure_sql: SELECT COUNT(DISTINCT pathogen || '|' || demographic_values) FROM {object} WHERE demographic_type
+          = 'Age Group' AND percent_deaths IS NOT NULL AND pathogen IN ('COVID-19', 'Influenza', 'RSV', 'Combined')
+          AND demographic_values IN ('0-17 years', '18-64 years', '65+ years')
+        condition: measured = 12
+      config:
+        severity: warn
+        meta:
+          dimension: completeness
+          rule: every_age_series_has_a_percent
+          contract: contracts/nchs_resp_deaths_pct.odcs.yaml
+          checks: 'Fill rate by series: each of the four causes in each of the three age groups the series read
+            has at least one row with a percent (all twelve on 2026-11-27). A relabelled age group would leave its
+            series empty while every column-level check still passes.'
+  - odcs_check:
       name: nchs_resp_deaths_pct_pathogen_codes
       arguments:
         measure_sql: SELECT CASE WHEN count(*) FILTER (WHERE NOT ("pathogen" IS NULL OR trim(CAST("pathogen" AS
@@ -155,7 +190,8 @@ models:
           rule: fill_rate_deaths
           contract: contracts/nchs_resp_deaths_pct.odcs.yaml
           checks: No row has a value for number of deaths involving the cause in the week and group (column description);
-            empty where NCHS suppressed a count from 1 to 9, never zero.
+            empty where NCHS suppressed a count from 1 to 9 (a suppressed count is never shown as 0; a published
+            0 is a real 0).
   - odcs_check:
       name: nchs_resp_deaths_pct_fill_rate_percent_deaths
       arguments:
@@ -169,8 +205,8 @@ models:
           rule: fill_rate_percent_deaths
           contract: contracts/nchs_resp_deaths_pct.odcs.yaml
           checks: No row has a value for percent of all deaths in the week and group that involved the cause (column
-            'Percent of deaths due to pathogen'); empty where NCHS suppressed it, or where no death was recorded,
-            never zero.
+            'Percent of deaths due to pathogen'); empty where NCHS suppressed it, or where no death was recorded
+            (an empty value is never shown as 0).
   - odcs_check:
       name: nchs_resp_deaths_pct_fill_rate_provisional
       arguments:
@@ -292,8 +328,8 @@ models:
       missing_codes: []
   - name: pathogen
     data_type: varchar
-    description: 'The cause of death the row counts: COVID-19, Influenza, RSV, or Combined for the three together
-      (column ''Cause of death (pathogen)''; the description writes ''Flu'', the rows ''Influenza'').'
+    description: 'The cause the deaths involve: COVID-19, Influenza, RSV, or Combined for the three together (column
+      ''Cause of death (pathogen)''; the description writes ''Flu'', the rows ''Influenza'').'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -304,7 +340,7 @@ models:
   - name: deaths
     data_type: bigint
     description: Number of deaths involving the cause in the week and group (column description); empty where NCHS
-      suppressed a count from 1 to 9, never zero.
+      suppressed a count from 1 to 9 (a suppressed count is never shown as 0; a published 0 is a real 0).
     meta:
       logical_type: integer
       physical_type: BIGINT
@@ -326,7 +362,8 @@ models:
   - name: percent_deaths
     data_type: double
     description: Percent of all deaths in the week and group that involved the cause (column 'Percent of deaths
-      due to pathogen'); empty where NCHS suppressed it, or where no death was recorded, never zero.
+      due to pathogen'); empty where NCHS suppressed it, or where no death was recorded (an empty value is never
+      shown as 0).
     meta:
       logical_type: number
       physical_type: DOUBLE

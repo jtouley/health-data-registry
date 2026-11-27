@@ -16,20 +16,12 @@ schema:
     physicalName: fct_nchs_resp_deaths_pct
     physicalType: table
     logicalType: object
-    description: "One row per week, cause and demographic group: every row of int_nchs_resp_deaths_pct, none removed, each with value_status."
+    description: "One row per week, cause and demographic group: every row of int_nchs_resp_deaths_pct, none removed, each with value_status. The publisher's calendar columns (year, month, MMWR week, last date of the period) and its jurisdiction ('United States' in every row) are left out; they stay in int_nchs_resp_deaths_pct."
     customProperties:
       - {property: layer, value: marts}
       - {property: totalRows, value: none}
       - {property: tableShape, value: surveillance_series}
     properties:
-      - name: cause
-        physicalType: VARCHAR
-        logicalType: string
-        required: true
-        primaryKey: true
-        primaryKeyPosition: 2
-        description: "The cause the deaths involve: COVID-19, Influenza, RSV, or Combined for the three together."
-        customProperties: [{property: role, value: dimension}]
       - name: week_end
         physicalType: DATE
         logicalType: date
@@ -37,6 +29,20 @@ schema:
         primaryKey: true
         primaryKeyPosition: 1
         description: "The Saturday that ends the week of reporting."
+        customProperties: [{property: role, value: dimension}]
+      - name: week_start
+        physicalType: DATE
+        logicalType: date
+        required: true
+        description: "The Sunday that starts the week of reporting (NCHS's first date of the data period)."
+        customProperties: [{property: role, value: attribute}]
+      - name: cause
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "The cause the deaths involve: COVID-19, Influenza, RSV, or Combined for the three together."
         customProperties: [{property: role, value: dimension}]
       - name: group_kind
         physicalType: VARCHAR
@@ -52,7 +58,7 @@ schema:
         required: true
         primaryKey: true
         primaryKeyPosition: 4
-        description: "The demographic group, as NCHS labels it ('65+ years', 'Hispanic', 'Female')."
+        description: "The demographic group, as NCHS labels it: an age group ('0-17 years', '18-64 years', '65+ years'), a race and Hispanic origin group ('Hispanic', 'White, NH', 'Not Available'), or a sex ('Female', 'Male')."
         customProperties: [{property: role, value: dimension}]
       - name: deaths_involving
         physicalType: BIGINT
@@ -70,7 +76,7 @@ schema:
         physicalType: DOUBLE
         logicalType: number
         required: false
-        description: "Percent of all deaths in the week and group that involved the cause, as published; never zero for an empty cell."
+        description: "Percent of all deaths in the week and group that involved the cause, as published; empty where NCHS suppressed it or no death was recorded (an empty value is never shown as 0)."
         customProperties: [{property: role, value: measure}]
       - name: provisional
         physicalType: VARCHAR
@@ -83,6 +89,16 @@ schema:
         logicalType: string
         required: false
         description: "NCHS's suppression note, exactly as published; empty where nothing was suppressed."
+        customProperties:
+          - {property: role, value: attribute}
+          - property: mayBeEmpty
+            value: true
+            description: "A load with no suppressed cell has no note in any row, which is the data, not a broken field."
+      - name: data_as_of
+        physicalType: DATE
+        logicalType: date
+        required: true
+        description: "The date NCHS drew these provisional counts (its 'Data as of'), the same in every row of a load: how current each figure is."
         customProperties: [{property: role, value: attribute}]
       - name: value_status
         physicalType: VARCHAR
@@ -100,7 +116,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "The sha256 fingerprint of each raw file the row was parsed from: the exact bytes the publisher sent."
+        description: "The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order: the exact bytes the publisher sent."
         customProperties: [{property: role, value: attribute}]
 customProperties:
   - {property: unreliableRule, value: {kind: none, description: "None of its own: the source contract's suppression rule applies, and value_status says on each row why a value is empty."}}

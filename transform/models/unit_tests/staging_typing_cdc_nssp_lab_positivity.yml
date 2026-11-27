@@ -1,9 +1,11 @@
-# Hand-written dbt unit test of the generated stg_cdc_nssp_lab_positivity typing (staging.typed_select). One file
-# per source, beside staging_typing.yml, so new-source pull requests don't edit the same file. Inputs are SQL so
-# the raw source needn't be loaded first. The column types themselves are held by the enforced model contract
-# (stg_cdc_nssp_lab_positivity.yml); this test checks the values: Socrata's number text ('250.0') becomes a whole
-# count, a count or percent CDC suppressed (the field left out, so NULL) stays empty rather than reading as zero,
-# a published zero stays zero, a blank or whitespace value is empty, and the percent is never rescaled.
+# Hand-written dbt unit tests of cdc_nssp_lab_positivity: the generated staging typing (staging.typed_select) and
+# the hand-written fact (fct_cdc_nssp_lab_positivity). One file per source, beside staging_typing.yml, so
+# new-source pull requests don't edit the same file. Inputs are SQL so the raw source needn't be loaded first. The
+# column types themselves are held by the enforced model contracts; these tests check the values: Socrata's number
+# text ('250.0') becomes a whole count, a count or percent CDC suppressed (the field left out, so NULL) stays empty
+# rather than reading as zero, a published zero stays zero, a blank or whitespace value is empty, the percent is
+# never rescaled, provenance passes through, and the fact renames every column, keeps every row and says why a
+# percent is empty.
 version: 2
 unit_tests:
 - name: stg_cdc_nssp_lab_positivity_counts_are_whole_and_suppressed_values_stay_empty
@@ -34,104 +36,206 @@ unit_tests:
   expect:
     rows:
     - pathogen: COVID-19
+      geography_type: state
       geography_value: MI
       mmwr_week_start: 2024-10-27
       mmwr_week_end: 2024-11-02
       test_count: 250
       positive_count: 20
       percent_pos: 8.0
+      _snapshot_id: s1
+      _raw_sha256: h1
     - pathogen: Influenza
+      geography_type: state
       geography_value: MI
       mmwr_week_start: 2024-10-27
       mmwr_week_end: 2024-11-02
       test_count: 120
       positive_count: null
       percent_pos: null
+      _snapshot_id: s1
+      _raw_sha256: h1
     - pathogen: RSV
+      geography_type: state
       geography_value: MI
       mmwr_week_start: 2024-10-27
       mmwr_week_end: 2024-11-02
       test_count: null
       positive_count: 0
       percent_pos: null
+      _snapshot_id: s1
+      _raw_sha256: h1
     - pathogen: COVID-19
+      geography_type: state
       geography_value: OH
       mmwr_week_start: 2024-11-03
       mmwr_week_end: 2024-11-09
       test_count: 0
       positive_count: 0
       percent_pos: null
+      _snapshot_id: s1
+      _raw_sha256: h1
     - pathogen: RSV
+      geography_type: state
       geography_value: OH
       mmwr_week_start: 2024-11-03
       mmwr_week_end: 2024-11-09
       test_count: 40
       positive_count: 0
       percent_pos: null
+      _snapshot_id: s1
+      _raw_sha256: h1
 - name: fct_cdc_nssp_lab_positivity_keeps_every_row_and_says_why_a_percent_is_empty
   model: fct_cdc_nssp_lab_positivity
   given:
   - input: ref('int_cdc_nssp_lab_positivity')
     rows:
     - pathogen: Influenza
+      mmwr_week_start: 2024-10-27
       mmwr_week_end: 2024-11-02
+      geography_type: state
       geography_value: MI
       test_count: 250
       positive_count: 20
       percent_pos: 8.0
+      _snapshot_id: s1
+      _raw_sha256: h1
     - pathogen: Influenza
+      mmwr_week_start: 2024-11-03
       mmwr_week_end: 2024-11-09
+      geography_type: state
       geography_value: MI
       test_count: 120
       positive_count: null
       percent_pos: null
+      _snapshot_id: s1
+      _raw_sha256: h1
     - pathogen: RSV
+      mmwr_week_start: 2024-11-03
       mmwr_week_end: 2024-11-09
+      geography_type: state
       geography_value: MI
       test_count: 0
       positive_count: 0
       percent_pos: null
+      _snapshot_id: s1
+      _raw_sha256: h1
     - pathogen: COVID-19
+      mmwr_week_start: 2024-10-27
       mmwr_week_end: 2024-11-02
+      geography_type: state
       geography_value: MI
       test_count: null
       positive_count: 0
       percent_pos: null
+      _snapshot_id: s1
+      _raw_sha256: h1
     - pathogen: RSV
+      mmwr_week_start: 2024-10-27
       mmwr_week_end: 2024-11-02
+      geography_type: state
       geography_value: OH
       test_count: 40
       positive_count: 0
       percent_pos: 0.0
+      _snapshot_id: s2
+      _raw_sha256: 'h2 h3'
+    - pathogen: COVID-19
+      mmwr_week_start: 2024-11-03
+      mmwr_week_end: 2024-11-09
+      geography_type: state
+      geography_value: OH
+      test_count: 250
+      positive_count: 30
+      percent_pos: null
+      _snapshot_id: s2
+      _raw_sha256: 'h2 h3'
+    - pathogen: COVID-19
+      mmwr_week_start: 2024-11-03
+      mmwr_week_end: 2024-11-09
+      geography_type: nation
+      geography_value: US
+      test_count: 9000
+      positive_count: 900
+      percent_pos: 10.0
+      _snapshot_id: s2
+      _raw_sha256: 'h2 h3'
   expect:
     rows:
     - pathogen: Influenza
       week_end: 2024-11-02
-      state: MI
+      week_start: 2024-10-27
+      place: MI
+      place_kind: state
+      tests: 250
+      positive_tests: 20
       percent_positive: 8.0
       value_status: published
-      tests: 250
+      _snapshot_id: s1
+      _raw_sha256: h1
     - pathogen: Influenza
       week_end: 2024-11-09
-      state: MI
+      week_start: 2024-11-03
+      place: MI
+      place_kind: state
+      tests: 120
+      positive_tests: null
       percent_positive: null
       value_status: suppressed by CDC (fewer than 10 tests or 10 positives)
-      tests: 120
+      _snapshot_id: s1
+      _raw_sha256: h1
     - pathogen: RSV
       week_end: 2024-11-09
-      state: MI
-      percent_positive: null
-      value_status: no test reported
+      week_start: 2024-11-03
+      place: MI
+      place_kind: state
       tests: 0
+      positive_tests: 0
+      percent_positive: null
+      value_status: 0 tests published (nothing to divide by)
+      _snapshot_id: s1
+      _raw_sha256: h1
     - pathogen: COVID-19
       week_end: 2024-11-02
-      state: MI
+      week_start: 2024-10-27
+      place: MI
+      place_kind: state
+      tests: null
+      positive_tests: 0
       percent_positive: null
       value_status: suppressed by CDC (fewer than 10 tests or 10 positives)
-      tests: null
+      _snapshot_id: s1
+      _raw_sha256: h1
     - pathogen: RSV
       week_end: 2024-11-02
-      state: OH
+      week_start: 2024-10-27
+      place: OH
+      place_kind: state
+      tests: 40
+      positive_tests: 0
       percent_positive: 0.0
       value_status: published
-      tests: 40
+      _snapshot_id: s2
+      _raw_sha256: 'h2 h3'
+    - pathogen: COVID-19
+      week_end: 2024-11-09
+      week_start: 2024-11-03
+      place: OH
+      place_kind: state
+      tests: 250
+      positive_tests: 30
+      percent_positive: null
+      value_status: not published
+      _snapshot_id: s2
+      _raw_sha256: 'h2 h3'
+    - pathogen: COVID-19
+      week_end: 2024-11-09
+      week_start: 2024-11-03
+      place: US
+      place_kind: nation
+      tests: 9000
+      positive_tests: 900
+      percent_positive: 10.0
+      value_status: published
+      _snapshot_id: s2
+      _raw_sha256: 'h2 h3'

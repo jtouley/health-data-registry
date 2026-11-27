@@ -139,7 +139,8 @@ def test_real_catalogs_list_every_named_series_condition() -> None:
         assert ds.semantic.generic_series or not plain, ds.id
         for s in ds.semantic.series:
             if s.asked_with:
-                assert any(w in norm_label(s.condition).split() for w in s.asked_with), (ds.id, s.condition)
+                words = set(norm_label(s.condition).split())
+                assert any(set(norm_label(w).split()) <= words for w in s.asked_with), (ds.id, s.condition)
 
 
 def test_every_real_catalogued_label_compiles_with_its_aggregation_rule() -> None:

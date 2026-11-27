@@ -382,7 +382,7 @@ sources:
       description: 'Publisher field percent_pos, as text; read into percent_pos (Percent of the week''s NAAT tests
         for the virus in the state that were positive: positives divided by tests classified positive or negative,
         times 100 (dataset description). Counts tests, not people. Empty where CDC suppressed it or no test was
-        reported, never zero.)'
+        reported; an empty value is never shown as 0, and a published 0 is a real 0 (zeros are not suppressed).)'
     - name: positive_count
       data_type: varchar
       description: Publisher field positive_count, as text; read into positive_count (Number of those NAAT tests
@@ -694,7 +694,8 @@ sources:
     - name: deaths
       data_type: varchar
       description: Publisher field deaths, as text; read into deaths (Number of deaths involving the cause in the
-        week and group (column description); empty where NCHS suppressed a count from 1 to 9, never zero.)
+        week and group (column description); empty where NCHS suppressed a count from 1 to 9 (a suppressed count
+        is never shown as 0; a published 0 is a real 0).)
     - name: demographic_type
       data_type: varchar
       description: 'Publisher field demographic_type, as text; read into demographic_type (The kind of demographic
@@ -718,14 +719,14 @@ sources:
       description: Publisher field month, as text; read into month (The month of reporting (column 'Month of reporting').)
     - name: pathogen
       data_type: varchar
-      description: 'Publisher field pathogen, as text; read into pathogen (The cause of death the row counts: COVID-19,
+      description: 'Publisher field pathogen, as text; read into pathogen (The cause the deaths involve: COVID-19,
         Influenza, RSV, or Combined for the three together (column ''Cause of death (pathogen)''; the description
         writes ''Flu'', the rows ''Influenza'').)'
     - name: percent_deaths
       data_type: varchar
       description: Publisher field percent_deaths, as text; read into percent_deaths (Percent of all deaths in the
         week and group that involved the cause (column 'Percent of deaths due to pathogen'); empty where NCHS suppressed
-        it, or where no death was recorded, never zero.)
+        it, or where no death was recorded (an empty value is never shown as 0).)
     - name: provisional
       data_type: varchar
       description: 'Publisher field provisional, as text; read into provisional (NCHS''s provisional mark, as published:

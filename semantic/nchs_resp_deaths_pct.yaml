@@ -11,7 +11,7 @@ dimensions:
 measures:
   - {name: percent_of_deaths, column: percent_deaths, kind: percent, unit: "% of all deaths", description: "Percent of all deaths in the week and group that involved the cause."}
   - {name: deaths_involving, column: deaths, kind: count, unit: "deaths", description: "Deaths involving the cause."}
-  - {name: all_cause_deaths, column: total_deaths, kind: count, unit: "deaths", description: "Deaths from all causes in the group."}
+  - {name: all_cause_deaths, column: total_deaths, kind: count, unit: "deaths", description: "Deaths from all causes in the week and group."}
 metrics:
   - name: weekly_percent_of_deaths
     description: "Weekly percent of all deaths among US residents in one demographic group that involved one cause, read as published and never added up."
@@ -104,7 +104,7 @@ series:
     place_coverage: "US residents as a whole (this table has no state or regional breakdown)"
     time_dimension: week_ending
     asked_with: ["death", "deaths", "mortality"]
-  - condition: "COVID-19, influenza and RSV deaths combined"
+  - condition: "Combined respiratory virus deaths"
     label: "COVID-19, influenza and RSV combined percent of all deaths, ages 0 to 17 (NCHS, national, weekly, provisional)"
     metric: weekly_percent_of_deaths
     measure: percent
@@ -112,7 +112,7 @@ series:
     place_coverage: "US residents as a whole (this table has no state or regional breakdown)"
     time_dimension: week_ending
     asked_with: ["death", "deaths", "mortality"]
-  - condition: "COVID-19, influenza and RSV deaths combined"
+  - condition: "Combined respiratory virus deaths"
     label: "COVID-19, influenza and RSV combined percent of all deaths, ages 18 to 64 (NCHS, national, weekly, provisional)"
     metric: weekly_percent_of_deaths
     measure: percent
@@ -120,7 +120,7 @@ series:
     place_coverage: "US residents as a whole (this table has no state or regional breakdown)"
     time_dimension: week_ending
     asked_with: ["death", "deaths", "mortality"]
-  - condition: "COVID-19, influenza and RSV deaths combined"
+  - condition: "Combined respiratory virus deaths"
     label: "COVID-19, influenza and RSV combined percent of all deaths, ages 65 and older (NCHS, national, weekly, provisional)"
     metric: weekly_percent_of_deaths
     measure: percent

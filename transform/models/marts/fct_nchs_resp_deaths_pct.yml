@@ -3,7 +3,8 @@ version: 2
 models:
 - name: fct_nchs_resp_deaths_pct
   description: 'One row per week, cause and demographic group: every row of int_nchs_resp_deaths_pct, none removed,
-    each with value_status.'
+    each with value_status. The publisher''s calendar columns (year, month, MMWR week, last date of the period)
+    and its jurisdiction (''United States'' in every row) are left out; they stay in int_nchs_resp_deaths_pct.'
   config:
     materialized: table
     contract:
@@ -26,18 +27,6 @@ models:
       arguments:
         columns: *id001
   columns:
-  - name: cause
-    data_type: varchar
-    description: 'The cause the deaths involve: COVID-19, Influenza, RSV, or Combined for the three together.'
-    meta:
-      logical_type: string
-      physical_type: VARCHAR
-      source_field: cause
-      unit: null
-      codes: []
-      missing_codes: []
-    constraints:
-    - type: not_null
   - name: week_end
     data_type: date
     description: The Saturday that ends the week of reporting.
@@ -45,6 +34,30 @@ models:
       logical_type: date
       physical_type: DATE
       source_field: week_end
+      unit: null
+      codes: []
+      missing_codes: []
+    constraints:
+    - type: not_null
+  - name: week_start
+    data_type: date
+    description: The Sunday that starts the week of reporting (NCHS's first date of the data period).
+    meta:
+      logical_type: date
+      physical_type: DATE
+      source_field: week_start
+      unit: null
+      codes: []
+      missing_codes: []
+    constraints:
+    - type: not_null
+  - name: cause
+    data_type: varchar
+    description: 'The cause the deaths involve: COVID-19, Influenza, RSV, or Combined for the three together.'
+    meta:
+      logical_type: string
+      physical_type: VARCHAR
+      source_field: cause
       unit: null
       codes: []
       missing_codes: []
@@ -64,7 +77,9 @@ models:
     - type: not_null
   - name: demographic_group
     data_type: varchar
-    description: The demographic group, as NCHS labels it ('65+ years', 'Hispanic', 'Female').
+    description: 'The demographic group, as NCHS labels it: an age group (''0-17 years'', ''18-64 years'', ''65+
+      years''), a race and Hispanic origin group (''Hispanic'', ''White, NH'', ''Not Available''), or a sex (''Female'',
+      ''Male'').'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -103,8 +118,8 @@ models:
     - type: not_null
   - name: percent_of_deaths
     data_type: double
-    description: Percent of all deaths in the week and group that involved the cause, as published; never zero for
-      an empty cell.
+    description: Percent of all deaths in the week and group that involved the cause, as published; empty where
+      NCHS suppressed it or no death was recorded (an empty value is never shown as 0).
     meta:
       logical_type: number
       physical_type: DOUBLE
@@ -142,11 +157,19 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    data_tests:
-    - not_all_empty:
-        name: fct_nchs_resp_deaths_pct_suppression_note_filled
-        config:
-          severity: warn
+  - name: data_as_of
+    data_type: date
+    description: 'The date NCHS drew these provisional counts (its ''Data as of''), the same in every row of a load:
+      how current each figure is.'
+    meta:
+      logical_type: date
+      physical_type: DATE
+      source_field: data_as_of
+      unit: null
+      codes: []
+      missing_codes: []
+    constraints:
+    - type: not_null
   - name: value_status
     data_type: varchar
     description: 'Why percent_of_deaths is or isn''t there: ''published'', ''suppressed by NCHS (a count from 1
@@ -176,8 +199,8 @@ models:
     - type: not_null
   - name: _raw_sha256
     data_type: varchar
-    description: 'The sha256 fingerprint of each raw file the row was parsed from: the exact bytes the publisher
-      sent.'
+    description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+      the exact bytes the publisher sent.'
     meta:
       logical_type: string
       physical_type: VARCHAR

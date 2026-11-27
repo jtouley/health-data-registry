@@ -151,8 +151,8 @@ models:
     - type: not_null
   - name: pathogen
     data_type: varchar
-    description: 'The cause of death the row counts: COVID-19, Influenza, RSV, or Combined for the three together
-      (column ''Cause of death (pathogen)''; the description writes ''Flu'', the rows ''Influenza'').'
+    description: 'The cause the deaths involve: COVID-19, Influenza, RSV, or Combined for the three together (column
+      ''Cause of death (pathogen)''; the description writes ''Flu'', the rows ''Influenza'').'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -165,7 +165,7 @@ models:
   - name: deaths
     data_type: bigint
     description: Number of deaths involving the cause in the week and group (column description); empty where NCHS
-      suppressed a count from 1 to 9, never zero.
+      suppressed a count from 1 to 9 (a suppressed count is never shown as 0; a published 0 is a real 0).
     meta:
       logical_type: integer
       physical_type: BIGINT
@@ -194,7 +194,8 @@ models:
   - name: percent_deaths
     data_type: double
     description: Percent of all deaths in the week and group that involved the cause (column 'Percent of deaths
-      due to pathogen'); empty where NCHS suppressed it, or where no death was recorded, never zero.
+      due to pathogen'); empty where NCHS suppressed it, or where no death was recorded (an empty value is never
+      shown as 0).
     meta:
       logical_type: number
       physical_type: DOUBLE

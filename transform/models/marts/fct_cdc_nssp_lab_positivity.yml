@@ -2,8 +2,8 @@
 version: 2
 models:
 - name: fct_cdc_nssp_lab_positivity
-  description: 'One row per virus, MMWR week and state: every row of int_cdc_nssp_lab_positivity, none removed,
-    each with value_status.'
+  description: 'One row per virus, MMWR week and place (a state or territory so far): every row of int_cdc_nssp_lab_positivity,
+    none removed, each with value_status.'
   config:
     materialized: table
     contract:
@@ -18,16 +18,16 @@ models:
     primary_key: &id001
     - pathogen
     - week_end
-    - state
+    - place
   data_tests:
   - one_row_per_key:
-      name: fct_cdc_nssp_lab_positivity_one_row_per_pathogen_week_end_state
+      name: fct_cdc_nssp_lab_positivity_one_row_per_pathogen_week_end_place
       arguments:
         columns: *id001
   columns:
   - name: pathogen
     data_type: varchar
-    description: 'The virus tested for: COVID-19, Influenza or RSV, as CDC labels it.'
+    description: 'The virus tested for, by NAAT only: COVID-19, Influenza or RSV, as CDC labels it.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -51,7 +51,7 @@ models:
     - type: not_null
   - name: week_start
     data_type: date
-    description: The Sunday that starts that MMWR week.
+    description: The Sunday that starts the MMWR week the specimens were collected in.
     meta:
       logical_type: date
       physical_type: DATE
@@ -61,13 +61,28 @@ models:
       missing_codes: []
     constraints:
     - type: not_null
-  - name: state
+  - name: place
     data_type: varchar
-    description: The state or territory, as CDC's two-letter postal code (MI, OH, PR).
+    description: 'The place, as CDC labels it: a two-letter postal code for each of the 50 states, DC, Puerto Rico
+      (PR), Guam (GU) and the US Virgin Islands (VI), by the patient''s ZIP code of residence, or the ordering provider''s
+      where that is missing. place_kind says what kind of place it is.'
     meta:
       logical_type: string
       physical_type: VARCHAR
-      source_field: state
+      source_field: place
+      unit: null
+      codes: []
+      missing_codes: []
+    constraints:
+    - type: not_null
+  - name: place_kind
+    data_type: varchar
+    description: 'The kind of place, as published: ''state'' in every row so far (a state or territory). Any other
+      kind, such as a national or regional row, is kept and shows here.'
+    meta:
+      logical_type: string
+      physical_type: VARCHAR
+      source_field: place_kind
       unit: null
       codes: []
       missing_codes: []
@@ -75,7 +90,8 @@ models:
     - type: not_null
   - name: tests
     data_type: bigint
-    description: NAAT tests classified positive or negative, as published; empty where CDC suppressed it.
+    description: 'NAAT tests for the virus classified positive or negative, as published: the denominator of percent_positive.
+      Unknown, indeterminate and uninterpretable results are excluded. Empty where CDC suppressed it.'
     meta:
       logical_type: integer
       physical_type: BIGINT
@@ -105,8 +121,9 @@ models:
           severity: warn
   - name: percent_positive
     data_type: double
-    description: Percent of the tests that were positive, as published; empty where suppressed or no test was reported,
-      never zero.
+    description: Percent of the NAAT tests that were positive, as published (positives divided by tests classified
+      positive or negative, times 100). Counts tests, not people. Empty where CDC suppressed it or no test was published;
+      an empty value is never shown as 0, and a published 0 is a real 0.
     meta:
       logical_type: number
       physical_type: DOUBLE
@@ -122,8 +139,11 @@ models:
   - name: value_status
     data_type: varchar
     description: 'Why percent_positive is or isn''t there, read from the published counts and CDC''s suppression
-      rule: ''published'', ''no test reported'' (tests published as 0), or ''suppressed by CDC (fewer than 10 tests
-      or 10 positives)''. It qualifies the row and removes nothing.'
+      rule: ''published''; ''0 tests published (nothing to divide by)'', where tests is published as 0 (whether
+      that is no test or no report is an open question in the source contract); ''suppressed by CDC (fewer than
+      10 tests or 10 positives)'', where a count is empty too, since CDC suppresses the counts and the percent together;
+      or ''not published'', where both counts are published and the percent is still empty. It qualifies the row
+      and removes nothing.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -148,8 +168,8 @@ models:
     - type: not_null
   - name: _raw_sha256
     data_type: varchar
-    description: 'The sha256 fingerprint of each raw file the row was parsed from: the exact bytes the publisher
-      sent.'
+    description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+      the exact bytes the publisher sent.'
     meta:
       logical_type: string
       physical_type: VARCHAR

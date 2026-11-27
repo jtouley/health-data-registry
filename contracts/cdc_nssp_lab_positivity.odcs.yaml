@@ -163,7 +163,7 @@ schema:
         physicalType: DOUBLE
         logicalType: number
         required: false
-        description: "Percent of the week's NAAT tests for the virus in the state that were positive: positives divided by tests classified positive or negative, times 100 (dataset description). Counts tests, not people. Empty where CDC suppressed it or no test was reported, never zero."
+        description: "Percent of the week's NAAT tests for the virus in the state that were positive: positives divided by tests classified positive or negative, times 100 (dataset description). Counts tests, not people. Empty where CDC suppressed it or no test was reported; an empty value is never shown as 0, and a published 0 is a real 0 (zeros are not suppressed)."
         customProperties:
           - {property: role, value: measure}
           - {property: sourceField, value: percent_pos}
@@ -183,6 +183,13 @@ schema:
             query: "SELECT COUNT(*) FROM {object} WHERE percent_pos IS NOT NULL AND (test_count IS NULL OR positive_count IS NULL)"
             mustBe: 0
             description: "The dataset description suppresses the counts and the percent together, so a percent published beside a suppressed count would mean the rule changed."
+          - id: counts_published_with_their_percent
+            dimension: consistency
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE percent_pos IS NULL AND test_count > 0 AND positive_count IS NOT NULL"
+            mustBe: 0
+            description: "The other direction of the same rule: the dataset description suppresses the counts and the percent together and does not suppress zeros, so both counts published, with tests to divide by, and no percent would mean the rule changed (none on 2026-11-27)."
 customProperties:
   - {property: licence, value: public-domain-us-federal}
   - {property: licenceSource, value: "No licence field in the Socrata metadata (read 2026-11-25). A CDC work on data.cdc.gov, a US federal work under 17 USC 105. A maintainer confirms the wording (see openQuestions)."}

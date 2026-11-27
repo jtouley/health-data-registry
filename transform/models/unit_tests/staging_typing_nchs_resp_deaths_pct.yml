@@ -38,6 +38,12 @@ unit_tests:
       percent_deaths: 2.0
       provisional: (provisional)
       suppressed: null
+      data_as_of: 2026-01-07
+      start_date: 2025-12-28
+      end_date: 2026-01-03
+      month: 1
+      _snapshot_id: s1
+      _raw_sha256: h1
     - demographic_values: 0-17 years
       pathogen: RSV
       weekending_date: 2026-01-03
@@ -48,6 +54,12 @@ unit_tests:
       percent_deaths: null
       provisional: null
       suppressed: One or more data cells have counts between 1-9 and have been suppressed in accordance with NCHS confidentiality standards.
+      data_as_of: 2026-01-07
+      start_date: 2025-12-28
+      end_date: 2026-01-03
+      month: 1
+      _snapshot_id: s1
+      _raw_sha256: h1
     - demographic_values: Female
       pathogen: Combined
       weekending_date: 2026-01-03
@@ -58,12 +70,20 @@ unit_tests:
       percent_deaths: null
       provisional: null
       suppressed: null
+      data_as_of: 2026-01-07
+      start_date: 2025-12-28
+      end_date: 2026-01-03
+      month: 1
+      _snapshot_id: s1
+      _raw_sha256: h1
 - name: fct_nchs_resp_deaths_pct_keeps_every_row_and_says_why_a_value_is_empty
   model: fct_nchs_resp_deaths_pct
   given:
   - input: ref('int_nchs_resp_deaths_pct')
     rows:
     - weekending_date: 2026-01-03
+      start_date: 2025-12-28
+      data_as_of: 2026-01-07
       pathogen: COVID-19
       demographic_type: Age Group
       demographic_values: 65+ years
@@ -72,7 +92,11 @@ unit_tests:
       percent_deaths: 2.0
       provisional: (provisional)
       suppressed: null
+      _snapshot_id: s1
+      _raw_sha256: h1
     - weekending_date: 2026-01-03
+      start_date: 2025-12-28
+      data_as_of: 2026-01-07
       pathogen: RSV
       demographic_type: Age Group
       demographic_values: 0-17 years
@@ -81,7 +105,11 @@ unit_tests:
       percent_deaths: null
       provisional: null
       suppressed: note
+      _snapshot_id: s1
+      _raw_sha256: h1
     - weekending_date: 2026-01-03
+      start_date: 2025-12-28
+      data_as_of: 2026-01-07
       pathogen: Combined
       demographic_type: Sex
       demographic_values: Female
@@ -90,7 +118,11 @@ unit_tests:
       percent_deaths: null
       provisional: null
       suppressed: null
+      _snapshot_id: s1
+      _raw_sha256: h1
     - weekending_date: 2026-01-03
+      start_date: 2025-12-28
+      data_as_of: 2026-01-07
       pathogen: Influenza
       demographic_type: Sex
       demographic_values: Male
@@ -99,33 +131,144 @@ unit_tests:
       percent_deaths: null
       provisional: null
       suppressed: null
+      _snapshot_id: s2
+      _raw_sha256: 'h2 h3'
+    - weekending_date: 2026-01-03
+      start_date: 2025-12-28
+      data_as_of: 2026-01-07
+      pathogen: COVID-19
+      demographic_type: Sex
+      demographic_values: Male
+      deaths: null
+      total_deaths: 10000
+      percent_deaths: 1.5
+      provisional: null
+      suppressed: note
+      _snapshot_id: s2
+      _raw_sha256: 'h2 h3'
+    - weekending_date: 2026-01-03
+      start_date: 2025-12-28
+      data_as_of: 2026-01-07
+      pathogen: RSV
+      demographic_type: Sex
+      demographic_values: Male
+      deaths: 50
+      total_deaths: null
+      percent_deaths: null
+      provisional: null
+      suppressed: null
+      _snapshot_id: s2
+      _raw_sha256: 'h2 h3'
+    - weekending_date: 2026-01-03
+      start_date: 2025-12-28
+      data_as_of: 2026-01-07
+      pathogen: Influenza
+      demographic_type: Age Group
+      demographic_values: 0-17 years
+      deaths: 0
+      total_deaths: 0
+      percent_deaths: null
+      provisional: null
+      suppressed: note
+      _snapshot_id: s2
+      _raw_sha256: 'h2 h3'
   expect:
     rows:
-    - cause: COVID-19
+    - week_end: 2026-01-03
+      week_start: 2025-12-28
+      cause: COVID-19
+      group_kind: Age Group
       demographic_group: 65+ years
-      percent_of_deaths: 2.0
       deaths_involving: 800
+      all_cause_deaths: 40000
+      percent_of_deaths: 2.0
       provisional: (provisional)
+      suppression_note: null
+      data_as_of: 2026-01-07
       value_status: published
-      suppression_note: null
-    - cause: RSV
+      _snapshot_id: s1
+      _raw_sha256: h1
+    - week_end: 2026-01-03
+      week_start: 2025-12-28
+      cause: RSV
+      group_kind: Age Group
       demographic_group: 0-17 years
-      percent_of_deaths: null
       deaths_involving: null
+      all_cause_deaths: 300
+      percent_of_deaths: null
       provisional: null
-      value_status: suppressed by NCHS (a count from 1 to 9)
       suppression_note: note
-    - cause: Combined
+      data_as_of: 2026-01-07
+      value_status: suppressed by NCHS (a count from 1 to 9)
+      _snapshot_id: s1
+      _raw_sha256: h1
+    - week_end: 2026-01-03
+      week_start: 2025-12-28
+      cause: Combined
+      group_kind: Sex
       demographic_group: Female
-      percent_of_deaths: null
       deaths_involving: 0
-      provisional: null
-      value_status: no death recorded in the group
-      suppression_note: null
-    - cause: Influenza
-      demographic_group: Male
+      all_cause_deaths: 0
       percent_of_deaths: null
-      deaths_involving: 5000
       provisional: null
-      value_status: not published
       suppression_note: null
+      data_as_of: 2026-01-07
+      value_status: no death recorded in the group
+      _snapshot_id: s1
+      _raw_sha256: h1
+    - week_end: 2026-01-03
+      week_start: 2025-12-28
+      cause: Influenza
+      group_kind: Sex
+      demographic_group: Male
+      deaths_involving: 5000
+      all_cause_deaths: 10000
+      percent_of_deaths: null
+      provisional: null
+      suppression_note: null
+      data_as_of: 2026-01-07
+      value_status: not published
+      _snapshot_id: s2
+      _raw_sha256: 'h2 h3'
+    - week_end: 2026-01-03
+      week_start: 2025-12-28
+      cause: COVID-19
+      group_kind: Sex
+      demographic_group: Male
+      deaths_involving: null
+      all_cause_deaths: 10000
+      percent_of_deaths: 1.5
+      provisional: null
+      suppression_note: note
+      data_as_of: 2026-01-07
+      value_status: published
+      _snapshot_id: s2
+      _raw_sha256: 'h2 h3'
+    - week_end: 2026-01-03
+      week_start: 2025-12-28
+      cause: RSV
+      group_kind: Sex
+      demographic_group: Male
+      deaths_involving: 50
+      all_cause_deaths: null
+      percent_of_deaths: null
+      provisional: null
+      suppression_note: null
+      data_as_of: 2026-01-07
+      value_status: not published
+      _snapshot_id: s2
+      _raw_sha256: 'h2 h3'
+    - week_end: 2026-01-03
+      week_start: 2025-12-28
+      cause: Influenza
+      group_kind: Age Group
+      demographic_group: 0-17 years
+      deaths_involving: 0
+      all_cause_deaths: 0
+      percent_of_deaths: null
+      provisional: null
+      suppression_note: note
+      data_as_of: 2026-01-07
+      value_status: suppressed by NCHS (a count from 1 to 9)
+      _snapshot_id: s2
+      _raw_sha256: 'h2 h3'

@@ -126,7 +126,8 @@ models:
     data_type: double
     description: 'Percent of the week''s NAAT tests for the virus in the state that were positive: positives divided
       by tests classified positive or negative, times 100 (dataset description). Counts tests, not people. Empty
-      where CDC suppressed it or no test was reported, never zero.'
+      where CDC suppressed it or no test was reported; an empty value is never shown as 0, and a published 0 is
+      a real 0 (zeros are not suppressed).'
     meta:
       logical_type: number
       physical_type: DOUBLE

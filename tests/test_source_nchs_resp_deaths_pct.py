@@ -79,6 +79,23 @@ RECORDS = [
     rec("RSV", "Sex", "Female", "2026-01-03", "20000.0", deaths="200.0", percent_deaths="1.0"),
     rec("Combined", "Race/Ethnicity", "AI/AN, NH", "2026-01-03", "0.0", deaths="0.0"),
 ]
+AGES = {"0-17 years": "1000.0", "18-64 years": "20000.0", "65+ years": "40000.0"}
+# Each cause in each age group the series read, with a percent, in the week before (every_age_series_has_a_percent).
+SERIES_WEEK = [
+    rec(
+        cause,
+        "Age Group",
+        group,
+        "2025-12-27",
+        total,
+        deaths=f"{float(total) / 50:.1f}",
+        percent_deaths="2.0",
+    )
+    for cause in ("COVID-19", "Influenza", "RSV", "Combined")
+    for group, total in AGES.items()
+    if not (cause == "COVID-19" and group == "65+ years")  # already in RECORDS
+]
+RECORDS += SERIES_WEEK
 
 
 def _build(tmp_path: Path, records: list[dict[str, str]]) -> tuple[Registry, Engine, Path, Any]:
@@ -113,11 +130,39 @@ def test_a_plain_disease_question_never_gets_a_percent_of_deaths() -> None:
         assert [s.label for d, s in series_for(reg, question) if d.id == DS] == [], question
 
 
-def test_a_deaths_question_gets_one_series_per_age_group() -> None:
+@pytest.mark.parametrize(
+    ("question", "cause"),
+    [
+        ("COVID-19 deaths", "COVID-19"),
+        ("COVID-19 mortality", "COVID-19"),
+        ("deaths from COVID-19", "COVID-19"),
+        ("influenza death", "Influenza"),
+        ("RSV deaths", "RSV"),
+        ("deaths involving RSV", "RSV"),
+        ("combined respiratory virus deaths", "Combined"),
+    ],
+)
+def test_a_deaths_question_gets_one_series_per_age_group_of_its_own_cause(question: str, cause: str) -> None:
+    """However the deaths are asked about, only the cause named answers: an RSV question never also gets the
+    Combined series, whose label holds "RSV" too."""
     reg = load_registry(ROOT)
-    labels = sorted(s.label for d, s in series_for(reg, "COVID-19 deaths") if d.id == DS)
-    assert len(labels) == 3
-    assert all(x.startswith("COVID-19 percent of all deaths, ages ") for x in labels)
+    found = [s for d, s in series_for(reg, question) if d.id == DS]
+    assert len(found) == 3, question
+    assert {s.filters["cause"] for s in found} == {cause}
+
+
+def test_a_bare_deaths_question_names_no_cause() -> None:
+    reg = load_registry(ROOT)
+    for question in ("deaths", "mortality"):
+        assert [s for d, s in series_for(reg, question) if d.id == DS] == [], question
+
+
+def test_suggest_datasets_keeps_to_the_same_gate_as_get_series() -> None:
+    """A plain disease question isn't offered a percent of deaths it then couldn't get; a deaths question is."""
+    plain = _mine("COVID-19")
+    assert plain["can_answer"] == "no"
+    assert "asks about" in plain["why"]
+    assert _mine("COVID-19 deaths")["can_answer"] == "yes"
 
 
 def test_a_state_question_is_told_the_table_is_national() -> None:
@@ -136,7 +181,7 @@ def test_get_series_reads_each_published_percent_and_never_adds(
     got = sorted((r[at["condition"]], str(r[at["year"]]), r[at["value"]]) for r in out["rows"])
     old = [g for g in got if "65 and older" in g[0]]
     assert [(y, v) for _, y, v in old] == [("2025-12-27", 2.0), ("2026-01-03", 2.0)]
-    young = [r for r in out["rows"] if "0 to 17" in r[at["condition"]]]
+    young = [r for r in out["rows"] if "0 to 17" in r[at["condition"]] and str(r[at["year"]]) == "2026-01-03"]
     assert [r[at["value"]] for r in young] == [None]
     # The suppressed cell keeps NCHS's own note beside it, and says it is empty: never a zero.
     assert young[0][at["flag"]] and "suppressed" in young[0][at["flag"]]
@@ -200,8 +245,23 @@ def test_each_rule_fires_on_the_case_it_is_written_for(tmp_path: Path) -> None:
         "suppressed_rows_carry_no_value",
         "national_rows_only",
         "week_ends_on_a_saturday",
+        "demographic_groups",
     ):
         assert status[rule] == "warn", rule
+
+
+def test_a_relabelled_age_group_is_reported(tmp_path: Path) -> None:
+    """NCHS renames '65+ years': every column-level check still passes, but each 65+ series would now be empty,
+    so the per-series rule warns and the new label is outside the published groups."""
+    renamed = [
+        {**r, "demographic_values": "65 years and over"} if r["demographic_values"] == "65+ years" else r
+        for r in RECORDS
+    ]
+    _, _, _, m = _build(tmp_path, renamed)
+    status = {r["test"]: r["status"] for r in m.quality["results"]}
+    assert status["every_age_series_has_a_percent"] == "warn"
+    assert status["demographic_groups"] == "warn"
+    assert status["fill_rate_percent_deaths"] == "pass"
 
 
 def test_a_percent_over_100_blocks_the_copy(tmp_path: Path) -> None:

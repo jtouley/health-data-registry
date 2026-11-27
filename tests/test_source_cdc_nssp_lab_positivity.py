@@ -170,6 +170,7 @@ def test_each_rule_fires_on_the_case_it_is_written_for(tmp_path: Path) -> None:
             **rec("RSV", "2024-11-02", "OH", test_count="30.0", percent_pos="10.0"),
             "geography_type": "hhs_region",
         },
+        rec("COVID-19", "2024-11-09", "OH", test_count="250.0", positive_count="30.0"),  # counts, no percent
     ]
     _, _, _, m = _build(tmp_path, bad)
     status = {r["test"]: r["status"] for r in m.quality["results"]}
@@ -180,6 +181,7 @@ def test_each_rule_fires_on_the_case_it_is_written_for(tmp_path: Path) -> None:
         "week_is_sunday_to_saturday",
         "every_row_is_a_state",
         "percent_suppressed_with_its_counts",
+        "counts_published_with_their_percent",
     ):
         assert status[rule] == "warn", rule
 
@@ -195,7 +197,17 @@ def test_a_percent_over_100_blocks_the_copy(tmp_path: Path) -> None:
 
 
 def test_a_virus_with_no_percent_is_reported(tmp_path: Path) -> None:
-    only_two = [r for r in RECORDS if r["pathogen"] != "RSV"]
-    _, _, _, m = _build(tmp_path, only_two)
+    """RSV's rows are still there but none has a percent: the column-level checks pass, and only the per-virus
+    rule notices that RSV's questions would go unanswered."""
+    rsv_empty = [
+        {k: v for k, v in r.items() if k not in ("test_count", "positive_count", "percent_pos")}
+        if r["pathogen"] == "RSV"
+        else r
+        for r in RECORDS
+    ]
+    assert any(r["pathogen"] == "RSV" for r in rsv_empty)
+    _, _, _, m = _build(tmp_path, rsv_empty)
     status = {r["test"]: r["status"] for r in m.quality["results"]}
     assert status["every_virus_has_a_percent"] == "warn"
+    assert status["percent_between_0_and_100"] == "pass"
+    assert status["fill_rate_percent_pos"] == "pass"
