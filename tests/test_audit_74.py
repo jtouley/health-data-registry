@@ -607,10 +607,11 @@ def guarded(sql: str) -> str:
             "SELECT sum(n) FROM (SELECT deaths AS n FROM deaths UNION ALL SELECT rate FROM vax) u",
             "undeclared_join",
         ),
-        # a declared pair stacked and summed: the join rule passes, the non-additive rule refuses
+        # a declared pair stacked and summed: the join rule passes, the non-additive rule refuses the sum over a
+        # subquery it can't trace (#186 gave that refusal its own code)
         (
             "SELECT sum(n) FROM (SELECT deaths AS n FROM deaths UNION ALL SELECT population FROM pop) u",
-            "non_additive",
+            "sum_over_subquery",
         ),
         # an unpinned sum next to a value that grows too large: the size rule refuses first
         (

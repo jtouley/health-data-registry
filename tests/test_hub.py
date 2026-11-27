@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -12,7 +13,7 @@ from typing import Any
 import duckdb
 import pytest
 
-from health_data_registry import crawl, hub
+from health_data_registry import crawl, hub, quality
 from health_data_registry.hub import Hub, HubError
 from health_data_registry.publish import export_public
 from health_data_registry.query import Engine, QueryRefused
@@ -615,6 +616,79 @@ def test_a_bad_live_table_is_refused_for_that_source_only(
     # The hub source still answers, and the next question reads the publisher afresh.
     assert eng.manifest("toy_cases").origin == "hub"
     assert eng.manifest("toy_listed").origin == "publisher" and len(calls) == 2
+
+
+def _no_result(real: Any) -> Any:
+    """The report with its first result gone, its expected list kept: that check never ran."""
+    return replace(real, results=real.results[1:])
+
+
+def _rule_error(real: Any) -> Any:
+    """The report with its first result turned into a rule error: that check could not run."""
+    return replace(
+        real, results=real.results[1:], rule_errors=({"test": real.results[0]["test"], "error": "boom"},)
+    )
+
+
+@pytest.mark.parametrize(
+    "spoil",
+    [lambda real: quality.QualityReport((), ()), _no_result, _rule_error],
+    ids=["no-result-at-all", "one-check-with-no-result", "a-check-that-could-not-run"],
+)
+def test_a_live_table_whose_checks_did_not_all_run_is_refused(
+    tmp_path: Path, reg: Registry, released: Path, monkeypatch: pytest.MonkeyPatch, spoil: Any
+) -> None:
+    """Issue #222: a live table answers with a caveat when a check fails, but never when its checks did not all
+    run, as the lake and publish paths judge the same record."""
+    from health_data_registry import staging
+
+    real = staging.run_rules
+    runs: list[int] = []
+
+    def flaky(con: Any, table: str, rules: Any) -> quality.QualityReport:
+        runs.append(1)
+        report = real(con, table, rules)
+        return spoil(report) if len(runs) == 1 else report
+
+    monkeypatch.setattr(staging, "run_rules", flaky)
+    eng = engine(reg, tmp_path, released, fetch_at_run_time=True, getter=lambda url: raw_fetch(url, RECORDS))
+    with pytest.raises(QueryRefused) as e:
+        eng.manifest("toy_listed")
+    assert e.value.code == "quality_not_run"
+    assert str(e.value) == (
+        f"{reg.get('toy_listed').entry.publisher} sent a table for toy_listed, but not all of its data checks "
+        "could run, so no numbers are shown for it. Other sources are not affected."
+    )
+    # One next step, said once: the code's own, not the generic one.
+    assert e.value.next_step == "Try again later; if it keeps happening, run the Something's wrong helper."
+    tables = {r[0] for r in eng.connect().execute("SELECT table_name FROM duckdb_tables()").fetchall()}
+    assert "toy_listed" not in tables and "toy_listed" not in eng.manifests  # dropped, not just unlisted
+    # The hub source still answers, and the next question reads the publisher afresh.
+    assert eng.manifest("toy_cases").origin == "hub"
+    assert eng.manifest("toy_listed").origin == "publisher"
+
+
+def test_a_clean_reload_clears_an_older_unchecked_refusal(
+    tmp_path: Path, reg: Registry, released: Path
+) -> None:
+    """A refusal recorded for a table that later loads cleanly never answers a later, different failure."""
+    bad = [{**RECORDS[0], "year": "not a year"}]
+    calls: list[str] = []
+
+    def get(url: str) -> Any:
+        calls.append(url)
+        return raw_fetch(url, bad if len(calls) == 2 else RECORDS)
+
+    eng = engine(reg, tmp_path, released, fetch_at_run_time=True, getter=get)
+    eng._unchecked["toy_listed"] = "an older refusal"
+    assert eng.manifest("toy_listed").origin == "publisher"
+    assert "toy_listed" not in eng._unchecked
+    eng._unchecked["toy_listed"] = "an older refusal"
+    eng.manifests.pop("toy_listed")
+    eng._live.pop("toy_listed")
+    with pytest.raises(QueryRefused) as e:  # the table that could not be read is refused for that reason
+        eng.manifest("toy_listed")
+    assert e.value.code == "publisher_bad_table" and "toy_listed" not in eng._unchecked
 
 
 def test_cache_never_evicts_a_file_a_view_reads(tmp_path: Path, reg: Registry, released: Path) -> None:

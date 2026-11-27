@@ -1,0 +1,58 @@
+id: cdc_schoolvaxview_kindergarten
+title: Vaccination Coverage and Exemptions among Kindergartners
+agency: CDC
+publisher: Centers for Disease Control and Prevention, National Center for Immunization and Respiratory Diseases (School Vaccination Assessment Program, SchoolVaxView)
+level: federal
+country: US
+research_areas: [infectious_disease]
+id_areas: [vaccine_preventable]
+years: {start: 2009, end: null}
+geography: [nation, state]
+shape: estimate_table
+grain: "One row is one vaccine and dose (or one kind of exemption), place (United States, the U.S. Median, a state or DC, or a city or part of a state that reports separately) and school year, giving the percent of kindergartners covered (or with that exemption) as the state reported it, the kindergarten enrolment, the percent surveyed, the survey type, CDC's footnote symbols and, for exemptions, the number of exemptions."
+refresh: annual
+licence:
+  id: public-domain-us-federal
+  redistribution: true
+  terms_url: https://www.usa.gov/government-works
+citation: "Centers for Disease Control and Prevention, National Center for Immunization and Respiratory Diseases. Vaccination Coverage and Exemptions among Kindergartners, SchoolVaxView. https://data.cdc.gov/d/ijqb-a7ye (accessed <retrieved_at>)."
+source:
+  portal: socrata
+  host: data.cdc.gov
+  dataset: ijqb-a7ye
+  landing_url: https://data.cdc.gov/d/ijqb-a7ye
+  api_url: https://data.cdc.gov/resource/ijqb-a7ye.json
+codebook_url: https://www.cdc.gov/vaccines/imz-managers/coverage/schoolvaxview/pubs-resources.html
+caveats:
+  - "Coverage and exemptions are reported by each state's school vaccination assessment, not measured by one national survey. Some states count every kindergartner (census); others survey a sample, and the method is shown with each row (survey type). Whether a sample-based state can be set beside a census state is not yet confirmed."
+  - "CDC publishes no confidence intervals for these percentages, so none is shown; for sample-based states the sampling error is unknown here."
+  - "NA means the estimate is not applicable and NReq that the vaccine is not required by the state for school entry (CDC's column description); both are shown as no value, never as zero. The publisher's own text is kept beside the number."
+  - "The footnote symbols (†, ‡, §, ¶, ** and others) are kept exactly as published. CDC uses the same symbols with different meanings for coverage rows and for exemption rows; their meanings are in CDC's footnote key and are not interpreted here."
+  - "On exemption rows, CDC's footnote '<' means fewer than 0.1% of kindergartners had the exemption; the percent printed beside it (usually 0.1) is then an upper limit, not an estimate. get_series shows the number without the footnote, so check the footnote with query_sql (column foot_notes) before quoting a very small exemption percent."
+  - "There are two national rows: 'United States' and 'U.S. Median'. The median is a median, as CDC labels it, not a national estimate; whether it is taken over states only or over every reporting area is not yet confirmed."
+  - "New York City, the rest of New York State and the City of Houston report separately in some years ('NY-City of New York', 'NY-Rest of state', 'TX-City of Houston') and are listed beside New York and Texas. How they overlap with the state rows is not yet confirmed, so a city's row is never added to or set against its state's."
+  - "Exemption percentages count kindergartners with an exemption among those enrolled. Where a state reported exemptions only per vaccine, CDC's footnote says the percent shown is a lower bound."
+  - "Each row is one vaccine, dose or exemption type: percentages are never added across them, across states or across school years."
+gbd:
+  # GBD cause mappings are proposals in the contract (gbdCauseProposals), pending a maintainer's review; none
+  # is asserted here (hard rule 1).
+  location_column: geography
+  causes: []
+conditions:
+  # Provenance: every distinct value of the vaccine column at https://data.cdc.gov/resource/ijqb-a7ye.json, read
+  # 2026-11-25 (an exact structural fact from the publisher). Exemption types sit in the dose column.
+  dimension: vaccine
+  source: "CDC's own vaccine and exemption names, exactly as published on data.cdc.gov (checked 25 Nov 2026). Definitions: https://www.cdc.gov/vaccines/imz-managers/coverage/schoolvaxview/pubs-resources.html."
+  labels:
+    - "DTP, DTaP, or DT"
+    - "Exemption"
+    - "Hepatitis B"
+    - "MMR"
+    - "MMR (PAC)"
+    - "Polio"
+    - "Varicella"
+  aliases: []
+contract: contracts/cdc_schoolvaxview_kindergarten.odcs.yaml
+semantic_model: semantic/cdc_schoolvaxview_kindergarten.yaml
+status: draft
+hosting: public

@@ -46,9 +46,15 @@ from typing import Any
 
 import duckdb
 
-from health_data_registry.quality import QualityBlocked, QualityReport, blocked_message
+from health_data_registry.quality import (
+    WHOLE_RUN,
+    QualityBlocked,
+    QualityReport,
+    blocked_message,
+    expected_ids,
+)
 from health_data_registry.registry import Dataset
-from health_data_registry.staging import Staged, check_snapshot, stage, write_parquet
+from health_data_registry.staging import Staged, check_snapshot, write_parquet
 
 _SNAPSHOT_ID = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{12}$")
 APP_NAME = "health-data-registry"
@@ -104,6 +110,9 @@ class Manifest:
     # Lake snapshots: the sha256 of each data file (SNAPSHOT_FILES). The server checks data.duckdb when it connects;
     # export-public checks both before publishing (hub.verify_lake_snapshot).
     files: dict[str, str] = field(default_factory=dict)
+    # How the records were read (ADR 0003, ADR 0016): the adapter type and the sha256 of its config and extensions
+    # (adapters.method_digest), part of the snapshot's identity; and any archive member read, with its own sha256.
+    method: dict[str, Any] = field(default_factory=dict)
 
     @staticmethod
     def read(path: Path) -> Manifest:
@@ -251,14 +260,27 @@ def build_snapshot(
     partial: bool = False,
     layouts: dict[str, str] | None = None,
     notes: Sequence[str] = (),
+    provenance: dict[str, str] | None = None,
     robots_overrides: Sequence[str] = (),
 ) -> Manifest:
-    """Normalise newline-delimited JSON record files (publisher field names, raw values) into a snapshot."""
+    """Normalise newline-delimited JSON record files (publisher field names, raw values) into a snapshot.
+
+    The snapshot id hashes the raw bytes, the contract and semantic versions, ``partial`` and the method digest
+    (the adapter type, its config and its extensions), so one id always means the same inputs read the same way:
+    a config-only change builds a new snapshot instead of returning the old parse.
+    """
+    from health_data_registry.adapters import method_digest
+    from health_data_registry.staging import raw_fields, stage_entry
+
     if not fetches:
         raise ValueError("a snapshot needs at least one fetch")
     write_raw(lake, fetches)
     retrieved = max(f.retrieved_at for f in fetches).astimezone(UTC)
-    inputs = "".join(f.sha256 for f in fetches) + f"|{ds.contract.version}|{ds.semantic.version}|{partial}"
+    method = {"type": ds.entry.source.kind, "digest": method_digest(ds.entry), **(provenance or {})}
+    inputs = (
+        "".join(f.sha256 for f in fetches)
+        + f"|{ds.contract.version}|{ds.semantic.version}|{partial}|{method['digest']}"
+    )
     digest = hashlib.sha256(inputs.encode()).hexdigest()[:12]
     snapshot_id = f"{retrieved:%Y%m%dT%H%M%SZ}-{digest}"
     out = snapshot_dir(lake, ds.id, snapshot_id)
@@ -273,11 +295,14 @@ def build_snapshot(
         existing = Manifest.read(out / "manifest.json")
         # The stored verdict may be missing (a snapshot from before the rules) or stale (rules edited since):
         # the contract's current rules run again on the kept file, which is never rewritten.
-        _promote(lake, ds.id, replace(existing, quality=judge_snapshot(out, ds)))
-        return existing
+        # The caller gets that fresh verdict too, so a refresh never reports a stale record (the file on disk keeps
+        # the one written at build time).
+        judged = replace(existing, quality=judge_snapshot(out, ds))
+        _promote(lake, ds, judged)
+        return judged
     tmp = Path(tempfile.mkdtemp(prefix=f".{ds.id}-", dir=lake))
     try:
-        sources = sorted({c.source_field for c in ds.contract.columns})
+        sources = raw_fields(ds.entry, sorted({c.source_field for c in ds.contract.columns}))
         cols = "{" + ", ".join(f"{_lit(s)}: 'VARCHAR'" for s in sources) + "}"
         files = "[" + ", ".join(_lit(str(p)) for p in records_files) + "]"
         con = duckdb.connect(str(tmp / "data.duckdb"))
@@ -285,8 +310,13 @@ def build_snapshot(
             raw = f"read_json({files}, format='newline_delimited', columns={cols})"
             # A full load must carry every declared field: read_json fills a missing one with NULL, so a renamed
             # publisher field would otherwise load as an all-empty column. A partial sample is not checked.
-            report = stage(
-                con, ds.contract, raw, table=ds.id, present=None if partial else fields_in(con, files)
+            report = stage_entry(
+                con,
+                ds.entry,
+                ds.contract,
+                raw,
+                table=ds.id,
+                present=None if partial else fields_in(con, files),
             )
             write_parquet(con, ds.contract, ds.id, str(tmp / "data.parquet"))
         finally:
@@ -307,6 +337,7 @@ def build_snapshot(
             redistribution=ds.entry.licence.redistribution,
             partial=partial,
             layouts=dict(layouts or {}),
+            method=method,
             notes=[*notes, *staged.notes()],
             quality=staged.quality.as_dict(),
             silver=staged.staging.as_dict(),
@@ -319,7 +350,7 @@ def build_snapshot(
         if tmp.exists():
             shutil.rmtree(tmp, ignore_errors=True)
     keep()
-    _promote(lake, ds.id, manifest)
+    _promote(lake, ds, manifest)
 
     return manifest
 
@@ -409,19 +440,23 @@ def judge_snapshot(snapshot: Path, ds: Dataset) -> dict[str, Any]:
             raise FileNotFoundError(f"{db.name} is missing from the snapshot")
         return check_snapshot(str(db), ds.contract, ds.id).as_dict()
     except (OSError, duckdb.Error) as e:
-        error = {"test": "contract-rules", "error": (str(e).splitlines() or [type(e).__name__])[0]}
-        return QualityReport((), (error,)).as_dict()
+        error = {"test": WHOLE_RUN, "error": (str(e).splitlines() or [type(e).__name__])[0]}
+        return QualityReport((), (error,), expected_ids(ds.contract)).as_dict()
 
 
-def _promote(lake: Path, dataset_id: str, manifest: Manifest) -> None:
+def _promote(lake: Path, ds: Dataset, manifest: Manifest) -> None:
     """Point LATEST at a new snapshot, unless a contract rule blocks it (an error-severity failure or a rule that
     could not run): then the snapshot and its raw records stay on disk for inspection, LATEST keeps naming the
     copy before it, and QualityBlocked says why. A partial development sample is never published, so its rules
-    are reported as caveats only."""
-    reason = None if manifest.partial else blocked_message(dataset_id, manifest.quality)
+    are reported as caveats only. A check of the contract's that has no result never ran, so it blocks too."""
+    reason = (
+        None
+        if manifest.partial
+        else blocked_message(ds.id, manifest.quality, expected=expected_ids(ds.contract))
+    )
     if reason:
         raise QualityBlocked(reason)
-    _point_latest(lake, dataset_id, manifest.snapshot_id)
+    _point_latest(lake, ds.id, manifest.snapshot_id)
 
 
 def _point_latest(lake: Path, dataset_id: str, snapshot_id: str) -> None:

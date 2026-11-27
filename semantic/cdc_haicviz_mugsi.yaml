@@ -1,0 +1,98 @@
+dataset: cdc_haicviz_mugsi
+# 0.1.0: first draft. Every figure is a rate read from its one published cell, for the EIP sites combined; nothing
+# is ever added.
+version: 0.1.0
+dimensions:
+  - {name: year, column: yearname, type: time, non_additive: false, description: "Surveillance year."}
+  - name: organism
+    column: organism
+    type: categorical
+    non_additive: true
+    non_additive_reason: "CRE and CRAB are different organisms"
+    description: "CRE (carbapenem-resistant Enterobacterales) or CRAB (carbapenem-resistant Acinetobacter baumannii)."
+  - name: topic
+    column: topic
+    type: categorical
+    non_additive: true
+    non_additive_reason: "a case rate and a death rate are different measures"
+    description: "Case Rates or Death Rates."
+  - name: view
+    column: viewby
+    type: categorical
+    non_additive: true
+    non_additive_reason: "each breakdown counts the same patients again"
+    description: "How the patients are broken down: all cases, or by age, sex, culture source or (CRE only) organism."
+  - name: stratum
+    column: series
+    type: categorical
+    non_additive: true
+    non_additive_reason: "'All cases' sits beside its groups, and CDC doesn't say the groups add up to it"
+    description: "The group the rate is for: all cases, an age group, a sex, a culture source or a species inside CRE."
+measures:
+  - {name: mugsi_rate, column: value, kind: rate, unit: "per 100,000 population (CDC's MuGSI page; not stated in the table)", description: "Cases or deaths per 100,000 population in the EIP sites that run MuGSI (unit from CDC's MuGSI page; the table states none)."}
+metrics:
+  - name: mugsi_case_rate
+    description: "New cases of one organism (CRE or CRAB) per 100,000 population in the EIP sites, all cases, from the published 'All cases' row; never added."
+    measure: mugsi_rate
+    aggregation: none
+    exclude_total_rows: false
+    # One published cell per organism and year: every grain column but organism and year is pinned.
+    filters: ["topic = 'Case Rates'", "viewby = 'All cases'", "series = 'All cases'"]
+    uncertainty: none
+    # Structural: the contract has no interval column.
+    uncertainty_reason: "CDC's HAICViz table gives no confidence interval for these rates."
+  - name: mugsi_death_rate
+    description: "Deaths among people with one organism (CRE or CRAB) per 100,000 population in the EIP sites, from the published 'All cases' row; never added."
+    measure: mugsi_rate
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["topic = 'Death Rates'", "viewby = 'All cases'", "series = 'All cases'"]
+    uncertainty: none
+    uncertainty_reason: "CDC's HAICViz table gives no confidence interval for these rates."
+  - name: mugsi_case_rate_by_stratum
+    description: "New cases per 100,000 for one published group (an age group, a sex, a culture source or a species inside CRE) of one organism; the 'All cases' rows are left out, and nothing is added."
+    measure: mugsi_rate
+    aggregation: none
+    exclude_total_rows: true
+    filters: ["topic = 'Case Rates'"]
+    uncertainty: none
+    uncertainty_reason: "CDC's HAICViz table gives no confidence interval for these rates."
+series:
+  - condition: "CRE"
+    label: "Carbapenem-resistant Enterobacterales (CRE) case rate (EIP sites, all ages)"
+    metric: mugsi_case_rate
+    measure: rate
+    filters: {organism: "CRE"}
+    place_coverage: "the Emerging Infections Program sites combined, not by state"
+    time_dimension: year
+    case_definition: "MuGSI CRE (definition in CDC's annual MuGSI reports; not yet in the contract)"
+  - condition: "CRE"
+    label: "Carbapenem-resistant Enterobacterales (CRE) death rate (EIP sites, all ages)"
+    metric: mugsi_death_rate
+    measure: rate
+    filters: {organism: "CRE"}
+    place_coverage: "the Emerging Infections Program sites combined, not by state"
+    time_dimension: year
+    case_definition: "MuGSI CRE (definition in CDC's annual MuGSI reports; not yet in the contract)"
+  - condition: "CRAB"
+    label: "Carbapenem-resistant Acinetobacter baumannii (CRAB) case rate (EIP sites, all ages)"
+    metric: mugsi_case_rate
+    measure: rate
+    filters: {organism: "CRAB"}
+    place_coverage: "the Emerging Infections Program sites combined, not by state"
+    time_dimension: year
+    case_definition: "MuGSI CRAB (definition in CDC's annual MuGSI reports; not yet in the contract)"
+  - condition: "CRAB"
+    label: "Carbapenem-resistant Acinetobacter baumannii (CRAB) death rate (EIP sites, all ages)"
+    metric: mugsi_death_rate
+    measure: rate
+    filters: {organism: "CRAB"}
+    place_coverage: "the Emerging Infections Program sites combined, not by state"
+    time_dimension: year
+    case_definition: "MuGSI CRAB (definition in CDC's annual MuGSI reports; not yet in the contract)"
+# Any catalogued organism label (catalog conditions.labels): the case rate for all cases, as published, never added.
+generic_series:
+  - metric: mugsi_case_rate
+    measure: rate
+    place_coverage: "the Emerging Infections Program sites combined, not by state"
+    time_dimension: year

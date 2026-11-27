@@ -103,7 +103,7 @@ _STOP = frozenset(
 _GEO_WORDS = {
     "county": "county", "counties": "county", "city": "city", "zip": "zip", "state": "state", "states": "state",
     "national": "nation", "nationally": "nation", "country": "country", "countries": "country",
-    "global": "country", "worldwide": "country",
+    "global": "country", "worldwide": "country", "region": "region", "regions": "region", "regional": "region",
 }  # fmt: skip
 
 NO_PATIENT_DATA = "Never put patient information in the chat."
@@ -736,6 +736,9 @@ def suggest_datasets(
         }
     )
     levels = {lvl for w, lvl in _GEO_WORDS.items() if re.search(rf"\b{w}\b", q)}
+    if re.search(r"\bwho regions?\b", q):  # a WHO region is its own level, not a US (HHS) region
+        levels.discard("region")
+        levels.add("who_region")
     if states:
         levels.add("state")
     years = [int(y) for y in re.findall(r"\b(19[5-9]\d|20[0-4]\d)\b", q)]
@@ -957,12 +960,20 @@ def _dataset_notes(ds: Dataset, m: Any, method: str, got: Sequence[SeriesRow]) -
     if ds.contract.rate_denominator:
         notes.append(f"{ds.id}: rate denominator: {ds.contract.rate_denominator}.")
     pairs = dict(p for col in ds.contract.columns for p in col.flag_codes)
+    zero = next((c.no_cases_code for c in ds.contract.columns if c.no_cases_code), None)
     if pairs:
+        who = ds.entry.agency
         notes.append(
             f"{ds.id}: the flag column gives the publisher's reason for an empty value: "
             + "; ".join(f"'{c}' = {t}" for c, t in pairs.items())
-            + ". '-' means no cases were reported, which is different from data that are unavailable or not "
-            "published."
+            + "."
+            + (
+                f" '{zero}' is {who}'s 'no reported cases': the area did not submit any cases. It is read as not "
+                f"reported (the maintainer's declaration in the contract), so a count flagged '{zero}' has no number "
+                "and is never counted as 0: no total, rate or trend point is worked out from it."
+                if zero
+                else ""
+            )
         )
     return notes
 
@@ -1270,6 +1281,16 @@ def list_caveats(
         rows += [[ds.id, "caveat", c] for c in ds.entry.caveats]
         rows += [[ds.id, "not yet confirmed", q] for q in ds.contract.open_questions]
         rows.append([ds.id, "unreliable values", ds.contract.unreliable_rule])
+        if not ds.contract.quality:
+            rows.append(
+                [
+                    ds.id,
+                    "data checks",
+                    "This source's contract sets no checks of its own on these numbers. Only the general checks "
+                    "run: that the table has rows, and a warning when an optional column is empty in every row. "
+                    "Compare with the publisher's page before relying on them.",
+                ]
+            )
         if ds.entry.status != "reviewed":
             rows.append([ds.id, "review", "Contract is a draft; no maintainer has reviewed it yet."])
     rows += [["all", "geography", t] for t in GEOGRAPHY_TRAPS]
@@ -1331,6 +1352,9 @@ def query_sql(
     )  # fmt: skip
 
 
+_SUM_RULE_CODES = frozenset({"weekly_sum", "empty_in_sum", "sum_over_subquery"})
+
+
 def _query_sql(engine: Engine, sql: str, fmt: Fmt) -> Result | Out:
     from health_data_registry.sql_guard import SqlRefused
 
@@ -1338,9 +1362,11 @@ def _query_sql(engine: Engine, sql: str, fmt: Fmt) -> Result | Out:
         out = engine.query_sql(sql)
     except (SqlRefused, QueryRefused) as e:
         code = getattr(e, "code", "refused")
-        # A refusal with a next step of its own (too_large, too_slow, lake_unverified, ...) keeps it; the others
-        # point to the tools that answer most questions without SQL.
-        if isinstance(e, SqlRefused):
+        # A refusal with a next step of its own (too_large, too_slow, lake_unverified, a sum rule's, ...) keeps
+        # it; the others point to the tools that answer most questions without SQL.
+        if code in _SUM_RULE_CODES:
+            step = next_step_for(code)
+        elif isinstance(e, SqlRefused):
             step = SQL_NEXT_STEPS.get(code, SQL_NEXT_STEP)
         else:
             step = SQL_NEXT_STEP if e.next_step == DEFAULT_NEXT_STEP else e.next_step
