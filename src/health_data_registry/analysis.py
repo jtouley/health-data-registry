@@ -348,20 +348,47 @@ def _unknown(registry: Registry, condition: str, what: str, fmt: Fmt) -> Out:
     return unknown_condition(registry, condition, fmt, what)
 
 
+def no_rate_reason(ds: Dataset, s: Series) -> tuple[str, str] | None:
+    """(refusal code, why in plain words) when a series' counts take no rate per 100,000 people, else None.
+
+    From declarations only, never from the label's words: the catalog's not_a_human_case_count (animals), and the
+    contract's notIncidence on the condition column (NNDSS: C. auris screening, colonisation found by screening).
+    """
+    if why := ds.not_a_human_case_count(s.label):
+        return "not_a_human_count", why
+    if why := ds.not_incidence(s.condition) or ds.not_incidence(s.label):
+        return "not_incidence", why
+    return None
+
+
+def _no_number_why(ds: Dataset, o: Obs) -> str:
+    """Why a count has no number, in the publisher's words when its flag says (NNDSS '-': no reported cases)."""
+    code = "" if o.flag is None else str(o.flag)
+    meaning = dict(pair for col in ds.contract.columns for pair in col.flag_codes).get(code) if code else None
+    return f"has no number (publisher flag '{code}' = {meaning})" if meaning else "suppressed or missing"
+
+
 def _not_human(matches: Sequence[tuple[Dataset, Series]]) -> list[str]:
-    """For each matched label whose counts are not cases in people (the catalog says why), one plain line."""
+    """For each matched label whose counts take no rate per 100,000 people (a declaration says why), one line."""
     return list(
-        dict.fromkeys(
-            f"'{s.label}' counts {why}" for ds, s in matches if (why := ds.not_a_human_case_count(s.label))
-        )
+        dict.fromkeys(f"'{s.label}' counts {r[1]}" for ds, s in matches if (r := no_rate_reason(ds, s)))
     )
 
 
-def _no_human_rate(condition: str, why: list[str], fmt: Fmt) -> Out:
+def _no_rate_code(matches: Sequence[tuple[Dataset, Series]]) -> str:
+    codes = {r[0] for ds, s in matches if (r := no_rate_reason(ds, s))}
+    return "not_a_human_count" if codes == {"not_a_human_count"} else "not_incidence"
+
+
+def _all_without_rate(matches: Sequence[tuple[Dataset, Series]]) -> bool:
+    return all(no_rate_reason(ds, s) for ds, s in matches)
+
+
+def _no_human_rate(condition: str, matches: Sequence[tuple[Dataset, Series]], fmt: Fmt) -> Out:
     return message(
-        f"No rate per 100,000 people is given for '{condition}': " + "; ".join(why) + ".",
+        f"No rate per 100,000 people is given for '{condition}': " + "; ".join(_not_human(matches)) + ".",
         fmt,
-        refused="not_a_human_count",
+        refused=_no_rate_code(matches),
     )
 
 
@@ -406,9 +433,9 @@ def _rate_rows(
             denom, pds = pop.get((o.place, o.year), (None, None))
             est = None
             part = partial_area(ds, s, o.raw_place)
-            not_human = ds.not_a_human_case_count(s.label)
-            if not_human:
-                flags.append(f"counts {not_human}, so no rate per 100,000 people")
+            no_rate = no_rate_reason(ds, s)
+            if no_rate:
+                flags.append(f"counts {no_rate[1]}, so no rate per 100,000 people")
             elif o.not_total:
                 flags.append(f"{o.not_total}; no rate")
             elif o.value is None and o.suppressed:
@@ -417,7 +444,7 @@ def _rate_rows(
                     "in the source, so no total and no rate (it is not zero)"
                 )
             elif o.value is None:
-                flags.append("count suppressed or missing in the source, so no rate (it is not zero)")
+                flags.append(f"count {_no_number_why(ds, o)} in the source, so no rate (it is not zero)")
             elif not is_count(o.value):
                 flags.append(
                     f"the source's count {o.value:g} is not a whole, non-negative number of cases, so no rate"
@@ -477,8 +504,8 @@ def get_rate(
     matches = series_for(registry, condition, "cases")
     if not matches:
         return _unknown(registry, condition, "case counts", fmt)
-    if all(ds.not_a_human_case_count(s.label) for ds, s in matches):
-        return _no_human_rate(condition, _not_human(matches), fmt)
+    if _all_without_rate(matches):
+        return _no_human_rate(condition, matches, fmt)
     try:
         rows, unmatched, used = _rate_rows(registry, engine, condition, locations, year, year)
         notes = spelling_notes([r.label for r in rows]) + _source_notes(engine, used)
@@ -539,8 +566,8 @@ def compare_rates(
     matches = series_for(registry, condition, "cases")
     if not matches:
         return _unknown(registry, condition, "case counts", fmt)
-    if all(ds.not_a_human_case_count(s.label) for ds, s in matches):
-        return _no_human_rate(condition, _not_human(matches), fmt)
+    if _all_without_rate(matches):
+        return _no_human_rate(condition, matches, fmt)
     try:
         a_rows, _, used_a = _rate_rows(registry, engine, condition, [location], year, year)
         b_rows, _, used_b = _rate_rows(registry, engine, condition, [loc_b], year_b, year_b)
@@ -669,16 +696,18 @@ def get_trend(
     if not matches:
         return _unknown(registry, condition, "case counts", fmt)
     if fit_on == "rates" and _not_human(matches):
-        if all(ds.not_a_human_case_count(s.label) for ds, s in matches):
+        if _all_without_rate(matches):
             return message(
                 f"No trend in rates per 100,000 people is given for '{condition}': "
                 + "; ".join(_not_human(matches))
-                + '. Ask again with fit_on="counts" for a trend in the counts themselves.',
+                + ".",
                 fmt,
-                refused="not_a_human_count",
+                refused=_no_rate_code(matches),
+                next_step='Ask again with fit_on="counts" for a trend in the counts themselves, or use get_series '
+                "to read them as published.",
             )
         skipped = _not_human(matches)
-        matches = [(ds, s) for ds, s in matches if not ds.not_a_human_case_count(s.label)]
+        matches = [(ds, s) for ds, s in matches if not no_rate_reason(ds, s)]
     else:
         skipped = []
     cols = ["location", "condition", "years", "points_used", "annual_percent_change", "lower_95", "upper_95",
@@ -700,7 +729,7 @@ def get_trend(
                 seg = [o for o in got if o.year in years]
                 left_out = [f"{o.year} not the year's total ({o.not_total})" for o in seg if o.not_total]
                 left_out += [
-                    f"{o.year} suppressed or missing" for o in seg if o.value is None and not o.not_total
+                    f"{o.year} {_no_number_why(ds, o)}" for o in seg if o.value is None and not o.not_total
                 ]
                 if not include_provisional:
                     left_out += [
@@ -993,14 +1022,22 @@ def check_signal(
     except QueryRefused as e:
         return refusal(e, fmt)
     weekly = {(o.year, int(o.extra[0])): o.value for o in rows}
+    flags = {(o.year, int(o.extra[0])): o.flag for o in rows}
     place = rows[0].place if rows else location
+    meaning = {c: m for col in ds.contract.columns for c, m in col.flag_codes}
 
     def total(y: int, first: int) -> float | str:
-        vals = [weekly.get((y, w), "absent") for w in range(first, first + WINDOW)]
+        span = range(first, first + WINDOW)
+        vals = [weekly.get((y, w), "absent") for w in span]
         if "absent" in vals:
             return f"{y} weeks {first}-{first + WINDOW - 1} are not in the data"
         if any(v is None for v in vals):
-            return f"{y} weeks {first}-{first + WINDOW - 1} include a suppressed or missing count"
+            # An empty week is never a zero, whatever its flag ('-' included): say which flag it carries.
+            codes = sorted({str(flags[(y, w)]) for w in span if weekly[(y, w)] is None and flags.get((y, w))})
+            why = "; ".join(f"'{c}' = {meaning[c]}" if c in meaning else f"'{c}'" for c in codes)
+            return f"{y} weeks {first}-{first + WINDOW - 1} include a week with no number, " + (
+                f"publisher flag {why}" if why else "suppressed or missing"
+            )
         return float(sum(v for v in vals if isinstance(v, float)))
 
     current = total(year, week - WINDOW + 1)
@@ -1013,9 +1050,15 @@ def check_signal(
     if problems:
         return message(
             f"CDC's historical-limits check needs complete weekly counts for this year and the past {HISTORY_YEARS} "
-            f"years, and some are missing ({'; '.join(problems[:3])}"
+            f"years, and some weeks are not in the data or have no number: {'; '.join(problems[:3])}"
             + ("; and more" if len(problems) > 3 else "")
-            + "). A missing week can't be counted as zero, so no signal is shown. Use get_series for what is there.",
+            + ". A week with no number is never counted as 0, so no signal is shown"
+            + (
+                ": CDC's '-' (no reported cases) is read as not reported, never as zero cases."
+                if any("no reported cases" in p for p in problems)
+                else "."
+            )
+            + " Use get_series for what is there.",
             fmt,
             refused="incomplete_history",
         )

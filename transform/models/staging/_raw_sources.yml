@@ -60,6 +60,109 @@ sources:
       data_type: varchar
       description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
         the exact bytes the publisher sent.'
+  - name: cdc_haicviz_isa
+    description: 'Raw records of HAICViz - iSA as the adapter hands them on, every value as text: the publisher''s
+      own fields, or for a wide table the adapter''s structural reshaping of them (see the staging model). Only
+      the full load the dataset''s LATEST pointer names is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_haicviz_isa.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - series
+      - topic
+      - value
+      - viewby
+      - yearname
+    columns:
+    - name: series
+      data_type: varchar
+      description: 'Publisher field series, as text; read into series (The group the figure is for: All cases, an
+        age group (such as 50-64 years), a sex, a race, an epidemiologic class (Hospital-onset, Healthcare-associated
+        community-onset, Community-associated), Dialysis, a syndrome, or a PFGE strain type (USA 100, USA 300, Other).)'
+    - name: topic
+      data_type: varchar
+      description: 'Publisher field topic, as text; read into topic (What the figure measures: Case rates or Death
+        rates, Syndromes (share of cases by syndrome), or a PFGE type topic (share of cases by strain type, for
+        all cases or one epidemiologic class).)'
+    - name: value
+      data_type: varchar
+      description: 'Publisher field value, as text; read into value (The published figure for the row''s topic and
+        group: a rate for Case rates and Death rates, or a share of cases (values between 0 and 1 on 2026-11-25;
+        unit not stated) for Syndromes and the PFGE topics. Empty in 27 rows on 2026-11-25 (the 1-year age group
+        in 2018, 2020 and 2021, and every PFGE row in 2020 and 2021), and an empty one is never read as zero.)'
+    - name: viewby
+      data_type: varchar
+      description: 'Publisher field viewby, as text; read into viewby (Which breakdown the row belongs to: All cases,
+        Age, Sex, Race, Epi class, Dialysis, Syndromes, or the PFGE topic again. Each view covers the same cases
+        again.)'
+    - name: yearname
+      data_type: varchar
+      description: Publisher field yearname, as text; read into yearname (Surveillance year (2005 to 2021 on 2026-11-25).)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
+  - name: cdc_haicviz_mugsi
+    description: 'Raw records of HAICViz - MuGSI as the adapter hands them on, every value as text: the publisher''s
+      own fields, or for a wide table the adapter''s structural reshaping of them (see the staging model). Only
+      the full load the dataset''s LATEST pointer names is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_haicviz_mugsi.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - organism
+      - series
+      - topic
+      - value
+      - viewby
+      - yearname
+    columns:
+    - name: organism
+      data_type: varchar
+      description: 'Publisher field organism, as text; read into organism (The organism, as CDC abbreviates it:
+        CRE (carbapenem-resistant Enterobacterales) or CRAB (carbapenem-resistant Acinetobacter baumannii).)'
+    - name: series
+      data_type: varchar
+      description: 'Publisher field series, as text; read into series (The group the rate is for: All cases, an
+        age group (such as 65-79 years), Female or Male, a culture source (Blood, Urine, Other site or Other sterile
+        site), or a species inside CRE (such as Klebsiella pneumoniae).)'
+    - name: topic
+      data_type: varchar
+      description: 'Publisher field topic, as text; read into topic (What the figure measures: Case Rates (new cases
+        per population) or Death Rates (deaths among people with the infection, per population).)'
+    - name: value
+      data_type: varchar
+      description: Publisher field value, as text; read into value (The published rate for the row's organism, topic
+        and group, as CDC gives it (cases or deaths per 100,000 population on CDC's MuGSI page; the table itself
+        states no unit). Every row had one on 2026-11-25, and an empty one is never read as zero.)
+    - name: viewby
+      data_type: varchar
+      description: 'Publisher field viewby, as text; read into viewby (Which breakdown the row belongs to: All cases,
+        Age, Sex, Culture source (blood, urine or another site), or Organism (the species inside CRE). Each view
+        covers the same cases again.)'
+    - name: yearname
+      data_type: varchar
+      description: Publisher field yearname, as text; read into yearname (Surveillance year (2012 to 2022 on 2026-11-25).)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
   - name: cdc_nhsn_ar_hai
     description: 'Raw records of National Healthcare Safety Network - Antimicrobial Resistance (2011-2025) as the
       adapter hands them on, every value as text: the publisher''s own fields, or for a wide table the adapter''s
@@ -225,9 +328,10 @@ sources:
         US TERRITORIES, NON-US RESIDENTS or a census division); empty on single-jurisdiction rows.)
     - name: m1
       data_type: varchar
-      description: Publisher field m1, as text; read into m1 (Cases reported for this condition and area in this
-        MMWR week (publisher column 'Current week'). Empty when the flag column m1_flag holds a code; '-' means
-        no reported cases.)
+      description: 'Publisher field m1, as text; read into m1 (Cases reported for this condition and area in this
+        MMWR week (publisher column ''Current week''). Empty only where the flag column m1_flag holds a code; a
+        count flagged ''-'' (no reported cases) means not reported (maintainer''s declaration, see noCasesCode):
+        it has no number and is never counted as 0.)'
     - name: m1_flag
       data_type: varchar
       description: 'Publisher field m1_flag, as text; read into m1_flag (Why the current-week count is empty. Codes
@@ -248,17 +352,21 @@ sources:
       data_type: varchar
       description: 'Publisher field m3, as text; read into m3 (Cumulative cases so far in this MMWR year up to and
         including this week (year to date). Cumulative: take the latest week, never sum across weeks. Can be incomplete
-        if the condition was reportable for only part of the year (publisher footnote).)'
+        if the condition was reportable for only part of the year (publisher footnote). Empty only where the flag
+        column m3_flag holds a code; a count flagged ''-'' (no reported cases) means not reported (maintainer''s
+        declaration, see noCasesCode): it has no number and is never counted as 0.)'
     - name: m3_flag
       data_type: varchar
       description: 'Publisher field m3_flag, as text; read into m3_flag (Why the current-year year-to-date count
         (m3) is empty: the publisher''s flag code.)'
     - name: m4
       data_type: varchar
-      description: Publisher field m4, as text; read into m4 (Cumulative cases in the previous MMWR year up to the
-        same week, as published in this week's table. The codebook doesn't say whether it counts the same thing
-        as that year's own year-to-date (m3); for some conditions the two differ widely (see openQuestions), so
-        it is shown beside m3, never in its place.)
+      description: 'Publisher field m4, as text; read into m4 (Cumulative cases in the previous MMWR year up to
+        the same week, as published in this week''s table. The codebook doesn''t say whether it counts the same
+        thing as that year''s own year-to-date (m3); for some conditions the two differ widely (see openQuestions),
+        so it is shown beside m3, never in its place. Empty only where the flag column m4_flag holds a code; a count
+        flagged ''-'' (no reported cases) means not reported (maintainer''s declaration, see noCasesCode): it has
+        no number and is never counted as 0.)'
     - name: m4_flag
       data_type: varchar
       description: 'Publisher field m4_flag, as text; read into m4_flag (Why the previous-year year-to-date count
@@ -280,6 +388,46 @@ sources:
     - name: year
       data_type: varchar
       description: Publisher field year, as text; read into year (MMWR (epidemiological) year of the report.)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
+  - name: cdc_nrevss_positivity
+    description: 'Raw records of Percent of Tests Positive for Viral Respiratory Pathogens (NREVSS) as the adapter
+      hands them on, every value as text: the publisher''s own fields, or for a wide table the adapter''s structural
+      reshaping of them (see the staging model). Only the full load the dataset''s LATEST pointer names is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_nrevss_positivity.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - pathogen
+      - percent_test_positivity
+      - week_end
+    columns:
+    - name: pathogen
+      data_type: varchar
+      description: 'Publisher field pathogen, as text; read into pathogen (The virus tested for: COVID-19 (SARS-CoV-2,
+        the virus that causes COVID-19), Influenza, or RSV (respiratory syncytial virus).)'
+    - name: percent_test_positivity
+      data_type: varchar
+      description: 'Publisher field percent_test_positivity, as text; read into percent_test_positivity (Percent
+        of laboratory tests for the virus that were positive in the week, nationally: positive tests divided by
+        all tests, times 100 (dataset description). Counts tests, not people (dataset description). An empty value
+        is kept empty, never read as zero; what CDC means by an empty value is not stated (see openQuestions).)'
+    - name: week_end
+      data_type: varchar
+      description: 'Publisher field week_end, as text; read into week_end (The Saturday that ends the MMWR week
+        (column description: ''Date of Saturday of the MMWR week''). For COVID-19 and RSV, the week the tests were
+        performed (dataset description: laboratories report ''the total number of SARS-CoV-2 and RSV tests performed
+        that week''); which date puts an influenza test in a week is not stated (see openQuestions).)'
     - name: _snapshot_id
       data_type: varchar
       description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
@@ -365,6 +513,109 @@ sources:
       description: 'Publisher field surveillance_network, as text; read into surveillance_network (Which virus surveillance
         network the estimate comes from: COVID-NET (COVID-19), FluSurv-NET (influenza), RSV-NET (RSV), or Combined
         (the three together).)'
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
+  - name: cdc_schoolvaxview_kindergarten
+    description: 'Raw records of Vaccination Coverage and Exemptions among Kindergartners as the adapter hands them
+      on, every value as text: the publisher''s own fields, or for a wide table the adapter''s structural reshaping
+      of them (see the staging model). Only the full load the dataset''s LATEST pointer names is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_schoolvaxview_kindergarten.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - coverage_estimate
+      - dose
+      - foot_notes
+      - geography
+      - geography_type
+      - number_of_exemptions
+      - percent_surveyed
+      - population_sample_size
+      - survey_type
+      - vaccine
+      - year_season
+    columns:
+    - name: coverage_estimate
+      data_type: varchar
+      description: 'Publisher field coverage_estimate, as text; read into coverage_estimate (Percent of kindergartners
+        with the vaccine and dose, or with that exemption, among all children enrolled in kindergarten (column ''Estimate
+        (%)''). Empty where CDC published a code instead of a number; the code is kept in estimate_as_published.);
+        estimate_as_published (The estimate exactly as CDC published it, number or code: NA (not applicable) and
+        NReq (not required by the state for school entry) per CDC''s column description; Nreq and NR are published
+        but not defined. Kept so a code is never lost when coverage_estimate is empty. Required because every one
+        of the 8,753 rows had an estimate on 2026-11-25 (SoQL count of rows where coverage_estimate is null or empty:
+        0); this also makes a vanished or renamed estimate field fail the load rather than pass the percent range
+        check over an empty column.)'
+    - name: dose
+      data_type: varchar
+      description: Publisher field dose, as text; read into dose (The varicella dose counted ('1 Dose (or disease
+        history)', '2 Doses (or disease history)', 'UTD (or disease history)'), the exemption type on exemption
+        rows ('Any Exemption', 'Medical Exemption', 'Non-Medical Exemption'), or 'MMR (PAC)' on MMR (PAC) rows.
+        Empty for MMR, DTaP, polio and hepatitis B, whose doses follow each state's school-entry requirement (open
+        question 'Empty dose'). CDC's column description says this column holds the dose (≥1 to ≥4) and applies
+        only to coverage rows; what is published differs (no ≥n values, exemption types here), so the description
+        follows what is published.)
+    - name: foot_notes
+      data_type: varchar
+      description: Publisher field foot_notes, as text; read into foot_notes (CDC's footnote symbols for the row,
+        exactly as published, such as '†' or '<'. Several symbols in one row are kept as CDC joined them, such as
+        '‡. §' or '>=. *'. Their meanings are in CDC's footnote key (the contract's footnoteKey), which differs
+        between coverage and exemption rows; they are not interpreted here.)
+    - name: geography
+      data_type: varchar
+      description: 'Publisher field geography, as text; read into geography (The place: a state or DC; a city or
+        part of a state that reports separately (''NY-City of New York'', ''NY-Rest of state'', ''TX-City of Houston''),
+        published beside its state''s own row and never added to it (how they overlap is open question ''Places'');
+        ''United States''; or ''U.S. Median'', a median as CDC labels it, never a national estimate (what it is
+        a median over is open question ''National row''). No territory was published on 2026-11-25.)'
+    - name: geography_type
+      data_type: varchar
+      description: 'Publisher field geography_type, as text; read into geography_type (The kind of place: ''National''
+        (the United States row and the U.S. Median row) or ''States'' (each state, DC, and the cities or parts of
+        a state that report separately). CDC''s column description names the two classes as ''National, State'';
+        the published value is ''States''.)'
+    - name: number_of_exemptions
+      data_type: varchar
+      description: Publisher field number_of_exemptions, as text; read into number_of_exemptions (Number of vaccine
+        exemptions among kindergartners, as CDC labels it (column 'Number of Exemptions'); published only on exemption
+        rows. Whether it counts children or exemptions is open question 'Exemption count'; footnote § says some
+        states reported exemptions per vaccine.)
+    - name: percent_surveyed
+      data_type: varchar
+      description: 'Publisher field percent_surveyed, as text; read into percent_surveyed (Percent of enrolled kindergartners
+        the state surveyed that year (column ''Percent Surveyed''). Footnote * on coverage rows: it may be under
+        100% but shown as 100%.)'
+    - name: population_sample_size
+      data_type: varchar
+      description: Publisher field population_sample_size, as text; read into population_sample_size (Number of
+        children enrolled in kindergarten in the place (state, city or part of a state that reports separately,
+        or the nation) for that school year (column 'Population Size'). This is the enrolment the coverage_estimate
+        description calls 'all children enrolled in Kindergarten', not the number surveyed or vaccinated.)
+    - name: survey_type
+      data_type: varchar
+      description: Publisher field survey_type, as text; read into survey_type (How the state or local area collected
+        the data that year, as published, such as 'Census', 'Stratified 2-stage cluster sample', 'Voluntary response'
+        or 'Census (public); Voluntary response (private)'. CDC spells the same method several ways; it is kept
+        as published.)
+    - name: vaccine
+      data_type: varchar
+      description: Publisher field vaccine, as text; read into vaccine (The vaccine the row is for, as CDC names
+        it, or 'Exemption' for exemption rows (column 'Vaccine/Exemption'). 'MMR (PAC)' is a separate MMR measure
+        whose meaning is an open question ('MMR (PAC)').)
+    - name: year_season
+      data_type: varchar
+      description: Publisher field year_season, as text; read into year_season (The school year, as CDC writes it
+        ('2024-25').)
     - name: _snapshot_id
       data_type: varchar
       description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the

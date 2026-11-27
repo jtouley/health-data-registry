@@ -417,9 +417,9 @@ def test_query_sql_refuses_an_unpinned_sum(sql: str) -> None:
     ],
 )
 def test_query_sql_refuses_a_sum_it_cant_trace(sql: str) -> None:
-    with pytest.raises(SqlRefused, match="Add up directly from the catalogued table instead") as e:
+    with pytest.raises(SqlRefused, match="inner query or WITH table") as e:
         _guard(sql)
-    assert e.value.code == "non_additive"
+    assert e.value.code == "sum_over_subquery"
 
 
 @pytest.mark.parametrize(
@@ -454,9 +454,8 @@ def test_query_sql_counts_rows_with_a_sum_of_ones_as_it_does_with_count_if(sql: 
 def test_query_sql_still_refuses_a_conditional_sum_of_values(sql: str) -> None:
     with pytest.raises(SqlRefused) as e:
         _guard(sql)
+    # Still the non-additive refusal of main: turning it into a qualified answer (hard rule 2, ADR 0018) is #226.
     assert e.value.code == "non_additive"
-    # The refusal says why counting rows is different, so count_if passing isn't a surprise (#166).
-    assert "count_if" in e.value.message and "counts rows" in e.value.message
 
 
 def test_query_sql_without_flags_is_unchanged() -> None:
@@ -520,8 +519,9 @@ def test_real_percents_estimates_and_rates_say_where_their_uncertainty_is() -> N
 def test_changed_models_carry_a_new_version() -> None:
     """Provenance reports the semantic model's version (ADR 0003): answers from before and after this change differ."""
     reg = load_registry(ROOT)
-    for ds_id in ("cdc_haicviz_cdi", "cdc_nndss_weekly", "cdc_respnet"):
+    for ds_id in ("cdc_haicviz_cdi", "cdc_respnet"):
         assert reg.get(ds_id).semantic.version == "0.2.0", ds_id
+    assert reg.get("cdc_nndss_weekly").semantic.version == "0.3.0"  # weeks non-additive, '-' never 0 (#173)
     for ds_id in ("detroit_dhd_epi_annual", "detroit_dhd_resp_ed_weekly"):
         assert reg.get(ds_id).semantic.version == "0.1.1", ds_id
 
