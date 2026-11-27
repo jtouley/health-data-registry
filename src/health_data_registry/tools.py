@@ -19,8 +19,6 @@ from typing import Any, Literal, NamedTuple
 import duckdb
 
 from health_data_registry import geo
-from health_data_registry.deadline import DeadlineExceeded
-from health_data_registry.paging import paged, respond
 from health_data_registry.query import Engine, QueryRefused, next_step_for
 from health_data_registry.registry import Dataset, Registry, Series, UnknownDataset, norm_label, spelling_key
 
@@ -185,7 +183,7 @@ def plain(e: Exception) -> str:
     if isinstance(e, UnknownDataset):
         # Only the registry's own message is echoed; any other KeyError would leak an internal name.
         return f"{e}. Use search_datasets to see what is available."
-    if isinstance(e, QueryRefused | DeadlineExceeded):
+    if isinstance(e, QueryRefused):
         return str(e)
     return (
         "The data for this question couldn't be read, so no numbers are shown. Try again; if it keeps "
@@ -710,9 +708,6 @@ def dimension_values(ds: Dataset, engine: Engine | None) -> dict[str, dict[str, 
                 else ""
             ),
         }
-        if d.non_additive_reason:
-            # Why counts are never added across these values, so a refused question can be asked again well.
-            out[d.name]["never_added_up_because"] = d.non_additive_reason
     return out
 
 
@@ -886,11 +881,6 @@ def series_rows(
             status = (
                 f"no total: {n_empty} value{'s' if n_empty != 1 else ''} suppressed or missing in the source"
             )
-        elif get(r, "not_published"):
-            # A published cell left empty is a gap, never a blank read as a value (hard rule 2).
-            status = "suppressed or not published: the publisher's cell for this row is empty"
-        elif "lower" in at and (get(r, "lower") is None or get(r, "upper") is None):
-            status += "; the publisher gives no uncertainty interval for this row"
         rows.append(
             SeriesRow(label, year, r[n_keys], status, get(r, "lower"), get(r, "upper"),
                       get(r, "flag"), "year_end_ytd" if running else "as_published", partial)
@@ -960,7 +950,6 @@ def _dataset_notes(ds: Dataset, m: Any, method: str, got: Sequence[SeriesRow]) -
     return notes
 
 
-@paged("get_series")
 def get_series(
     registry: Registry,
     engine: Engine,
@@ -973,7 +962,7 @@ def get_series(
     sex: str | None = None,
     source_id: str | None = None,
     fmt: Fmt = "csv",
-) -> Result | Out:
+) -> Out:
     if sex not in (None, "", "both"):
         return message(
             "None of the loaded sources split this by sex yet, so only both-sexes values are available. "
@@ -994,8 +983,6 @@ def get_series(
         try:
             got, unmatched, method = series_rows(engine, ds, s, locations, year_start, year_end)
             m = engine.manifest(ds.id)
-        except DeadlineExceeded:
-            raise  # out of time: no partial answer, whose pages could not be matched up later
         except Exception as e:  # noqa: BLE001 - one source failing must not hide the others' rows
             notes.append(f"{ds.id}: {plain(e)}")
             failed = True
@@ -1029,7 +1016,7 @@ def get_series(
         "lower and upper are the publisher's own uncertainty bounds, shown only where published; observed counts "
         "have none. An empty value is never a zero: where the publisher gives a reason, it is in the flag column."
     )
-    return Result(columns, rows, notes)
+    return Result(columns, rows, notes).render(fmt)
 
 
 def matched_nothing(
@@ -1094,7 +1081,6 @@ def gbd_call(cause: str, pathogen: str | None, places: list[str], y0: int | None
     )
 
 
-@paged("get_aligned_with_gbd")
 def get_aligned_with_gbd(
     registry: Registry,
     engine: Engine,
@@ -1104,7 +1090,7 @@ def get_aligned_with_gbd(
     year_start: int | None = None,
     year_end: int | None = None,
     fmt: Fmt = "csv",
-) -> Result | Out:
+) -> Out:
     matches = series_for(registry, condition)
     if not matches:
         return unknown_condition(registry, condition, fmt)
@@ -1129,8 +1115,6 @@ def get_aligned_with_gbd(
         try:
             got, unmatched, method = series_rows(engine, ds, s, locations, year_start, year_end)
             m = engine.manifest(ds.id)
-        except DeadlineExceeded:
-            raise  # out of time: no partial answer, whose pages could not be matched up later
         except Exception as e:  # noqa: BLE001 - one source failing must not hide the others' rows
             notes.append(f"{ds.id}: {plain(e)}")
             continue
@@ -1174,7 +1158,7 @@ def get_aligned_with_gbd(
         if unmatched:
             notes.append(f"{ds.id} has no rows for: {', '.join(unmatched)}.")
         notes += _dataset_notes(ds, m, method, got)
-    return Result(columns, rows, notes)
+    return Result(columns, rows, notes).render(fmt)
 
 
 def get_rate(
@@ -1184,25 +1168,20 @@ def get_rate(
     condition: str,
     locations: Sequence[str] = (),
     year: int,
-    page: int | None = None,
-    pin: str | None = None,
     fmt: Fmt = "csv",
 ) -> Out:
     """Crude rate per 100,000 with an exact Poisson interval: see analysis.get_rate."""
     from health_data_registry import analysis
 
-    return analysis.get_rate(
-        registry, engine, condition=condition, locations=locations, year=year, page=page, pin=pin, fmt=fmt
-    )
+    return analysis.get_rate(registry, engine, condition=condition, locations=locations, year=year, fmt=fmt)
 
 
 # ------------------------------------------------------------------------------------------ provenance
 
 
-@paged("get_provenance")
 def get_provenance(
     registry: Registry, engine: Engine, *, source_id: str, year: int | None = None, fmt: Fmt = "csv"
-) -> Result | Out:
+) -> Out:
     try:
         ds = registry.get(source_id)
         m = engine.manifest(source_id)
@@ -1238,7 +1217,7 @@ def get_provenance(
     if year is not None:
         notes.insert(0, f"Every row for {year} in this source comes from the fetches listed.")
     cols = ["source_id", "url", "retrieved_at", "content_sha256", "snapshot_id", "contract_version"]
-    return Result(cols, rows, notes)
+    return Result(cols, rows, notes).render(fmt)
 
 
 GEOGRAPHY_TRAPS = [
@@ -1311,16 +1290,7 @@ def unlisted_condition_labels(registry: Registry, engine: Engine) -> dict[str, l
     return out
 
 
-def query_sql(
-    engine: Engine, sql: str, *, page: int | None = None, pin: str | None = None, fmt: Fmt = "csv"
-) -> Out:
-    return respond(
-        "query_sql", {"sql": sql, "fmt": fmt}, engine, lambda eng: _query_sql(eng, sql, fmt), page=page, pin=pin,
-        fmt=fmt,
-    )  # fmt: skip
-
-
-def _query_sql(engine: Engine, sql: str, fmt: Fmt) -> Result | Out:
+def query_sql(engine: Engine, sql: str, *, fmt: Fmt = "csv") -> Out:
     from health_data_registry.sql_guard import SqlRefused
 
     try:
@@ -1338,4 +1308,4 @@ def _query_sql(engine: Engine, sql: str, fmt: Fmt) -> Result | Out:
     for src in sources:  # every table the query read, never only the first
         ds = engine.registry.get(src["dataset"])
         notes.append(provenance_note(ds, engine.manifest(src["dataset"])))
-    return Result(out["columns"], out["rows"], notes + list(out.get("caveats", [])))
+    return Result(out["columns"], out["rows"], notes + list(out.get("caveats", []))).render(fmt)

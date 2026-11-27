@@ -126,9 +126,7 @@ def test_rates_are_never_added_up(lake: Path, registry: Registry) -> None:
         group_by=["state", "year"],
         filters={"condition": "Legionellosis", "year": 2023},
     )
-    assert ok["rows"] == [
-        ["MICHIGAN", 2023, 3.1, False], ["OHIO", 2023, 3.4, False], ["US RESIDENTS", 2023, 2.7, False]
-    ]  # fmt: skip
+    assert ok["rows"] == [["MICHIGAN", 2023, 3.1], ["OHIO", 2023, 3.4], ["US RESIDENTS", 2023, 2.7]]
     assert "not summed" in ok["method"]
 
 

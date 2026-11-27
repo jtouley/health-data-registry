@@ -88,90 +88,14 @@ class Reshape(_Strict):
     wide_to_long: WideToLong
 
 
-class TableauView(_Strict):
-    """One dashboard view (the URL name after /views/<workbook>/) and the worksheets read from it.
-
-    Each worksheet maps to the sha256 of its column list (adapters/tableau.layout_hash), recorded when the
-    contract was written: a dashboard whose columns change no longer matches, and the load stops.
-    """
-
-    view: str
-    worksheets: dict[str, str]
-    # A count the chart carries as a number while the dashboard shows it suppressed on the same mark (its tooltip
-    # reads "<16"): count field -> the field whose marker suppresses it. Where that marker is shown, the count is
-    # read as suppressed (empty, with the marker in "<count> flag"), never as the number behind the chart.
-    suppressed_by: dict[str, str] = {}
-
-    @field_validator("suppressed_by")
-    @classmethod
-    def _suppressed_by(cls, v: dict[str, str]) -> dict[str, str]:
-        if any(not k.strip() or not m.strip() or k == m for k, m in v.items()):
-            raise ValueError("suppressed_by maps a count field to another field that carries its marker")
-        return v
-
-    @field_validator("view")
-    @classmethod
-    def _view(cls, v: str) -> str:
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", v):
-            raise ValueError("view must be the view's URL name (letters, digits, - and _)")
-        return v
-
-    @field_validator("worksheets")
-    @classmethod
-    def _hashes(cls, v: dict[str, str]) -> dict[str, str]:
-        if not v or not all(re.fullmatch(r"[0-9a-f]{64}", h) for h in v.values()):
-            raise ValueError("worksheets must map each worksheet name to its 64-character layout sha256")
-        return v
-
-
-class Tableau(_Strict):
-    views: list[TableauView]
-
-
-# The reviewed list of what counts as a government host under the maintainer's access policy (robots.txt on such a
-# host does not stop the crawler; see crawl.Robots). One place in code: a catalog entry's `government_host: true`
-# is refused for any other host, so a typo or a copied entry can't switch robots.txt off for a commercial host.
-# Add a suffix or a domain only through review.
-GOVERNMENT_HOST_SUFFIXES: tuple[str, ...] = (
-    ".gov",  # US federal, state, county and city governments (.gov is restricted to US government bodies)
-    ".mil",
-    ".mi.us",  # Michigan state and local governments under the .us locality space
-    ".state.us",
-)
-# Government bodies whose own domain is not under one of the suffixes above: the named county domains of the
-# Detroit metropolitan area. michigan.gov and detroitmi.gov are listed for the record (they are .gov already).
-GOVERNMENT_DOMAINS: tuple[str, ...] = (
-    "michigan.gov",
-    "detroitmi.gov",
-    "waynecounty.com",  # Wayne County, Michigan
-    "oakgov.com",  # Oakland County, Michigan
-    "macombgov.org",  # Macomb County, Michigan
-)
-
-
-def is_government_host(host: str) -> bool:
-    """True when ``host`` is on the reviewed list of government suffixes and domains (see above)."""
-    h = host.lower().rstrip(".")
-    return h.endswith(GOVERNMENT_HOST_SUFFIXES) or any(
-        h == d or h.endswith("." + d) for d in GOVERNMENT_DOMAINS
-    )
-
-
 class Source(_Strict):
-    portal: Literal["socrata", "who_gho", "https_csv", "tableau"]
+    portal: Literal["socrata", "who_gho", "https_csv"]
     host: str
     dataset: str
     landing_url: str
     api_url: str
     encoding: str = "utf-8"  # https_csv only: the file's text encoding, from the publisher's documentation
     reshape: Reshape | None = None  # https_csv only
-    tableau: Tableau | None = None  # tableau only: the views and worksheets read
-    # A government host (only a host on the reviewed list GOVERNMENT_HOST_SUFFIXES / GOVERNMENT_DOMAINS): by the
-    # maintainer's access policy a robots.txt disallow there does not stop the crawler (the pacing, the honest
-    # user agent and every other rule still apply). Default false: robots.txt is honoured in full.
-    government_host: bool = False
-    # The host answers only a real browser (browser_fetch.py): Tableau Server views, michigan.gov behind Akamai.
-    browser: bool = False
 
     @field_validator("host")
     @classmethod
@@ -191,15 +115,6 @@ class Source(_Strict):
     def _csv_only(self) -> Source:
         if self.portal != "https_csv" and (self.reshape is not None or self.encoding != "utf-8"):
             raise ValueError("encoding and reshape apply only to the https_csv portal")
-        if (self.portal == "tableau") != (self.tableau is not None):
-            raise ValueError(
-                "a tableau source lists its views (tableau.views), and only a tableau source does"
-            )
-        if self.government_host and not is_government_host(self.host):
-            raise ValueError(
-                f"government_host is accepted only for hosts on the reviewed list of government suffixes and "
-                f"domains (registry.GOVERNMENT_HOST_SUFFIXES, GOVERNMENT_DOMAINS); {self.host} is not on it"
-            )
         if self.reshape is not None:
             try:
                 re.compile(self.reshape.wide_to_long.key_pattern)
@@ -631,20 +546,8 @@ class Dimension(_Strict):
     # True when the dimension's values overlap (a Total or All row beside its parts, Confirmed + Probable = Total)
     # or count different things (different conditions, a count beside a rate): a summed metric must then pin it to
     # one value or group by it, never add across it (hard rule 2). A model with a summed metric says true or false
-    # for every dimension, so a new model can't forget; so does any model that declares one (query_sql reads them).
+    # for every dimension, so a new model can't forget.
     non_additive: bool | None = None
-    # Why the values can't be added, in plain clinical words: refusals and describe_dataset show it to clinicians.
-    non_additive_reason: str | None = None
-
-    @model_validator(mode="after")
-    def _reason_goes_with_flag(self) -> Dimension:
-        if self.non_additive and not (self.non_additive_reason or "").strip():
-            raise ValueError(
-                f"dimension {self.name}: non_additive: true needs a non_additive_reason saying why"
-            )
-        if self.non_additive_reason is not None and not self.non_additive:
-            raise ValueError(f"dimension {self.name}: non_additive_reason only goes with non_additive: true")
-        return self
 
 
 class Measure(_Strict):
@@ -661,9 +564,8 @@ class Uncertainty(_Strict):
 
 
 # Measure kinds a publisher may give an uncertainty range for: a metric reading one names its bound measures, or
-# says `uncertainty: none` with a reason, so a published range is never dropped silently (hard rule 2). Rates are
-# included: age-adjusted and estimated rates often come with an interval.
-UNCERTAIN_KINDS = frozenset({"estimate", "percent", "rate"})
+# says `uncertainty: none` with a reason, so a published range is never dropped silently (hard rule 2).
+UNCERTAIN_KINDS = frozenset({"estimate", "percent"})
 
 
 class Restatement(_Strict):
@@ -695,9 +597,7 @@ class Metric(_Strict):
     order_by: str | None = None
     restated_by: Restatement | None = None
     # Dimensions a summed running total must be filtered to one value of (NNDSS year to date: the week), so
-    # every week's running total is never added up. For a plain count, the dimensions whose values overlap or
-    # count different things (Detroit within Michigan; one condition and another): each answer row then holds one
-    # value of them, by a filter or by grouping. The compiler refuses the metric otherwise.
+    # every week's running total is never added up. The compiler refuses the metric otherwise.
     single_value_of: list[str] = Field(default_factory=list)
 
 
@@ -727,21 +627,6 @@ class Series(_Strict):
     week_dimension: str | None = None
     # An age-specific series (age_adjust): counts or populations split by this age-group dimension.
     age_dimension: str | None = None
-
-    def held_dimensions(self) -> list[str]:
-        """The dimensions each answer row of this series holds at one value: filtered to one value
-        (is_single_value) or grouped by (time, place, week, age). The load-time check uses these, and get_series
-        compiles the same filters and grouping, so the two can't drift apart."""
-        fixed = [d for d, v in self.filters.items() if is_single_value(v)]
-        grouped = [self.time_dimension, self.location_dimension, self.week_dimension, self.age_dimension]
-        return [*fixed, *(d for d in grouped if d)]
-
-
-def is_single_value(value: Any) -> bool:
-    """A filter value that pins a dimension to exactly one value: a scalar, or a one-item list or tuple."""
-    if value is None:
-        return False
-    return len(value) == 1 if isinstance(value, list | tuple) else True
 
 
 class GenericSeries(_Strict):
@@ -819,26 +704,10 @@ class SemanticModel(_Strict):
         dims = {d.name: d for d in self.dimensions}
         summed = [m.name for m in self.metrics if m.aggregation == "sum"]
         undeclared = [d.name for d in self.dimensions if d.non_additive is None]
-        declared = len(undeclared) < len(self.dimensions)
-        if (summed or declared) and undeclared:
-            why = f"metric {summed[0]} adds up counts" if summed else "the model declares non_additive"
+        if summed and undeclared:
             raise ValueError(
-                f"{why}, so every dimension must say non_additive: true (its values "
+                f"metric {summed[0]} adds up counts, so every dimension must say non_additive: true (its values "
                 f"overlap or count different things) or false; not declared on: {', '.join(undeclared)}"
-            )
-        named = {
-            b
-            for x in self.metrics
-            if isinstance(x.uncertainty, Uncertainty)
-            for b in (x.uncertainty.lower, x.uncertainty.upper)
-        }
-        unused = [
-            m.name for m in self.measures if m.kind in ("lower_bound", "upper_bound") and m.name not in named
-        ]
-        if unused:
-            raise ValueError(
-                f"bound measure {unused[0]} is named by no metric's uncertainty, so its range would never be "
-                "returned"
             )
         metrics = {m.name: m for m in self.metrics}
         templates = [g.bind("(any catalogued condition)", None) for g in self.generic_series]
@@ -894,7 +763,7 @@ class SemanticModel(_Strict):
 
 
 def _check_uncertainty(metric: Metric, m: Measure, measures: Mapping[str, Measure]) -> None:
-    """A percent, estimate or rate names its publisher's bounds, or says there are none and why (hard rule 2)."""
+    """A percent or estimate names its publisher's bounds, or says there are none and why (hard rule 2)."""
     u = metric.uncertainty
     if u == "none":
         if not (metric.uncertainty_reason or "").strip():
@@ -917,10 +786,6 @@ def _check_uncertainty(metric: Metric, m: Measure, measures: Mapping[str, Measur
             raise ValueError(f"metric {metric.name} uncertainty names unknown measure {b}")
         if bound.kind != kind:
             raise ValueError(f"metric {metric.name} uncertainty {b} is a {bound.kind}, not a {kind}")
-        if bound.unit != m.unit:
-            raise ValueError(
-                f"metric {metric.name} uncertainty {b} is in {bound.unit!r}, but {m.name} is in {m.unit!r}"
-            )
 
 
 @functools.cache
@@ -928,20 +793,40 @@ def _pinned_columns(filters: tuple[str, ...]) -> frozenset[str]:
     import sqlglot
     from sqlglot import exp
 
-    from health_data_registry.sql_guard import pinned_columns
+    def bare(node: exp.Expr) -> exp.Expr:
+        while isinstance(node, exp.Lower | exp.Upper | exp.Trim | exp.Paren):
+            node = node.this
+        return node
 
-    out: set[str] = set()
+    def conjuncts(node: exp.Expr) -> Iterator[exp.Expr]:
+        node = node.unnest()
+        if isinstance(node, exp.And):
+            yield from conjuncts(node.left)
+            yield from conjuncts(node.right)
+        else:
+            yield node
+
+    pinned: set[str] = set()
     for f in filters:
-        out |= {c for _q, c in pinned_columns(sqlglot.parse_one(f, dialect="duckdb", into=exp.Condition))}
-    return frozenset(out)
+        for c in conjuncts(sqlglot.parse_one(f, dialect="duckdb", into=exp.Condition)):
+            if isinstance(c, exp.EQ):
+                pair = [bare(c.left), bare(c.right)]
+            elif isinstance(c, exp.In) and len(c.expressions) == 1:
+                pair = [bare(c.this), c.expressions[0]]
+            else:
+                continue
+            cols = [x for x in pair if isinstance(x, exp.Column)]
+            if len(cols) == 1 and any(isinstance(x, exp.Literal) for x in pair):
+                pinned.add(cols[0].name)
+    return frozenset(pinned)
 
 
 def filter_pins(filters: Sequence[str], dimensions: Sequence[Dimension]) -> frozenset[str]:
-    """Dimensions a metric's own reviewed filters fix to one value, by sql_guard.pinned_columns (the one rule
-    query_sql uses too): `column = 'literal'` (the column may be wrapped in lower, upper or trim), or `column IN
-    (...)` of one label spelled several ways, joined by AND. Anything under OR or NOT pins nothing."""
+    """Dimensions a metric's own reviewed filters fix to one value: `column = 'literal'` (the column may be wrapped
+    in lower, upper or trim) or `column IN ('one literal')`, joined by AND. Anything under OR or NOT, or a
+    comparison with several values, pins nothing."""
     cols = _pinned_columns(tuple(filters))
-    return frozenset(d.name for d in dimensions if d.column.casefold() in cols)
+    return frozenset(d.name for d in dimensions if d.column in cols)
 
 
 def unpinned_non_additive(semantic: SemanticModel, metric: Metric, pinned: Iterable[str]) -> list[str]:
@@ -1078,39 +963,6 @@ _PREDICATE_FUNCS = frozenset(
 )
 
 
-def _check_additive_needs_totals_excluded(
-    dataset_id: str, contract: Contract, semantic: SemanticModel
-) -> None:
-    """A place or group declared additive (non_additive: false) adds up only once the publisher's total rows are
-    gone (NNDSS: the states add up to US RESIDENTS only without TOTAL, US RESIDENTS and the census divisions). So a
-    summed metric that keeps the total rows must say which side of the split it reads: filter that dimension to
-    one value, or a dimension the totalRows predicate tests (census: the state rows, sumlev = '040')."""
-    if contract.total_rows is None:
-        return
-    import sqlglot
-    from sqlglot import exp
-
-    tree = sqlglot.parse_one(contract.total_rows, dialect="duckdb", into=exp.Condition)
-    tested = {c.name.casefold() for c in tree.find_all(exp.Column)}
-    for metric in semantic.metrics:
-        if metric.aggregation != "sum" or metric.exclude_total_rows:
-            continue
-        pins = filter_pins(metric.filters, semantic.dimensions)
-        if any(semantic.dimension(d).column.casefold() in tested for d in pins):
-            continue
-        loose = [
-            d.name
-            for d in semantic.dimensions
-            if d.type == "categorical" and d.non_additive is False and d.name not in pins
-        ]
-        if loose:
-            raise RegistryError(
-                f"{dataset_id}: metric {metric.name} keeps the publisher's total rows (exclude_total_rows: false) "
-                f"but adds up {', '.join(loose)}, declared additive only once total rows are excluded; set "
-                "exclude_total_rows: true, or filter it to one value"
-            )
-
-
 def check_predicate(sql: str, columns: frozenset[str], *, where: str) -> None:
     """A reviewed predicate (totalRows, metric filters) may only compare contract columns with literals.
 
@@ -1183,13 +1035,16 @@ def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticMode
     # it can add overlapping labels; the compiler refuses the same at run time for any other caller.
     templates = [g.bind("(any catalogued condition)", cond.dimension) for g in semantic.generic_series]
     for ser in [*semantic.series, *templates]:
-        loose = unpinned_non_additive(semantic, semantic.metric(ser.metric), ser.held_dimensions())
+        fixed = [d for d, v in ser.filters.items() if not isinstance(v, list) or len(v) == 1]
+        grouped = [ser.time_dimension, ser.location_dimension, ser.week_dimension, ser.age_dimension]
+        loose = unpinned_non_additive(
+            semantic, semantic.metric(ser.metric), [*fixed, *(d for d in grouped if d)]
+        )
         if loose:
             raise RegistryError(
                 f"{entry.id}: series {ser.label} adds up {ser.metric} across {', '.join(loose)}, whose values "
                 "overlap or count different things; filter each to one value"
             )
-    _check_additive_needs_totals_excluded(entry.id, contract, semantic)
     for c in contract.columns:
         if c.flag_for is not None and c.flag_for not in cols:
             raise RegistryError(f"{entry.id}: {c.name} flags unknown column {c.flag_for}")
@@ -1206,22 +1061,4 @@ def load_registry(root: Path | None = None) -> Registry:
     for path in sorted(catalog_dir.glob("*.yaml")):
         ds = load_dataset(root, path)
         datasets[ds.id] = ds
-    _check_hosts_agree(datasets.values())
     return Registry(root=root, datasets=datasets)
-
-
-def _check_hosts_agree(datasets: Iterable[Dataset]) -> None:
-    """The access policy is per host (robots.txt, the pace, a block), so every entry on one host must state it alike.
-
-    crawl.py decides browser and portal per dataset (by its URLs), but whether robots.txt binds is a property of
-    the host: two entries on one host that disagree on `government_host` would leave it to file order.
-    """
-    seen: dict[str, tuple[str, bool]] = {}
-    for ds in datasets:
-        s = ds.entry.source
-        first = seen.setdefault(s.host, (ds.id, s.government_host))
-        if first[1] != s.government_host:
-            raise RegistryError(
-                f"{ds.id} and {first[0]} are both on {s.host} but disagree on government_host; the access policy "
-                "is per host, so they must agree"
-            )

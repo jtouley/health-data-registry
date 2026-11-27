@@ -182,16 +182,6 @@ schema:
             description: "Publisher formula (resistant / tested) x 100; tolerance 0.06 allows rounding to one decimal place."
             query: "SELECT COUNT(*) FROM {object} WHERE percent_resistant IS NOT NULL AND abs(percent_resistant - 100.0 * resistant_isolates / isolates_tested) > 0.06"
             mustBe: 0
-          - id: interval_filled_where_percent
-            type: sql
-            description: "Fill rate. Publisher: the 95% confidence bounds are given only when percent resistant is calculated (lower_confidence_interval's description), so a calculated percent has both bounds. An all-empty bound column would pass every value check; this rule catches it."
-            query: "SELECT COUNT(*) FROM {object} WHERE percent_resistant IS NOT NULL AND (lower_confidence_interval IS NULL OR upper_confidence_interval IS NULL)"
-            mustBe: 0
-          - id: interval_only_with_percent
-            type: sql
-            description: "Pairing. Publisher: the bounds are given only when percent resistant is calculated, so a row with no percent has no bounds."
-            query: "SELECT COUNT(*) FROM {object} WHERE percent_resistant IS NULL AND (lower_confidence_interval IS NOT NULL OR upper_confidence_interval IS NOT NULL)"
-            mustBe: 0
       - name: suppressed
         physicalType: BOOLEAN
         logicalType: boolean

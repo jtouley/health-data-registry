@@ -15,17 +15,14 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 | Command | What it does |
 |---|---|
 | `make install` | `uv sync` |
-| `make check` | lint, typecheck, test, mutate: the quick local loop, not all of CI |
-| `make precheck` | The pre-PR gate's local half: the CI checks plus a docs-drift check, stopping at the first failure; run before every pre-pr push |
+| `make check` | lint, typecheck, test, mutate: what CI runs; run before every push |
 | `make hooks` | Install the pre-commit hooks (`uv run pre-commit install`); once per checkout |
 | `make test` | Offline tests with coverage (floor 85%) |
 | `make test-network` | Live publisher checks in `tests/integration` (marker `network`) |
-| `make smoke` | The C. auris in Michigan journey through the MCP server on a synthetic lake, scored with `eval/scorer.py` (marker `smoke`; [docs/dev/README.md](docs/dev/README.md#smoke-journey)) |
 | `make mutate` | Mutation tests on modules changed since `BASE` (`scripts/mutate_changed.py`, floor 70%) |
 | `make docs` | Regenerate `docs/helpers.md`, `template/.claude/skills/`, `plugin/` and the marketplace from `helpers.py`, and the tool lists in README.md, docs/tools.md and this file from the server |
 | `make kit` | Build the Claude Projects kit into `dist/projects-kit/` ([docs/dev/distribution.md](docs/dev/distribution.md)) |
 | `make refresh` / `make serve` | Fetch every source into the lake / run the MCP server on stdio |
-| `make serve-http` | The hosted read-only server (Streamable HTTP, hub releases only; [docs/dev/hosting.md](docs/dev/hosting.md)) |
 | `make check-contracts` | Check each publisher still serves the fields its contract reads |
 | `make eval` | Verify the sealed sets; never run or read the held-out pool while developing |
 | `uv run health-data-registry refresh <id> [--max-rows N]` | One dataset; `--max-rows` marks the snapshot partial |
@@ -35,18 +32,9 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 
 One review round, one fix round, merge, then follow-ups. We don't get stuck in review rounds.
 
-1. **Green before the pull request.** Every change lands through a pull request; there are no direct pushes to
-   main. CI must be green before a commit reaches a PR branch ([docs/dev/README.md](docs/dev/README.md#the-pre-pr-gate)):
-   - Merge `origin/main` into the branch first. A PR's CI tests the branch merged with current main, while a
-     pre-pr run tests the branch tip, so the two agree only when the branch already contains main.
-   - `make precheck` passes locally: the CI checks plus a docs-drift check, stopping at the first failure.
-   - Then push the commit to `pre-pr/<branch>` and wait until every CI check there is green. If one is red, fix it
-     on the pre-pr branch, run `make precheck` again, and push again.
-   - Only then open the PR, or fast-forward the PR branch, to that exact green commit.
-   - Fix-round pushes follow the same path. Merging main into a branch is a change like any other: precheck, then
-     pre-pr, then the PR branch.
-
-   Every commit carries the required trailers, and the PR body names the skills used and what each changed.
+1. **Pull request.** Every change lands through a pull request; there are no direct pushes to main. Before opening
+   it, `make check` passes (mutation tests on changed modules included) and every commit carries the required
+   trailers. The PR body names the skills used and what each changed.
    Every commit, by people, subagents and the lead, goes through the pre-commit hooks (`make hooks`); `--no-verify`
    is never used. Unfinished work is not committed to the PR branch: it stays uncommitted or goes on a separate WIP
    branch until it passes the hooks.
@@ -78,7 +66,7 @@ One review round, one fix round, merge, then follow-ups. We don't get stuck in r
 
 ```text
 src/health_data_registry/
-  cli.py          serve [--http], refresh <dataset>|--all, fetch <source>, export-public --to, check-contracts, validate,
+  cli.py          serve, refresh <dataset>|--all, fetch <source>, export-public --to, check-contracts, validate,
                   eval, publication-outlook, and the analysis tools (get-rate, compare-rates, get-trend,
                   age-adjust, check-signal)
   server.py       the MCP server (stdio): registers the tools (listed below) and the helper prompts; wraps
@@ -101,9 +89,6 @@ src/health_data_registry/
                   with data.parquet, data.duckdb and manifest.json, LATEST, fetch_log/
   crawl.py        fetch one source into a lake (refresh, fetch, and run-time fetches)
   publish.py      export-public to the open data hub: cards, licence, manifest, pre-publish checks, tag
-  hosted.py       serve --http: stateless Streamable HTTP for the claude.ai connector; hub releases and live only,
-                  rate limits per session and overall, result cap, no request content in any log
-  deadline.py     one deadline per hosted tool call, capping every fetch, retry and download
   hub.py          hosted read path: immutable hub release, sha256 and contract checks, bounded cache
   live.py         restricted sources (WHO GHO) read live per question, in memory only, never stored
   product.py      the ODPS data product (contracts/health-data-registry.odps.yaml)

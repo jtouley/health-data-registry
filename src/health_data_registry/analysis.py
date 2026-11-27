@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from health_data_registry import geo, stats
-from health_data_registry.paging import paged
 from health_data_registry.query import Engine, QueryRefused
 from health_data_registry.registry import Dataset, Registry, Series
 from health_data_registry.tools import (
@@ -462,7 +461,6 @@ def _rule_notes(datasets: Sequence[Dataset]) -> list[str]:
     return notes
 
 
-@paged("get_rate")
 def get_rate(
     registry: Registry,
     engine: Engine,
@@ -471,7 +469,7 @@ def get_rate(
     year: int,
     locations: Sequence[str] = (),
     fmt: Fmt = "csv",
-) -> Result | Out:
+) -> Out:
     if not _population_series(registry):
         return _no_population(fmt)
     matches = series_for(registry, condition, "cases")
@@ -508,13 +506,12 @@ def get_rate(
         table,
         out_notes + notes,
         "computed here: crude rate per 100,000 with an exact Poisson (Garwood) 95% interval; cases and population as published",
-    )
+    ).render(fmt)
 
 
 # ---------------------------------------------------------------------------------- compare_rates
 
 
-@paged("compare_rates")
 def compare_rates(
     registry: Registry,
     engine: Engine,
@@ -525,7 +522,7 @@ def compare_rates(
     other_location: str | None = None,
     other_year: int | None = None,
     fmt: Fmt = "csv",
-) -> Result | Out:
+) -> Out:
     loc_b = other_location or location
     year_b = other_year if other_year is not None else year
     if _place_name(loc_b) == _place_name(location) and year_b == year:
@@ -624,7 +621,7 @@ def compare_rates(
         table,
         out_notes + notes,
         "computed here: rates, rate ratio and rate difference with 95% intervals (method in the notes)",
-    )
+    ).render(fmt)
 
 
 def _series_condition(ds: Dataset, label: str) -> str:
@@ -648,7 +645,6 @@ def _segments(years: Sequence[int], changes: Sequence[tuple[int, str]]) -> list[
     return list(out.items())
 
 
-@paged("get_trend")
 def get_trend(
     registry: Registry,
     engine: Engine,
@@ -660,7 +656,7 @@ def get_trend(
     include_provisional: bool = False,
     fit_on: Literal["rates", "counts"] = "rates",
     fmt: Fmt = "csv",
-) -> Result | Out:
+) -> Out:
     """Annual percent change. fit_on="rates" (the default) needs a population for every year fitted and refuses
     otherwise; fit_on="counts" fits case counts and ignores population change. Never one in place of the other."""
     if fit_on not in ("rates", "counts"):
@@ -813,7 +809,7 @@ def get_trend(
         table,
         out_notes + notes,
         "computed here: annual percent change from a log-linear Poisson fit, with its 95% interval",
-    )
+    ).render(fmt)
 
 
 # ---------------------------------------------------------------------------------- age_adjust
@@ -851,7 +847,6 @@ def _standard_for(
     return None
 
 
-@paged("age_adjust")
 def age_adjust(
     registry: Registry,
     engine: Engine,
@@ -860,7 +855,7 @@ def age_adjust(
     location: str,
     year: int,
     fmt: Fmt = "csv",
-) -> Result | Out:
+) -> Out:
     case_series = series_for(registry, condition, "cases", kind="age")
     pop_series = [
         (d, s) for d in registry for s in d.semantic.series if s.measure == "population" and s.age_dimension
@@ -942,7 +937,7 @@ def age_adjust(
         table,
         out_notes + notes,
         "computed here: direct age adjustment to the 2000 US standard, gamma (Fay-Feuer) 95% interval",
-    )
+    ).render(fmt)
 
 
 # ---------------------------------------------------------------------------------- check_signal
@@ -951,7 +946,6 @@ HISTORY_YEARS = 5
 WINDOW = 4
 
 
-@paged("check_signal")
 def check_signal(
     registry: Registry,
     engine: Engine,
@@ -961,7 +955,7 @@ def check_signal(
     year: int,
     week: int,
     fmt: Fmt = "csv",
-) -> Result | Out:
+) -> Out:
     matches = series_for(registry, condition, "cases", kind="weekly")
     if not matches:
         return message(
@@ -1051,4 +1045,4 @@ def check_signal(
         table,
         out_notes + notes,
         "computed here: CDC historical limits from the published weekly counts",
-    )
+    ).render(fmt)

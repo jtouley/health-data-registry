@@ -23,11 +23,6 @@ dependencies = [
     "sqlglot>=26,<31",
 ]
 
-[project.optional-dependencies]
-# Hosts that answer only a real browser (michigan.gov behind Akamai): browser_fetch.py. Browsers are not
-# downloaded by this package; point PLAYWRIGHT_BROWSERS_PATH at an installed Chromium of the same revision.
-browser = ["playwright>=1.63,<2"]
-
 [project.urls]
 Repository = "https://github.com/jtouley/health-data-registry"
 
@@ -36,17 +31,13 @@ health-data-registry = "health_data_registry.cli:main"
 
 [dependency-groups]
 dev = [
-    "actionlint-py==1.7.9.24",
     "hypothesis>=6.100",
     "mutmut>=3.3",
     "mypy>=1.13",
-    # Pinned to the Chromium build (revision 1243) the development containers ship in PLAYWRIGHT_BROWSERS_PATH.
-    "playwright==1.63.0",
     "pre-commit>=4.7.0",
     "pytest>=8",
     "pytest-cov>=5",
     "ruff>=0.6",
-    "shellcheck-py>=0.10",
     "types-PyYAML>=6",
 ]
 
@@ -82,7 +73,7 @@ ignore = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src", "eval", "tools"]
+files = ["src", "eval"]
 exclude = ["^eval/sealed/"]
 strict = true
 ignore_missing_imports = true
@@ -90,10 +81,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
-markers = [
-    "network: hits a live publisher (deselected in CI by default)",
-    "smoke: the C. auris in Michigan reference journey on a synthetic lake (make smoke; also part of make test)",
-]
+markers = ["network: hits a live publisher (deselected in CI by default)"]
 
 [tool.coverage.run]
 source = ["health_data_registry", "eval"]
@@ -102,8 +90,6 @@ branch = true
 [tool.mutmut]
 # Mutation tests run on the modules a change touches (scripts/mutate_changed.py, `make mutate`), not the whole tree.
 source_paths = ["src/health_data_registry/", "eval/"]
-also_copy = ["eval/dev/", "catalog/", "contracts/", "semantic/", "docs/", "licenses/", "template/", "plugin/", ".claude-plugin/", "scripts/", "tools/", "assets/", "pyproject.toml", "README.md", "CLAUDE.md"]
+also_copy = ["eval/dev/", "catalog/", "contracts/", "semantic/", "docs/", "licenses/", "template/", "plugin/", ".claude-plugin/", "scripts/", "pyproject.toml", "README.md", "CLAUDE.md"]
 pytest_add_cli_args = ["-m", "not network", "-x", "-q", "-p", "no:cacheprovider"]
-# The fuzz harness tests match known findings by the name of the sql_guard or adapter function an error is raised
-# in, which mutmut's trampolines rename; they test fuzz/ (never mutated), so mutmut leaves them out.
-pytest_add_cli_args_test_selection = ["tests/", "--ignore=tests/integration", "--ignore=tests/test_metamorphic.py", "--ignore=tests/test_fuzz_harnesses.py"]
+pytest_add_cli_args_test_selection = ["tests/", "--ignore=tests/integration", "--ignore=tests/test_metamorphic.py"]

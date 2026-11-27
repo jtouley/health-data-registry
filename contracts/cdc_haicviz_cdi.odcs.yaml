@@ -31,7 +31,7 @@ schema:
     customProperties:
       - property: totalRows
         value: "viewby = 'Total' AND series = 'Total'"
-        description: "The overall all-cases row for each topic and year (labels observed in the full table, 718 rows, 2026-11-24). Rows with grouping 'All cases' inside the Age, Sex and Race views are strata of those views, not totals. Structural fact checked live 2026-11-25 (viewby = 'Total', 2011-2022): each year has exactly one Total row per topic, under grouping 'All cases'; the healthcare- and community-associated rows beside it sit under 'Epi Class' (2011-2019, 2022) or 'Epi class' (2020-2021); topic is 'Number of Cases' through 2021 and 'Number of cases' in 2022."
+        description: "The overall all-cases row for each topic and year (labels observed in the full table, 718 rows, 2026-11-24). Rows with grouping 'All cases' inside the Age, Sex and Race views are strata of those views, not totals."
       - {property: tableShape, value: frequency_table}
       - property: idDimensions
         value:
