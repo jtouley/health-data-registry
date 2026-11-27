@@ -41,6 +41,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- New source, draft: `nchs_resp_deaths_pct`, NCHS's provisional weekly percent of all deaths among US residents
+  involving COVID-19, influenza, RSV or the three combined, by age group, sex and race and Hispanic origin
+  (data.cdc.gov 53g5-jf7x). Read as published and never added; a suppressed count (1 to 9) is no value, never zero,
+  and keeps NCHS's note. It answers only a question about deaths: a plain "COVID-19" question doesn't get it.
+- Semantic series can list `asked_with` words: a series that names a disease but isn't a measure of it (a percent
+  of deaths, vaccination coverage) answers only a question that uses one of them.
+- The first marts: `fct_cdc_nssp_lab_positivity` and `fct_nchs_resp_deaths_pct`, one fact per source with every
+  row kept, the publisher's own notes as published, and a `value_status` that says why a value is empty.
 - New source, draft (contract not yet reviewed): `cdc_nssp_lab_positivity`, CDC's weekly NSSP commercial
   laboratory NAAT tests, positives and percent positive for COVID-19, influenza and RSV by state (data.cdc.gov
   jqxy-cyu2), on the existing Socrata adapter. Read as published and never added; a count or percent CDC

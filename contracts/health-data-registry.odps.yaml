@@ -129,6 +129,13 @@ outputPorts:
     contractId: cdc_schoolvaxview_kindergarten
     customProperties:
       - {property: hosted, value: true}
+  - name: nchs_resp_deaths_pct
+    description: NCHS provisional weekly percent of all deaths involving COVID-19, influenza and RSV, by age, sex and race and Hispanic origin, United States.
+    type: tables
+    version: 0.1.0
+    contractId: nchs_resp_deaths_pct
+    customProperties:
+      - {property: hosted, value: true}
   - name: census_county_pop
     description: Census Bureau county and state resident population estimates, the denominator for rates.
     type: tables

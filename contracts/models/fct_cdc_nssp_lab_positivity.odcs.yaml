@@ -1,0 +1,95 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: fct_cdc_nssp_lab_positivity
+name: Fact - NSSP commercial laboratory test positivity
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Every row of the NSSP commercial laboratory table (cdc_nssp_lab_positivity) as one fact per virus, week and state, with clinical column names and a status that says why a value is empty."
+  usage: "Read one virus, state and week, or one virus in one state over the weeks. Every row is kept, suppressed ones included; nothing is added across states, viruses or weeks."
+  limitations: "Commercial laboratories only; tests, not people; suppressed below 10 tests or 10 positives; by state only."
+  authoritativeDefinitions:
+    - {type: businessDefinition, url: "contracts/cdc_nssp_lab_positivity.odcs.yaml", description: "The source dataset's contract, whose descriptions and rules this fact carries"}
+schema:
+  - name: fct_cdc_nssp_lab_positivity
+    physicalName: fct_cdc_nssp_lab_positivity
+    physicalType: table
+    logicalType: object
+    description: "One row per virus, MMWR week and state: every row of int_cdc_nssp_lab_positivity, none removed, each with value_status."
+    customProperties:
+      - {property: layer, value: marts}
+      - {property: totalRows, value: none}
+      - {property: tableShape, value: surveillance_series}
+    properties:
+      - name: pathogen
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "The virus tested for: COVID-19, Influenza or RSV, as CDC labels it."
+        customProperties: [{property: role, value: dimension}]
+      - name: week_end
+        physicalType: DATE
+        logicalType: date
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "The Saturday that ends the MMWR week the specimens were collected in."
+        customProperties: [{property: role, value: dimension}]
+      - name: week_start
+        physicalType: DATE
+        logicalType: date
+        required: true
+        description: "The Sunday that starts that MMWR week."
+        customProperties: [{property: role, value: attribute}]
+      - name: state
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 3
+        description: "The state or territory, as CDC's two-letter postal code (MI, OH, PR)."
+        customProperties: [{property: role, value: dimension}]
+      - name: tests
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "NAAT tests classified positive or negative, as published; empty where CDC suppressed it."
+        customProperties: [{property: role, value: measure}]
+      - name: positive_tests
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Positive NAAT tests, as published; empty where CDC suppressed it."
+        customProperties: [{property: role, value: measure}]
+      - name: percent_positive
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Percent of the tests that were positive, as published; empty where suppressed or no test was reported, never zero."
+        customProperties: [{property: role, value: measure}]
+      - name: value_status
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Why percent_positive is or isn't there, read from the published counts and CDC's suppression rule: 'published', 'no test reported' (tests published as 0), or 'suppressed by CDC (fewer than 10 tests or 10 positives)'. It qualifies the row and removes nothing."
+        customProperties: [{property: role, value: attribute}]
+      - name: _snapshot_id
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The lake snapshot the row was read from (the dataset's LATEST load); its manifest gives the source address, retrieval time and dataset version."
+        customProperties: [{property: role, value: attribute}]
+      - name: _raw_sha256
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The sha256 fingerprint of each raw file the row was parsed from: the exact bytes the publisher sent."
+        customProperties: [{property: role, value: attribute}]
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None of its own: the source contract's suppression rule applies, and value_status says on each row why a value is empty."}}
+  - property: openQuestions
+    value:
+      - "value_status reads an empty percent beside a non-zero published test count as suppressed (CDC's rule: fewer than 10 positives); a maintainer confirms that reading when the source contract is reviewed."

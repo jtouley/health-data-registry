@@ -11,20 +11,127 @@ unit_tests:
   given:
   - input: source('raw', 'cdc_nssp_lab_positivity')
     format: sql
-    rows: |
-      select 'COVID-19' as "pathogen", '2024-10-27T00:00:00.000' as "mmwr_week_start", '2024-11-02T00:00:00.000' as "mmwr_week_end", 'state' as "geography_type", 'MI' as "geography_value", '250.0' as "test_count", '20.0' as "positive_count", '8.0' as "percent_pos", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+    rows: 'select ''COVID-19'' as "pathogen", ''2024-10-27T00:00:00.000'' as "mmwr_week_start", ''2024-11-02T00:00:00.000'' as "mmwr_week_end", ''state'' as "geography_type", ''MI'' as "geography_value",
+      ''250.0'' as "test_count", ''20.0'' as "positive_count", ''8.0'' as "percent_pos", ''s1'' as "_snapshot_id", ''h1'' as "_raw_sha256"
+
       union all
-      select 'Influenza', '2024-10-27T00:00:00.000', '2024-11-02T00:00:00.000', 'state', 'MI', '120.0', cast(null as varchar), cast(null as varchar), 's1', 'h1'
+
+      select ''Influenza'', ''2024-10-27T00:00:00.000'', ''2024-11-02T00:00:00.000'', ''state'', ''MI'', ''120.0'', cast(null as varchar), cast(null as varchar), ''s1'', ''h1''
+
       union all
-      select 'RSV', '2024-10-27T00:00:00.000', '2024-11-02T00:00:00.000', 'state', 'MI', cast(null as varchar), '0.0', cast(null as varchar), 's1', 'h1'
+
+      select ''RSV'', ''2024-10-27T00:00:00.000'', ''2024-11-02T00:00:00.000'', ''state'', ''MI'', cast(null as varchar), ''0.0'', cast(null as varchar), ''s1'', ''h1''
+
       union all
-      select 'COVID-19', '2024-11-03', '2024-11-09', 'state', 'OH', '0.0', '0.0', '', 's1', 'h1'
+
+      select ''COVID-19'', ''2024-11-03'', ''2024-11-09'', ''state'', ''OH'', ''0.0'', ''0.0'', '''', ''s1'', ''h1''
+
       union all
-      select 'RSV', '2024-11-03T00:00:00.000', '2024-11-09T00:00:00.000', 'state', 'OH', '40', ' 0.0 ', ' ', 's1', 'h1'
+
+      select ''RSV'', ''2024-11-03T00:00:00.000'', ''2024-11-09T00:00:00.000'', ''state'', ''OH'', ''40'', '' 0.0 '', '' '', ''s1'', ''h1''
+
+      '
   expect:
     rows:
-    - {pathogen: COVID-19, geography_value: MI, mmwr_week_start: 2024-10-27, mmwr_week_end: 2024-11-02, test_count: 250, positive_count: 20, percent_pos: 8.0}
-    - {pathogen: Influenza, geography_value: MI, mmwr_week_start: 2024-10-27, mmwr_week_end: 2024-11-02, test_count: 120, positive_count: null, percent_pos: null}
-    - {pathogen: RSV, geography_value: MI, mmwr_week_start: 2024-10-27, mmwr_week_end: 2024-11-02, test_count: null, positive_count: 0, percent_pos: null}
-    - {pathogen: COVID-19, geography_value: OH, mmwr_week_start: 2024-11-03, mmwr_week_end: 2024-11-09, test_count: 0, positive_count: 0, percent_pos: null}
-    - {pathogen: RSV, geography_value: OH, mmwr_week_start: 2024-11-03, mmwr_week_end: 2024-11-09, test_count: 40, positive_count: 0, percent_pos: null}
+    - pathogen: COVID-19
+      geography_value: MI
+      mmwr_week_start: 2024-10-27
+      mmwr_week_end: 2024-11-02
+      test_count: 250
+      positive_count: 20
+      percent_pos: 8.0
+    - pathogen: Influenza
+      geography_value: MI
+      mmwr_week_start: 2024-10-27
+      mmwr_week_end: 2024-11-02
+      test_count: 120
+      positive_count: null
+      percent_pos: null
+    - pathogen: RSV
+      geography_value: MI
+      mmwr_week_start: 2024-10-27
+      mmwr_week_end: 2024-11-02
+      test_count: null
+      positive_count: 0
+      percent_pos: null
+    - pathogen: COVID-19
+      geography_value: OH
+      mmwr_week_start: 2024-11-03
+      mmwr_week_end: 2024-11-09
+      test_count: 0
+      positive_count: 0
+      percent_pos: null
+    - pathogen: RSV
+      geography_value: OH
+      mmwr_week_start: 2024-11-03
+      mmwr_week_end: 2024-11-09
+      test_count: 40
+      positive_count: 0
+      percent_pos: null
+- name: fct_cdc_nssp_lab_positivity_keeps_every_row_and_says_why_a_percent_is_empty
+  model: fct_cdc_nssp_lab_positivity
+  given:
+  - input: ref('int_cdc_nssp_lab_positivity')
+    rows:
+    - pathogen: Influenza
+      mmwr_week_end: 2024-11-02
+      geography_value: MI
+      test_count: 250
+      positive_count: 20
+      percent_pos: 8.0
+    - pathogen: Influenza
+      mmwr_week_end: 2024-11-09
+      geography_value: MI
+      test_count: 120
+      positive_count: null
+      percent_pos: null
+    - pathogen: RSV
+      mmwr_week_end: 2024-11-09
+      geography_value: MI
+      test_count: 0
+      positive_count: 0
+      percent_pos: null
+    - pathogen: COVID-19
+      mmwr_week_end: 2024-11-02
+      geography_value: MI
+      test_count: null
+      positive_count: 0
+      percent_pos: null
+    - pathogen: RSV
+      mmwr_week_end: 2024-11-02
+      geography_value: OH
+      test_count: 40
+      positive_count: 0
+      percent_pos: 0.0
+  expect:
+    rows:
+    - pathogen: Influenza
+      week_end: 2024-11-02
+      state: MI
+      percent_positive: 8.0
+      value_status: published
+      tests: 250
+    - pathogen: Influenza
+      week_end: 2024-11-09
+      state: MI
+      percent_positive: null
+      value_status: suppressed by CDC (fewer than 10 tests or 10 positives)
+      tests: 120
+    - pathogen: RSV
+      week_end: 2024-11-09
+      state: MI
+      percent_positive: null
+      value_status: no test reported
+      tests: 0
+    - pathogen: COVID-19
+      week_end: 2024-11-02
+      state: MI
+      percent_positive: null
+      value_status: suppressed by CDC (fewer than 10 tests or 10 positives)
+      tests: null
+    - pathogen: RSV
+      week_end: 2024-11-02
+      state: OH
+      percent_positive: 0.0
+      value_status: published
+      tests: 40

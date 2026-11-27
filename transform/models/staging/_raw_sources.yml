@@ -612,3 +612,108 @@ sources:
       data_type: varchar
       description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
         the exact bytes the publisher sent.'
+  - name: nchs_resp_deaths_pct
+    description: 'Raw records of Provisional Percent of Deaths for COVID-19, Influenza, and RSV by Select Characteristics
+      as the adapter hands them on, every value as text: the publisher''s own fields, or for a wide table the adapter''s
+      structural reshaping of them (see the staging model). Only the full load the dataset''s LATEST pointer names
+      is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/nchs_resp_deaths_pct.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - data_as_of
+      - deaths
+      - demographic_type
+      - demographic_values
+      - end_date
+      - mmwr_week
+      - month
+      - pathogen
+      - percent_deaths
+      - provisional
+      - start_date
+      - state
+      - suppressed
+      - total_deaths
+      - weekending_date
+      - year
+    columns:
+    - name: data_as_of
+      data_type: varchar
+      description: Publisher field data_as_of, as text; read into data_as_of (The date NCHS's counts were drawn
+        (column 'Data as of'); the same in every row of a load.)
+    - name: deaths
+      data_type: varchar
+      description: Publisher field deaths, as text; read into deaths (Number of deaths involving the cause in the
+        week and group (column description); empty where NCHS suppressed a count from 1 to 9, never zero.)
+    - name: demographic_type
+      data_type: varchar
+      description: 'Publisher field demographic_type, as text; read into demographic_type (The kind of demographic
+        group: Age Group, Race/Ethnicity or Sex (column description ''[Age, Race/Ethnicity, Sex]'', published as
+        ''Age Group'' for Age).)'
+    - name: demographic_values
+      data_type: varchar
+      description: 'Publisher field demographic_values, as text; read into demographic_values (The demographic group,
+        as NCHS labels it: an age group (''0-17 years'', ''18-64 years'', ''65+ years''), a race and Hispanic origin
+        group (''Hispanic'', ''White, NH'', ''Not Available''), or a sex (''Female'', ''Male'').)'
+    - name: end_date
+      data_type: varchar
+      description: Publisher field end_date, as text; read into end_date (The last day of the week (column 'Last
+        date of data period').)
+    - name: mmwr_week
+      data_type: varchar
+      description: Publisher field mmwr_week, as text; read into mmwr_week (The MMWR week of reporting, 1 to 53
+        (column 'MMWR week of reporting').)
+    - name: month
+      data_type: varchar
+      description: Publisher field month, as text; read into month (The month of reporting (column 'Month of reporting').)
+    - name: pathogen
+      data_type: varchar
+      description: 'Publisher field pathogen, as text; read into pathogen (The cause of death the row counts: COVID-19,
+        Influenza, RSV, or Combined for the three together (column ''Cause of death (pathogen)''; the description
+        writes ''Flu'', the rows ''Influenza'').)'
+    - name: percent_deaths
+      data_type: varchar
+      description: Publisher field percent_deaths, as text; read into percent_deaths (Percent of all deaths in the
+        week and group that involved the cause (column 'Percent of deaths due to pathogen'); empty where NCHS suppressed
+        it, or where no death was recorded, never zero.)
+    - name: provisional
+      data_type: varchar
+      description: 'Publisher field provisional, as text; read into provisional (NCHS''s provisional mark, as published:
+        ''(provisional)'' on provisional rows, empty on the others (column ''Is this data provisional'').)'
+    - name: start_date
+      data_type: varchar
+      description: Publisher field start_date, as text; read into start_date (The first day of the week (column
+        'First date of data period').)
+    - name: state
+      data_type: varchar
+      description: 'Publisher field state, as text; read into state (The jurisdiction of residence, as published:
+        ''United States'' in every row (column ''Jurisdiction of residence''; metadata geographic unit: Nation).)'
+    - name: suppressed
+      data_type: varchar
+      description: 'Publisher field suppressed, as text; read into suppressed (NCHS''s suppression note, exactly
+        as published: when it is not empty, deaths and percent_deaths are suppressed for confidentiality (column
+        description).)'
+    - name: total_deaths
+      data_type: varchar
+      description: 'Publisher field total_deaths, as text; read into total_deaths (Number of deaths from all causes
+        in the week and group (column description): the denominator of the percent.)'
+    - name: weekending_date
+      data_type: varchar
+      description: Publisher field weekending_date, as text; read into weekending_date (The Saturday that ends the
+        week of reporting (column 'Week-ending date for the week of reporting').)
+    - name: year
+      data_type: varchar
+      description: Publisher field year, as text; read into year (The MMWR year of reporting (column 'Year of reporting').)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
