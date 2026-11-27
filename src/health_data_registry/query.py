@@ -66,6 +66,7 @@ NEXT_STEPS: dict[str, str] = {
     "would_combine_rates": "Use describe_dataset to see the filters, and ask for one published group at a time.",
     "publisher_unreachable": "Try again in a few minutes.",
     "publisher_bad_table": "Try again later; if it keeps happening, run the Something's wrong helper.",
+    "quality_not_run": "Try again later; if it keeps happening, run the Something's wrong helper.",
     "needs_single_value": "Ask for the year's total, or for one week.",
     "non_additive": "Use describe_dataset to see the values, then ask again for one of them, or ask to see each "
     "one on its own row.",
@@ -587,6 +588,8 @@ class Engine:
     _live: dict[str, Any] = field(default_factory=dict)  # dataset id -> live.LiveTable (memory only)
     _live_failed: set[str] = field(default_factory=set)  # live tables that could not be loaded (refused once)
     _private: dict[str, Any] = field(default_factory=dict)  # dataset id -> (records, Manifest), memory only
+    # Live or private tables whose data checks did not all run (dataset id -> why): refused once, never answered.
+    _unchecked: dict[str, str] = field(default_factory=dict)
     # Lake snapshots to read instead of LATEST (dataset id -> snapshot id): a later page pinned to older data.
     lake_pins: dict[str, str] = field(default_factory=dict)
     # The sources the current call has read, in order (paging.respond clears it per call and reads it after).
@@ -614,6 +617,7 @@ class Engine:
             return self._con
         from health_data_registry.isolation import Source
         from health_data_registry.live import load_live
+        from health_data_registry.quality import expected_ids, unchecked_message
 
         con = duckdb.connect(":memory:")
         parquet: list[str] = []
@@ -628,6 +632,16 @@ class Engine:
                 except Exception:  # noqa: BLE001 - one bad store must not break the other sources
                     del self._private[ds.id]
                     continue
+                # A check that did not run is never answered (#222); run_rules reports on every rule, so this
+                # holds against a rule error, and against a missing result as defence in depth.
+                if why := unchecked_message(
+                    ds.id, staged.quality.as_dict(), expected=expected_ids(ds.contract)
+                ):
+                    con.execute(f"DROP TABLE IF EXISTS {_q(ds.id)}")
+                    del self._private[ds.id]
+                    self._unchecked[ds.id] = why
+                    continue
+                self._unchecked.pop(ds.id, None)  # checked cleanly now: an older refusal no longer applies
                 manifest = replace(  # its data checks reach answers as caveats, as a live table's do
                     held[1],
                     notes=[*held[1].notes, *staged.notes()],
@@ -643,7 +657,19 @@ class Engine:
                 except Exception:  # noqa: BLE001 - one bad publisher table must not break the other sources
                     del self._live[ds.id]
                     self._live_failed.add(ds.id)
+                    self._unchecked.pop(ds.id, None)  # this load's own refusal, not an older one
                     continue
+                if why := unchecked_message(  # as for a private table above
+                    ds.id,
+                    report.quality.as_dict(),
+                    expected=expected_ids(ds.contract),
+                    publisher=ds.entry.publisher,
+                ):
+                    con.execute(f"DROP TABLE IF EXISTS {_q(ds.id)}")
+                    del self._live[ds.id]
+                    self._unchecked[ds.id] = why
+                    continue
+                self._unchecked.pop(ds.id, None)  # checked cleanly now: an older refusal no longer applies
                 manifest = replace(
                     table.manifest,
                     notes=[*table.manifest.notes, *report.notes()],
@@ -826,6 +852,8 @@ class Engine:
         if m is None and ds is not None and self._obtain(ds):
             self._reconnect()
             m = self.manifests.get(dataset_id)
+        if m is None and (why := self._unchecked.pop(dataset_id, None)):
+            raise QueryRefused("quality_not_run", why)  # the next question reads the table afresh
         if m is None and dataset_id in self._live_failed:
             self._live_failed.discard(dataset_id)  # the next question reads the publisher afresh
             raise QueryRefused(
@@ -1143,12 +1171,14 @@ def envelope(
     if m.partial:
         # A development sample (refresh --max-rows) is served locally even when a blocking check failed on it;
         # the refresh exited 1 for it, and every answer from it says so too.
-        from health_data_registry.quality import sample_blocked_message
+        from health_data_registry.quality import expected_ids, sample_blocked_message
 
         checked = (m.quality or {}).get(
             "tool"
         ) == "contract-rules"  # a live read's partial copy has no checks
-        if checked and (blocked := sample_blocked_message(ds.id, m.quality)):
+        if checked and (
+            blocked := sample_blocked_message(ds.id, m.quality, expected=expected_ids(ds.contract))
+        ):
             notes.insert(0, blocked)
         notes.insert(0, "This snapshot is a partial sample, not the full dataset.")
     if truncated:

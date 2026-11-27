@@ -47,7 +47,7 @@ import duckdb
 import yaml
 
 from health_data_registry.product import Port, load_ports
-from health_data_registry.quality import blocked_message
+from health_data_registry.quality import blocked_message, expected_ids
 from health_data_registry.registry import Dataset, Registry
 from health_data_registry.store import Manifest, judge_snapshot, latest_snapshot
 
@@ -845,7 +845,9 @@ def check_release(registry: Registry, lake: Path, out: Path) -> list[str]:
             problems.append(f"{ds.id}: the snapshot is a partial development sample, not the full table")
         # The contract's current rules, run again on the file: a LATEST from before the rules has no record,
         # and one from before a rule edit has a stale one.
-        elif blocked := blocked_message(ds.id, judge_snapshot(snap_dir, ds)):
+        elif blocked := blocked_message(
+            ds.id, judge_snapshot(snap_dir, ds), expected=expected_ids(ds.contract)
+        ):
             problems.append(blocked)
         if snap.row_count <= 0:
             problems.append(f"{ds.id}: the snapshot has no rows; an empty table is never published")
