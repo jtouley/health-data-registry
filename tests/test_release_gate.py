@@ -269,7 +269,8 @@ def test_a_clean_build_passes_and_is_served_only_once_confirmed(tmp_path: Path) 
     assert build.build_id.startswith("build-") and len(build.build_id) == 18
     row = rg.decide(ops, build, now=T0, run_date="2026-11-25")
     assert row == {"at": "2026-11-25T12:00:00+00:00", "action": "pass", "build_id": build.build_id,
-                   "serving": None, "warnings": 1, "invocation_id": "inv-1", "run_date": "2026-11-25"}  # fmt: skip
+                   "serving": None, "warnings": 1, "invocation_id": "inv-1", "run_date": "2026-11-25",
+                   "artifact_digest": build.artifact_digest}  # fmt: skip
     assert rg.serving(ops) is None  # a pass is not served: nothing has been uploaded yet
     served = rg.confirm(ops, build, "release-2026-11-25.2", now=T1)
     assert served == {"at": "2026-11-25T13:00:00+00:00", "action": "serve", "release_ref": "release-2026-11-25.2",
@@ -404,6 +405,7 @@ def test_missing_run_record_holds_and_the_cli_checks_then_confirms(
     # The CLI takes the expected set from the contracts and the build id from the lake; here, the toy run's.
     monkeypatch.setattr(rg, "expected_from", lambda registry: TOY)
     monkeypatch.setattr(rg, "build_inputs", lambda registry, lake, commit: {"commit": commit})
+    monkeypatch.setattr(rg, "raw_problems_of", lambda registry, lake: [])
     monkeypatch.setenv("GITHUB_SHA", "abc123")
     ops = tmp_path / "ops"
     passed, message = rg.run(tmp_path / "no-target", ops)
@@ -435,3 +437,100 @@ def test_missing_run_record_holds_and_the_cli_checks_then_confirms(
     )
     assert "release-2026-11-26 was not recorded as served: build" in capsys.readouterr().err
     assert rg.serving(ops)["release_ref"] == "release-2026-11-25"  # type: ignore[index]
+
+
+def test_a_raw_object_that_no_longer_matches_its_name_holds_the_build(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #269: the gate re-hashes every raw object a LATEST snapshot names. A corrupt or missing one holds the
+    build in plain words, and a build that passed can't be confirmed once its raw bytes stop matching."""
+    from health_data_registry.registry import load_registry
+    from health_data_registry.store import build_snapshot, write_ndjson
+    from tests.conftest import RECORDS, raw_fetch, write_registry
+
+    reg = load_registry(write_registry(tmp_path / "reg"))
+    page = tmp_path / "p.ndjson"
+    write_ndjson(page, RECORDS)
+    lake = tmp_path / "lake"
+    lake.mkdir()
+    fetch = raw_fetch("https://data.cdc.gov/resource/a.json", RECORDS)
+    build_snapshot(lake, reg.get("toy_cases"), [fetch], [page])
+    assert rg.raw_problems_of(reg, lake) == []
+    assert rg.raw_problems_of(reg, tmp_path / "empty-lake") == []  # nothing stored, nothing cited
+    good = target(tmp_path, GOOD)
+    ops = tmp_path / "ops"
+    assert rg.run(good, ops, expected=TOY, run_date="2026-11-25", raw_problems=rg.raw_problems_of(reg, lake))[
+        0
+    ]
+
+    raw = lake / "raw" / fetch.sha256
+    raw.write_bytes(raw.read_bytes()[:-3])  # cut short
+    (problem,) = rg.raw_problems_of(reg, lake)
+    assert problem.startswith(f"toy_cases: the raw file raw/{fetch.sha256} no longer holds the bytes")
+    build = rg.read_build(good, expected=TOY, raw_problems=[problem])
+    assert not build.servable and build.raw_objects == [problem]
+    assert build.reason().startswith(
+        "1 raw file(s) its snapshots cite are missing or no longer match their sha256"
+    )
+    passed, message = rg.run(good, ops, expected=TOY, run_date="2026-11-25", raw_problems=[problem])
+    assert not passed and "is held: 1 raw file(s)" in message
+    assert rg.read_log(ops, rg.SERVING_LOG)[-1]["action"] == "hold"
+    assert rg.read_log(ops, rg.BUILDS)[-1]["raw_objects"] == [problem]
+    ok, message = rg.run_confirm(good, ops, "release-2026-11-25", expected=TOY, raw_problems=[problem])
+    assert not ok and "was not recorded as served" in message and rg.serving(ops) is None
+    raw.unlink()
+    (missing,) = rg.raw_problems_of(reg, lake)
+    assert "is missing from the lake" in missing
+    (lake / "datasets" / "toy_cases" / "LATEST").write_text("not a snapshot id\n")
+    assert rg.raw_problems_of(reg, lake) == ["toy_cases: its LATEST snapshot can't be read (ValueError)"]
+
+    # The CLI re-hashes the lake it judges, so the command a refresh runs holds the release too.
+    monkeypatch.setattr(rg, "expected_from", lambda registry: TOY)
+    monkeypatch.setattr(rg, "build_inputs", lambda registry, lake, commit: {"commit": commit})
+    monkeypatch.setattr(rg, "raw_problems_of", lambda registry, lake: [problem])
+    monkeypatch.setenv("GITHUB_SHA", "abc123")
+    assert cli.main(["gate", "--target", str(good), "--ops", str(ops), "--run-date", "2026-11-25"]) == 1
+    assert "1 raw file(s) its snapshots cite are missing" in capsys.readouterr().err
+
+
+def test_the_logical_build_id_and_the_artifact_digest_are_recorded_apart(tmp_path: Path) -> None:
+    """Issue #271: the same inputs give the same logical build id, while the build record's artifact digest follows
+    the bytes the build wrote: changed output bytes give another digest under the same logical id."""
+    inputs = {"commit": "c1", "datasets": {"a": {"raw_sha256": ["x"]}}}
+    one = target(tmp_path, GOOD, invocation="run-a")
+    two = target(tmp_path, GOOD, invocation="run-b")
+    a, b = rg.read_build(one, inputs=inputs), rg.read_build(two, inputs=inputs)
+    assert a.build_id == b.build_id == rg.build_id_of(inputs)  # the logical id: same inputs, same id
+    assert set(a.artifact_sha256) == {"manifest.json", "run_results.json"}
+    assert a.artifact_sha256["manifest.json"] == rg._sha256(one / "manifest.json")
+    assert a.artifact_digest.startswith("sha256:") and len(a.artifact_digest) == 7 + 64
+    assert (
+        a.artifact_digest == rg.read_build(one, inputs=inputs).artifact_digest
+    )  # the same bytes, the same digest
+    assert a.artifact_digest != b.artifact_digest  # other bytes (another run's record), another digest
+    (one / "compiled").mkdir()
+    (one / "compiled" / "stg_a.sql").write_text("select 1")
+    (one / "link.json").symlink_to(two / "manifest.json")  # a link is never followed out of the target
+    c = rg.read_build(one, inputs=inputs)
+    assert c.build_id == a.build_id and c.artifact_digest != a.artifact_digest
+    assert set(c.artifact_sha256) == {"manifest.json", "run_results.json", "compiled/stg_a.sql"}
+    (one / "compiled" / "stg_a.sql").write_text("select 2")  # the same files, one byte changed
+    assert rg.read_build(one, inputs=inputs).artifact_digest != c.artifact_digest
+    assert rg.artifact_sha256(tmp_path / "nowhere") == {}
+    with (
+        pytest.MonkeyPatch.context() as mp
+    ):  # an output that can't be read holds, never drops out of the list
+
+        def unreadable(path: Path) -> str:
+            raise PermissionError(path)
+
+        mp.setattr(rg, "_sha256", unreadable)
+        with pytest.raises(rg.GateInputMissing, match="a file the build wrote could not be read"):
+            rg.artifact_sha256(one)
+    # Both are kept in the build record, and the pass names the bytes it judged.
+    ops = tmp_path / "ops"
+    rg.decide(ops, c, now=T0, run_date="2026-11-25")
+    record = rg.read_log(ops, rg.BUILDS)[-1]
+    assert (record["build_id"], record["artifact_digest"]) == (c.build_id, c.artifact_digest)
+    assert record["artifact_sha256"] == c.artifact_sha256
+    assert rg.read_log(ops, rg.SERVING_LOG)[-1]["artifact_digest"] == c.artifact_digest

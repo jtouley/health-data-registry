@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- A stored raw file is never trusted for its name (#269). Whenever a refresh reuses `raw/<sha256>`, streamed
+  pages included, the file is hashed again, and one that no longer matches is refused in plain words with a next
+  step. The transform refuses a load cut from such a file, and the release gate holds a build when any raw file a
+  `LATEST` snapshot names is missing or no longer matches, so no answer cites a false sha256.
+- The release gate's build id is now called the logical build id: it names what a build was made from (#271). The
+  build record (`ops/builds.jsonl`) also carries an artifact digest, the sha256 of each file the build wrote and one
+  sha256 over them, so two builds of the same inputs that produced different bytes can be told apart.
 - Release blockers from #173, where the served path returned wrong numbers:
   - NNDSS's `-` (no reported cases) is read as not reported (the maintainer's declaration of 25 Nov 2026). It
     comes back empty with its flag, never as 0 and never as a rate: `get_rate` gives no rate, `compare_rates`

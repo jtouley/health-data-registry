@@ -13,6 +13,7 @@ for each node's resource type, severity and dimension) and sorts every result in
     data failure    an error-severity test, or a unit test, ran and failed
     warning         a warn-severity test failed: served, and the warning travels with the answers
     incomplete      the run record has no results, or no test or unit test ran: nothing was judged
+    raw objects     a raw object a LATEST snapshot names is missing or no longer hashes to its name
 
 The gate fails closed. Any result type it does not know, with any status but success, holds the build. So does a
 run record and manifest from different dbt runs (their invocation_id must match), and so does a missing model or
@@ -20,9 +21,17 @@ test: the expected set comes from the contracts (expected_from: every staging, i
 model, and one named test per contract quality rule), and each expected test must pass, or warn when its rule is
 warn-severity. A missing or unreadable artifact holds it too.
 
-The build id is a content hash of the build's inputs (build_inputs: each stored dataset's sorted raw sha256s,
-each contract's version and file hash, the dbt vars and the code commit), never of a snapshot id, dbt's run id,
-its thread count or the clock, so the same inputs always give the same id.
+The build id is a logical build id: a content hash of the build's inputs (build_inputs: each stored dataset's
+sorted raw sha256s, each contract's version and file hash, the dbt vars and the code commit), never of a snapshot id,
+dbt's run id, its thread count or the clock, so the same inputs always give the same id. Because the rows a build
+writes carry their snapshot ids, one logical build id can name different physical outputs (the same bytes fetched
+again on another day). So the build record also carries an artifact digest (artifact_digest_of): the sha256 of each
+file the build wrote to dbt's target directory, and one sha256 over that list. The logical id says what a build was
+made from; the digest says which bytes it produced.
+
+Before judging the run, the gate re-hashes every raw object each stored dataset's LATEST snapshot names
+(raw_problems_of): one that is missing, or no longer hashes to its name, holds the build, since every answer built
+on it would cite a false sha256 (hard rule 8).
 
 Two steps, so "served" is only ever recorded for a release that was uploaded:
 
@@ -92,7 +101,12 @@ def expected_from(registry: Any) -> Expected:
 
 
 def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    """Streamed, so a large built file (the transform's DuckDB file) is never read into memory whole."""
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 DBT_PROJECT = Path("transform/dbt_project.yml")
@@ -130,14 +144,59 @@ def build_inputs(registry: Any, lake: Path, commit: str) -> dict[str, Any]:
 
 
 def build_id_of(inputs: Mapping[str, Any]) -> str:
-    """The same inputs always give the same id."""
+    """The logical build id: the same inputs always give the same id, whatever bytes the build then wrote."""
     canonical = json.dumps(inputs, sort_keys=True, separators=(",", ":"))
     return "build-" + hashlib.sha256(canonical.encode()).hexdigest()[:12]
 
 
+def raw_problems_of(registry: Any, lake: Path) -> list[str]:
+    """Every raw object a stored dataset's LATEST snapshot names that is missing or no longer hashes to its name,
+    each in plain words with the dataset first; empty when all of them check out. Each file is re-hashed."""
+    from health_data_registry.store import latest_snapshot, raw_problems
+    from health_data_registry.transform_gen import stored
+
+    problems: list[str] = []
+    for ds in stored(registry):
+        try:
+            found = latest_snapshot(lake, ds.id)
+        except (OSError, ValueError) as e:
+            problems.append(f"{ds.id}: its LATEST snapshot can't be read ({type(e).__name__})")
+            continue
+        if found is not None:
+            problems += [f"{ds.id}: {why}" for why in raw_problems(lake, found[1].raw_sha256)]
+    return problems
+
+
+def artifact_sha256(target: Path) -> dict[str, str]:
+    """The sha256 of each file the build wrote to dbt's target directory, by its path there (symbolic links are
+    left out, never followed). In the weekly refresh that is run_results.json and manifest.json. Raises
+    GateInputMissing when one can't be read."""
+    files: dict[str, str] = {}
+    if not target.is_dir():
+        return files
+    for root, dirs, names in os.walk(target, followlinks=False):
+        dirs.sort()
+        for name in sorted(names):
+            p = Path(root) / name
+            if p.is_file() and not p.is_symlink():
+                try:
+                    files[p.relative_to(target).as_posix()] = _sha256(p)
+                except OSError as e:  # an output that can't be read can't be named: hold, never skip it
+                    raise GateInputMissing(
+                        f"{p}: a file the build wrote could not be read ({type(e).__name__}); the release is held"
+                    ) from e
+    return files
+
+
+def artifact_digest_of(files: Mapping[str, str]) -> str:
+    """One sha256 over each output file's path and sha256: changed bytes in any output give another digest."""
+    canonical = json.dumps(dict(files), sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+
+
 @dataclass(frozen=True)
 class Build:
-    build_id: str
+    build_id: str  # the logical build id (build_id_of): what the build was made from
     generated_at: str
     dbt_version: str
     invocation_id: str
@@ -150,6 +209,10 @@ class Build:
     warnings: list[dict[str, Any]] = field(default_factory=list)
     incomplete: list[str] = field(default_factory=list)
     tests_passed: int = 0
+    raw_objects: list[str] = field(default_factory=list)  # raw objects that don't hash to their name
+    # The physical outputs: path in dbt's target directory -> sha256, and one digest over them (artifact_digest_of).
+    artifact_sha256: dict[str, str] = field(default_factory=dict)
+    artifact_digest: str = ""
 
     @property
     def servable(self) -> bool:
@@ -160,11 +223,17 @@ class Build:
             or self.not_evaluated
             or self.data_failures
             or self.incomplete
+            or self.raw_objects
         )
 
     def reason(self) -> str:
         """Why the build is held, in plain words; empty when it can be served."""
         parts = list(self.incomplete)
+        if self.raw_objects:
+            parts.append(
+                f"{len(self.raw_objects)} raw file(s) its snapshots cite are missing or no longer match their "
+                f"sha256 ({'; '.join(self.raw_objects)})"
+            )
         if self.model_errors:
             parts.append(f"{len(self.model_errors)} model(s) failed to build")
         if self.skipped:
@@ -204,13 +273,18 @@ def _kind(uid: str, node: Mapping[str, Any]) -> str:
 
 
 def read_build(
-    target: Path, *, expected: Expected | None = None, inputs: Mapping[str, Any] | None = None
+    target: Path,
+    *,
+    expected: Expected | None = None,
+    inputs: Mapping[str, Any] | None = None,
+    raw_problems: list[str] | None = None,
 ) -> Build:
     """Sort one dbt build (target/run_results.json and target/manifest.json) into the gate's outcomes.
 
     With `expected`, every expected model must have built and every expected test must have passed (or warned,
     for a warn-severity rule). With `inputs`, the build id is their content hash (build_id_of); without, it is a
-    hash of the run record (tests only).
+    hash of the run record (tests only). `raw_problems` (raw_problems_of) holds the build when not empty. The
+    build records the sha256 of every file in `target` and their artifact digest.
     """
     results = _read(target / "run_results.json")
     manifest = _read(target / "manifest.json")
@@ -300,6 +374,7 @@ def read_build(
         build_id = build_id_of(inputs)
     else:
         build_id = "build-" + hashlib.sha256(f"{invocation}|{generated}".encode()).hexdigest()[:12]
+    outputs = artifact_sha256(target)
     return Build(
         build_id=build_id,
         generated_at=generated,
@@ -314,6 +389,9 @@ def read_build(
         warnings=warnings,
         incomplete=incomplete,
         tests_passed=passed,
+        raw_objects=list(raw_problems or []),
+        artifact_sha256=outputs,
+        artifact_digest=artifact_digest_of(outputs),
     )
 
 
@@ -401,7 +479,7 @@ def decide(
     if build.servable:
         row = {"at": at, "action": "pass", "build_id": build.build_id, "serving": kept,
                "warnings": len(build.warnings), "invocation_id": build.invocation_id,
-               "run_date": run_date}  # fmt: skip
+               "artifact_digest": build.artifact_digest, "run_date": run_date}  # fmt: skip
     else:
         row = {"at": at, "action": "hold", "build_id": build.build_id, "kept": kept, "reason": build.reason()}
     _append(ops / SERVING_LOG, row)
@@ -476,10 +554,11 @@ def run(
     expected: Expected | None = None,
     inputs: Mapping[str, Any] | None = None,
     run_date: str | None = None,
+    raw_problems: list[str] | None = None,
 ) -> tuple[bool, str]:
     """The CLI's check: (passed, plain-words message). Anything unreadable holds the release."""
     try:
-        build = read_build(target, expected=expected, inputs=inputs)
+        build = read_build(target, expected=expected, inputs=inputs, raw_problems=raw_problems)
     except GateInputMissing as e:
         _hold(ops, str(e))
         return False, str(e)
@@ -504,10 +583,12 @@ def run_confirm(
     *,
     expected: Expected | None = None,
     inputs: Mapping[str, Any] | None = None,
+    raw_problems: list[str] | None = None,
 ) -> tuple[bool, str]:
-    """The CLI's confirm, after the upload: (recorded, plain-words message)."""
+    """The CLI's confirm, after the upload: (recorded, plain-words message). A raw object that stopped matching its
+    name since the check holds the release here too."""
     try:
-        build = read_build(target, expected=expected, inputs=inputs)
+        build = read_build(target, expected=expected, inputs=inputs, raw_problems=raw_problems)
 
         row = confirm(ops, build, release_ref)
     except (GateInputMissing, GateStateUnreadable, ValueError) as e:

@@ -11,7 +11,7 @@ from dbt.adapters.duckdb.utils import SourceConfig
 
 from health_data_registry.dbt_raw import PROVENANCE, Plugin, empty_sql, load_sql
 from health_data_registry.registry import load_registry
-from health_data_registry.store import build_snapshot, write_ndjson
+from health_data_registry.store import RawObjectCorrupt, build_snapshot, latest_snapshot, write_ndjson
 from tests.conftest import RECORDS, raw_fetch, write_registry
 
 FIELDS = ["label", "m1", "m2", "states", "year"]
@@ -142,3 +142,34 @@ def test_plugin_hands_dbt_the_latest_load_and_warns_when_there_is_none(
     assert plugin.load(other).fetchall() == []
     assert capsys.readouterr().err.startswith("WARNING: toy_other has no load in the lake at ")
     assert Plugin(name="x", plugin_config={}).lake == Path("../lake")
+
+
+def test_a_load_whose_raw_bytes_no_longer_match_is_refused(tmp_path: Path) -> None:
+    """Issue #269: the transform refuses a load cut from a raw object that no longer hashes to its name, so no row
+    carries a false sha256; dbt fails the source and the release gate holds the build."""
+    lake, (_, new) = _lake(tmp_path)
+    found = latest_snapshot(lake, "toy_cases")
+    assert found is not None
+    (sha,) = found[1].raw_sha256
+    raw = lake / "raw" / sha
+    raw.write_bytes(raw.read_bytes() + b" ")
+    with pytest.raises(
+        RawObjectCorrupt, match=f"toy_cases: LATEST names {new}, but the raw file raw/{sha} no"
+    ):
+        load_sql(lake, "toy_cases", FIELDS)
+    plugin = Plugin(name="hdr_raw", plugin_config={"lake": str(lake)})
+    plugin.configure_connection(duckdb.connect())
+    config = SourceConfig(
+        name="raw",
+        identifier="toy_cases",
+        schema="raw",
+        database=None,
+        meta={"source_fields": FIELDS},
+        tags=[],
+    )
+    with pytest.raises(RawObjectCorrupt, match="stg_toy_cases is not built from it"):
+        plugin.load(config)
+    # A lake that keeps no raw bytes at all (CI's synthetic fixtures) still loads; the gate checks those.
+    raw.unlink()
+    sql, warning = load_sql(lake, "toy_cases", FIELDS)
+    assert warning is None and len(_rows(sql)) == len(RECORDS)

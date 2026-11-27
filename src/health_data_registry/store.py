@@ -2,7 +2,9 @@
 
 Layout under the lake root ($HDR_LAKE, default ./lake), partitioned by source and run date:
 
-    raw/<sha256>                         every byte fetched from a publisher, never rewritten (ADR 0005)
+    raw/<sha256>                         every byte fetched from a publisher, never rewritten (ADR 0005), and
+                                         re-hashed whenever it is reused: one whose bytes no longer match its
+                                         name is refused (RawObjectCorrupt), never trusted for its name
     datasets/<id>/run_date=<YYYY-MM-DD>/<snapshot_id>/
         data.parquet                     the normalised table, for publishing
         data.duckdb                      the same table, attached read-only by the server
@@ -188,19 +190,79 @@ def _lit(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+_EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+
+
+class RawObjectCorrupt(ValueError):
+    """A stored raw object no longer hashes to its name (or is gone), so the sha256 it would carry is false."""
+
+
+def _file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def raw_problem(lake: Path, sha256: str) -> str | None:
+    """Why the stored raw object `raw/<sha256>` can't be trusted, in plain words; None when its bytes hash to its
+    name. Re-hashes the stored file every time: a name is never taken on trust (issue #269)."""
+    path = lake / "raw" / sha256
+    if path.is_symlink() or not path.is_file():
+        return (
+            f"the raw file raw/{sha256} is missing from the lake at {lake}, so the sha256 its snapshot cites "
+            "can't be checked. Restore it from the private raw archive, or refresh the source again"
+        )
+    try:
+        got = _file_sha256(path)
+    except OSError as e:
+        return (
+            f"the raw file raw/{sha256} can't be read ({type(e).__name__}). Restore it from the private raw "
+            "archive"
+        )
+    if got != sha256:
+        return (
+            f"the raw file raw/{sha256} no longer holds the bytes it is named for (they hash to {got[:12]}...), so "
+            "it may have been edited or cut short. Nothing was built from it. Restore it from the private raw "
+            "archive, or delete it and refresh the source again"
+        )
+    return None
+
+
+def raw_problems(lake: Path, sha256s: Sequence[str]) -> list[str]:
+    """Every raw object of `sha256s` that does not hash to its name, each in plain words (raw_problem)."""
+    return [why for sha in dict.fromkeys(sha256s) if (why := raw_problem(lake, sha))]
+
+
+def verify_raw(lake: Path, sha256s: Sequence[str]) -> None:
+    """Refuse, with RawObjectCorrupt, when any raw object named in `sha256s` does not hash to its name."""
+    problems = raw_problems(lake, sha256s)
+    if problems:
+        raise RawObjectCorrupt("; ".join(problems))
+
+
 def write_raw(lake: Path, fetches: Sequence[RawFetch]) -> None:
+    """Keep each fetch's bytes at raw/<sha256>. An object already stored is re-hashed whenever it is reused (a
+    refresh that streamed the page earlier hands over empty content), and one whose bytes no longer match its name
+    is refused with RawObjectCorrupt: it is never trusted for its name alone."""
     raw = lake / "raw"
     raw.mkdir(parents=True, exist_ok=True)
     for f in fetches:
         target = raw / f.sha256
-        if target.exists() and not f.content:
-            continue  # already stored when the page arrived (refresh streams pages to disk)
-        if hashlib.sha256(f.content).hexdigest() != f.sha256:
+        if f.content and hashlib.sha256(f.content).hexdigest() != f.sha256:
             raise ValueError(f"sha256 mismatch for {f.url}")
-        if not target.exists():
-            tmp = target.with_suffix(".tmp")
+        if target.exists() or target.is_symlink():
+            verify_raw(lake, [f.sha256])  # reused (or streamed earlier): the stored bytes must still match
+            continue
+        if not f.content and f.sha256 != _EMPTY_SHA256:
+            verify_raw(lake, [f.sha256])  # streamed earlier, but gone since: refused in plain words
+        tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+        try:
             tmp.write_bytes(f.content)
-            tmp.replace(target)
+            os.replace(tmp, target)
+        finally:
+            tmp.unlink(missing_ok=True)
 
 
 def build_snapshot(

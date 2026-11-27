@@ -84,6 +84,12 @@ ends green with a notice and does nothing. Each starts working on its next run a
    its dependencies never share a job with the publish token); it hands over only `run_results.json` and
    `manifest.json`, as an artifact. The gate holds the release unless every model, seed and snapshot built, at
    least one test ran, nothing was skipped, every check ran and every error-severity test and unit test passed.
+   It also re-hashes every raw file each `LATEST` snapshot names (`raw/<sha256>`), and holds the release when one
+   is missing or no longer matches its name; the transform refuses such a load too, and so does a refresh that
+   would reuse it. Each build is recorded under its **logical build id**, a hash of what it was made from (raw
+   sha256s, contracts, dbt vars, commit; never a snapshot id or the clock), next to its **artifact digest**, the
+   sha256 of each file the build wrote and one sha256 over them, which tells apart builds of the same inputs that
+   produced different bytes.
    A pass records only the verdict. After `export-public` has uploaded the release, `gate --confirm <tag>`
    records the exact tag it created (`release-<date>`, or `release-<date>.N` for a correction) as served and
    swaps `SERVING` to it. The gate's state (`SERVING`, `builds.jsonl`, `serving_log.jsonl`) is restored at

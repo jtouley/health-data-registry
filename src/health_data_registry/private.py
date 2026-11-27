@@ -193,7 +193,15 @@ def write_raw_private(lake: Path, ds: Dataset, fetches: Iterable[RawFetch]) -> N
         if hashlib.sha256(f.content).hexdigest() != f.sha256:
             raise PrivateRefused("sha256_mismatch", f"the bytes from {f.url} don't match their sha256")
         target = folder / f.sha256
-        if not target.exists():
+        if target.exists():  # reused: the stored copy is re-hashed, never trusted for its name (issue #269)
+            if hashlib.sha256(target.read_bytes()).hexdigest() != f.sha256:
+                raise PrivateRefused(
+                    "raw_mismatch",
+                    f"the stored raw file {RAW_DIR}/{f.sha256} of {ds.id} no longer holds the bytes it is named "
+                    "for; nothing was written. Restore it from the private raw archive, or delete it and crawl "
+                    "the source again",
+                )
+        else:
             tmp = target.with_suffix(".tmp")
             tmp.write_bytes(f.content)
             tmp.chmod(0o600)
