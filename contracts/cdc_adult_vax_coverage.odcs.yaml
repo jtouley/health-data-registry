@@ -1,0 +1,227 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: cdc_adult_vax_coverage
+name: "Vaccination Coverage among Adults (18+ Years)"
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Vaccination coverage among US adults from the Behavioral Risk Factor Surveillance System (BRFSS) for pneumococcal, tetanus (Td or Tdap, and Tdap) and zoster (shingles) vaccines, nationally, by HHS region, state, local area and county, by age group and race and Hispanic origin (dataset description, https://data.cdc.gov/api/views/aetd-68ew.json)."
+  usage: "Read one vaccine, place, age group, group and survey year as published, with its interval as text. Never add percents across vaccines, doses, places, groups or years; a state and its local areas sit side by side."
+  limitations: "Self-reported survey estimates; no definition of each vaccine's coverage in the metadata; county names repeat across states; interval packed as text; symbols in place of some estimates."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://data.cdc.gov/d/aetd-68ew", description: "Publisher dataset page"}
+    - {type: businessDefinition, url: "https://data.cdc.gov/api/views/aetd-68ew.json", description: "Socrata metadata: dataset description and column descriptions, read 2026-11-25"}
+servers:
+  - id: data_cdc_gov
+    server: data.cdc.gov
+    type: api
+    location: https://data.cdc.gov/resource/aetd-68ew.json
+    description: "Socrata SODA API; the adapter keeps only the columns listed in the schema."
+schema:
+  - name: cdc_adult_vax_coverage
+    physicalName: cdc_adult_vax_coverage
+    physicalType: table
+    logicalType: object
+    description: "One row per vaccine and dose, place, survey year, age group and group."
+    dataGranularityDescription: "vaccine x dose x place (fips) x survey year x age group (dimension_type) x group (dimension)"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://data.cdc.gov/api/views/aetd-68ew.json"}
+    customProperties:
+      - property: totalRows
+        value: none
+        description: "No total row is read as one: the nation, HHS regions, states, local areas and counties sit side by side, and Overall sits beside the race and Hispanic origin groups; every metric reads one published estimate (67,596 rows on 2026-11-25)."
+      - {property: tableShape, value: estimate_table}
+      - property: idDimensions
+        value:
+          condition: vaccine
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: null
+          period: year_season
+          provisionalFlag: null
+        description: "Condition is the vaccine. These are survey estimates of vaccination, not cases, so there is no case definition or case status. Period is the survey year. No provisional flag is published."
+    properties:
+      - name: vaccine
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "The vaccine the estimate is for, as CDC names it: Pneumococcal, Tetanus or Zoster (Shingles) (column 'Vaccine')."
+        examples: ["Pneumococcal", "Tetanus", "Zoster (Shingles)"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: vaccine}
+        quality:
+          - id: vaccine_labels
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["Pneumococcal", "Tetanus", "Zoster (Shingles)"]}
+            mustBe: 0
+            description: "Every vaccine label published on 2026-11-25. A new label is a new series to catalogue, and it also shows in the flag_unmapped_labels review queue; it is a warning so that queue still builds."
+      - name: dose
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "The kind of tetanus shot counted, as published: 'Td or Tdap' or 'Tdap' (column description: 'The type of Tetanus shot'); an empty text ('') for pneumococcal and zoster rows, as Socrata serves it (a row that left the field out would read as empty, open question 'Dose')."
+        examples: ["", "Td or Tdap", "Tdap"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: dose}
+      - name: geography_type
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The kind of place, as published: 'HHS Regions/National', 'States/Local Areas' or 'Counties' (column description: HHS Region/National, State/Local Area, County)."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: geography_type}
+        quality:
+          - id: geography_types
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["HHS Regions/National", "States/Local Areas", "Counties"]}
+            mustBe: 0
+            description: "The three kinds of place the column description lists, as published. A new kind is a new breakdown to review."
+      - name: geography
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The place, as CDC names it: 'United States', 'Region 1' to 'Region 10', a state, DC or territory, a local area reported apart from its state ('IL-City of Chicago', 'TX-Rest of state'), or a county by its name alone ('Champaign'), which repeats across states; fips tells them apart."
+        examples: ["United States", "Region 5", "Michigan", "IL-City of Chicago", "Champaign"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: geography}
+      - name: fips
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 3
+        description: "The place's code, as published: two digits for a state, five for a county (state and county code, column description), and CDC's own codes for the nation ('100'), HHS regions ('101' to '110') and local areas."
+        examples: ["26", "17019", "100", "105"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: fips}
+      - name: year_season
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 4
+        description: "The survey year, as published (column 'Survey Year'), a four-digit year."
+        examples: ["2022", "2023", "2024"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: year_season}
+        quality:
+          - id: survey_year_is_a_year
+            dimension: conformity
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE NOT regexp_full_match(year_season, '[0-9]{4}')"
+            mustBe: 0
+            description: "The column is the survey year (column description). A pooled period ('2021-2022') would be compared as text against single years, so it is reported instead of being read beside them."
+      - name: dimension_type
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 5
+        description: "The age group the estimate is for, as published: '>=18 Years', '>=65 Years', '18-64 Years at Increased Risk', '>=60 Years' and others. CDC's column description calls it the sociodemographic category (Age or Race/ethnicity), but the published values are age groups (open question 'Dimensions')."
+        examples: [">=65 Years", "18-64 Years at Increased Risk", ">=18 Years", ">=60 Years"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: dimension_type}
+      - name: dimension
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 6
+        description: "The group within that age group, as published: 'Overall' or a race and Hispanic origin group such as 'Hispanic' or 'Black, Non-Hispanic' (column 'Dimension')."
+        examples: ["Overall", "Hispanic", "White, Non-Hispanic"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: dimension}
+      - name: coverage_estimate
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Percent of adults in the place and group vaccinated (column 'Estimate (%)'), from the Behavioral Risk Factor Surveillance System. Empty where CDC published a symbol instead of a number; the symbol is kept in estimate_as_published."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: coverage_estimate}
+          - {property: unit, value: "%"}
+          - {property: missingCodes, value: ["*", "NR"], description: "Column description, https://data.cdc.gov/api/views/aetd-68ew.json: 'Non-numeric data are present in this column, such as \"*\". These symbols indicate if data were not collected,' (the description stops there). NR (2,766 rows on 2026-11-25) is also published but not defined (open question 'Estimate codes'). Neither is a number, so each is stored as no value, never as zero, and the published text is kept in estimate_as_published. A symbol not listed here refuses the load rather than being guessed at (#188)."}
+        quality:
+          - id: coverage_is_a_percent
+            dimension: conformity
+            severity: error
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE coverage_estimate < 0 OR coverage_estimate > 100"
+            mustBe: 0
+            description: "The column is a percent ('Estimate (%)'), so it lies from 0 to 100."
+      - name: estimate_as_published
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The estimate exactly as CDC published it, number or symbol: '*' (CDC's description: data not collected, its text cut short) and 'NR' (published, not defined). Kept so a symbol is never lost when coverage_estimate is empty."
+        examples: ["65.6", "NR", "*"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: coverage_estimate}
+      - name: ci_95
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "The estimate's 95% confidence interval, exactly as published ('59.5 to 71.7', column '95% CI (%)'). Kept as text: it is two numbers packed in one field, and splitting it waits for a declared staging extension (#172). Empty where the estimate is a symbol."
+        examples: ["59.5 to 71.7", "22.9 to 34.7"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: _95_ci}
+        quality:
+          - id: interval_with_every_number
+            dimension: completeness
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE (coverage_estimate IS NULL) <> (nullif(trim(ci_95), '') IS NULL)"
+            mustBe: 0
+            description: "The column is the 95% confidence interval of the estimate (column description), so every numeric estimate has one, and a symbol has none (as on 2026-11-25)."
+      - name: population_sample_size
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Number of adults surveyed behind the estimate (column 'Sample Size'); published for national, regional and state rows, empty for counties."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: population_sample_size}
+          - {property: unit, value: "respondents"}
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: licenceSource, value: "No licence field in the Socrata metadata (read 2026-11-25). A CDC work on data.cdc.gov, a US federal work under 17 USC 105. A maintainer confirms the wording (see openQuestions)."}
+  - {property: refresh, value: annual}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "CDC may revise earlier years, so each refresh stores the complete table as a dated, append-only load; older loads are never overwritten."
+  - {property: geographyBasis, value: "respondent residence in a telephone survey (BRFSS); not stated beyond that, and how county estimates are made is an open question"}
+  - {property: unreliableRule, value: {kind: none, description: "None stated in the metadata. Some estimates are published as a symbol ('*' or 'NR') instead of a number; each is kept as published and read as no value, never as zero."}}
+  - property: openQuestions
+    value:
+      - "Dose: pneumococcal and zoster rows carry an empty text ('') in dose, which the series match exactly. If CDC ever leaves the field out instead, those rows would read as NULL and the series would miss them; the fill-rate check and the live test watch for it."
+      - "Estimate codes: '*' is defined only by a column description that stops mid-sentence ('These symbols indicate if data were not collected,'); NR (2,766 rows on 2026-11-25) is not defined. What do they mean (not reported, too few respondents)? Until answered each is stored as no value, with the symbol kept in estimate_as_published; a new symbol refuses the load (#188)."
+      - "Dimensions: CDC describes dimension_type as the sociodemographic category ('Age' or 'Race/ethnicity') and dimension as the group, but dimension_type holds age groups and dimension holds 'Overall' or a race and Hispanic origin group. Kept as published; the series read dimension 'Overall' within one age group."
+      - "Interval: ci_95 packs the lower and upper bounds into one text ('59.5 to 71.7'). It is kept as text and returned with query_sql; showing it as lower and upper bounds waits for a declared staging extension (#172)."
+      - "Counties: county rows (46,899 on 2026-11-25, survey years 2018 to 2022) name the county without its state ('Champaign' is in Illinois and Ohio) and have no sample size. The series read only national, regional and state or local-area rows; county figures are read with query_sql by fips. How CDC models county estimates (small-area estimation or direct survey) is not stated."
+      - "Local areas: 'IL-City of Chicago', 'NY-City of New York' and others sit beside their state; never added to it."
+      - "Grain: vaccine x dose x fips x survey year x dimension_type x dimension was unique over the whole table on 2026-11-25 (67,596 rows) and is declared as the key."
+      - "Survey methods: BRFSS questions, weighting and the definition of each vaccine's coverage (for example the period a tetanus shot must fall in) are not in the metadata; the AdultVaxView page is cited but was not read."
+      - "Licence: the Socrata metadata has no licence field (2026-11-25); public-domain-us-federal is assumed from its being a CDC work. A maintainer confirms the wording."
+      - "GBD mapping: none. A vaccination coverage percent is not a GBD measure; a maintainer decides whether to key pneumococcal to Lower respiratory infections (Streptococcus pneumoniae), tetanus to Tetanus, and zoster to Varicella and herpes zoster."

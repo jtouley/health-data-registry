@@ -122,6 +122,13 @@ outputPorts:
     contractId: cdc_schoolvaxview_kindergarten
     customProperties:
       - {property: hosted, value: true}
+  - name: cdc_adult_vax_coverage
+    description: AdultVaxView (BRFSS) pneumococcal, tetanus and zoster vaccination coverage among adults, by place, survey year, age group and race and Hispanic origin.
+    type: tables
+    version: 0.1.0
+    contractId: cdc_adult_vax_coverage
+    customProperties:
+      - {property: hosted, value: true}
   - name: census_county_pop
     description: Census Bureau county and state resident population estimates, the denominator for rates.
     type: tables

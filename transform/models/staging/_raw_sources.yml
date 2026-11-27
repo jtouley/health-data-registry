@@ -6,6 +6,97 @@ sources:
     LATEST full load by the dbt_raw plugin (profiles.yml).
   schema: raw
   tables:
+  - name: cdc_adult_vax_coverage
+    description: 'Raw records of Vaccination Coverage among Adults (18+ Years) as the adapter hands them on, every
+      value as text: the publisher''s own fields, or for a wide table the adapter''s structural reshaping of them
+      (see the staging model). Only the full load the dataset''s LATEST pointer names is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_adult_vax_coverage.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - _95_ci
+      - coverage_estimate
+      - dimension
+      - dimension_type
+      - dose
+      - fips
+      - geography
+      - geography_type
+      - population_sample_size
+      - vaccine
+      - year_season
+    columns:
+    - name: _95_ci
+      data_type: varchar
+      description: 'Publisher field _95_ci, as text; read into ci_95 (The estimate''s 95% confidence interval, exactly
+        as published (''59.5 to 71.7'', column ''95% CI (%)''). Kept as text: it is two numbers packed in one field,
+        and splitting it waits for a declared staging extension (#172). Empty where the estimate is a symbol.)'
+    - name: coverage_estimate
+      data_type: varchar
+      description: 'Publisher field coverage_estimate, as text; read into coverage_estimate (Percent of adults in
+        the place and group vaccinated (column ''Estimate (%)''), from the Behavioral Risk Factor Surveillance System.
+        Empty where CDC published a symbol instead of a number; the symbol is kept in estimate_as_published.); estimate_as_published
+        (The estimate exactly as CDC published it, number or symbol: ''*'' (CDC''s description: data not collected,
+        its text cut short) and ''NR'' (published, not defined). Kept so a symbol is never lost when coverage_estimate
+        is empty.)'
+    - name: dimension
+      data_type: varchar
+      description: 'Publisher field dimension, as text; read into dimension (The group within that age group, as
+        published: ''Overall'' or a race and Hispanic origin group such as ''Hispanic'' or ''Black, Non-Hispanic''
+        (column ''Dimension'').)'
+    - name: dimension_type
+      data_type: varchar
+      description: 'Publisher field dimension_type, as text; read into dimension_type (The age group the estimate
+        is for, as published: ''>=18 Years'', ''>=65 Years'', ''18-64 Years at Increased Risk'', ''>=60 Years''
+        and others. CDC''s column description calls it the sociodemographic category (Age or Race/ethnicity), but
+        the published values are age groups (open question ''Dimensions'').)'
+    - name: dose
+      data_type: varchar
+      description: 'Publisher field dose, as text; read into dose (The kind of tetanus shot counted, as published:
+        ''Td or Tdap'' or ''Tdap'' (column description: ''The type of Tetanus shot''); an empty text ('''') for
+        pneumococcal and zoster rows, as Socrata serves it (a row that left the field out would read as empty, open
+        question ''Dose'').)'
+    - name: fips
+      data_type: varchar
+      description: 'Publisher field fips, as text; read into fips (The place''s code, as published: two digits for
+        a state, five for a county (state and county code, column description), and CDC''s own codes for the nation
+        (''100''), HHS regions (''101'' to ''110'') and local areas.)'
+    - name: geography
+      data_type: varchar
+      description: 'Publisher field geography, as text; read into geography (The place, as CDC names it: ''United
+        States'', ''Region 1'' to ''Region 10'', a state, DC or territory, a local area reported apart from its
+        state (''IL-City of Chicago'', ''TX-Rest of state''), or a county by its name alone (''Champaign''), which
+        repeats across states; fips tells them apart.)'
+    - name: geography_type
+      data_type: varchar
+      description: 'Publisher field geography_type, as text; read into geography_type (The kind of place, as published:
+        ''HHS Regions/National'', ''States/Local Areas'' or ''Counties'' (column description: HHS Region/National,
+        State/Local Area, County).)'
+    - name: population_sample_size
+      data_type: varchar
+      description: Publisher field population_sample_size, as text; read into population_sample_size (Number of
+        adults surveyed behind the estimate (column 'Sample Size'); published for national, regional and state rows,
+        empty for counties.)
+    - name: vaccine
+      data_type: varchar
+      description: 'Publisher field vaccine, as text; read into vaccine (The vaccine the estimate is for, as CDC
+        names it: Pneumococcal, Tetanus or Zoster (Shingles) (column ''Vaccine'').)'
+    - name: year_season
+      data_type: varchar
+      description: Publisher field year_season, as text; read into year_season (The survey year, as published (column
+        'Survey Year'), a four-digit year.)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
   - name: cdc_haicviz_cdi
     description: 'Raw records of HAICViz - CDI as the adapter hands them on, every value as text: the publisher''s
       own fields, or for a wide table the adapter''s structural reshaping of them (see the staging model). Only

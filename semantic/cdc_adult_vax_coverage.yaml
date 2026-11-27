@@ -1,0 +1,68 @@
+dataset: cdc_adult_vax_coverage
+# 0.1.0: first draft. Every figure is read from its one published cell; nothing is added. A vaccination coverage
+# percent names a disease but is not a measure of it, so every series answers only a question that asks about
+# vaccination (asked_with). The series read the nation, HHS regions, states and local areas, never counties, whose
+# names repeat across states (query_sql reads them by fips). Survey years are four-digit text (a warn rule
+# reports any other form), so a year filter never mixes a pooled period with a single year.
+version: 0.1.0
+dimensions:
+  - {name: vaccine, column: vaccine, type: categorical, non_additive: true, non_additive_reason: "each vaccine's coverage is its own percent", description: "Pneumococcal, Tetanus or Zoster (Shingles)."}
+  - {name: dose, column: dose, type: categorical, non_additive: true, non_additive_reason: "Tdap is part of Td or Tdap", description: "Td or Tdap, or Tdap, for tetanus; empty for the other vaccines."}
+  - {name: place_kind, column: geography_type, type: categorical, non_additive: true, non_additive_reason: "the nation, regions, states and counties overlap", description: "HHS Regions/National, States/Local Areas or Counties."}
+  - {name: place, column: geography, type: categorical, non_additive: true, non_additive_reason: "the nation, regions, states, local areas and counties overlap", description: "United States, an HHS region, a state or territory, a local area, or a county."}
+  - {name: place_code, column: fips, type: categorical, non_additive: true, non_additive_reason: "the nation, regions, states, local areas and counties overlap", description: "The place's code: a state or county FIPS code, or CDC's code for the nation and HHS regions."}
+  - {name: survey_year, column: year_season, type: time, non_additive: false, description: "Survey year, e.g. 2022."}
+  - {name: age, column: dimension_type, type: categorical, non_additive: true, non_additive_reason: "age groups overlap (65 and older is inside 18 and older)", description: "The age group, such as '>=65 Years'."}
+  - {name: group, column: dimension, type: categorical, non_additive: true, non_additive_reason: "Overall sits beside the race and Hispanic origin groups", description: "Overall, or a race and Hispanic origin group."}
+measures:
+  - {name: coverage_percent, column: coverage_estimate, kind: percent, unit: "% of adults", description: "Percent of adults vaccinated, as published."}
+metrics:
+  - name: yearly_vaccination_coverage
+    description: "Percent of adults in one place, age group and group vaccinated with one vaccine (and dose) in one survey year, read as published and never added up."
+    measure: coverage_percent
+    aggregation: none
+    exclude_total_rows: false
+    uncertainty: none
+    # Structural: the interval is one text field (ci_95); splitting it waits for #172.
+    uncertainty_reason: "CDC publishes the 95% confidence interval as one text ('59.5 to 71.7', column ci_95), returned as published with query_sql; it can't be shown here as lower and upper bounds until splitting it is a declared staging step (#172)."
+series:
+  - condition: "Pneumococcal vaccination"
+    label: "Pneumococcal vaccination coverage, adults 65 and older (BRFSS, by year)"
+    metric: yearly_vaccination_coverage
+    measure: percent
+    filters: {vaccine: "Pneumococcal", dose: "", age: ">=65 Years", group: "Overall", place_kind: ["HHS Regions/National", "States/Local Areas"]}
+    location_dimension: place
+    time_dimension: survey_year
+    asked_with: ["vaccination", "vaccinated", "vaccine", "coverage", "up to date", "immunization", "uptake"]
+  - condition: "Pneumococcal vaccination"
+    label: "Pneumococcal vaccination coverage, adults 18 to 64 at increased risk (BRFSS, by year)"
+    metric: yearly_vaccination_coverage
+    measure: percent
+    filters: {vaccine: "Pneumococcal", dose: "", age: "18-64 Years at Increased Risk", group: "Overall", place_kind: ["HHS Regions/National", "States/Local Areas"]}
+    location_dimension: place
+    time_dimension: survey_year
+    asked_with: ["vaccination", "vaccinated", "vaccine", "coverage", "up to date", "immunization", "uptake"]
+  - condition: "Tetanus vaccination"
+    label: "Tetanus vaccination coverage (Td or Tdap), adults 18 and older (BRFSS, by year)"
+    metric: yearly_vaccination_coverage
+    measure: percent
+    filters: {vaccine: "Tetanus", dose: "Td or Tdap", age: ">=18 Years", group: "Overall", place_kind: ["HHS Regions/National", "States/Local Areas"]}
+    location_dimension: place
+    time_dimension: survey_year
+    asked_with: ["vaccination", "vaccinated", "vaccine", "coverage", "up to date", "immunization", "uptake"]
+  - condition: "Tdap vaccination"
+    label: "Tdap vaccination coverage, adults 18 and older (BRFSS, by year)"
+    metric: yearly_vaccination_coverage
+    measure: percent
+    filters: {vaccine: "Tetanus", dose: "Tdap", age: ">=18 Years", group: "Overall", place_kind: ["HHS Regions/National", "States/Local Areas"]}
+    location_dimension: place
+    time_dimension: survey_year
+    asked_with: ["vaccination", "vaccinated", "vaccine", "coverage", "up to date", "immunization", "uptake"]
+  - condition: "Shingles vaccination"
+    label: "Shingles (zoster) vaccination coverage, adults 60 and older (BRFSS, by year)"
+    metric: yearly_vaccination_coverage
+    measure: percent
+    filters: {vaccine: "Zoster (Shingles)", dose: "", age: ">=60 Years", group: "Overall", place_kind: ["HHS Regions/National", "States/Local Areas"]}
+    location_dimension: place
+    time_dimension: survey_year
+    asked_with: ["vaccination", "vaccinated", "vaccine", "coverage", "up to date", "immunization", "uptake"]

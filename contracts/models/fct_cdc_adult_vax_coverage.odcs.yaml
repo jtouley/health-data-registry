@@ -1,0 +1,131 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: fct_cdc_adult_vax_coverage
+name: "Fact - Vaccination coverage among adults (BRFSS)"
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Every row of the AdultVaxView table (cdc_adult_vax_coverage) as one fact per vaccine and dose, place, survey year, age group and group, with the estimate's published text and interval as sent and a status that says why an estimate is empty."
+  usage: "Read one place, group, measure and week as published. Every row is kept, suppressed ones included; nothing is added across vaccines, places, groups or years."
+  limitations: "A telephone survey estimate, self-reported; county names repeat across states (use place_code)."
+  authoritativeDefinitions:
+    - {type: businessDefinition, url: "contracts/cdc_adult_vax_coverage.odcs.yaml", description: "The source dataset's contract, whose descriptions and rules this fact carries"}
+schema:
+  - name: fct_cdc_adult_vax_coverage
+    physicalName: fct_cdc_adult_vax_coverage
+    physicalType: table
+    logicalType: object
+    description: "One row per published estimate: every row of int_cdc_adult_vax_coverage, none removed, each with value_status."
+    customProperties:
+      - {property: layer, value: marts}
+      - {property: totalRows, value: none}
+      - {property: tableShape, value: estimate_table}
+    properties:
+      - name: vaccine
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "Pneumococcal, Tetanus or Zoster (Shingles), as published."
+        customProperties: [{property: role, value: dimension}]
+      - name: dose
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "Td or Tdap, or Tdap, for tetanus; an empty text for the other vaccines."
+        customProperties: [{property: role, value: dimension}]
+      - name: place_code
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 3
+        description: "The place's code (state or county FIPS, or CDC's code for the nation and regions), as published."
+        customProperties: [{property: role, value: dimension}]
+      - name: place
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The place, as CDC names it (county names repeat across states)."
+        customProperties: [{property: role, value: attribute}]
+      - name: place_kind
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "HHS Regions/National, States/Local Areas or Counties, as published."
+        customProperties: [{property: role, value: attribute}]
+      - name: survey_year
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 4
+        description: "The survey year, as published."
+        customProperties: [{property: role, value: dimension}]
+      - name: age_group
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 5
+        description: "The age group, as published in dimension_type."
+        customProperties: [{property: role, value: dimension}]
+      - name: demographic_group
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 6
+        description: "Overall, or a race and Hispanic origin group, as published."
+        customProperties: [{property: role, value: dimension}]
+      - name: estimate_as_published
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The estimate exactly as CDC published it, number or symbol."
+        customProperties: [{property: role, value: attribute}]
+      - name: ci_95
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "The 95% confidence interval exactly as published ('59.5 to 71.7')."
+        customProperties: [{property: role, value: attribute}]
+      - name: coverage_percent
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Percent of adults vaccinated, as published; empty where CDC published a symbol, never zero."
+        customProperties: [{property: role, value: measure}]
+      - name: sample_size
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Adults surveyed behind the estimate, as published; empty for counties."
+        customProperties: [{property: role, value: attribute}]
+      - name: value_status
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Why coverage_percent is or isn't there: 'published', or 'not a number: CDC published' and the symbol it published ('*' or 'NR'). It qualifies the row and removes nothing."
+        customProperties: [{property: role, value: attribute}]
+      - name: _snapshot_id
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The lake snapshot the row was read from (the dataset's LATEST load); its manifest gives the source address, retrieval time and dataset version."
+        customProperties: [{property: role, value: attribute}]
+      - name: _raw_sha256
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The sha256 fingerprint of each raw file the row was parsed from: the exact bytes the publisher sent."
+        customProperties: [{property: role, value: attribute}]
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None of its own: the source contract's estimate symbols apply, and value_status says on each row why an estimate is empty."}}
+  - property: openQuestions
+    value:
+      - "value_status names the symbol CDC published instead of a number and does not interpret it: what '*' and 'NR' mean is an open question in the source contract."
