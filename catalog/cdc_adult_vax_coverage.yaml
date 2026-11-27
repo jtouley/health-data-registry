@@ -1,0 +1,53 @@
+id: cdc_adult_vax_coverage
+title: Vaccination Coverage among Adults (18+ Years)
+agency: CDC
+publisher: "Centers for Disease Control and Prevention, National Center for Immunization and Respiratory Diseases (AdultVaxView), from the Behavioral Risk Factor Surveillance System (BRFSS)"
+level: federal
+country: US
+research_areas: [infectious_disease]
+id_areas: [vaccine_preventable]
+years: {start: 2008, end: null}
+# The nation, the 10 HHS regions, states, territories, local areas and counties (geography_type HHS
+# Regions/National, States/Local Areas, Counties; https://data.cdc.gov/resource/aetd-68ew.json, read 2026-11-25).
+geography: [nation, region, state, city, county]
+shape: estimate_table
+grain: "One row is one vaccine (pneumococcal, tetanus as Td or Tdap or as Tdap, or zoster), one place (the nation, an HHS region, a state or territory, a local area, or a county), one survey year, one age group and one group (overall, or a race and Hispanic origin group), holding the percent of adults vaccinated (or a symbol where CDC published none), its 95% confidence interval as text, and the sample size."
+refresh: annual
+licence:
+  # No licence field in the dataset's Socrata metadata (checked 2026-11-25). A CDC dataset on data.cdc.gov is a
+  # US federal work (17 USC 105); a maintainer confirms the wording on review (see the contract's open questions).
+  id: public-domain-us-federal
+  redistribution: true
+  terms_url: https://www.usa.gov/government-works
+citation: "Centers for Disease Control and Prevention, National Center for Immunization and Respiratory Diseases. Vaccination Coverage among Adults (18+ Years), AdultVaxView. https://data.cdc.gov/d/aetd-68ew (accessed <retrieved_at>)."
+source:
+  portal: socrata
+  host: data.cdc.gov
+  dataset: aetd-68ew
+  landing_url: https://data.cdc.gov/d/aetd-68ew
+  api_url: https://data.cdc.gov/resource/aetd-68ew.json
+codebook_url: https://www.cdc.gov/vaccines/imz-managers/coverage/adultvaxview/index.html
+caveats:
+  - "Vaccination coverage, not disease: the percent of adults who report the vaccine in the Behavioral Risk Factor Surveillance System (BRFSS), a telephone survey. It answers vaccination questions only, never pneumococcal disease, tetanus or shingles questions."
+  - "Some estimates are published as a symbol instead of a number: '*' (CDC: data not collected; its description is cut short) or 'NR' (not defined). Each is shown as no value, never as zero, and the symbol is kept beside it."
+  - "The 95% confidence interval is published as one text ('59.5 to 71.7'); it is shown as published with query_sql, and get_series can't show it as lower and upper bounds yet."
+  - "Counties are named without their state ('Champaign' is in Illinois and Ohio); use fips to tell them apart. County rows have no sample size."
+  - "Local areas ('IL-City of Chicago', 'TX-Rest of state') sit beside their state; places, groups, vaccines and years are never added."
+  - "The column CDC calls the sociodemographic category holds the age group; 'Overall' or a race and Hispanic origin group is in the next column."
+gbd:
+  # No GBD keys: a vaccination coverage percent is not a GBD measure (contract openQuestions, hard rule 1).
+  location_column: geography
+  causes: []
+conditions:
+  dimension: vaccine
+  # Provenance: every distinct value of vaccine at https://data.cdc.gov/resource/aetd-68ew.json on 2026-11-25.
+  source: "CDC's vaccine names in this dataset on data.cdc.gov (checked 25 Nov 2026): Pneumococcal, Tetanus (with the dose column saying Td or Tdap, or Tdap) and Zoster (Shingles)."
+  labels:
+    - "Pneumococcal"
+    - "Tetanus"
+    - "Zoster (Shingles)"
+  aliases: []
+contract: contracts/cdc_adult_vax_coverage.odcs.yaml
+semantic_model: semantic/cdc_adult_vax_coverage.yaml
+status: draft
+hosting: public

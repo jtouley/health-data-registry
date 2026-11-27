@@ -1,0 +1,117 @@
+# Hand-written dbt unit tests of cdc_adult_vax_coverage: the generated staging typing (staging.typed_select) and the
+# hand-written fact (fct_cdc_adult_vax_coverage). One file per source, beside staging_typing.yml, so new-source pull
+# requests don't edit the same file. Column types are held by the enforced model contracts; these tests check
+# values: the symbols '*' and 'NR' become no value (never zero) while estimate_as_published keeps them as sent, a
+# real zero stays zero, the interval stays as published text (#172), a decimal-formatted sample size becomes a whole
+# count, and the fact keeps every row and names the symbol CDC published.
+version: 2
+unit_tests:
+- name: stg_cdc_adult_vax_coverage_symbols_are_no_value_and_kept_as_published
+  model: stg_cdc_adult_vax_coverage
+  given:
+  - input: source('raw', 'cdc_adult_vax_coverage')
+    format: sql
+    rows: 'select ''Pneumococcal'' as "vaccine", '''' as "dose", ''HHS Regions/National'' as "geography_type", ''United States'' as "geography", ''100'' as "fips", ''2022'' as "year_season", ''>=65 Years''
+      as "dimension_type", ''Overall'' as "dimension", ''70.1'' as "coverage_estimate", ''69.5 to 70.7'' as "_95_ci", ''90000'' as "population_sample_size", ''s1'' as "_snapshot_id", ''h1'' as "_raw_sha256"
+
+      union all select ''Pneumococcal'', '''', ''States/Local Areas'', ''Michigan'', ''26'', ''2022'', ''>=65 Years'', ''Overall'', ''68.2'', ''65.0 to 71.2'', ''2200'', ''s1'', ''h1''
+
+      union all select ''Tetanus'', ''Tdap'', ''States/Local Areas'', ''Michigan'', ''26'', ''2022'', ''>=18 Years'', ''Hispanic'', ''NR'', cast(null as varchar), ''40'', ''s1'', ''h1''
+
+      union all select ''Zoster (Shingles)'', '''', ''Counties'', ''Champaign'', ''17019'', ''2022'', ''>=60 Years'', ''Overall'', ''35.0'', ''30.1 to 40.2'', cast(null as varchar), ''s1'', ''h1''
+
+      union all select ''Zoster (Shingles)'', '''', ''Counties'', ''Champaign'', ''39021'', ''2022'', ''>=60 Years'', ''Overall'', ''*'', cast(null as varchar), cast(null as varchar), ''s1'', ''h1''
+
+      union all select ''Pneumococcal'', '''', ''States/Local Areas'', ''Ohio'', ''39'', ''2022'', ''>=65 Years'', ''Overall'', '' 0.0 '', ''0.0 to 1.0'', ''1500.0'', ''s1'', ''h1''
+
+      '
+  expect:
+    rows:
+    - fips: '100'
+      coverage_estimate: 70.1
+      estimate_as_published: '70.1'
+      ci_95: 69.5 to 70.7
+      population_sample_size: 90000
+    - fips: '26'
+      coverage_estimate: 68.2
+      estimate_as_published: '68.2'
+      ci_95: 65.0 to 71.2
+      population_sample_size: 2200
+    - fips: '26'
+      coverage_estimate: null
+      estimate_as_published: NR
+      ci_95: null
+      population_sample_size: 40
+    - fips: '17019'
+      coverage_estimate: 35.0
+      estimate_as_published: '35.0'
+      ci_95: 30.1 to 40.2
+      population_sample_size: null
+    - fips: '39021'
+      coverage_estimate: null
+      estimate_as_published: '*'
+      ci_95: null
+      population_sample_size: null
+    - fips: '39'
+      coverage_estimate: 0.0
+      estimate_as_published: ' 0.0 '
+      ci_95: 0.0 to 1.0
+      population_sample_size: 1500
+- name: fct_cdc_adult_vax_coverage_keeps_every_row_and_names_the_published_symbol
+  model: fct_cdc_adult_vax_coverage
+  given:
+  - input: ref('int_cdc_adult_vax_coverage')
+    rows:
+    - vaccine: Tetanus
+      dose: Tdap
+      fips: '26'
+      geography: Michigan
+      geography_type: States/Local Areas
+      year_season: '2022'
+      dimension_type: '>=18 Years'
+      dimension: Hispanic
+      coverage_estimate: null
+      estimate_as_published: NR
+      ci_95: null
+      population_sample_size: 40
+    - vaccine: Zoster (Shingles)
+      dose: ''
+      fips: '39021'
+      geography: Champaign
+      geography_type: Counties
+      year_season: '2022'
+      dimension_type: '>=60 Years'
+      dimension: Overall
+      coverage_estimate: null
+      estimate_as_published: '*'
+      ci_95: null
+      population_sample_size: null
+    - vaccine: Pneumococcal
+      dose: ''
+      fips: '26'
+      geography: Michigan
+      geography_type: States/Local Areas
+      year_season: '2022'
+      dimension_type: '>=65 Years'
+      dimension: Overall
+      coverage_estimate: 68.2
+      estimate_as_published: '68.2'
+      ci_95: 65.0 to 71.2
+      population_sample_size: 2200
+  expect:
+    rows:
+    - place_code: '26'
+      vaccine: Tetanus
+      coverage_percent: null
+      estimate_as_published: NR
+      value_status: 'not a number: CDC published NR'
+    - place_code: '39021'
+      vaccine: Zoster (Shingles)
+      coverage_percent: null
+      estimate_as_published: '*'
+      value_status: 'not a number: CDC published *'
+    - place_code: '26'
+      vaccine: Pneumococcal
+      coverage_percent: 68.2
+      estimate_as_published: '68.2'
+      value_status: published

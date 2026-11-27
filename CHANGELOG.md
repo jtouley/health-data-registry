@@ -61,6 +61,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- New source, draft: `cdc_adult_vax_coverage`, AdultVaxView (BRFSS) pneumococcal, tetanus (Td or Tdap, and Tdap)
+  and shingles vaccination coverage among adults, by place (nation, HHS region, state, local area, county), survey
+  year, age group and race and Hispanic origin (data.cdc.gov aetd-68ew). Read as published and never added; the
+  symbols '*' and 'NR' are no value, never zero, kept beside the number; the 95% interval stays as published text
+  (#172). It answers only vaccination questions: a plain "tetanus" question doesn't get it.
+- Semantic series can list `asked_with` words: a series that names a disease but isn't a measure of it
+  (vaccination coverage, a percent of deaths) answers only a question that uses one of them.
+- Mart `fct_cdc_adult_vax_coverage`: every row kept, the published estimate and interval as sent, and a
+  `value_status` that names the symbol CDC published instead of a number.
 - New source, draft (contract not yet reviewed): `cdc_nrevss_positivity`, CDC's weekly national percent of laboratory tests
   positive for COVID-19, influenza and RSV (NREVSS, data.cdc.gov seuz-s2cv), on the existing Socrata adapter. One
   figure for the whole country each week; a question about a state or region is told so.

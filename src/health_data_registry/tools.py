@@ -328,14 +328,17 @@ def series_for(
     """Series whose condition code or clinical label matches the words asked for.
 
     kind "plain" (the default, used by get_series) leaves out weekly and age-specific series, so a year is never
-    built by adding up provisional weeks; "weekly" and "age" return only those (check_signal, age_adjust).
+    built by adding up provisional weeks; "weekly" and "age" return only those (check_signal, age_adjust). A series
+    with asked_with words (vaccination coverage, a percent of deaths) answers only a question that uses one of them.
     """
     want = norm_label(condition)
+    said = set(want.split())
     found: list[tuple[Dataset, Series]] = []
 
     def fits(s: Series) -> bool:
         s_kind = "weekly" if s.week_dimension else "age" if s.age_dimension else "plain"
-        return s_kind == kind and (measure is None or s.measure == measure)
+        asked = not s.asked_with or any(set(norm_label(w).split()) <= said for w in s.asked_with)
+        return s_kind == kind and (measure is None or s.measure == measure) and asked
 
     for ds in registry:
         if source_id and ds.id != source_id:
