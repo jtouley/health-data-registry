@@ -1,0 +1,3 @@
+{"vaccine": "MMR", "dose": "", "geography_type": "States", "geography": "Toy State", "year_season": "2024-25", "coverage_estimate": "90.5", "population_sample_size": "1000", "percent_surveyed": "100", "foot_notes": "*", "survey_type": "Census"}
+{"vaccine": "Exemption", "dose": "Any Exemption", "geography_type": "States", "geography": "Toy State", "year_season": "2024-25", "coverage_estimate": "4.0", "population_sample_size": "1000", "number_of_exemptions": "40", "survey_type": "Census"}
+{"vaccine": "Hepatitis B", "dose": "", "geography_type": "States", "geography": "Toy State", "year_season": "2024-25", "coverage_estimate": "NReq", "foot_notes": "†"}
