@@ -71,7 +71,7 @@ version: 0.1.0
 dimensions:
   - {name: state, column: area, type: categorical, non_additive: false}
   - {name: year, column: year, type: time, non_additive: false}
-  - {name: week, column: week, type: time, non_additive: false}
+  - {name: week, column: week, type: time, non_additive: true, non_additive_reason: late reports reach only the running total}
 measures:
   - {name: wk, column: wk, kind: count}
   - {name: ytd, column: ytd, kind: running_count}
@@ -237,8 +237,15 @@ def test_weekly_counts_are_never_the_annual_figure(tmp_path: Path) -> None:
     reg, eng = _setup(tmp_path)
     cm = compile_metric(reg.get("toy_cases"), "annual", group_by=["state", "year"])
     assert '"wk"' not in cm.sql and "sum(" not in cm.sql
-    weekly = eng.query_metric("toy_cases", "weekly", filters={"state": ["MICHIGAN"]}, group_by=["year"])
-    assert [r[:2] for r in weekly["rows"]] == [[2022, 3]]  # the trap the running total avoids
+    # The trap the running total avoids: weeks added into a year undercount it (late reports reach only the
+    # running total), so the compiler refuses it (issue #173); one row per week is still read.
+    with pytest.raises(QueryRefused) as e:
+        eng.query_metric("toy_cases", "weekly", filters={"state": ["MICHIGAN"]}, group_by=["year"])
+    assert e.value.code == "weekly_sum" and "year-to-date count at the year's last week" in e.value.next_step
+    weekly = eng.query_metric(
+        "toy_cases", "weekly", filters={"state": ["MICHIGAN"]}, group_by=["year", "week"]
+    )
+    assert sum(r[2] for r in weekly["rows"] if r[0] == 2022) == 3
 
 
 def test_without_a_restatement_no_year_is_said_to_be_over(tmp_path: Path) -> None:
@@ -406,8 +413,9 @@ def test_compiled_running_total_sql_is_exact(tmp_path: Path) -> None:
 
 
 SEQ_SEMANTIC = SEMANTIC.replace(
-    "  - {name: week, column: week, type: time, non_additive: false}\n",
-    "  - {name: week, column: week, type: time, non_additive: false}\n  - {name: epi_seq, column: week, type: time, non_additive: false}\n"
+    "  - {name: week, column: week, type: time, non_additive: true, non_additive_reason: late reports reach only the running total}\n",
+    "  - {name: week, column: week, type: time, non_additive: true, non_additive_reason: late reports reach only the running total}\n"
+    "  - {name: epi_seq, column: week, type: time, non_additive: true, non_additive_reason: late reports reach only the running total}\n"
     "  - {name: span_id, column: year, type: time, non_additive: false}\n",
 ).replace(
     "  - {name: weekly,",
@@ -463,8 +471,8 @@ BY_FLAG = {"-": "OHIO", "U": "MAINE", "N": "IOWA", "NN": "UTAH", "NP": "IDAHO", 
 
 @pytest.mark.parametrize("code", list(BY_FLAG))
 def test_no_flagged_cell_is_a_bare_zero_or_a_bare_empty(tmp_path: Path, code: str) -> None:
-    """Every NNDSS flag: '-' (no reported cases, by the codebook) reads as 0 with its flag; every other code
-    stays empty with its flag. No flagged cell comes back as a bare 0 or a bare empty value."""
+    """Every NNDSS flag, '-' (no reported cases, by the codebook) included, stays empty with its flag and the
+    flag's meaning: never read as 0 (issue #173). No flagged cell comes back as a bare 0 or a bare empty value."""
     contract = CONTRACT.replace(
         f"{{property: flagFor, value: ytd}}, {FLAG_CODES}", f"{{property: flagFor, value: ytd}}, {ALL_CODES}"
     )
@@ -488,7 +496,7 @@ def test_no_flagged_cell_is_a_bare_zero_or_a_bare_empty(tmp_path: Path, code: st
     cols = out["columns"]
     (row,) = [dict(zip(cols, r, strict=True)) for r in out["rows"]]
     assert row["flag"] == code
+    assert row["value"] is None and row["period_status"].startswith("no number published")
     if code == "-":
-        assert row["value"] == 0 and "no reported cases" in row["period_status"]
-    else:
-        assert row["value"] is None and row["period_status"].startswith("no number published")
+        assert "'-' = no reported cases" in row["period_status"]
+        assert "never counted as 0" in row["period_status"]
