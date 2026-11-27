@@ -1,6 +1,8 @@
 # 0013. The browser fetcher may read government hosts, under stop conditions
 
-- **Status:** Accepted (the maintainer's decision, 24 Nov 2026)
+- **Status:** Accepted (the maintainer's decision, 24 Nov 2026); superseded in part by
+  [ADR 0016](0016-crawler-factory.md) (accepted 27 Nov 2026): the stop rule for a refused robots.txt on a reviewed
+  government host, marked below
 - **Date:** 2026-11-24
 - **Spec:** "Crawling"; "Privacy and licences"
 - **Related:** [ADR 0002](0002-primary-sources-only.md) (primary sources only), Hard rule 6 in `CLAUDE.md`
@@ -42,6 +44,10 @@ is "not taken" and the job opens or updates the "Sitemap refresh blocked" issue)
 - a CAPTCHA;
 - a 401, 403 or 429, for the page or for robots.txt;
 - a robots.txt that disallows the path.
+
+*Superseded in part by [ADR 0016](0016-crawler-factory.md):* on a reviewed government host, a robots.txt that
+disallows the path, or a 401, 403 or 429 for robots.txt itself, no longer stops the crawl; it is overridden and
+recorded. A 401, 403 or 429 for the page still stops it.
 
 After a block, the only other route is a maintainer downloading the file in their own browser and uploading it
 with `sitemaps snapshot --from-file`.
