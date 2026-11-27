@@ -1,0 +1,97 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: fct_cdc_haicviz_mugsi
+name: Fact - HAICViz - MuGSI
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "One row per published cell of cdc_haicviz_mugsi (carbapenem-resistant Enterobacterales (CRE) and Acinetobacter baumannii (CRAB) rates), with every row kept and qualified: the figure as CDC published it, whether the cell was published, and whether it is one of CDC's 'All cases' total rows."
+  usage: "Read one cell, or follow one topic, view and stratum over the years. Never add rates, and never add a total row to the groups beside it. Built by transform/models/marts/fct_cdc_haicviz_mugsi.sql from int_cdc_haicviz_mugsi; the source contract (contracts/cdc_haicviz_mugsi.odcs.yaml) holds every fact about the numbers. The semantic model and the MCP tools do not read this fact yet: they still read the source's own column names (yearname, viewby, series), and moving them onto the facts is tracked in issue 131."
+  limitations: "The same limits as the source contract: EIP sites combined, no state values, and the unit, denominator and case definition are open questions there."
+schema:
+  - name: fct_cdc_haicviz_mugsi
+    physicalName: fct_cdc_haicviz_mugsi
+    physicalType: table
+    logicalType: object
+    description: "One row per published cell of cdc_haicviz_mugsi: every row of the latest load, none removed, none added, each with its published status and total-row flag. Grain: year x organism x topic x view x stratum, unique on the full table (see the source contract for the row count it was checked on)."
+    customProperties:
+      - {property: layer, value: marts}
+      - {property: totalRows, value: "is_total_row"}
+      - {property: tableShape, value: rate_table}
+    properties:
+      - name: year
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "Surveillance year (yearname in the source)."
+        customProperties: [{property: role, value: dimension}, {property: sourceField, value: yearname}]
+      - name: organism
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "The organism as CDC abbreviates it: CRE (carbapenem-resistant Enterobacterales) or CRAB (carbapenem-resistant Acinetobacter baumannii)."
+        customProperties: [{property: role, value: dimension}]
+      - name: topic
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 3
+        description: "What the figure measures, exactly as CDC labels it: Case Rates (new cases per population) or Death Rates (deaths among people with the infection, per population)."
+        customProperties: [{property: role, value: dimension}]
+      - name: view
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 4
+        description: "Which breakdown the row belongs to, exactly as CDC labels it (viewby in the source)."
+        customProperties: [{property: role, value: dimension}, {property: sourceField, value: viewby}]
+      - name: stratum
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 5
+        description: "The group the figure is for, exactly as CDC labels it (series in the source); 'All cases' is CDC's total row."
+        customProperties: [{property: role, value: dimension}, {property: sourceField, value: series}]
+      - name: value
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "The published rate for the row's organism, topic and group, as CDC sent it, never rescaled (cases or deaths per 100,000 population on CDC's MuGSI page; the table itself states no unit). Empty where CDC's cell is empty, never a zero."
+        customProperties: [{property: role, value: measure}, {property: unit, value: "/100000 (CDC's MuGSI page; not stated in the table)"}]
+      - name: value_status
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Whether CDC published a figure in this cell: 'published', or 'not published: the publisher's cell is empty'. Every row is kept and qualified, never dropped or filled."
+        customProperties: [{property: role, value: attribute}]
+      - name: is_total_row
+        physicalType: BOOLEAN
+        logicalType: boolean
+        required: true
+        description: "True for CDC's own 'All cases' rows in any view, which sit beside the groups they cover; never added to them."
+        customProperties: [{property: role, value: attribute}]
+      - name: snapshot_id
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the source address, retrieval time and dataset version that go with every answer built on this row."
+        customProperties: [{property: role, value: attribute}, {property: sourceField, value: _snapshot_id}]
+      - name: raw_sha256
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order: the exact bytes the publisher sent. A load fetched in several pages carries several."
+        customProperties: [{property: role, value: attribute}, {property: sourceField, value: _raw_sha256}]
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None stated by the publisher (see contracts/cdc_haicviz_mugsi.odcs.yaml)."}}
+  - property: openQuestions
+    value:
+      - "Every open question of contracts/cdc_haicviz_mugsi.odcs.yaml applies here: this fact only re-keys and qualifies the published cells."

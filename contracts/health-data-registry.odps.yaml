@@ -94,6 +94,20 @@ outputPorts:
     contractId: cdc_haicviz_cdi
     customProperties:
       - {property: hosted, value: true}
+  - name: cdc_haicviz_isa
+    description: HAICViz - iSA (invasive Staphylococcus aureus case and death rates, Emerging Infections Program).
+    type: tables
+    version: 0.1.0
+    contractId: cdc_haicviz_isa
+    customProperties:
+      - {property: hosted, value: true}
+  - name: cdc_haicviz_mugsi
+    description: HAICViz - MuGSI (carbapenem-resistant Enterobacterales and Acinetobacter baumannii case and death rates, Emerging Infections Program).
+    type: tables
+    version: 0.1.0
+    contractId: cdc_haicviz_mugsi
+    customProperties:
+      - {property: hosted, value: true}
   - name: cdc_lyme_county
     description: CDC Lyme disease cases by county of residence, case status, sex and age group, 2022 onward (2022 case definition).
     type: tables
