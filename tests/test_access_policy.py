@@ -244,7 +244,8 @@ def test_tableau_view_returns_its_bootstrap_session(tmp_path: Path) -> None:
     # Hard rule 8: the source URL is the catalogued view, never the one-time session URL; that is kept beside it.
     assert got.content == b"2;{}" and got.url == VIEW and got.capture_url == data.url
     url, kw = browser.calls[0]
-    assert url == VIEW and kw["capture"] == [crawl.TABLEAU_DATA] and kw["allowed_hosts"] == reg.hosts
+    # every hop stays on this source's own hosts, never another catalogued source's
+    assert url == VIEW and kw["capture"] == [crawl.TABLEAU_DATA] and kw["allowed_hosts"] == frozenset({GOV})
     assert kw["allow"] is None  # robots=False: no policy to apply to the page's own requests
     (row,) = read_fetch_log(tmp_path, "toy_dash")
     assert row["status"] == "ok" and row["url"] == VIEW and row["capture_url"] == data.url
