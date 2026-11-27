@@ -1,0 +1,38 @@
+dataset: who_gho_hiv_incidence
+version: 0.1.0
+dimensions:
+  - {name: place, column: spatial_dim, type: categorical, non_additive: true, non_additive_reason: "WHO regions and the globe are aggregates of the countries beside them, and rates are never added", description: "Country (ISO3), WHO region or GLOBAL."}
+  - {name: place_type, column: spatial_dim_type, type: categorical, non_additive: true, non_additive_reason: "a region or the globe contains the countries, and rates are never added", description: "COUNTRY, REGION or GLOBAL."}
+  - {name: year, column: time_dim, type: time, non_additive: false, description: "Calendar year."}
+  - name: sex
+    column: dim1
+    type: categorical
+    non_additive: true
+    non_additive_reason: "Both sexes is WHO's own estimate for everyone, not the sum of the female and male estimates, and rates are never added"
+    description: "SEX_BTSX both sexes, SEX_FMLE female, SEX_MLE male."
+measures:
+  - {name: hiv_incidence, column: numeric_value, kind: estimate, unit: "per 1000 uninfected population per year", description: "WHO estimated new HIV infections."}
+  - {name: hiv_incidence_low, column: low, kind: lower_bound, unit: "per 1000 uninfected population per year", description: "Lower uncertainty bound."}
+  - {name: hiv_incidence_high, column: high, kind: upper_bound, unit: "per 1000 uninfected population per year", description: "Upper uncertainty bound."}
+metrics:
+  - name: hiv_incidence_rate
+    description: "WHO's estimated new HIV infections per 1000 uninfected people per year, both sexes, with its uncertainty range."
+    measure: hiv_incidence
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["dim1 = 'SEX_BTSX'"]
+    uncertainty: {lower: hiv_incidence_low, upper: hiv_incidence_high}
+  - name: hiv_incidence_rate_by_sex
+    description: "WHO's estimated new HIV infections per 1000 uninfected people per year for one sex (female or male), with its uncertainty range; never added to make both sexes."
+    measure: hiv_incidence
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["dim1 IN ('SEX_FMLE', 'SEX_MLE')"]
+    uncertainty: {lower: hiv_incidence_low, upper: hiv_incidence_high}
+series:
+  - condition: "SDGHIV"
+    label: "New HIV infections per 1000 uninfected people (WHO estimate, both sexes)"
+    metric: hiv_incidence_rate
+    measure: estimate
+    location_dimension: place
+    time_dimension: year

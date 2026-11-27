@@ -129,6 +129,13 @@ outputPorts:
     contractId: census_county_pop
     customProperties:
       - {property: hosted, value: true}
+  - name: who_gho_hiv_incidence
+    description: WHO estimated new HIV infections per 1000 uninfected population. Listed, not hosted (WHO's dataset terms).
+    type: tables
+    version: 0.1.0
+    contractId: who_gho_hiv_incidence
+    customProperties:
+      - {property: hosted, value: false}
   - name: who_gho_tb_incidence
     description: WHO estimated tuberculosis incidence. Listed, not hosted (non-commercial terms).
     type: tables
