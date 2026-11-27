@@ -6,7 +6,6 @@ so a clinician (or a grader) can check the number without trusting the model tha
 
 from __future__ import annotations
 
-import threading
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -15,62 +14,21 @@ from typing import Any
 
 import duckdb
 
-from health_data_registry import deadline
 from health_data_registry.registry import Column, Dataset, Metric, Registry, label_key
 from health_data_registry.sql_guard import GuardedQuery, guard_sql, harden, run_guarded
 from health_data_registry.store import Manifest, latest_snapshot, snapshot_dir
 
 MAX_ROWS = 5000
 MAX_PINNED = 2  # engines kept on older pinned versions, so the next page of an answer needn't rebuild one
-LOADED_VALUES_TIMEOUT_S = 5.0  # describe_dataset never waits longer than this for one column's values
 FilterValue = str | int | float | bool | Sequence[str | int | float | bool]
 
 
-# What to do next after each kind of decline, in plain words. Every refusal carries one (DEFAULT_NEXT_STEP when
-# its code has none of its own), so a clinician is never left at a dead end.
-DEFAULT_NEXT_STEP = "Ask suggest_datasets with your whole question to see which sources can answer it."
-NEXT_STEPS: dict[str, str] = {
-    "unknown_condition": "Open describe_dataset for a source search_datasets lists, pick one of its condition "
-    "labels, and ask again with that label.",
-    "filter_matched_nothing": "Ask again with one of the values listed as available.",
-    "no_snapshot": "Run the Something's wrong helper, which walks you through loading this source again.",
-    "no_place_breakdown": "Ask again without places, or ask which sources report by state.",
-    "too_many_rows": "Ask again for fewer places or a shorter span of years.",
-    "no_sex_split": "Ask again without sex.",
-    "index_not_built": "Search PubMed for the condition and place in the meantime.",
-    "no_denominator": "Use get_series for the counts, or a rate the source publishes (describe_dataset says).",
-    "ambiguous_condition": "Ask again with the full label of one series as the condition.",
-    "nothing_to_compare": "Ask again with other_location or other_year.",
-    "no_rate": "Use get_rate to see which places and years have both a count and a population.",
-    "too_few_points": "Ask for a longer span of years, or use get_series to read the counts.",
-    "would_combine_rates": "Use describe_dataset to see the filters, and ask for one published group at a time.",
-    "publisher_unreachable": "Try again in a few minutes.",
-    "publisher_bad_table": "Try again later; if it keeps happening, run the Something's wrong helper.",
-    "needs_single_value": "Ask for the year's total, or for one week.",
-    "not_a_human_count": "Use get_series to read these counts as published; they are not cases in people, so "
-    "there is no rate per 100,000 people.",
-    "bad_page": "Ask for page=1, or leave page out.",
-    "no_such_page": "Ask for a page the answer has, or leave page out for page 1.",
-    "bad_pin": "Copy the Next line from the previous page exactly, or ask again without page and pin.",
-    "page_data_changed": "Ask the same question again without page and pin, and set the older pages aside.",
-    "page_rows_changed": "Ask the same question again without page and pin, and set the older pages aside.",
-    "too_slow": "Try again in a few minutes, or narrow the question: one condition, fewer places or fewer years.",
-    "busy": "Try again in a minute.",
-    "too_large": "Ask again for fewer columns or one measure.",
-}
-
-
-def next_step_for(code: str | None) -> str:
-    return NEXT_STEPS.get(code or "", DEFAULT_NEXT_STEP)
-
-
 class QueryRefused(ValueError):
-    """The question can't be answered this way; the message says why in plain words, next_step what to do."""
+    """The question can't be answered this way; the message says why in plain words."""
 
-    def __init__(self, code: str, message: str, next_step: str | None = None) -> None:
+    def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
-        self.next_step = next_step or next_step_for(code)
 
 
 def _q(ident: str) -> str:
@@ -111,22 +69,12 @@ def compile_metric(
     measure = sem.measure(metric.measure)
     dims = {d.name: d for d in sem.dimensions}
     for d in metric.single_value_of:
-        if measure.kind == "running_count":
-            if d in group_by or not _single((filters or {}).get(d)):
-                raise QueryRefused(
-                    "needs_single_value",
-                    f"{metric.name} is a running total, so it is read at one {d}: filter {d} to a single value "
-                    f"(normally the latest) and don't group by it. Adding up the running totals of several {d}s "
-                    "would count the same cases many times.",
-                )
-        # A count whose values of d overlap (Michigan includes Detroit) or are different things (conditions): each
-        # answer row holds one value of d, by a filter to one value or by grouping by it; never added across them.
-        elif d not in group_by and not _single((filters or {}).get(d)):
+        if d in group_by or not _single((filters or {}).get(d)):
             raise QueryRefused(
                 "needs_single_value",
-                f"{metric.name} is never added up across {d}s: they overlap or count different things (for example "
-                f"a state's count already includes its cities). Filter {d} to one value, or group by {d} to get one "
-                "row each.",
+                f"{metric.name} is a running total, so it is read at one {d}: filter {d} to a single value "
+                f"(normally the latest) and don't group by it. Adding up the running totals of several {d}s would "
+                "count the same cases many times.",
             )
 
     def dim(name: str) -> str:
@@ -460,8 +408,7 @@ class Engine:
     A redistributable source comes from the local lake when it holds a snapshot (maintainers, CI), else from the
     published hub release (downloaded on first use, checked against its sha256, bounded cache). A restricted
     source (e.g. WHO GHO) is served live: fetched from the publisher per request, held in memory for at most
-    live.LIVE_TTL_S (live.DASHBOARD_TTL_S for a dashboard read with the browser, stated in its provenance), and
-    never written to disk (see live.py).
+    live.LIVE_TTL_S, and never written to disk (see live.py).
     """
 
     registry: Registry
@@ -484,9 +431,6 @@ class Engine:
     )
 
     def connect(self) -> duckdb.DuckDBPyConnection:
-        # Every read starts here: a call past its deadline (one the hosted guard gave up on) stops before it
-        # touches the connection, so it never uses the engine alongside the next call.
-        deadline.check()
         if self._con is not None:
             return self._con
         from health_data_registry.live import load_live
@@ -555,11 +499,10 @@ class Engine:
             return True
         if not self.fetch_at_run_time:
             return False
-        from health_data_registry.crawl import fetcher, shared_robots
+        from health_data_registry.crawl import fetcher
         from health_data_registry.live import fetch_live
 
-        # One access policy per server process: two live sources on one host keep its pace between them.
-        get = self.getter or fetcher(self.registry, None, robots=shared_robots(self.registry))
+        get = self.getter or fetcher(self.registry, None)
         try:
             self._live[ds.id] = fetch_live(ds, get)
         except DeadlineExceeded:
@@ -616,16 +559,14 @@ class Engine:
 
     def _hub_at(self, pins: Mapping[str, tuple[str, str | None]]) -> Any:
         """The hub read at the pinned release tag, when the pins name one and this hub can be read at another."""
-        from health_data_registry.hub import RELEASE_TAG, Hub
+        from health_data_registry.hub import Hub, is_immutable_ref
 
         refs = {r for _, r in pins.values() if r}
         if not refs or self.hub is None:
             return self.hub
         ref = refs.pop()
-        # One answer reads one release; a local hub copy has only its own; and a pin may only name a tagged
-        # release, never a bare commit (which could be any unreleased or pull-request commit of the hub).
-        if refs or not self.hub.is_remote or not RELEASE_TAG.fullmatch(ref):
-            return None
+        if refs or not self.hub.is_remote or not is_immutable_ref(ref):
+            return None  # one answer reads one release; a local hub copy has only its own
         if self.hub.revision() == ref:
             return self.hub
         return Hub(url=f"{self.hub.url.split('@')[0]}@{ref}", cache=self.cache, max_bytes=self.hub.max_bytes,
@@ -638,43 +579,28 @@ class Engine:
         an engine on the pinned hub release or lake snapshot (kept for the next page, at most two) serves them;
         restricted sources are never re-read for an old page, because their copies are never kept.
         """
+        if self._serves(pins):
+            return self
         key = tuple(sorted(pins.items()))
+        if key in self._pinned:
+            self._pinned.move_to_end(key)
+            return self._pinned[key]
         try:
-            if self._serves(pins):
-                return self
-            if key in self._pinned:
-                self._pinned.move_to_end(key)
-                return self._pinned[key]
             hub = self._hub_at(pins)
             if hub is None and any(r for _, r in pins.values()):
                 return None
             alt = Engine(registry=self.registry, lake=self.lake, hub=hub, cache=self.cache, fetch_at_run_time=False,
                          getter=self.getter, lake_pins={i: s for i, (s, r) in pins.items() if r is None})  # fmt: skip
             if not alt._serves(pins):
-                alt.close(release_hub=alt.hub is not self.hub)
                 return None
-        except deadline.DeadlineExceeded:
-            raise  # out of time is not "the data changed" (DeadlineExceeded is an OSError)
         except (QueryRefused, ValueError, OSError):  # an old release that can't be read is gone
             return None
         self._pinned[key] = alt
         while len(self._pinned) > MAX_PINNED:
             _, old = self._pinned.popitem(last=False)
-            old.close(release_hub=old.hub is not self.hub)
+            if old._con is not None:
+                old._con.close()
         return alt
-
-    def engines(self) -> list[Engine]:
-        """This engine and the pinned ones it keeps: every connection a call may be using."""
-        return [self, *self._pinned.values()]
-
-    def close(self, *, release_hub: bool = True) -> None:
-        """Close the connection and (unless another engine shares the hub) give back the hub files its views
-        read, so the cache may evict them."""
-        if self._con is not None:
-            self._con.close()
-            self._con = None
-        if release_hub and hasattr(self.hub, "release_files"):
-            self.hub.release_files()
 
     def provenance(self, dataset_id: str) -> dict[str, Any]:
         """Where a source's numbers come from, without downloading anything: origin, contract, product, release."""
@@ -768,30 +694,6 @@ class Engine:
             .execute(f"SELECT DISTINCT {_q(column)} FROM {_q(dataset_id)} ORDER BY 1")  # noqa: S608 - quoted contract identifiers
             .fetchall()
         )  # noqa: S608 - quoted contract identifiers
-        return [r[0] for r in rows if r[0] is not None]
-
-    def loaded_values(
-        self, dataset_id: str, column: str, timeout_s: float = LOADED_VALUES_TIMEOUT_S
-    ) -> list[Any] | None:
-        """The values a column takes in a copy that is already on this computer, or None when there is none.
-
-        Never downloads or reads the publisher (describe_dataset is a catalog lookup), and gives up after
-        timeout_s, so a slow or broken copy can't hold up the answer."""
-        ds = self.registry.get(dataset_id)
-        try:
-            con = self.connect()
-        except (duckdb.Error, OSError):
-            return None
-        if dataset_id not in self.manifests or column not in ds.contract.column_names:
-            return None
-        timer = threading.Timer(timeout_s, con.interrupt)
-        timer.start()
-        try:
-            rows = con.execute(f"SELECT DISTINCT {_q(column)} FROM {_q(dataset_id)} ORDER BY 1").fetchall()  # noqa: S608 - quoted contract identifiers
-        except (duckdb.Error, OSError):
-            return None
-        finally:
-            timer.cancel()
         return [r[0] for r in rows if r[0] is not None]
 
     def query_sql(self, sql: str) -> dict[str, Any]:

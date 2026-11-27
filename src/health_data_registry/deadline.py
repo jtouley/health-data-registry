@@ -10,9 +10,8 @@ maintainers' refresh) nothing changes.
 
 from __future__ import annotations
 
-import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 
@@ -60,44 +59,3 @@ def cap(seconds: float) -> float:
     if left <= 0:
         raise DeadlineExceeded()
     return min(seconds, left)
-
-
-def check() -> None:
-    """Raise DeadlineExceeded when the current call's budget is spent (no-op outside a deadline).
-
-    The engine calls this before it touches its connection, so a worker the hosted guard gave up on stops at its
-    next step instead of using the engine alongside the next call.
-    """
-    left = remaining()
-    if left is not None and left <= 0:
-        raise DeadlineExceeded()
-
-
-def bounded[T](fn: Callable[[], T]) -> T:
-    """Run a blocking library call (a hub download, a release lookup) within what is left of the budget.
-
-    Outside a deadline it simply runs. Inside one it runs on a helper thread, and when the budget runs out first
-    the caller gets DeadlineExceeded at once; the helper finishes or fails on its own, holding nothing of the
-    caller's (no engine lock, no connection).
-    """
-    left = remaining()
-    if left is None:
-        return fn()
-    if left <= 0:
-        raise DeadlineExceeded()
-    box: dict[str, object] = {}
-
-    def run() -> None:
-        try:
-            box["value"] = fn()
-        except BaseException as e:  # noqa: BLE001 - handed back to the caller below
-            box["error"] = e
-
-    helper = threading.Thread(target=run, daemon=True, name="deadline-bounded")
-    helper.start()
-    helper.join(left)
-    if helper.is_alive():
-        raise DeadlineExceeded()
-    if "error" in box:
-        raise box["error"]  # type: ignore[misc]
-    return box["value"]  # type: ignore[return-value]

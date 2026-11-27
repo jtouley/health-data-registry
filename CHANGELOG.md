@@ -17,22 +17,6 @@ All notable changes to this project are documented here. The format follows
   page, and a pin keeps every page on one version of the data. `query_sql` adds `ORDER BY ALL` when a query has
   no `ORDER BY`. The hosted server refuses to start with a limit of 0, a negative number, inf or nan, or with
   `HDR_PAGE_CHARS` above `HDR_MAX_RESULT_CHARS`.
-- Hosted server hardening from review: request bodies over 1 MiB are refused with 413; session ids and pins are
-  signed (`HDR_SIGNING_KEY`), calls without a signed session id share one rate-limit bucket, and a refused call
-  spends no token; pins carry the answer's row count and row-key hash and may name only release tags; hub
-  downloads end by the call deadline and a stuck call never holds the engine past it; `serve --http` binds to
-  127.0.0.1 by default with Host and Origin checks; `query_sql` adds tie-breakers to its own `ORDER BY`.
-- Condition vocabulary: each catalog entry lists the publisher's own condition labels (`conditions:`, with
-  where they come from), and `get_series`, `get_rate` and `get_trend` accept any of them through the semantic
-  model's `generic_series`, with the same aggregation rules as the named series. `validate` fails when a local
-  snapshot holds a label the catalog doesn't list.
-- `describe_dataset` returns `dimension_values` (the values each filter takes) and `presentation_rules`;
-  discovery results (`list_sources`, `search_datasets`, `suggest_datasets`, `describe_dataset`) carry each
-  source's provenance (source URL, retrieved_at, raw sha256, version, licence, citation, contract status).
-- Structured declines: every refusal carries `next_step`, and where they apply `did_you_mean`,
-  `nearest_served` (e.g. the state for a county), `served_elsewhere` (the publisher's page),
-  `outside_registry` (a GBD cause by name only) or, for `filter_matched_nothing`, the values that exist.
-- The server's instructions are an intent-to-tool routing block.
 - Repository scaffolding under the Apache License 2.0, with a NOTICE for material adapted from the author's
   earlier MIT-licensed work.
 - SECURITY.md (private reporting through GitHub advisories, 14-day first response), CONTRIBUTING.md,

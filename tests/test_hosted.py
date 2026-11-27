@@ -168,19 +168,18 @@ def test_initialize_gets_an_opaque_session_id_and_rate_limits_answer_429(
         "params": {"name": "list_caveats", "arguments": {}},
     }
     with Running(app) as srv, httpx.Client(base_url=srv.url, headers=headers) as c:
-        another = c.post("/mcp", json=init).headers["mcp-session-id"]
         r = c.post("/mcp", json=init)
         sid = r.headers["mcp-session-id"]
-        assert r.status_code == 200 and len(sid) == 65
+        assert r.status_code == 200 and len(sid) == 32
         h = {"mcp-session-id": sid, "mcp-protocol-version": "2025-06-18"}
         assert c.post("/mcp", json=call, headers=h).status_code == 200
         limited = c.post("/mcp", json={**call, "id": 8}, headers=h)
-        other = c.post("/mcp", json=call, headers={**h, "mcp-session-id": another})
+        other = c.post("/mcp", json=call, headers={**h, "mcp-session-id": "another-session"})
     assert limited.status_code == 429 and int(limited.headers["retry-after"]) >= 1
     body = limited.json()
     assert body["id"] == 8 and "Too many questions from this conversation" in body["error"]["message"]
     assert other.status_code == 200  # the limit is per session, not per address
-    assert another not in log_stream.getvalue() and sid not in log_stream.getvalue()
+    assert "another-session" not in log_stream.getvalue() and sid not in log_stream.getvalue()
 
 
 def test_rate_limiter_per_session_and_overall() -> None:
@@ -200,7 +199,7 @@ def test_rate_limiter_per_session_and_overall() -> None:
 def test_result_cap_replaces_a_long_answer_with_a_plain_message(tmp_path: Path) -> None:
     guard = CallGuard(cfg(tmp_path, max_result_chars=1000), Metrics())
     out = guard("get_series", lambda: "x" * 600, "csv")
-    assert isinstance(out, str) and "too long to send" in out and "fewer columns" in out
+    assert isinstance(out, str) and "too long to send" in out and "Narrow your question" in out
     j = guard("get_series", lambda: {"rows": ["x" * 600]}, "json")
     assert isinstance(j, dict) and j["refused"] == "too_large"
     assert guard("get_series", lambda: "short", "csv") == "short"
@@ -286,9 +285,7 @@ def test_cli_serve_http_reaches_the_hosted_server(monkeypatch: pytest.MonkeyPatc
     seen: dict[str, Any] = {}
     monkeypatch.setattr(hosted, "main", lambda host, port: seen.update(host=host, port=port))
     assert cli.main(["serve", "--http", "--port", "9999"]) == 0
-    assert seen == {"host": "127.0.0.1", "port": 9999}  # local by default; the Space passes --host 0.0.0.0
-    assert cli.main(["serve", "--http", "--host", "0.0.0.0"]) == 0  # noqa: S104
-    assert seen == {"host": "0.0.0.0", "port": 7860}  # noqa: S104
+    assert seen == {"host": "0.0.0.0", "port": 9999}  # noqa: S104
 
 
 def test_cache_dir_and_config_from_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

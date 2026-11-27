@@ -29,8 +29,6 @@ import math
 import os
 import re
 import shutil
-import threading
-from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -102,21 +100,6 @@ def cache_max_bytes() -> int:
     return int(gb * 1024**3)
 
 
-# Files a reader holds open (a DuckDB view reads them by path), shared by every Hub on the same cache root: a
-# pinned-release Hub and the main one evict from the same tree, so neither may remove what the other's views read.
-# cache root -> path -> number of Hubs using it.
-_IN_USE: dict[Path, Counter[Path]] = {}
-_IN_USE_LOCK = threading.Lock()
-ETAG_TIMEOUT_S = (
-    10.0  # the release lookup before a download; capped by the call's deadline on the hosted server
-)
-
-
-def _in_use_at(root: Path) -> Counter[Path]:
-    with _IN_USE_LOCK:
-        return _IN_USE.setdefault(root.resolve(), Counter())
-
-
 def is_immutable_ref(rev: str) -> bool:
     """A release tag (release-<run date>[.<n>]) or a full commit id; never a branch such as main."""
     return bool(RELEASE_TAG.fullmatch(rev) or _COMMIT.fullmatch(rev))
@@ -180,33 +163,8 @@ class Hub:
     api: Any = field(default=None, repr=False)  # a huggingface_hub.HfApi; None builds one without a token
     _release: dict[str, Any] | None = field(default=None, repr=False)
     _rev: str | None = field(default=None, repr=False)
-    # Files this hub handed to a reader (a DuckDB view reads them by path). They are counted in the registry
-    # shared by every Hub on this cache (_IN_USE) and never evicted until release_files() gives them back.
+    # Files handed to a reader (a DuckDB view reads them by path): never evicted while this hub is in use.
     _in_use: set[Path] = field(default_factory=set, repr=False)
-
-    def in_use(self) -> set[Path]:
-        """Every file any Hub on this cache has handed to a reader and not given back."""
-        shared = _in_use_at(self.cache / "hub")
-        with _IN_USE_LOCK:
-            return {p for p, n in shared.items() if n > 0}
-
-    def _hold(self, path: Path) -> None:
-        if path in self._in_use:
-            return
-        self._in_use.add(path)
-        shared = _in_use_at(self.cache / "hub")
-        with _IN_USE_LOCK:
-            shared[path] += 1
-
-    def release_files(self) -> None:
-        """Give back this hub's files (its engine is closed), so the cache may evict them again."""
-        shared = _in_use_at(self.cache / "hub")
-        with _IN_USE_LOCK:
-            for p in self._in_use:
-                shared[p] -= 1
-                if shared[p] <= 0:
-                    del shared[p]
-        self._in_use.clear()
 
     @property
     def is_remote(self) -> bool:
@@ -238,11 +196,7 @@ class Hub:
                 from huggingface_hub import HfApi
 
                 api = HfApi(token=False)  # public datasets: no sign-in, ever
-            # Bounded by the hosted call's deadline: a slow lookup never holds the engine past it.
-            refs = deadline.bounded(lambda: api.list_repo_refs(repo, repo_type="dataset"))
-            tags = [t.name for t in refs.tags]
-        except deadline.DeadlineExceeded:
-            raise
+            tags = [t.name for t in api.list_repo_refs(repo, repo_type="dataset").tags]
         except Exception as e:  # noqa: BLE001 - every lookup failure becomes one plain refusal
             raise HubError(
                 "hub_unreachable",
@@ -273,26 +227,18 @@ class Hub:
 
             repo, _ = _split(self.url)
             rev = self.revision()
-            local_dir = str(self._cache_dir())
-            # On the hosted server the whole download, not only its start, ends by the call's deadline: past it the
-            # call answers in plain words and the download finishes (or fails) on its own, holding no engine lock.
-            etag = deadline.cap(ETAG_TIMEOUT_S)
+            deadline.cap(1.0)  # a hosted call whose budget is spent starts no download
             try:
                 got = Path(
-                    deadline.bounded(
-                        lambda: hf_hub_download(
-                            repo,
-                            path_in_repo,
-                            repo_type="dataset",
-                            revision=rev,
-                            local_dir=local_dir,
-                            etag_timeout=etag,
-                            token=False,  # public datasets: no sign-in, ever
-                        )
+                    hf_hub_download(
+                        repo,
+                        path_in_repo,
+                        repo_type="dataset",
+                        revision=rev,
+                        local_dir=str(self._cache_dir()),
+                        token=False,  # public datasets: no sign-in, ever
                     )
                 )
-            except deadline.DeadlineExceeded:
-                raise
             except Exception as e:  # noqa: BLE001 - every download failure becomes one plain refusal
                 raise HubError(
                     "hub_unreachable",
@@ -310,7 +256,7 @@ class Hub:
             got.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src, got)
         os.utime(got)  # most recently used
-        evict(self.cache / "hub", self.max_bytes, keep={got.resolve(), *self.in_use()})
+        evict(self.cache / "hub", self.max_bytes, keep={got.resolve(), *self._in_use})
         return got
 
     def release(self) -> dict[str, Any]:
@@ -359,7 +305,7 @@ class Hub:
                 "it was not used. It may have been damaged in transit; ask again to download it afresh, and "
                 "report it if it keeps happening.",
             )
-        self._hold(local.resolve())  # the server's views read this file from now on
+        self._in_use.add(local.resolve())  # the server's views read this file from now on
         allowed = set(Manifest.__dataclass_fields__)
         snap = {k: v for k, v in dict(sm["snapshot"]).items() if k in allowed}
         files = {f"{ds.id}/{k}": str(v["sha256"]) for k, v in (sm.get("files") or {}).items()}

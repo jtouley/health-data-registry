@@ -59,43 +59,23 @@ answer would then be dropped instead of paged.
   the exact call for page 2 (same arguments plus `page` and `pin`), the guidance to fetch every page and save
   the rows to a CSV file or artifact, and provenance on every page. `HDR_PAGE_CHARS` must not be above
   `HDR_MAX_RESULT_CHARS` (checked at start). The cap stays as a backstop only (a single row too long for any page): such a result
-  is replaced by "One row of this answer is too long to send in a reply…". `HDR_MAX_RESULT_CHARS` is a whole
-  number of at least 2,000.
+  is replaced by "This answer is too long to send… even one page at a time…".
 - **Consistent pages across releases.** The pin names each source's snapshot id and, from the hub, its release
-  tag, then the whole answer's row count and a hash of its row keys, then an HMAC-SHA256 signature
-  (`toy_cases:<snapshot>@release-<date>~<rows>~<hash>~<signature>`). The key is the Space secret
-  `HDR_SIGNING_KEY`, else a random per-process key (pins then stop working after a restart, and the clinician is
-  told to start again from page 1). A pin the server didn't sign is refused, so a forged pin can't point the
-  server at another hub commit; a pin may name only a `release-<date>` tag, never a bare commit. A later page
-  whose rows differ from page 1's in number or keys is refused, never mixed; a call that runs out of time is
-  refused whole, never answered with the sources it managed to read. The hosted server resolves the newest release once per process,
+  tag (`toy_cases:<snapshot>@release-<date>`). The hosted server resolves the newest release once per process,
   so a restart can move it to a newer release between two pages; a page whose pin names the older tag is then
   read from that tag (a second engine on `…@release-<date>`, at most two kept, in the same bounded cache). If
   the tag is gone, or a restricted source's in-memory read has expired (those are never kept), the page is
   refused in plain words with "start again from page 1". Page boundaries depend only on the rows and the notes,
-  so the same pinned data always cuts into the same pages. A `query_sql` query with its own `ORDER BY` gets
-  every output column added after its keys (or `COLUMNS(*)` for a star), so ties never reorder between pages.
+  so the same pinned data always cuts into the same pages.
 - **Download links.** A long answer from a public-domain source read from a hub release also carries
   `https://huggingface.co/datasets/<org>/<name>/resolve/<tag>/<source>/data/<source>.parquet` and the `hf://`
   form, with the file's sha256, licence and citation. Links are built only from the hub URL, the release tag and
   the source id: never from a question or an argument, and never for a source with `redistribution: false`.
 - **Rate limits are never per IP address:** every claude.ai user reaches the server from Anthropic's published
-  outbound range. The server hands out an opaque `MCP-Session-Id` on `initialize` (the spec allows a server
-  to; clients must send it back): a random nonce and its HMAC signature (`HDR_SIGNING_KEY`, else a per-process
-  key), and keys the per-session limit on it. Requests without a session id the server signed (the sessionless
-  2026-07-28 protocol, or a made-up id) share one bucket at the per-session rate, so a client can't skip the
-  limit by leaving the header out or changing it. Both buckets are checked before either is spent, a refused
-  call stores nothing, and the bucket map never holds more than 10,000 keys. Over a limit: HTTP 429,
-  `Retry-After`, and a JSON-RPC error whose message is plain words.
-- **Request bodies** over 1 MiB are refused with HTTP 413 and a plain JSON-RPC error, from `Content-Length`
-  when it is sent and otherwise as soon as the bytes read pass the cap; nothing past it is held in memory.
-- **The engine is never held past a deadline.** Hub downloads and the release lookup run within what is left of
-  the call's budget; when a call overruns anyway, the guard interrupts every engine connection (pinned ones
-  included), takes the engine lock back and answers. At most 8 calls queue for the engine; the rest are told
-  the server is busy at once.
-- **Host checks.** `serve --http` binds to 127.0.0.1 unless `--host` says otherwise, and the Host and Origin
-  headers are checked (the SDK's DNS-rebinding protection) whenever the address isn't the explicitly public
-  `0.0.0.0` or `::`. The Space passes `--host 0.0.0.0` behind Hugging Face's proxy.
+  outbound range. The server hands out an opaque random `MCP-Session-Id` on `initialize` (the spec allows a
+  server to; clients must send it back) and keys the per-session limit on it; requests without one (the
+  sessionless 2026-07-28 protocol) count only against the overall limit. Over a limit: HTTP 429, `Retry-After`,
+  and a JSON-RPC error whose message is plain words.
 
 ## Privacy
 
@@ -136,10 +116,8 @@ Deploys come from `.github/workflows/deploy-space.yml` on a release tag ([automa
    in git and a build without them stops. `deploy-space.yml` fills in both from the release it deploys and
    uploads `space/`. To deploy newer code, cut a release; never point them at a branch.
 3. Optional: attach a Storage Bucket as a volume at `/data`, so the cache survives restarts.
-4. Settings, Variables and secrets: the secret `HDR_SIGNING_KEY` (32 or more random characters, for example
-   `python -c "import secrets; print(secrets.token_hex(32))"`), so pins and session ids survive a restart;
-   `HDR_HUB` only to pin a release; the secret `HDR_PRIVATE_HF_TOKEN` (read-only) once the private tier ships.
-   Never put a token or key in a file.
+4. Settings, Variables and secrets: `HDR_HUB` only to pin a release; the secret `HDR_PRIVATE_HF_TOKEN`
+   (read-only) once the private tier ships. Never put a token in a file.
 5. Add `https://jtouley-health-data-registry-mcp.hf.space/mcp` as a custom connector in Claude and run one real
    call. `HDR_PUBLIC_URL` in `pyproject.toml` already names it, so the plugin points at it; if the Space moves,
    change it there and run `make docs`.

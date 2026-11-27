@@ -50,10 +50,6 @@ def _series(records: list[dict[str, Any]], contract: str = CONTRACT) -> list[lis
             locations=["Michigan", "Ohio", "Indiana"], fmt="json",
         )  # fmt: skip
         assert isinstance(out, dict)
-        if (
-            out.get("refused") == "filter_matched_nothing"
-        ):  # no row for any place asked: a decline, not a table
-            return []
         return [r[:3] for r in out["rows"]]
 
 

@@ -28,23 +28,6 @@ repos:
 
   - repo: local
     hooks:
-      # Workflow lint, with shellcheck on every `run:` block (catches SC2015 and friends before CI does). Both
-      # tools come from the locked dev environment: actionlint-py and shellcheck-py are pinned by version and
-      # sha256 in uv.lock, so nothing is downloaded outside the lockfile. `uv run` puts the environment's
-      # shellcheck on PATH, wherever uv keeps it (a worktree, Windows, UV_PROJECT_ENVIRONMENT).
-      - id: actionlint
-        name: actionlint (uv run, pinned in uv.lock)
-        entry: uv run --frozen actionlint
-        language: system
-        files: ^\.github/workflows/
-        pass_filenames: false
-      # actionlint silently skips its shell checks when it cannot find shellcheck, so this hook fails instead.
-      - id: shellcheck-present
-        name: shellcheck available for actionlint (uv sync installs it)
-        entry: uv run --frozen shellcheck --version
-        language: system
-        files: ^\.github/workflows/
-        pass_filenames: false
       # Runs in the project's locked environment (uv.lock) with the strict settings in pyproject.toml.
       - id: mypy
         name: mypy (strict, uv run)

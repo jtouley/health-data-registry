@@ -11,11 +11,8 @@ page the same way:
 - Rows are in a fixed order (the compiled SQL ends in ORDER BY ALL; query_sql adds it when the query has none), and
   pages are cut from that order by size alone, so the same data always gives the same pages.
 - The pin names the version of every source an answer read (snapshot id, and the hub release tag when it came from
-  the hub), the number of rows in the whole answer and a hash of their keys, and is signed (HMAC-SHA256 with
-  HDR_SIGNING_KEY, or a random per-process key), so a pin the server didn't write is refused and can't send it to
-  another hub commit. A later page with the pin reads that same version, from the pinned hub release or lake
-  snapshot if this server no longer serves it by default; if it is gone, or the rows no longer match the first
-  page's, the page is refused in plain words, never mixed.
+  the hub). A later page with the pin reads that same version, from the pinned hub release or lake snapshot if this
+  server no longer serves it by default; if it is gone, the page is refused in plain words, never mixed.
 - Provenance is on every page: the same `Provenance for …` line every answer carries (tools.provenance_note:
   source URL, retrieved_at, raw-file sha256, snapshot, contract version and status, hub release, licence,
   citation), plus the answer's own notes; rows keep every column (period_status, computed and the rest).
@@ -28,15 +25,12 @@ from __future__ import annotations
 
 import csv
 import functools
-import hashlib
-import hmac
 import io
 import json
 import os
 import re
-import secrets
 from collections.abc import Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any
 
 from health_data_registry.helpers import PAGING_GUIDANCE
 from health_data_registry.query import QueryRefused
@@ -52,20 +46,8 @@ MIN_PAGE_CHARS = 2_000
 HF_WEB = "https://huggingface.co/datasets/"
 _PIN_PART = re.compile(r"^([a-z0-9_]{1,64}):([A-Za-z0-9._-]{1,80})(?:@([A-Za-z0-9._-]{1,80}))?$")
 _MAX_PIN_CHARS = 2000
-_PIN_TAIL = re.compile(r"^(0|[1-9][0-9]{0,8})~([0-9a-f]{16})~([0-9a-f]{32})$")
-_PROCESS_KEY = secrets.token_bytes(
-    32
-)  # used when HDR_SIGNING_KEY is unset: signatures then last as long as the process
 
 Pins = dict[str, tuple[str, str | None]]  # dataset id -> (snapshot id, hub release tag or None)
-
-
-class Pin(NamedTuple):
-    """What a Next line's pin holds: the versions read, and the size and row-key hash of the whole answer."""
-
-    versions: Pins
-    rows: int
-    keys: str
 
 
 def page_budget() -> int:
@@ -95,38 +77,7 @@ def wire_size(out: Out) -> int:
 # --------------------------------------------------------------------------------------------- the pin
 
 
-def server_key(purpose: str) -> bytes:
-    """The key that signs what this server hands out for `purpose` (pins, session ids).
-
-    Derived from HDR_SIGNING_KEY (a secret, so signatures survive a restart and hold across replicas), else from a
-    random per-process key. Each purpose gets its own key, so a value signed for one is never valid for another.
-    """
-    env = os.environ.get("HDR_SIGNING_KEY", "")
-    root = env.encode() if env else _PROCESS_KEY
-    return hmac.new(root, purpose.encode(), hashlib.sha256).digest()
-
-
-def sign(purpose: str, body: str) -> str:
-    """A 128-bit HMAC-SHA256 signature of `body` for `purpose`, as 32 hex characters."""
-    return hmac.new(server_key(purpose), body.encode(), hashlib.sha256).hexdigest()[:32]
-
-
-def _sign(body: str) -> str:
-    return sign("pin", body)
-
-
-def row_keys(rows: Sequence[Sequence[Any]]) -> str:
-    """A hash of the rows' keys: every value but the decimals, whose last digits can differ between two runs of
-    the same sum. Two runs over the same rows give the same hash; a lost, added or reordered row changes it."""
-    h = hashlib.sha256()
-    for row in rows:
-        key = [None if isinstance(v, float) else v for v in row]
-        h.update(json.dumps(key, default=str).encode())
-        h.update(b"\n")
-    return h.hexdigest()[:16]
-
-
-def versions_token(used: Sequence[tuple[Dataset, Manifest]]) -> str:
+def pin_token(used: Sequence[tuple[Dataset, Manifest]]) -> str:
     """The versions an answer read, as `<source>:<snapshot>[@<release>]` joined by commas (sorted, stable)."""
     parts = sorted(
         f"{ds.id}:{m.snapshot_id}" + (f"@{m.release_ref}" if m.release_ref else "") for ds, m in used
@@ -134,38 +85,22 @@ def versions_token(used: Sequence[tuple[Dataset, Manifest]]) -> str:
     return ",".join(parts)
 
 
-def pin_token(used: Sequence[tuple[Dataset, Manifest]], rows: Sequence[Sequence[Any]]) -> str:
-    """The signed pin: `<versions>~<row count>~<row-key hash>~<signature>`."""
-    body = f"{versions_token(used)}~{len(rows)}~{row_keys(rows)}"
-    return f"{body}~{_sign(body)}"
-
-
-BAD_PIN = (
-    "The pin with this page doesn't match the one the previous page's Next line gave (it may have been cut short "
-    "or changed, or the server has restarted since), so no rows are shown. Copy the Next line from the previous "
-    "page exactly, or ask again without page and pin to start from page 1."
-)
-
-
-def parse_pin(token: str) -> Pin:
-    """The pin a Next line gave, checked against its signature; anything else is refused in plain words."""
-    bad = QueryRefused("bad_pin", BAD_PIN)
+def parse_pin(token: str) -> Pins:
+    """The pin a Next line gave; anything else is refused in plain words."""
+    bad = QueryRefused(
+        "bad_pin",
+        "The pin given with this page isn't one this server wrote, so no rows are shown. Copy the Next line "
+        "from the previous page exactly, or ask again without page and pin to start from page 1.",
+    )
     if not token or len(token) > _MAX_PIN_CHARS:
         raise bad
-    versions, _, tail = token.partition("~")
-    found_tail = _PIN_TAIL.fullmatch(tail)
-    if found_tail is None:
-        raise bad
-    rows, keys, sig = found_tail.groups()
-    if not hmac.compare_digest(sig, _sign(f"{versions}~{rows}~{keys}")):
-        raise bad
     pins: Pins = {}
-    for part in versions.split(","):
+    for part in token.split(","):
         found = _PIN_PART.fullmatch(part)
         if found is None or found.group(1) in pins:
             raise bad
         pins[found.group(1)] = (found.group(2), found.group(3))
-    return Pin(pins, int(rows), keys)
+    return pins
 
 
 def data_changed(pins: Pins) -> QueryRefused:
@@ -178,16 +113,6 @@ def data_changed(pins: Pins) -> QueryRefused:
         "a page from newer data wouldn't fit with the pages you already have, so no rows are shown. Ask the same "
         "question again without page and pin to start from page 1 with the current data, and set aside the "
         "pages you saved from the older version.",
-    )
-
-
-def rows_changed(was: int, now: int) -> QueryRefused:
-    change = f"it had {was:,} rows and now has {now:,}" if was != now else "its rows are no longer the same"
-    return QueryRefused(
-        "page_rows_changed",
-        f"This page can't be shown: the answer no longer matches the first page ({change}), so a page cut from it "
-        "wouldn't fit with the pages you already have, and no rows are shown. Ask the same question again without "
-        "page and pin to start from page 1, and set aside the pages you saved.",
     )
 
 
@@ -278,7 +203,7 @@ def _render_page(res: Result, lo: int, hi: int, page: int, bounds: Sequence[tupl
     )
     guidance = [PAGING_GUIDANCE.format(pages=pages, total=f"{total:,}")]
     notes = [*nxt, *guidance, *res.notes, *extra]
-    body = Result(res.columns, res.rows[lo:hi], notes, dict(res.extra)).render(fmt)
+    body = Result(res.columns, res.rows[lo:hi], notes).render(fmt)
     if isinstance(body, dict):
         info = {
             "page": page,
@@ -333,13 +258,13 @@ def respond(
         return message(
             "Pages are numbered from 1. Ask for page=1, or leave page out.", fmt, refused="bad_page"
         )
-    given: Pin | None = None
+    pins: Pins = {}
     try:
         if pin:
-            given = parse_pin(pin)
-            eng = engine.at(given.versions)
+            pins = parse_pin(pin)
+            eng = engine.at(pins)
             if eng is None:
-                raise data_changed(given.versions)
+                raise data_changed(pins)
         else:
             eng = engine
     except QueryRefused as e:
@@ -349,23 +274,14 @@ def respond(
     if not isinstance(res, Result):
         return res
     used = used_sources(eng)
-    if given is not None:
-        if {ds.id: (m.snapshot_id, m.release_ref) for ds, m in used} != given.versions:
-            return refusal(data_changed(given.versions), fmt)
-        if (len(res.rows), row_keys(res.rows)) != (given.rows, given.keys):
-            return refusal(rows_changed(given.rows, len(res.rows)), fmt)
-    token = pin_token(used, res.rows)
+    if pins and {ds.id: (m.snapshot_id, m.release_ref) for ds, m in used} != pins:
+        return refusal(data_changed(pins), fmt)
+    token = pin_token(used)
     res.notes = list(dict.fromkeys([*res.notes, *provenance_lines(used)]))
     limit = budget if budget is not None else page_budget()
     whole = res.render(fmt)
-    if wire_size(whole) <= limit:  # the whole answer is one page, whatever page was asked for
-        if page in (None, 1):
-            return whole
-        return message(
-            f"This answer fits on one page, so there is no page {page}. Leave page out, or ask for page=1.",
-            fmt,
-            refused="no_such_page",
-        )
+    if wire_size(whole) <= limit and page in (None, 1):
+        return whole
     downloads = download_lines(eng, used)
 
     def render(lo: int, hi: int, n: int, bounds: list[tuple[int, int]]) -> Out:

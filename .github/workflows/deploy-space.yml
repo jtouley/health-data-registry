@@ -107,12 +107,8 @@ jobs:
           # TAG is a checked vX.Y.Z (verify) and GITHUB_SHA a hex commit, so neither can carry sed syntax.
           sed -i -e "s/^ARG HDR_TAG=\$/ARG HDR_TAG=${TAG}/" -e "s/^ARG HDR_COMMIT=\$/ARG HDR_COMMIT=${GITHUB_SHA}/" \
             space/Dockerfile
-          if grep -qx "ARG HDR_TAG=${TAG}" space/Dockerfile && grep -qx "ARG HDR_COMMIT=${GITHUB_SHA}" space/Dockerfile; then
-            echo "space/Dockerfile pinned to ${TAG} (${GITHUB_SHA})."
-          else
-            echo "::error::space/Dockerfile has no empty HDR_TAG and HDR_COMMIT to fill in. Nothing deployed."
-            exit 1
-          fi
+          grep -qx "ARG HDR_TAG=${TAG}" space/Dockerfile && grep -qx "ARG HDR_COMMIT=${GITHUB_SHA}" space/Dockerfile \
+            || { echo "::error::space/Dockerfile has no empty HDR_TAG and HDR_COMMIT to fill in. Nothing deployed."; exit 1; }
       - name: Upload space/ as one commit
         if: steps.gate.outputs.go == 'true'
         env:
