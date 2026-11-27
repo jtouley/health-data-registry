@@ -11,8 +11,8 @@ All notable changes to this project are documented here. The format follows
 - `suggest_datasets` marks a source "fits" only when its declared coverage holds the question's place,
   condition and years (#111). A place it can't read, or a source that declares no places or conditions, is
   "unknown", never a fit, and generic words ("cases", "years", "lost") never make a fit. Coverage is read in one
-  place, `coverage.declared_coverage`, from the contract's conformed place keys, else the catalog's own
-  federal or international declaration; it will read the transform's coverage mart once that carries keys. A
+  place, `coverage.declared_coverage`, from the contract's conformed place keys only; it will read the
+  coverage declaration once #223 adds it. A
   question about years of life lost, DALYs or other GBD-modelled measures is handed to the IHME GBD connector.
 - `get_series` and `get_aligned_with_gbd` read a live source only when its declared coverage holds a place asked
   for, and give one refusal per source, never one per series (#111).
@@ -39,6 +39,21 @@ All notable changes to this project are documented here. The format follows
   they leave.
 - The "Rows cover N condition labels" and "Rows mix measures" notes count only the rows returned, never series
   that matched but gave no rows (#112).
+- Release blockers from #173, where the served path returned wrong numbers:
+  - NNDSS's `-` (no reported cases) is read as not reported (the maintainer's declaration of 25 Nov 2026). It
+    comes back empty with its flag, never as 0 and never as a rate: `get_rate` gives no rate, `compare_rates`
+    refuses, `get_trend` leaves the year out and names the flag, and `check_signal` refuses any 4-week window
+    with a `-` week, which is common for rare conditions. The measles trial row "Imported 2024" is now empty
+    with flag `-`, not 0.
+  - Weekly counts, or year-to-date counts, are never added across weeks into a year (late reports reach only
+    the year-to-date count), in the metric compiler and in `query_sql`.
+  - A `query_sql` sum across places leaves the publisher's total rows out of that sum and says so; a sum that
+    meets an empty value stops, and so does one that filters out the empty values first. These rules cover
+    sums only.
+  - *C. auris* screening (colonisation) gets no rate per 100,000 people, from the NNDSS contract's new
+    `notIncidence` declaration (the maintainer's declaration); its counts are still returned.
+  - `refresh` exits non-zero when a development sample (`--max-rows`) fails a blocking data check, and every
+    answer from that sample says which check failed.
 - A summed count never adds up labels that overlap or count different things (hard rule 2). Semantic-model
   dimensions say `non_additive: true` or `false`, and each `true` says why in plain words
   (`non_additive_reason`), which the refusal and `describe_dataset` show. A metric or series that neither picks
@@ -77,6 +92,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- New source, draft (contract not yet reviewed): `cdc_nrevss_positivity`, CDC's weekly national percent of laboratory tests
+  positive for COVID-19, influenza and RSV (NREVSS, data.cdc.gov seuz-s2cv), on the existing Socrata adapter. One
+  figure for the whole country each week; a question about a state or region is told so.
 - SchoolVaxView kindergarten coverage and exemptions (`cdc_schoolvaxview_kindergarten`, CDC data.cdc.gov
   ijqb-a7ye): the percent of kindergartners vaccinated, or with an exemption, by vaccine and dose or exemption
   type, state and school year, as each state reported it, read as published and never added up. Draft contract.
