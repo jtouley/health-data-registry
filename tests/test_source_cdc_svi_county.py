@@ -154,7 +154,7 @@ def test_raw_layer_keeps_every_column_as_sent(
     for sent, row in zip(ROWS, kept, strict=True):
         assert {k: row[k] for k in HEADER} == dict(zip(HEADER, sent, strict=True))
         assert row["document_url"] == URL
-    assert "﻿ST" not in kept[0]
+    assert "\ufeffST" not in kept[0]
 
 
 def test_ranks_read_as_published_and_minus_999_is_no_value(real: tuple[Registry, Engine, Path, Any]) -> None:
