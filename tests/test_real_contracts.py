@@ -36,7 +36,7 @@ ROWS = [
     nndss("MICHIGAN", "3", m3="30"),
     nndss("NEW YORK", "2", m3="20"),
     nndss("NEW YORK CITY", "4", m3="40"),
-    nndss("DISTRICT OF COLUMBIA", None, flag="-"),  # no reported cases: a zero, by the codebook
+    nndss("DISTRICT OF COLUMBIA", None, flag="-"),  # no reported cases: stays empty, never read as 0 (#173)
     nndss("PUERTO RICO", "1", m3="10"),
     nndss("Non-U.S. Residents", "1", summary=True, m3="10"),  # its own bucket, title case as from 2025
     nndss("EAST NORTH CENTRAL", "3", summary=True, m3="30"),  # a census division: a summary row
@@ -73,9 +73,16 @@ WEEK = {"condition": "Legionellosis", "mmwr_year": 2024, "mmwr_week": 52}
 
 def test_nndss_sum_of_non_total_rows_equals_the_total_row(real: tuple[Registry, Engine]) -> None:
     _, eng = real
-    assert one(eng, "weekly_cases", filters=WEEK) == 11  # = TOTAL: states, DC, NYC, territories, non-US
+    # Every area with a number (DC's '-' is empty, so a sum that includes it has no total).
+    areas = {
+        **WEEK,
+        "reporting_area": ["MICHIGAN", "NEW YORK", "NEW YORK CITY", "PUERTO RICO", "Non-U.S. Residents"],
+    }
+    assert one(eng, "weekly_cases", filters=areas) == 11  # = TOTAL: states, NYC, territories, non-US
     assert one(eng, "us_resident_weekly_cases", filters=WEEK) == 9  # the published US RESIDENTS row
-    assert one(eng, "year_to_date_cases", filters=WEEK) == 110
+    assert one(eng, "year_to_date_cases", filters=areas) == 110
+    # With DC's empty '-' value in the sum, there is no total at all, never a total that reads it as 0.
+    assert eng.query_metric("cdc_nndss_weekly", "weekly_cases", filters=WEEK)["rows"] == [[None, 1, "-"]]
 
 
 def test_nndss_year_to_date_is_read_at_one_week(real: tuple[Registry, Engine]) -> None:
@@ -85,13 +92,16 @@ def test_nndss_year_to_date_is_read_at_one_week(real: tuple[Registry, Engine]) -
     assert e.value.code == "needs_single_value"
 
 
-def test_nndss_no_reported_cases_reads_as_zero_with_its_flag(real: tuple[Registry, Engine]) -> None:
+def test_nndss_no_reported_cases_stays_empty_with_its_flag(real: tuple[Registry, Engine]) -> None:
     _, eng = real
     out = eng.query_metric(
         "cdc_nndss_weekly", "weekly_cases", filters={**WEEK, "reporting_area": "DISTRICT OF COLUMBIA"}
     )
-    assert out["rows"] == [[0, 0, None]]  # 0 cases, no empty values: '-' is not a gap
-    assert "'-' as no reported cases" in out["method"]
+    assert out["rows"] == [[None, 1, "-"]]  # no number, one empty value, its flag: never read as 0 (#173)
+    assert (
+        "flagged '-' (no reported cases, in the publisher's codebook) has no number and is never counted as 0"
+        in (out["method"])
+    )
 
 
 STATUSES = ("Confirmed", "Probable", "Total")
@@ -117,6 +127,8 @@ def test_case_status_text_agrees_with_the_publishers_labels() -> None:
             assert "without a confirmed/probable split" not in text, text
         said = [c for c in ds.entry.caveats if "case status" in c.casefold()]
         assert len(said) == 1, said
+        # Hard rule 2 (ADR 0018): the caveat says what adding would do; it never tells the reader not to.
+        assert "never add" not in said[0].casefold(), said[0]
         for status, n in counts.items():
             assert re.search(rf"\b{n} (names )?end in '{status}'", said[0]), (status, n, said[0])
     assert _status_counts(list(reg.get("cdc_nndss_weekly").condition_labels)) == {

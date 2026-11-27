@@ -1,9 +1,9 @@
 # 0016. Crawler factory: generic adapter types, per-source config, declared extensions
 
-- **Status:** Proposed
+- **Status:** Accepted (maintainer, 27 Nov 2026)
 - **Date:** 2026-11-25
 - **Spec:** "Crawling"; the maintainer's direction of 25 Nov 2026
-- **Supersedes in part, if accepted:** [ADR 0013](0013-browser-fetcher-on-government-hosts.md)'s stop rule for a
+- **Supersedes in part:** [ADR 0013](0013-browser-fetcher-on-government-hosts.md)'s stop rule for a
   refused robots.txt on a government host (section 4, open question 5)
 - **Related:**
   - [ADR 0002](0002-primary-sources-only.md): primary sources only
@@ -220,8 +220,8 @@ through one getter built by `crawl.fetcher`, which owns, in one place:
 - **robots.txt and the government-host policy:** read first; obeyed in full on other hosts; on a reviewed
   government host a disallow, or a 401, 403 or 429 for robots.txt, is overridden and recorded (owner decision,
   25 Nov 2026). `sitemaps.BrowserRobots`, which stops instead, is retired. That changes ADR 0013's stop rule, and
-  the ADR index says records are not rewritten: if this ADR is accepted, it supersedes ADR 0013 in that one respect,
-  and the index marks 0013 "superseded in part by 0016" before `BrowserRobots` is retired (open question 5). The
+  the ADR index says records are not rewritten: this ADR supersedes ADR 0013 in that one respect (accepted 27 Nov
+  2026), and the index marks 0013 "superseded in part by 0016" before `BrowserRobots` is retired (open question 5). The
   override stays safe only while `government_host: true` is accepted just for hosts on `GOVERNMENT_DOMAINS`
   (`registry.py:342`) and entries on one host agree (`registry.py:1431`). Both validators stay on the shared
   `source:` block when `Source` is split per type, and step 1 tests that an unlisted host with
@@ -396,3 +396,4 @@ existing types.
 4. Where does Tableau's suppression blanking sit under ELT (#104 item 5)?
 5. Is ADR 0013's stop rule for a refused robots.txt on a government host superseded in part by this ADR (the index
    marks 0013 "superseded in part by 0016"), or by a separate record that lands first? This ADR proposes the former.
+   *Answered (maintainer, 27 Nov 2026): by this ADR; ADR 0013 and the index are marked.*

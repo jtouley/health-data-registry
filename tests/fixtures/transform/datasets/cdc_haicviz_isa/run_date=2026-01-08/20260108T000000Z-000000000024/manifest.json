@@ -1,0 +1,18 @@
+{
+  "dataset": "cdc_haicviz_isa",
+  "snapshot_id": "20260108T000000Z-000000000024",
+  "contract_version": "synthetic",
+  "semantic_version": "synthetic",
+  "catalog_status": "draft",
+  "retrieved_at": "2026-01-08T00:00:00+00:00",
+  "source_urls": [
+    "https://example.invalid/synthetic/cdc_haicviz_isa.json"
+  ],
+  "raw_sha256": [
+    "2424242424242424242424242424242424242424242424242424242424242424"
+  ],
+  "row_count": 9,
+  "licence": "synthetic",
+  "redistribution": true,
+  "partial": false
+}
