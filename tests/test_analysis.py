@@ -16,7 +16,7 @@ import pytest
 
 from health_data_registry import analysis, stats, tools
 from health_data_registry.query import Engine, QueryRefused
-from health_data_registry.registry import LOGICAL_TYPES, Registry, load_registry
+from health_data_registry.registry import Registry, load_registry
 from health_data_registry.store import build_snapshot, write_ndjson
 from tests.conftest import raw_fetch
 
@@ -66,7 +66,7 @@ status: draft
 
 def prop(name: str, typ: str, role: str, desc: str = "toy column", required: bool = False) -> str:
     return (
-        f"      - {{name: {name}, physicalType: {typ}, logicalType: {sorted(LOGICAL_TYPES[typ])[0]}, required: {str(required).lower()}, "
+        f"      - {{name: {name}, physicalType: {typ}, logicalType: x, required: {str(required).lower()}, "
         f"description: {desc}, customProperties: [{{property: role, value: {role}}}]}}\n"
     )
 
@@ -95,7 +95,7 @@ schema:
     customProperties:
       - {property: totalRows, value: "upper(area) = 'US RESIDENTS'"}
     properties:
-      - {name: area, physicalType: VARCHAR, logicalType: string, required: true, description: toy column,
+      - {name: area, physicalType: VARCHAR, logicalType: x, required: true, description: toy column,
          customProperties: [{property: role, value: dimension},
                             {property: partialPlaces, value: {"NEW YORK": "excludes New York City"}}]}
 """
@@ -110,9 +110,9 @@ CASES_SEMANTIC = """\
 dataset: toy_weekly
 version: 0.1.0
 dimensions:
-  - {name: state, column: area, type: categorical, non_additive: false}
-  - {name: year, column: year, type: time, non_additive: false}
-  - {name: week, column: week, type: time, non_additive: false}
+  - {name: state, column: area, type: categorical}
+  - {name: year, column: year, type: time}
+  - {name: week, column: week, type: time}
 measures:
   - {name: wk, column: wk, kind: count}
   - {name: ytd, column: ytd, kind: running_count}
@@ -156,8 +156,8 @@ POP_SEMANTIC = """\
 dataset: toy_pop
 version: 0.1.0
 dimensions:
-  - {name: state, column: state, type: categorical, non_additive: false}
-  - {name: year, column: year, type: time, non_additive: false}
+  - {name: state, column: state, type: categorical}
+  - {name: year, column: year, type: time}
 measures:
   - {name: population, column: population, kind: count}
 metrics:
@@ -193,9 +193,9 @@ AGE_SEMANTIC = """\
 dataset: toy_age
 version: 0.1.0
 dimensions:
-  - {name: state, column: state, type: categorical, non_additive: false}
-  - {name: year, column: year, type: time, non_additive: false}
-  - {name: age, column: age_group, type: categorical, non_additive: false}
+  - {name: state, column: state, type: categorical}
+  - {name: year, column: year, type: time}
+  - {name: age, column: age_group, type: categorical}
 measures:
   - {name: cases, column: cases, kind: count}
   - {name: population, column: population, kind: count}

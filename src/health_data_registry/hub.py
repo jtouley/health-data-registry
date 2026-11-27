@@ -2,11 +2,10 @@
 
 Where the server reads each source from (query.Engine decides, in this order):
 
-1. The local lake (store.lake_root: $HDR_LAKE as a full path, else a per-user data folder, never the working
-   folder), when it holds a snapshot: maintainers and CI, after `refresh`. Each time the server connects, a lake
-   snapshot is checked (verify_lake_snapshot): dataset id, snapshot id, contract version, review status, owner,
-   and the sha256 of data.duckdb against its own manifest. One that fails is refused in plain words, never read.
-   The manifest sits beside the data, so this catches damage, not tampering.
+1. The local lake (store.lake_root: $HDR_LAKE, else a per-user data folder, never the working folder), when it
+   holds a snapshot: maintainers and CI, after `refresh`. A lake snapshot gets the same checks as a hub file
+   (verify_lake_snapshot): dataset id, snapshot id, contract version, review status, and the sha256 of data.duckdb
+   and data.parquet against its manifest. One that fails is refused in plain words, never read.
 2. A redistributable source: the published release on the open data hub ($HDR_HUB, hf://datasets/<org>/<name>,
    read at an immutable release: pinned with @release-<run date>, or else the newest release tag; a branch such
    as main is refused; a local directory stands in for the Hub in tests). Only the Parquet file a question needs
@@ -34,17 +33,13 @@ import math
 import os
 import re
 import shutil
-import threading
-from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from health_data_registry import deadline
 from health_data_registry.publish import HF_PREFIX, data_path, hf_repo_id
 from health_data_registry.registry import Dataset
-from health_data_registry.staging import StagingReport
-from health_data_registry.store import Manifest, sha256_file
+from health_data_registry.store import SNAPSHOT_FILES, Manifest, sha256_file
 
 # The project's public hub. Until its first release-<run date> tag exists, reading from it is refused plainly.
 DEFAULT_HUB: str | None = "hf://datasets/jtouley/health-data-registry"
@@ -108,21 +103,6 @@ def cache_max_bytes() -> int:
     return int(gb * 1024**3)
 
 
-# Files a reader holds open (a DuckDB view reads them by path), shared by every Hub on the same cache root: a
-# pinned-release Hub and the main one evict from the same tree, so neither may remove what the other's views read.
-# cache root -> path -> number of Hubs using it.
-_IN_USE: dict[Path, Counter[Path]] = {}
-_IN_USE_LOCK = threading.Lock()
-ETAG_TIMEOUT_S = (
-    10.0  # the release lookup before a download; capped by the call's deadline on the hosted server
-)
-
-
-def _in_use_at(root: Path) -> Counter[Path]:
-    with _IN_USE_LOCK:
-        return _IN_USE.setdefault(root.resolve(), Counter())
-
-
 def is_immutable_ref(rev: str) -> bool:
     """A release tag (release-<run date>[.<n>]) or a full commit id; never a branch such as main."""
     return bool(RELEASE_TAG.fullmatch(rev) or _COMMIT.fullmatch(rev))
@@ -139,19 +119,6 @@ def newest_release(tags: list[str]) -> str | None:
     return max(found, key=_release_order) if found else None
 
 
-def hub_notes(snapshot: dict[str, Any]) -> list[str]:
-    """The snapshot's plain-words notes, so a hosted answer carries the same caveats as a lake answer.
-
-    The staging notes (a flag code the contract doesn't list) are rebuilt from the snapshot's silver section too,
-    for a release whose snapshot notes leave them out.
-    """
-    notes = [str(n) for n in snapshot.get("notes") or []]
-    silver = snapshot.get("silver") or {}
-    unlisted = {str(k): tuple(str(c) for c in v) for k, v in (silver.get("unlisted_codes") or {}).items()}
-    report = StagingReport(row_count=int(silver.get("row_count") or 0), unlisted_codes=unlisted)
-    return notes + [n for n in report.notes() if n not in notes]
-
-
 def contract_compatible(dataset_id: str, release_version: str, installed_version: str) -> bool:
     if release_version == installed_version:
         return True
@@ -159,54 +126,14 @@ def contract_compatible(dataset_id: str, release_version: str, installed_version
 
 
 LAKE_UNVERIFIED = "lake_unverified"
-# The files of a lake snapshot the server reads: only data.duckdb is attached. export-public also checks
-# data.parquet, the file it publishes (store.SNAPSHOT_FILES).
-READ_FILES = ("data.duckdb",)
-
-# sha256 of files already hashed in this process, by (path, device, inode, size, mtime, ctime). A file whose
-# stat stamp is unchanged is not hashed again on every reconnect; the first check in each process always hashes,
-# because this cache lives in memory only. A change that keeps every part of the stamp (including the inode
-# change time, which a program can't set) would go unseen until the server restarts.
-_HASHED: dict[tuple[str, int, int, int, int, int], str] = {}
 
 
-def fingerprint(path: Path) -> str:
-    """sha256_file(path), hashed once per process while the file's stat stamp stays the same."""
-    st = os.stat(path)
-    key = (str(path.resolve()), st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
-    found = _HASHED.get(key)
-    if found is None:
-        found = _HASHED[key] = sha256_file(path)
-    return found
-
-
-def _owned_privately(path: Path) -> bool:
-    """On Unix: owned by this user and not writable by group or others. Always true where there are no owners."""
-    getuid = getattr(os, "getuid", None)
-    if getuid is None:  # Windows
-        return True
-    st = os.lstat(path)
-    return st.st_uid == getuid() and not st.st_mode & 0o022
-
-
-def verify_lake_snapshot(
-    ds: Dataset, path: Path, manifest: Manifest, files: tuple[str, ...] = READ_FILES
-) -> None:
-    """Check a local lake snapshot, as a hub file is checked, when the server connects (issue #74).
+def verify_lake_snapshot(ds: Dataset, path: Path, manifest: Manifest) -> None:
+    """Check a local lake snapshot as a hub file is checked, before any number is read from it (issue #74).
 
     The manifest must name this dataset and this snapshot, be built with a contract version the installed one
-    can read, claim no review the catalogue doesn't record, and list a sha256 for each of ``files``; each file must
-    be a regular file (not a link) that matches it. On Unix the snapshot folder and its files must belong to this
-    user and not be writable by anyone else. Raises HubError (code LAKE_UNVERIFIED) with the reason in plain words.
-
-    When: Engine.connect calls this each time it (re)connects, checking data.duckdb, the one file it attaches;
-    export-public calls it with SNAPSHOT_FILES before publishing. DuckDB then reads the file by its path, so a
-    change made after the check is read until the next reconnect.
-
-    What it proves: that the files are the ones the manifest names, so a damaged or half-written snapshot is
-    caught. The manifest sits in the same folder as the data, so anyone who can write the snapshot can also write
-    matching fingerprints: these checks catch damage, not tampering. The defence against a planted lake is where
-    the lake is read from (store.lake_root: never the working folder) and the ownership check above.
+    can read, claim no review the catalogue doesn't record, and list the sha256 of data.duckdb and data.parquet;
+    each file must match. Raises HubError (code LAKE_UNVERIFIED) with the reason in plain words.
     """
 
     def refuse(why: str) -> HubError:
@@ -224,23 +151,13 @@ def verify_lake_snapshot(
         )
     if manifest.catalog_status == "reviewed" and ds.entry.status != "reviewed":
         raise refuse("it claims a maintainer review that the catalogue does not record")
-    listed = manifest.files
-    if not isinstance(listed, dict) or not all(isinstance(v, str) for v in listed.values()):
-        raise refuse("its manifest's list of fingerprints (sha256) is damaged")
-    try:
-        if not _owned_privately(path):
-            raise refuse("its folder belongs to another user or can be changed by other users")
-        for name in files:
-            expected = listed.get(name)
-            if not expected:
-                raise refuse(f"its manifest has no fingerprint (sha256) for {name}; it predates these checks")
-            file = path / name
-            if file.is_symlink() or not file.is_file() or fingerprint(file) != expected:
-                raise refuse(f"its {name} does not match the fingerprint (sha256) in its manifest")
-            if not _owned_privately(file):
-                raise refuse(f"its {name} belongs to another user or can be changed by other users")
-    except OSError as e:  # unreadable, or removed while being checked; the message never names the path
-        raise refuse("its files could not be read") from e
+    for name in SNAPSHOT_FILES:
+        expected = manifest.files.get(name)
+        if not expected:
+            raise refuse(f"its manifest has no fingerprint (sha256) for {name}; it predates these checks")
+        file = path / name
+        if not file.is_file() or sha256_file(file) != expected:
+            raise refuse(f"its {name} does not match the fingerprint (sha256) in its manifest")
 
 
 def _split(url: str) -> tuple[str, str | None]:
@@ -284,8 +201,7 @@ class Hub:
     api: Any = field(default=None, repr=False)  # a huggingface_hub.HfApi; None builds one without a token
     _release: dict[str, Any] | None = field(default=None, repr=False)
     _rev: str | None = field(default=None, repr=False)
-    # Files this hub handed to a reader (a DuckDB view reads them by path). They are counted in the registry
-    # shared by every Hub on this cache (_IN_USE) and never evicted until release_files() gives them back.
+    # Files handed to a reader (a DuckDB view reads them by path): never evicted while this hub is in use.
     _in_use: set[Path] = field(default_factory=set, repr=False)
     # The sha256 each file handed out was checked against, so a reconnect can check it again (still_intact).
     _verified: dict[Path, str] = field(default_factory=dict, repr=False)
@@ -294,59 +210,16 @@ class Hub:
         """A cached file handed out by snapshot() is still there and still has the sha256 it was checked against.
 
         The cache is an ordinary folder another program can change after the first check, so the server checks
-        again whenever it reconnects (hashing again only when the file's stat stamp changed: see fingerprint). A
-        file that fails is removed, and downloaded and checked afresh on next use. Between reconnects DuckDB reads
-        the file by its path, so a change made after a check is read until the next reconnect.
+        again whenever it reconnects. A file that fails is removed, and downloaded and checked afresh on next use.
         """
         key = local.resolve()
         expected = self._verified.get(key)
-        try:
-            if expected is not None and local.is_file() and fingerprint(local) == expected:
-                return True
-        except OSError:
-            pass  # unreadable: treated as changed
+        if expected is not None and local.is_file() and sha256_file(local) == expected:
+            return True
         self._verified.pop(key, None)
-        self._let_go(key)
-        try:
-            local.unlink(missing_ok=True)
-        except OSError:
-            logger.warning("a changed file in the hub cache could not be removed")
+        self._in_use.discard(key)
+        local.unlink(missing_ok=True)
         return False
-
-    def in_use(self) -> set[Path]:
-        """Every file any Hub on this cache has handed to a reader and not given back."""
-        shared = _in_use_at(self.cache / "hub")
-        with _IN_USE_LOCK:
-            return {p for p, n in shared.items() if n > 0}
-
-    def _hold(self, path: Path) -> None:
-        if path in self._in_use:
-            return
-        self._in_use.add(path)
-        shared = _in_use_at(self.cache / "hub")
-        with _IN_USE_LOCK:
-            shared[path] += 1
-
-    def _let_go(self, path: Path) -> None:
-        """Give back one file this hub held (it failed its re-check and is removed)."""
-        if path not in self._in_use:
-            return
-        self._in_use.discard(path)
-        shared = _in_use_at(self.cache / "hub")
-        with _IN_USE_LOCK:
-            shared[path] -= 1
-            if shared[path] <= 0:
-                del shared[path]
-
-    def release_files(self) -> None:
-        """Give back this hub's files (its engine is closed), so the cache may evict them again."""
-        shared = _in_use_at(self.cache / "hub")
-        with _IN_USE_LOCK:
-            for p in self._in_use:
-                shared[p] -= 1
-                if shared[p] <= 0:
-                    del shared[p]
-        self._in_use.clear()
 
     @property
     def is_remote(self) -> bool:
@@ -378,11 +251,7 @@ class Hub:
                 from huggingface_hub import HfApi
 
                 api = HfApi(token=False)  # public datasets: no sign-in, ever
-            # Bounded by the hosted call's deadline: a slow lookup never holds the engine past it.
-            refs = deadline.bounded(lambda: api.list_repo_refs(repo, repo_type="dataset"))
-            tags = [t.name for t in refs.tags]
-        except deadline.DeadlineExceeded:
-            raise
+            tags = [t.name for t in api.list_repo_refs(repo, repo_type="dataset").tags]
         except Exception as e:  # noqa: BLE001 - every lookup failure becomes one plain refusal
             raise HubError(
                 "hub_unreachable",
@@ -413,26 +282,17 @@ class Hub:
 
             repo, _ = _split(self.url)
             rev = self.revision()
-            local_dir = str(self._cache_dir())
-            # On the hosted server the whole download, not only its start, ends by the call's deadline: past it the
-            # call answers in plain words and the download finishes (or fails) on its own, holding no engine lock.
-            etag = deadline.cap(ETAG_TIMEOUT_S)
             try:
                 got = Path(
-                    deadline.bounded(
-                        lambda: hf_hub_download(
-                            repo,
-                            path_in_repo,
-                            repo_type="dataset",
-                            revision=rev,
-                            local_dir=local_dir,
-                            etag_timeout=etag,
-                            token=False,  # public datasets: no sign-in, ever
-                        )
+                    hf_hub_download(
+                        repo,
+                        path_in_repo,
+                        repo_type="dataset",
+                        revision=rev,
+                        local_dir=str(self._cache_dir()),
+                        token=False,  # public datasets: no sign-in, ever
                     )
                 )
-            except deadline.DeadlineExceeded:
-                raise
             except Exception as e:  # noqa: BLE001 - every download failure becomes one plain refusal
                 raise HubError(
                     "hub_unreachable",
@@ -450,7 +310,7 @@ class Hub:
             got.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src, got)
         os.utime(got)  # most recently used
-        evict(self.cache / "hub", self.max_bytes, keep={got.resolve(), *self.in_use()})
+        evict(self.cache / "hub", self.max_bytes, keep={got.resolve(), *self._in_use})
         return got
 
     def release(self) -> dict[str, Any]:
@@ -499,7 +359,7 @@ class Hub:
                 "it was not used. It may have been damaged in transit; ask again to download it afresh, and "
                 "report it if it keeps happening.",
             )
-        self._hold(local.resolve())  # the server's views read this file from now on
+        self._in_use.add(local.resolve())  # the server's views read this file from now on
         self._verified[local.resolve()] = str(meta["sha256"])
         allowed = set(Manifest.__dataclass_fields__)
         snap = {k: v for k, v in dict(sm["snapshot"]).items() if k in allowed}
@@ -513,7 +373,7 @@ class Hub:
                 "run_date": str(rel.get("run_date", "")),
                 "release_contract_version": release_cv,
                 "release_files": files,
-                "notes": hub_notes(snap),
+                "notes": [],
                 "quality": dict(sm.get("quality") or {}),
             }
         )

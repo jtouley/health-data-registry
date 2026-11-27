@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import duckdb
 import pytest
 
-from health_data_registry import hub, store, tools
+from health_data_registry import store
 from health_data_registry.hub import Hub
-from health_data_registry.query import SQL_NEXT_STEPS, Engine, QueryRefused
+from health_data_registry.query import Engine, QueryRefused
 from health_data_registry.registry import Registry
 from health_data_registry.sql_guard import (
     MAX_GROWTH,
@@ -150,107 +149,6 @@ def test_audit74_growth_perFunction(sql: str, ok: bool) -> None:
         assert refused(sql).code == "too_large"
 
 
-CHAIN_100 = " || ".join(["state"] * 100)
-
-
-@pytest.mark.parametrize(
-    "sql",
-    [
-        # 9 concatenated columns: each is 2x; separate columns don't multiply
-        "SELECT " + ", ".join(f"state || year AS c{i}" for i in range(9)) + " FROM deaths",
-        # a 10-term chain is 10x, not 2^9
-        "SELECT " + " || ".join(["state", "year"] * 5) + " AS label FROM deaths",
-        # 8 concat comparisons in WHERE
-        "SELECT state FROM deaths WHERE " + " AND ".join(f"concat(state, '{i}') <> 'x'" for i in range(8)),
-        # sizes pass through derived tables and CTEs without multiplying across columns
-        "WITH a AS (SELECT state || year AS s, state || state AS t FROM deaths) SELECT s || t FROM a",
-        "SELECT x || x FROM (SELECT concat(state, '-', year) AS x FROM deaths) d",
-        f"SELECT lpad(state, {MAX_PAD_LENGTH}, '0') || state FROM deaths",
-        "SELECT regexp_split_to_array(state, ','), strftime(year, '%Y') FROM deaths",
-        "SELECT max(deaths), arg_max(state, deaths), [1, 2], {'a': state} FROM deaths",
-        "SELECT state FROM deaths WHERE deaths = (SELECT max(deaths) FROM deaths)",
-    ],
-)
-def test_audit74_ordinaryQueries_notTooLarge(sql: str) -> None:
-    assert allowed(sql)
-
-
-@pytest.mark.parametrize(
-    "sql",
-    [
-        # growth carried through a derived table, a CTE and a scalar subquery
-        f"SELECT x || x || x FROM (SELECT {CHAIN_100} AS x FROM deaths) d",
-        f"SELECT d.x || d.x || d.x FROM (SELECT {CHAIN_100} AS x FROM deaths) d",
-        f"WITH a AS (SELECT {CHAIN_100} AS x FROM deaths) SELECT x || x || x FROM a",
-        f"SELECT (SELECT {CHAIN_100} FROM deaths LIMIT 1) || {CHAIN_100} || {CHAIN_100} FROM deaths",
-        # splitting text into a list: about 16 bytes an entry
-        "SELECT regexp_split_to_array(" + " || ".join(["state"] * 17) + ", '') FROM deaths",
-        # whole-column lists, the siblings of array_agg
-        "SELECT array_length(ARRAY(SELECT lpad(state, 1000, state) FROM deaths)) FROM deaths LIMIT 1",
-        "SELECT ARRAY(SELECT state FROM deaths UNION ALL SELECT state FROM deaths)",
-        "SELECT [(SELECT state FROM deaths)]",
-        "SELECT list_value((SELECT state FROM deaths))",
-        "SELECT {'a': (SELECT state FROM deaths)}",
-        "SELECT max(state, 1000000) FROM deaths",
-        "SELECT min(state, 5) FROM deaths",
-        "SELECT arg_max(state, deaths, 1000000) FROM deaths",
-        "SELECT max_by(state, deaths, 5) FROM deaths",
-        "SELECT min_by(state, deaths, 5) FROM deaths",
-        # a format the guard can't read
-        "SELECT strftime(year, state) FROM deaths",
-    ],
-)
-def test_audit74_blowUps_stillRefused(sql: str) -> None:
-    assert refused(sql).code == "too_large"
-
-
-@pytest.mark.parametrize(
-    "sql",
-    [
-        "SELECT [x FOR x IN [state]] FROM deaths",
-        "SELECT unnest([1, 2])",
-        "SELECT * FROM deaths, LATERAL (SELECT state) l",
-        "SELECT array_agg(state) OVER () FROM deaths",
-        "SELECT list(state) OVER (PARTITION BY year) FROM deaths",
-        "SELECT * FROM generate_series(1, 10)",
-        "SELECT * FROM range(10)",
-        "SELECT string_split(state, '') FROM deaths",
-    ],
-)
-def test_audit74_bypassSiblings_refused(sql: str) -> None:
-    error = refused(sql)
-    assert error.code in {"too_large", "forbidden_construct", "forbidden_function", "table_function"}
-    assert error.message and "Traceback" not in error.message
-
-
-@pytest.mark.parametrize(
-    ("sql", "code"),
-    [
-        ("SELECT max(reporting_area, 5) FROM toy_cases", "too_large"),
-        ("SELECT levenshtein(reporting_area, reporting_area) FROM toy_cases", "too_slow"),
-    ],
-)
-def test_audit74_querySql_keepsSpecificNextStep(lake: Path, registry: Registry, sql: str, code: str) -> None:
-    out = tools.query_sql(Engine(registry=registry, lake=lake, hub=None), sql, fmt="json")
-    assert out["refused"] == code and out["next_step"] == SQL_NEXT_STEPS[code]
-
-
-def test_audit74_querySql_lakeUnverified_nextStep(lake: Path, registry: Registry) -> None:
-    path, _ = snapshot_of(lake)
-    with (path / "data.duckdb").open("ab") as f:
-        f.write(b"\0")
-    out = tools.query_sql(
-        Engine(registry=registry, lake=lake, hub=None), "SELECT 1 FROM toy_cases", fmt="json"
-    )
-    assert out["refused"] == "lake_unverified"
-    assert "refresh toy_cases" in out["next_step"] and "get_series" not in out["message"]
-
-
-def test_audit74_querySql_otherRefusal_pointsToTools(lake: Path, registry: Registry) -> None:
-    out = tools.query_sql(Engine(registry=registry, lake=lake, hub=None), "DELETE FROM toy_cases", fmt="json")
-    assert out["next_step"].startswith("Use get_series")
-
-
 def test_audit74_smallPad_runsOnHardenedConnection() -> None:
     con = duckdb.connect(":memory:")
     con.execute("CREATE VIEW deaths AS SELECT 'S1' AS state, 2001 AS year, 3 AS deaths")
@@ -345,9 +243,7 @@ def lake_refusal(registry: Registry, lake: Path) -> QueryRefused:
     with pytest.raises(QueryRefused) as e:
         eng.query_metric("toy_cases", "case_count", filters={"condition": "Legionellosis", "year": 2023})
     assert e.value.code == "lake_unverified" and "No numbers were read" in str(e.value)
-    assert (
-        str(lake / "datasets" / "toy_cases") in e.value.next_step and "refresh toy_cases" in e.value.next_step
-    )
+    assert "HDR_LAKE" in e.value.next_step
     return e.value
 
 
@@ -360,134 +256,12 @@ def test_audit74_verifiedLake_answers(lake: Path, registry: Registry) -> None:
     assert out["rows"] == [[710, 0]]
 
 
-def test_audit74_lakeFileChanged_refused(lake: Path, registry: Registry) -> None:
+@pytest.mark.parametrize("name", ["data.duckdb", "data.parquet"])
+def test_audit74_lakeFileChanged_refused(lake: Path, registry: Registry, name: str) -> None:
     path, _ = snapshot_of(lake)
-    with (path / "data.duckdb").open("ab") as f:
+    with (path / name).open("ab") as f:
         f.write(b"\0")
     assert "does not match" in str(lake_refusal(registry, lake))
-
-
-def test_audit74_lakeParquet_notReadAtConnect_checkedAtExport(
-    lake: Path, registry: Registry, tmp_path: Path
-) -> None:
-    """data.parquet is never attached, so reads don't hash it; export-public, which publishes it, does."""
-    from health_data_registry.publish import PublishCheckFailed, stage
-
-    path, _ = snapshot_of(lake)
-    with (path / "data.parquet").open("ab") as f:
-        f.write(b"\0")
-    out = Engine(registry=registry, lake=lake, hub=None).query_metric(
-        "toy_cases", "case_count", filters={"condition": "Legionellosis", "year": 2023}
-    )
-    assert out["rows"] == [[710, 0]]
-    with pytest.raises(PublishCheckFailed, match="data.parquet does not match"):
-        stage(registry, lake, tmp_path / "release", run_date="2026-11-25", repo=None)
-
-
-@pytest.mark.parametrize("files", [[], None, "data.duckdb", {"data.duckdb": 5}])
-def test_audit74_lakeManifest_damagedFiles_refusedPlainly(
-    lake: Path, registry: Registry, files: object
-) -> None:
-    path, doc = snapshot_of(lake)
-    (path / "manifest.json").write_text(json.dumps({**doc, "files": files}))
-    assert "damaged" in str(lake_refusal(registry, lake))
-
-
-def test_audit74_lakeUnreadable_refusedPlainly(
-    lake: Path, registry: Registry, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def unreadable(path: Path) -> str:
-        raise PermissionError(13, "Permission denied", str(path))
-
-    monkeypatch.setattr(hub, "sha256_file", unreadable)
-    monkeypatch.setattr(hub, "_HASHED", {})
-    error = lake_refusal(registry, lake)
-    assert "could not be read" in str(error) and str(lake) not in str(error)
-
-
-def test_audit74_lakeAnyFailure_refusedPlainly(
-    lake: Path, registry: Registry, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def broken(*_: object, **__: object) -> None:
-        raise AttributeError("'list' object has no attribute 'get'")
-
-    monkeypatch.setattr(hub, "verify_lake_snapshot", broken)
-    assert "could not be checked or opened" in str(lake_refusal(registry, lake))
-
-
-def test_audit74_lakeSymlinkedFile_refused(lake: Path, registry: Registry, tmp_path: Path) -> None:
-    path, _ = snapshot_of(lake)
-    real = tmp_path / "elsewhere.duckdb"
-    (path / "data.duckdb").rename(real)
-    (path / "data.duckdb").symlink_to(real)
-    assert "does not match" in str(lake_refusal(registry, lake))
-
-
-@pytest.mark.skipif(not hasattr(os, "getuid"), reason="Unix owners and modes")
-@pytest.mark.parametrize("which", ["folder", "file"])
-def test_audit74_lakeWritableByOthers_refused(lake: Path, registry: Registry, which: str) -> None:
-    path, _ = snapshot_of(lake)
-    target = path if which == "folder" else path / "data.duckdb"
-    target.chmod(target.stat().st_mode | 0o020)
-    assert "other users" in str(lake_refusal(registry, lake))
-
-
-def test_audit74_fingerprint_hashedOncePerStamp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[Path] = []
-    real = hub.sha256_file
-
-    def counting(path: Path) -> str:
-        calls.append(path)
-        return real(path)
-
-    monkeypatch.setattr(hub, "sha256_file", counting)
-    f = tmp_path / "data.duckdb"
-    f.write_bytes(b"one")
-    assert hub.fingerprint(f) == hub.fingerprint(f) == real(f)
-    assert len(calls) == 1  # unchanged: not hashed again on the next reconnect
-    f.write_bytes(b"two!")
-    assert hub.fingerprint(f) == real(f) and len(calls) == 2  # changed: hashed again
-
-
-def test_audit74_hubStillIntact_unreadable_treatedAsChanged(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    h = Hub(url=str(tmp_path), cache=tmp_path / "cache")
-    f = tmp_path / "cached.parquet"
-    f.write_bytes(b"x")
-    h._verified[f.resolve()] = "0" * 64
-
-    def unreadable(_: Path) -> str:
-        raise PermissionError(13, "Permission denied")
-
-    monkeypatch.setattr(hub, "fingerprint", unreadable)
-    assert h.still_intact(f) is False and not f.exists()
-
-
-def test_audit74_hubStillIntact_changed_givesBackSharedHold(tmp_path: Path) -> None:
-    """The hosted server shares one cache between engines: a file that fails its re-check is no longer held."""
-    h = Hub(url=str(tmp_path), cache=tmp_path / "cache")
-    other = Hub(url=str(tmp_path), cache=tmp_path / "cache")
-    f = tmp_path / "cached.parquet"
-    f.write_bytes(b"x")
-    key = f.resolve()
-    h._hold(key)
-    other._hold(key)
-    h._verified[key] = "0" * 64
-    assert h.still_intact(f) is False
-    assert key not in h._in_use and key in other.in_use()  # the other engine still holds it
-    other.release_files()
-    assert key not in h.in_use()
-
-
-def test_audit74_engine_hubIntactError_isNotACrash(lake: Path, registry: Registry) -> None:
-    class Broken:
-        def still_intact(self, _: Path) -> bool:
-            raise OSError("read-only cache")
-
-    eng = Engine(registry=registry, lake=lake, hub=None)
-    eng.hub = Broken()  # type: ignore[assignment]
-    assert eng._hub_intact(lake) is False
 
 
 @pytest.mark.parametrize(
@@ -510,7 +284,7 @@ def test_audit74_lakeManifest_mismatch_refused(
 
 def test_audit74_lakeFileMissing_refused(lake: Path, registry: Registry) -> None:
     path, _ = snapshot_of(lake)
-    (path / "data.duckdb").unlink()
+    (path / "data.parquet").unlink()
     assert "does not match" in str(lake_refusal(registry, lake))
 
 
@@ -589,58 +363,3 @@ def test_audit74_anyScope_undeclaredPair_refused(sql: str) -> None:
 )
 def test_audit74_declaredOrSameTable_setOperation_allowed(sql: str) -> None:
     assert allowed(sql)
-
-
-# ------------------------------------------------------------------ with #49's non-additive guard
-
-LOOSE = {"deaths": frozenset({"state"})}  # deaths.state holds a Total row beside its parts
-
-
-def guarded(sql: str) -> str:
-    return guard_sql(sql, allowed_tables=TABLES, declared_joins=JOINS, non_additive=LOOSE).sql
-
-
-@pytest.mark.parametrize(
-    ("sql", "code"),
-    [
-        # an unpinned sum that also stacks an undeclared pair: the join rule refuses first
-        (
-            "SELECT sum(n) FROM (SELECT deaths AS n FROM deaths UNION ALL SELECT rate FROM vax) u",
-            "undeclared_join",
-        ),
-        # a declared pair stacked and summed: the join rule passes, the non-additive rule refuses
-        (
-            "SELECT sum(n) FROM (SELECT deaths AS n FROM deaths UNION ALL SELECT population FROM pop) u",
-            "non_additive",
-        ),
-        # an unpinned sum next to a value that grows too large: the size rule refuses first
-        (
-            "SELECT sum(deaths), " + " || ".join(["state"] * (MAX_GROWTH + 1)) + " FROM deaths",
-            "too_large",
-        ),
-        # a sum pinned by WHERE but built into a list from a subquery
-        ("SELECT ARRAY(SELECT sum(deaths) FROM deaths WHERE state = 'Michigan')", "too_large"),
-        # sizes are fine and the join is declared, but the sum crosses state
-        (
-            "SELECT sum(d.deaths), d.year || '-' || p.year FROM deaths d JOIN pop p ON d.year = p.year "
-            "GROUP BY 2",
-            "non_additive",
-        ),
-    ],
-)
-def test_audit74_bothGuards_refuseCorrectly(sql: str, code: str) -> None:
-    with pytest.raises(SqlRefused) as e:
-        guarded(sql)
-    assert e.value.code == code and e.value.message
-
-
-@pytest.mark.parametrize(
-    "sql",
-    [
-        "SELECT state, sum(deaths), state || year AS label FROM deaths GROUP BY state, year",
-        "SELECT sum(deaths), concat(year, '-', year) FROM deaths WHERE state = 'Michigan' GROUP BY year",
-        "SELECT sum(d.deaths) FROM deaths d JOIN pop p ON d.year = p.year WHERE d.state = 'Michigan'",
-    ],
-)
-def test_audit74_bothGuards_allowPinnedSmallQueries(sql: str) -> None:
-    assert guarded(sql)

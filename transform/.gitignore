@@ -1,5 +1,0 @@
-# dbt build output and the local DuckDB file: never committed (hard rule 5)
-target/
-dbt_packages/
-logs/
-.user.yml

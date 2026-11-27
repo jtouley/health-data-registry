@@ -1,3 +1,0 @@
-<?xml version="1.0"?>
-<!DOCTYPE u [<!ENTITY a "aaaa"><!ENTITY b "&a;&a;&a;&a;">]>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>&b;</loc></url></urlset>

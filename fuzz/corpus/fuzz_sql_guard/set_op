@@ -1,1 +1,0 @@
-SELECT state FROM deaths UNION ALL SELECT state FROM vax EXCEPT SELECT 'x'

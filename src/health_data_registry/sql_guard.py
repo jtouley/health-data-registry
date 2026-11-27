@@ -39,7 +39,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Final
 
@@ -48,8 +48,6 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
 from sqlglot.optimizer.scope import Scope, traverse_scope
-
-from health_data_registry.registry import label_key
 
 logger = logging.getLogger(__name__)
 
@@ -172,9 +170,8 @@ _ALLOWED: Final = _STRUCTURE + _FUNCTIONS
 # interrupted). Refused by name with a next step. lpad/rpad stay allowed with a capped length (MAX_PAD_LENGTH);
 # repeat, range, generate_series, printf and format are not on the allowlist at all.
 _UNBOUNDED_MESSAGE: Final = (
-    "Joining many rows into one text or list (string_agg, group_concat, list, array_agg, ARRAY(SELECT ...), or "
-    "max, min, arg_max or arg_min with a count) is not allowed here, because the result can grow without limit. "
-    "Return the values as rows instead, with GROUP BY, or ORDER BY and LIMIT."
+    "Joining many rows into one text or list (string_agg, group_concat, list, array_agg) is not allowed here, "
+    "because the result can grow without limit. Return the values as rows instead, with GROUP BY."
 )
 _UNBOUNDED_CLASSES: Final = _classes("GroupConcat", "ArrayAgg")
 _UNBOUNDED_NAMES: Final = frozenset({"string_agg", "group_concat", "listagg", "list", "array_agg"})
@@ -216,8 +213,6 @@ def guard_sql(
     allowed_tables: Mapping[str, frozenset[str]],
     declared_joins: frozenset[frozenset[str]] = frozenset(),
     max_rows: int = 5000,
-    non_additive: Mapping[str, frozenset[str]] | None = None,
-    ordered: bool = False,
 ) -> GuardedQuery:
     """Check ``sql`` and return the SQL that may run.
 
@@ -227,12 +222,6 @@ def guard_sql(
             case-insensitively, as DuckDB's do.
         declared_joins: pairs of table names a contract declares joinable.
         max_rows: the most rows the outer query may return; a larger or missing LIMIT becomes this.
-        non_additive: catalogued table name -> the columns whose values overlap or count different things
-            (the semantic model's non_additive dimensions). A sum over such a table must filter each of them
-            to one value or group by it, the same rule the metric compiler applies (hard rule 2).
-        ordered: give the outer query a total order, so the rows and the rows the LIMIT keeps come in the same
-            order on every run (answers cut into pages need that): ``ORDER BY ALL`` when it has no ORDER BY, and
-            otherwise every output column after its own keys as tie-breakers.
 
     Raises:
         SqlRefused: anything outside the read-only shape, with a plain-language reason.
@@ -242,58 +231,26 @@ def guard_sql(
         raise ValueError(f"max_rows must be positive, got {max_rows!r}")
     tables = {name.casefold(): frozenset(c.casefold() for c in cols) for name, cols in allowed_tables.items()}
     joins = frozenset(frozenset(t.casefold() for t in pair) for pair in declared_joins)
-    loose = {
-        name.casefold(): frozenset(c.casefold() for c in cols) for name, cols in (non_additive or {}).items()
-    }
 
     tree = _parse(sql)
     _check_nodes(tree)
+    _check_output_size(tree)
     _check_tables(tree, tables)
     scopes = _scopes(tree)
-    _check_output_size(tree, scopes)
     used: set[str] = set()
     for scope in scopes:
         _check_scope_sources(scope, tables, used)
         _check_columns(scope, tables)
         _check_joins(scope, tables, joins)
-        _check_sums(scope, tables, loose)
     # Every catalogued table named anywhere, a CTE no scope reads included, is checked as one more scope.
     _check_pairs({t.name.casefold() for t in tree.find_all(exp.Table)} & set(tables), joins)
     limit = _apply_limit(tree, max_rows)
-    if ordered:
-        _total_order(tree)
 
     for node in tree.walk():
         node.comments = None  # the generated SQL carries no caller text outside literals and names
     generated = tree.sql(dialect=_DIALECT)
     _require_single_select(generated)
     return GuardedQuery(sql=generated, tables=frozenset(used), limit=limit)
-
-
-def _total_order(tree: exp.Query) -> None:
-    """Make the outer ORDER BY a total order, so ties never come back in a different order on another run.
-
-    No ORDER BY: ``ORDER BY ALL``. An ORDER BY of its own (which may have ties, e.g. ``ORDER BY year`` over many
-    places): its keys first, then every output column by position, or, when the select list has a star, every
-    input column (``COLUMNS(*)``), which decides every output column.
-    """
-    order = tree.args.get("order")
-    if order is None:
-        tree.set("order", exp.Order(expressions=[exp.Ordered(this=exp.var("ALL"), nulls_first=False)]))
-        return
-    if any(isinstance(o.this, exp.Var) and o.this.name.upper() == "ALL" for o in order.expressions):
-        return  # already total
-    selects = tree.selects
-    if any(
-        isinstance(e, exp.Star) or (isinstance(e, exp.Column) and isinstance(e.this, exp.Star))
-        for e in selects
-    ):
-        if isinstance(tree, exp.Select):
-            star = exp.Anonymous(this="COLUMNS", expressions=[exp.Star()])
-            order.append("expressions", exp.Ordered(this=star, nulls_first=False))
-        return  # a set operation over a star: its own order stands (its output columns can't be counted here)
-    for i in range(1, len(selects) + 1):
-        order.append("expressions", exp.Ordered(this=exp.Literal.number(i), nulls_first=False))
 
 
 def _parse(sql: str) -> exp.Query:
@@ -414,153 +371,68 @@ def _string_literal_length(node: exp.Expr | None) -> int | None:
     return None
 
 
-def _factor(node: exp.Expr) -> int:
-    """How many times larger than its input text a replace or regexp_replace can make it."""
-    replacement = _string_literal_length(node.args.get("replacement"))
-    if replacement is None:
-        raise SqlRefused(
-            "too_large",
-            "In replace() and regexp_replace(), write the replacement as quoted text, such as ' ' or '-'.",
-        )
-    search = _string_literal_length(node.expression)
-    if isinstance(node, exp.Replace) and search:
-        return max(1, -(-replacement // search))  # each match of the search text becomes the replacement
-    return replacement + 1  # a pattern can match between every pair of characters
+def _count_growing(parts: Iterable[exp.Expr | None]) -> int:
+    """How many of a node's inputs can carry a large value (constants can't)."""
+    return sum(1 for part in parts if not _is_constant(part))
 
 
-# Functions that turn one text into a list: n characters can become n entries of about 16 bytes each.
-_SPLITTERS: Final = frozenset({"regexp_split_to_array", "string_split", "str_split"})
-SPLIT_GROWTH: Final = 16
-
-
-def _is_splitter(node: exp.Expr) -> bool:
-    split = getattr(exp, "Split", None)
-    return (isinstance(split, type) and isinstance(node, split)) or (
-        isinstance(node, exp.Anonymous) and str(node.name).casefold() in _SPLITTERS
-    )
-
-
-def _node_size(node: exp.Expr, children: list[int], column_size: int) -> int:
-    """How large one node's value can be, in units of the largest value a table cell holds, from its children's.
-
-    A cell is 1 and a constant 0 (the query's own text is short). Joining values (||, concat, concat_ws, lists,
-    structs) adds their sizes; replace, regexp_replace and the splitters multiply; every other node is no larger
-    than its largest input.
-    """
-    if isinstance(node, exp.Column | exp.Star):
-        return column_size
+def _growth(node: exp.Expr) -> int:
+    """How many times larger than its largest input one node's output can be (1: it can't grow)."""
+    if isinstance(node, exp.DPipe):
+        return max(1, _count_growing((node.this, node.expression)))
     if isinstance(node, exp.ConcatWs):
-        separator, *values = children or [0]
-        return sum(values) + separator * max(0, len(values) - 1)
-    if isinstance(node, exp.DPipe | exp.Concat | exp.Array | exp.Struct):  # after ConcatWs, a Concat
-        return sum(children)
-    if isinstance(node, exp.Replace | exp.RegexpReplace):
-        return children[0] * _factor(node) if children else 0
-    if _is_splitter(node):
-        return (children[0] if children else 0) * SPLIT_GROWTH
-    return max(children, default=0)
-
-
-def _check_shape(node: exp.Expr) -> None:
-    """Refuse the constructs that grow without a bound the size model can see."""
-    if isinstance(node, exp.With) and node.args.get("recursive"):
-        raise SqlRefused(
-            "too_large",
-            "Recursive WITH queries are not allowed here, because they can grow without limit. Ask for the "
-            "rows you need directly, with WHERE and GROUP BY.",
+        separator, *values = node.expressions
+        repeats = 0 if _is_constant(separator) else len(values) - 1
+        return max(1, _count_growing(values) + repeats)
+    if isinstance(node, exp.Concat | exp.Array):
+        return max(1, _count_growing(node.expressions))
+    if isinstance(node, exp.Struct):
+        return max(
+            1, _count_growing(p.expression if isinstance(p, exp.PropertyEQ) else p for p in node.expressions)
         )
-    if isinstance(node, exp.Pad):
-        length = _literal_int(node.expression)
-        if length is None or length > MAX_PAD_LENGTH:
+    if isinstance(node, exp.Replace | exp.RegexpReplace):
+        replacement = _string_literal_length(node.args.get("replacement"))
+        if replacement is None:
             raise SqlRefused(
                 "too_large",
-                f"lpad and rpad can make text at most {MAX_PAD_LENGTH:,} characters long here: give the "
-                f"length as a whole number up to {MAX_PAD_LENGTH:,}.",
+                "In replace() and regexp_replace(), write the replacement as quoted text, such as ' ' or '-'.",
             )
-    if isinstance(node, exp.Array | exp.Struct):
-        # ARRAY(SELECT ...) and [(SELECT ...)] gather a whole column into one list, as array_agg does.
-        values = (v.expression if isinstance(v, exp.PropertyEQ) else v for v in node.expressions)
-        if any(isinstance(v, exp.Query | exp.Subquery) for v in values):
-            raise SqlRefused("too_large", _UNBOUNDED_MESSAGE)
-    if isinstance(node, exp.Min | exp.Max | exp.ArgMax | exp.ArgMin) and node.args.get("count") is not None:
-        raise SqlRefused("too_large", _UNBOUNDED_MESSAGE)  # max(x, n) returns a list of the n largest values
-    if isinstance(node, exp.TimeToStr) and _string_literal_length(node.args.get("format")) is None:
-        raise SqlRefused("too_large", "In strftime(), write the format as quoted text, such as '%Y-%m-%d'.")
+        search = _string_literal_length(node.expression)
+        if isinstance(node, exp.Replace) and search:
+            return max(1, -(-replacement // search))  # each match of the search text becomes the replacement
+        return replacement + 1  # a pattern can match between every pair of characters
+    return 1
 
 
-def _check_output_size(tree: exp.Expr, scopes: list[Scope]) -> None:
+def _check_output_size(tree: exp.Expr) -> None:
     """Bound how large a value the query can build, before it runs (issue #74).
 
     DuckDB's memory limit doesn't count a string one function call builds, and an interrupt can't stop that
     call, so the guard refuses what could grow without limit: a recursive WITH, which can repeat any step;
-    lpad/rpad with a length that isn't a whole number up to MAX_PAD_LENGTH; a list built from a subquery
-    (ARRAY(SELECT ...)) or by max/min/arg_max with a count, which gather a whole column as array_agg does; and
-    strftime with a format that isn't quoted text.
-
-    Every other value is sized per expression, bottom-up (:func:`_node_size`): a cell is 1, joining values adds
-    their sizes, replace and splitting multiply. A column read from a CTE or a derived table carries the size of
-    that query's largest output, so growth through a chain of CTEs is counted. Any value larger than MAX_GROWTH is
-    refused. Separate output columns and conditions don't multiply each other: the largest one counts.
-
-    The real ceiling for one value is MAX_PAD_LENGTH x MAX_GROWTH characters (256,000), because lpad/rpad can turn
-    a one-character cell into MAX_PAD_LENGTH characters before it is joined. The OS-level memory limit and hard
-    kill of a child process are the second layer (#64).
+    lpad/rpad with a length that isn't a whole number up to MAX_PAD_LENGTH; and any query whose growing steps
+    (||, concat, concat_ws, replace, regexp_replace, lists, structs), multiplied together as if each fed the
+    next, could make a value more than MAX_GROWTH times larger than its inputs. The OS-level memory limit and
+    hard kill of a child process are the second layer (#64).
     """
+    growth = 1
     for node in tree.walk():
-        _check_shape(node)
-    size: dict[int, int] = {}
-    by_expression = {id(scope.expression): scope for scope in scopes}
-
-    def _output(scope: Scope) -> int:
-        key = id(scope.expression)
-        if key not in size:
-            _measure(scope.expression, scope)
-        return size[key]
-
-    def _derived(scope: Scope | None, qualifier: str = "") -> int:
-        """The size of a column read from the CTEs and derived tables in reach (1 for a catalogued table)."""
-        found = 1
-        while scope is not None:
-            for name, (_node, source) in scope.selected_sources.items():
-                if isinstance(source, Scope) and (not qualifier or name.casefold() == qualifier):
-                    found = max(found, _output(source))
-            # Only a subquery can name its outer query's columns; a CTE or derived table can't.
-            scope = scope.parent if scope.is_subquery else None
-        return found
-
-    def _in_scope(root: exp.Expr) -> list[exp.Expr]:
-        """The nodes under root in pre-order, stopping at (but including) each nested query's own node."""
-        found: list[exp.Expr] = []
-        stack = [root]
-        while stack:
-            node = stack.pop()
-            found.append(node)
-            if node is root or id(node) not in by_expression:
-                stack.extend(node.iter_expressions())
-        return found
-
-    def _measure(root: exp.Expr, scope: Scope | None) -> None:
-        for node in reversed(_in_scope(root)):  # children before parents
-            if id(node) in size:
-                continue
-            inner = by_expression.get(id(node))
-            if inner is not None and inner is not scope:
-                _output(inner)
-                continue
-            column_size = 1
-            if isinstance(node, exp.Column | exp.Star):
-                column_size = _derived(scope, node.table.casefold() if isinstance(node, exp.Column) else "")
-            if inner is not None and isinstance(node, exp.Select):
-                value = max((size[id(e)] for e in node.expressions), default=0)
-            else:
-                value = _node_size(node, [size[id(c)] for c in node.iter_expressions()], column_size)
-            if value > MAX_GROWTH:
-                raise SqlRefused("too_large", TOO_LARGE)
-            size[id(node)] = value
-
-    for scope in scopes:
-        _output(scope)
-    _measure(tree, by_expression.get(id(tree)))
+        if isinstance(node, exp.With) and node.args.get("recursive"):
+            raise SqlRefused(
+                "too_large",
+                "Recursive WITH queries are not allowed here, because they can grow without limit. Ask for the "
+                "rows you need directly, with WHERE and GROUP BY.",
+            )
+        if isinstance(node, exp.Pad):
+            length = _literal_int(node.expression)
+            if length is None or length > MAX_PAD_LENGTH:
+                raise SqlRefused(
+                    "too_large",
+                    f"lpad and rpad can make text at most {MAX_PAD_LENGTH:,} characters long here: give the "
+                    f"length as a whole number up to {MAX_PAD_LENGTH:,}.",
+                )
+        growth *= _growth(node)
+        if growth > MAX_GROWTH:
+            raise SqlRefused("too_large", TOO_LARGE)
 
 
 def _check_clauses(node: exp.Expr) -> None:
@@ -722,137 +594,6 @@ def _check_pairs(names: Iterable[str], joins: frozenset[frozenset[str]]) -> None
                     "undeclared_join",
                     f"The tables {a} and {b} can't be combined: their contracts don't declare a join "
                     "between them, so rows may not line up. Query each one on its own.",
-                )
-
-
-# Aggregates that add values up. Other aggregates (count, avg, min, max) don't add a column's values together.
-_SUM_FUNCTIONS: Final = frozenset({"fsum", "sumkahan", "kahan_sum"})
-
-
-def _bare(node: exp.Expr) -> exp.Expr:
-    while isinstance(node, exp.Lower | exp.Upper | exp.Trim | exp.Paren):
-        node = node.this
-    return node
-
-
-def _conjuncts(node: exp.Expr) -> Iterator[exp.Expr]:
-    node = node.unnest()
-    if isinstance(node, exp.And):
-        yield from _conjuncts(node.left)
-        yield from _conjuncts(node.right)
-    else:
-        yield node
-
-
-def pinned_columns(condition: exp.Expr | None) -> frozenset[tuple[str, str]]:
-    """(qualifier, column) pairs a condition fixes to one value, both casefolded ('' when unqualified).
-
-    A column is pinned by `column = 'literal'` (the column may be wrapped in lower, upper or trim) or by
-    `column IN (...)` whose literals are one label spelled several ways (registry.label_key: case, edge
-    spaces and dots, e.g. 'US RESIDENTS' and 'U.S. RESIDENTS'), joined by AND. Anything under OR or NOT, or a
-    comparison with several different values, pins nothing. The metric compiler (registry.filter_pins) and
-    query_sql both use this one rule.
-    """
-    pinned: set[tuple[str, str]] = set()
-    if condition is None:
-        return frozenset()
-    for c in _conjuncts(condition):
-        if isinstance(c, exp.EQ):
-            pair = [_bare(c.left), _bare(c.right)]
-        elif isinstance(c, exp.In) and c.expressions and not c.args.get("query"):
-            values = c.expressions
-            if not all(isinstance(v, exp.Literal) for v in values):
-                continue
-            if len({label_key(v.name) for v in values}) != 1:
-                continue
-            pair = [_bare(c.this), values[0]]
-        else:
-            continue
-        cols = [x for x in pair if isinstance(x, exp.Column)]
-        if len(cols) == 1 and any(isinstance(x, exp.Literal) for x in pair):
-            pinned.add((cols[0].table.casefold(), cols[0].name.casefold()))
-    return frozenset(pinned)
-
-
-def _is_sum(node: exp.Expr) -> bool:
-    return isinstance(node, exp.Sum) or (
-        isinstance(node, exp.Anonymous) and str(node.name).casefold() in _SUM_FUNCTIONS
-    )
-
-
-def _grouped_columns(select: exp.Select) -> set[tuple[str, str]]:
-    """(qualifier, column) pairs a SELECT groups by: by column, output alias, position or GROUP BY ALL."""
-    group = select.args.get("group")
-    if group is None:
-        return set()
-    outputs = select.expressions
-    keys: list[exp.Expr] = list(group.expressions)
-    if group.args.get("all"):
-        keys += [o for o in outputs if not o.find(exp.AggFunc)]
-    aliases = {o.alias.casefold(): o.this for o in outputs if isinstance(o, exp.Alias)}
-    out: set[tuple[str, str]] = set()
-    for key in keys:
-        position = _literal_int(key)
-        if position is not None and 1 <= position <= len(outputs):
-            key = outputs[position - 1]
-        if isinstance(key, exp.Alias):
-            key = key.this
-        key = _bare(key)
-        if isinstance(key, exp.Column) and not key.table and key.name.casefold() in aliases:
-            key = _bare(aliases[key.name.casefold()])
-        if isinstance(key, exp.Column):
-            out.add((key.table.casefold(), key.name.casefold()))
-    return out
-
-
-def _check_sums(
-    scope: Scope, tables: Mapping[str, frozenset[str]], loose: Mapping[str, frozenset[str]]
-) -> None:
-    """Hard rule 2 for typed SQL: a sum never adds across values that overlap or count different things.
-
-    Every column the semantic model marks non-additive, in each catalogued table the summing SELECT reads, must
-    be filtered to one value in WHERE (pinned_columns) or grouped by (GROUP BY, or PARTITION BY for a window
-    sum). A sum over a subquery or CTE built from such a table is refused: its rows can't be traced back here.
-    """
-    select = scope.expression
-    if not isinstance(select, exp.Select) or not loose:
-        return
-    sums = [
-        n for n in select.walk() if _is_sum(n) and n.find_ancestor(exp.Select, exp.SetOperation) is select
-    ]
-    if not sums:
-        return
-    where = select.args.get("where")
-    pinned = pinned_columns(where.this if where is not None else None)
-    grouped = _grouped_columns(select)
-    for alias, (_node, source) in scope.selected_sources.items():
-        if not isinstance(source, exp.Table):
-            if any(loose.get(t) for t in _reachable(source, tables)):
-                raise SqlRefused(
-                    "non_additive",
-                    "This query adds up rows of an inner query or WITH table, so it can't be checked that "
-                    "values which overlap or count different things (a Total row beside its parts, different "
-                    "conditions) are kept apart. Add up directly from the catalogued table instead.",
-                )
-            continue
-        cols = loose.get(source.name.casefold(), frozenset())
-        for n in sums:
-            window = n.find_ancestor(exp.Window)
-            held = set(grouped)
-            if window is not None and window.find_ancestor(exp.Select) is select:
-                held |= {
-                    (p.table.casefold(), p.name.casefold())
-                    for p in (_bare(x) for x in window.args.get("partition_by") or [])
-                    if isinstance(p, exp.Column)
-                }
-            missing = sorted(c for c in cols if not ({("", c), (alias.casefold(), c)} & (pinned | held)))
-            if missing:
-                raise SqlRefused(
-                    "non_additive",
-                    f"This query adds up {source.name} across {', '.join(missing)}, whose values overlap or "
-                    "count different things (a Total row beside its parts, or different conditions), so the "
-                    "sum would count the same cases twice or mix different things. Filter each of them to one "
-                    "value in WHERE, or add it to GROUP BY to get one row per value.",
                 )
 
 

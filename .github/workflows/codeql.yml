@@ -5,8 +5,6 @@ on:
   # pre-pr/** is the pre-PR gate (CLAUDE.md, "How changes land"): a commit goes green there before it reaches a PR.
   push:
     branches: [main, "pre-pr/**"]
-  # The merge queue: Analyze must report on the queued merge, or the queue waits for it forever.
-  merge_group:
   schedule:
     - cron: "41 5 * * 3"
 

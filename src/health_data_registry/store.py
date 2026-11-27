@@ -11,9 +11,6 @@ lake/ planted in a folder a clinician opens is never read (issue #74).
         manifest.json                    provenance: URLs, retrieved_at, sha256s (raw bytes and the two data
                                          files), contract version
     datasets/<id>/LATEST                 the snapshot_id the server reads
-    raw_records/<id>/<snapshot_id>.ndjson
-                                         the parsed publisher records (every value as published text) that the
-                                         dbt staging models in transform/ read; full loads only, never partial
     fetch_log/source=<id>/run_date=<YYYY-MM-DD>.jsonl
                                          one row per fetch attempt, ok or error: URL, time, status, bytes,
                                          sha256 and the error in plain words
@@ -22,10 +19,9 @@ A snapshot directory is never overwritten: its id is the fetch time plus a hash 
 contract and semantic versions, so the same id always means the same inputs. Snapshots written before the
 run-date partition (datasets/<id>/<snapshot_id>/) are still read.
 
-The snapshot table is built by the one generic, contract-driven staging step (staging.py), the same
-projection the dbt staging models are generated from: rename each publisher field to its column, turn the
-codebook's missing codes into NULL, cast to the declared type. Nothing else changes a value. Flag columns are never missing-coded (the registry refuses it): the publisher's flags are kept as
-published.
+Normalisation is driven only by the contract: rename each publisher field to its column, turn the
+codebook's missing codes into NULL, cast to the declared type. Nothing else changes a value. Flag columns
+are never missing-coded (the registry refuses it): the publisher's flags are kept as published.
 """
 
 from __future__ import annotations
@@ -46,8 +42,7 @@ from typing import Any
 
 import duckdb
 
-from health_data_registry.registry import Dataset
-from health_data_registry.staging import stage, write_parquet
+from health_data_registry.registry import Contract, Dataset
 
 _SNAPSHOT_ID = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{12}$")
 APP_NAME = "health-data-registry"
@@ -95,13 +90,10 @@ class Manifest:
     quality: dict[str, Any] = field(
         default_factory=dict
     )  # the release's data-test results (publish.quality_section)
-    # The staging run: layout version, rows, and codes the contract doesn't list (staging.py).
-    silver: dict[str, Any] = field(default_factory=dict)
     # Dashboard sources: the sha256 of each worksheet's column list read ("<view>/<worksheet>" -> sha256), so a
     # redesign is visible in provenance as well as stopping the load.
     layouts: dict[str, str] = field(default_factory=dict)
-    # Lake snapshots: the sha256 of each data file (SNAPSHOT_FILES). The server checks data.duckdb when it connects;
-    # export-public checks both before publishing (hub.verify_lake_snapshot).
+    # Lake snapshots: the sha256 of each data file (SNAPSHOT_FILES), checked before the server reads the snapshot.
     files: dict[str, str] = field(default_factory=dict)
 
     @staticmethod
@@ -213,9 +205,11 @@ def lake_root() -> Path:
 
 
 def sha256_file(path: Path) -> str:
-    # hashlib.file_digest reads in chunks itself; a hand-written read loop gave mutmut a mutant that never ends.
+    h = hashlib.sha256()
     with path.open("rb") as f:
-        return hashlib.file_digest(f, "sha256").hexdigest()
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _q(ident: str) -> str:
@@ -224,6 +218,33 @@ def _q(ident: str) -> str:
 
 def _lit(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+def select_list(contract: Contract) -> str:
+    """The contract-driven projection from raw publisher fields (all read as text) to typed columns."""
+    parts = []
+    for c in contract.columns:
+        src = _q(c.source_field)
+        if c.missing_codes:
+            codes = ", ".join(_lit(m) for m in c.missing_codes)
+            src = f"CASE WHEN trim({src}) IN ({codes}) THEN NULL ELSE {src} END"
+        if c.physical_type == "BOOLEAN":
+            expr = f"CASE lower(trim({src})) WHEN 'true' THEN true WHEN 'false' THEN false ELSE NULL END"
+        elif c.physical_type == "VARCHAR":
+            expr = src
+        elif c.physical_type in ("DATE", "TIMESTAMP"):
+            # Socrata floating timestamps look like 2024-01-06T00:00:00.000
+            expr = f"CAST(CAST(NULLIF(trim({src}), '') AS TIMESTAMP) AS {c.physical_type})"
+        elif c.physical_type in ("BIGINT", "INTEGER"):
+            # Counts arrive as text, "31" or "31.0" (NNDSS from 2025). A plain cast would round "1.5" to 2, so
+            # anything with a fraction stops the load instead of becoming a different count.
+            dec = f"CAST(NULLIF(trim({src}), '') AS DECIMAL(38, 6))"
+            msg = _lit(f"{c.name}: a value has a fraction, so it isn't a whole count; check the contract")
+            expr = f"CASE WHEN {dec} IS NULL THEN NULL WHEN {dec} = trunc({dec}) THEN CAST({dec} AS {c.physical_type}) ELSE error({msg}) END"
+        else:
+            expr = f"CAST(NULLIF(trim({src}), '') AS {c.physical_type})"
+        parts.append(f"{expr} AS {_q(c.name)}")
+    return ",\n  ".join(parts)
 
 
 def write_raw(lake: Path, fetches: Sequence[RawFetch]) -> None:
@@ -261,10 +282,6 @@ def build_snapshot(
     snapshot_id = f"{retrieved:%Y%m%dT%H%M%SZ}-{digest}"
     out = snapshot_dir(lake, ds.id, snapshot_id)
     if (out / "manifest.json").is_file():  # the same inputs were snapshotted already: never overwrite
-        if not partial and ds.entry.licence.redistribution:
-            keep_raw_records(
-                lake, ds, snapshot_id, records_files
-            )  # a lake from before raw_records gets them now
         _point_latest(lake, ds.id, snapshot_id)
         return Manifest.read(out / "manifest.json")
     tmp = Path(tempfile.mkdtemp(prefix=f".{ds.id}-", dir=lake))
@@ -274,13 +291,14 @@ def build_snapshot(
         files = "[" + ", ".join(_lit(str(p)) for p in records_files) + "]"
         con = duckdb.connect(str(tmp / "data.duckdb"))
         try:
-            raw = f"read_json({files}, format='newline_delimited', columns={cols})"
-            # A full load must carry every declared field: read_json fills a missing one with NULL, so a renamed
-            # publisher field would otherwise load as an all-empty column. A partial sample is not checked.
-            report = stage(
-                con, ds.contract, raw, table=ds.id, present=None if partial else fields_in(con, files)
+            con.execute(
+                f"CREATE TABLE {_q(ds.id)} AS SELECT\n  {select_list(ds.contract)}\n"
+                f"FROM read_json({files}, format='newline_delimited', columns={cols})"
             )
-            write_parquet(con, ds.contract, ds.id, str(tmp / "data.parquet"))
+            row = con.execute(f"SELECT count(*) FROM {_q(ds.id)}").fetchone()  # noqa: S608 - quoted contract identifiers, bound values
+            n = int(row[0]) if row else 0
+            _check_required(con, ds)
+            con.execute(f"COPY {_q(ds.id)} TO {_lit(str(tmp / 'data.parquet'))} (FORMAT parquet)")
         finally:
             con.close()
         manifest = Manifest(
@@ -292,13 +310,12 @@ def build_snapshot(
             retrieved_at=retrieved.isoformat(),
             source_urls=[f.url for f in fetches],
             raw_sha256=[f.sha256 for f in fetches],
-            row_count=report.row_count,
+            row_count=n,
             licence=ds.entry.licence.id,
             redistribution=ds.entry.licence.redistribution,
             partial=partial,
             layouts=dict(layouts or {}),
-            notes=[*notes, *report.notes()],
-            silver=report.as_dict(),
+            notes=list(notes),
             files={name: sha256_file(tmp / name) for name in SNAPSHOT_FILES},
         )
         (tmp / "manifest.json").write_text(json.dumps(asdict(manifest), indent=2) + "\n", encoding="utf-8")
@@ -307,44 +324,8 @@ def build_snapshot(
     finally:
         if tmp.exists():
             shutil.rmtree(tmp, ignore_errors=True)
-    if not partial and ds.entry.licence.redistribution:
-        keep_raw_records(lake, ds, snapshot_id, records_files)
     _point_latest(lake, ds.id, snapshot_id)
     return manifest
-
-
-def fields_in(con: duckdb.DuckDBPyConnection, files: str) -> set[str] | None:
-    """Every field name in a load's records (`files` is a SQL list of paths), or None when it has no records."""
-    rows = con.execute(
-        f"SELECT DISTINCT unnest(json_keys(json)) FROM read_ndjson_objects({files})"  # noqa: S608 - quoted paths
-    ).fetchall()
-    return {str(r[0]) for r in rows} or None
-
-
-def keep_raw_records(lake: Path, ds: Dataset, snapshot_id: str, records_files: Sequence[Path]) -> Path:
-    """Keep one full load's parsed records where the dbt staging models read them; written once, never rewritten.
-
-    Refuses a source whose licence forbids keeping a copy (ADR 0009), whatever the caller checked. A failed copy
-    leaves no temporary file behind.
-    """
-    if not ds.entry.licence.redistribution:
-        raise ValueError(
-            f"{ds.id}: its licence forbids keeping a copy, so its records are never kept on disk"
-        )
-    target = lake / "raw_records" / ds.id / f"{snapshot_id}.ndjson"
-    if target.is_file():
-        return target
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-    try:
-        with tmp.open("wb") as out:
-            for p in records_files:
-                with p.open("rb") as fh:
-                    shutil.copyfileobj(fh, out)
-        os.replace(tmp, target)
-    finally:
-        tmp.unlink(missing_ok=True)
-    return target
 
 
 def _point_latest(lake: Path, dataset_id: str, snapshot_id: str) -> None:
@@ -353,6 +334,17 @@ def _point_latest(lake: Path, dataset_id: str, snapshot_id: str) -> None:
     tmp = latest.with_name(f".LATEST.{os.getpid()}.tmp")
     tmp.write_text(snapshot_id + "\n", encoding="utf-8")
     os.replace(tmp, latest)
+
+
+def _check_required(con: duckdb.DuckDBPyConnection, ds: Dataset) -> None:
+    for c in ds.contract.columns:
+        if c.required:
+            row = con.execute(f"SELECT count(*) FROM {_q(ds.id)} WHERE {_q(c.name)} IS NULL").fetchone()  # noqa: S608 - quoted contract identifiers, bound values
+            nulls = int(row[0]) if row else 0
+            if nulls:
+                raise ValueError(
+                    f"{ds.id}: required column {c.name} has {nulls} empty values; check the contract"
+                )
 
 
 def latest_snapshot(lake: Path, dataset_id: str) -> tuple[Path, Manifest] | None:

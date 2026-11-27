@@ -347,8 +347,7 @@ def test_describe_returns_dimension_values_rules_and_provenance(vocab: tuple[Reg
     d = _json(tools.describe_dataset(reg, "toy_cases", eng, fmt="json"))
     dv = d["dimension_values"]
     assert dv["condition"] == {"column": "condition", "values": LABELS,
-                               "from": "the catalog's condition labels (the publisher's own)",
-                               "never_added_up_because": "each is a different condition"}  # fmt: skip
+                               "from": "the catalog's condition labels (the publisher's own)"}  # fmt: skip
     assert dv["state"] == {"column": "reporting_area", "values": ["MICHIGAN", "OHIO", "US RESIDENTS"],
                            "from": "the loaded copy of the data"}  # fmt: skip
     assert dv["year"]["values"] == [2022, 2023, 2024]

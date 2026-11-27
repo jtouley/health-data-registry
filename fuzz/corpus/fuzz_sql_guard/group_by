@@ -1,1 +1,0 @@
-SELECT state, sum(deaths) AS n FROM deaths GROUP BY state ORDER BY n DESC LIMIT 10

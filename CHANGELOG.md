@@ -9,75 +9,19 @@ All notable changes to this project are documented here. The format follows
 ### Security
 
 - `query_sql` refuses queries that could build values too large to answer safely (#74): `lpad`/`rpad` lengths
-  over 1,000, `string_agg`/`list`/`array_agg` and the other ways to gather a whole column into one value
-  (`ARRAY(SELECT ...)`, `max`/`min`/`arg_max`/`arg_min` with a count), `levenshtein`, recursive `WITH`,
-  non-literal `replace` replacements and `strftime` formats, and any one value that `||`, `concat`, `replace`,
-  splitting, lists or structs could grow more than 256-fold. Growth is counted per value, through CTEs and
-  subqueries, so separate columns and conditions don't add up against each other. Each refusal says what to ask
-  instead, and `query_sql` passes that next step on.
+  over 1,000, `string_agg`/`list`/`array_agg`, `levenshtein`, recursive `WITH`, non-literal `replace`
+  replacements, and chains of `||`, `concat`, `replace`, lists or structs that could grow a value more than
+  256-fold. Each refusal says what to ask instead.
 - `query_sql` refuses any query that reaches two sources with no declared join in any part of it, including each
   branch of a `UNION`, `INTERSECT` or `EXCEPT`, every subquery and every CTE (#74).
 - The lake is never read from the working folder: it is `$HDR_LAKE` (a full path) or a per-user data folder.
-  Each time the server connects, it checks each lake snapshot's dataset id, snapshot id, contract version and
-  review status, that its folder and files belong to the current user and can't be changed by others (on Unix),
-  and that `data.duckdb` is a regular file with the sha256 in its manifest. A snapshot that fails, or can't be
-  read, is refused in plain words; the others still answer. DuckDB then reads the file by its path, so a change
-  made after that check is read until the next reconnect. The manifest sits beside the data, so these hashes
-  catch damage, not tampering. A file is hashed once per server process and again only when its size, times or
-  inode change. `export-public` checks `data.duckdb` and `data.parquet` the same way before publishing, and
-  compares the copy it publishes. Cached hub files are checked again each time the server reconnects (#74).
-  Snapshots built before this change have no file fingerprints and must be rebuilt with `refresh`.
-
-### Fixed
-
-- A summed count never adds up labels that overlap or count different things (hard rule 2). Semantic-model
-  dimensions say `non_additive: true` or `false`, and each `true` says why in plain words
-  (`non_additive_reason`), which the refusal and `describe_dataset` show. A metric or series that neither picks
-  one value of such a dimension nor shows each value on its own row is declined in plain words with a next step.
-  `query_sql` applies the same rule to a typed `sum()`: each such column is filtered to one value in WHERE or
-  grouped by, and a column a model leaves undeclared counts as such. Before, a weekly NNDSS count asked for
-  without a condition added every label together, including Confirmed, Probable and Total and animal rabies.
-  The tools always picked one label, so their answers don't change.
-- `validate` refuses a summed metric that keeps the publisher's total rows while adding up a place or group
-  declared additive (NNDSS areas add up only once TOTAL, US RESIDENTS and the divisions are excluded).
-- Every percent, estimate or rate names the publisher's uncertainty bounds, in the same units, or says
-  `uncertainty: none` and why in plain words; a bound measure no metric returns is a load error. A row whose
-  interval is empty says so.
-- The CDI total case count is read as the one published Total cell (grouping 'All cases'), not a sum. An empty
-  published cell, there or in any other figure read as published, comes back as "suppressed or not published",
-  never a blank.
-- Semantic-model versions: CDI, NNDSS and RESP-NET 0.2.0; Detroit annual and ED-visit models 0.1.1.
-- NHSN contract: two quality rules check that the confidence interval is filled wherever the percent resistant
-  is, and only there, as the publisher's column descriptions state.
-
-### Changed
-
-- The README is rewritten for clinicians: five setup steps that each say what you'll see (the Start here
-  helper is the check step), a C. auris in Michigan example checked against CDC with every year provisional and
-  CDC's later count beside each, a short GBD and PubMed section, and light and dark images from
-  `tools/readme_svg/gen.py`. The setup guide no longer says the hosted preview can't answer CDC questions (the hub
-  has published releases since `release-2026-11-24`).
-- The Something's wrong helper, the setup guide and `docs/tools.md` now tell "the hub could not be reached" (try
-  again) apart from "the hub has no published release yet" (retrying won't help).
-- `tools/` is linted and type-checked with the rest of the code, and a test fails if the committed README images
-  differ from what the generator draws.
+  Before a lake snapshot is read, its dataset id, snapshot id, contract version, review status and the sha256 of
+  `data.duckdb` and `data.parquet` are checked against its manifest; a mismatch is refused in plain words.
+  Cached hub files are re-hashed each time the server reconnects (#74). Snapshots built before this change have
+  no file fingerprints and must be rebuilt with `refresh`.
 
 ### Added
 
-- `serve --http`: the hosted, read-only connector over stateless Streamable HTTP (hub releases and live reads
-  only), with one deadline per tool call, a result-size cap, rate limits per MCP session and overall, and no
-  request content in any log; `space/` for a Hugging Face Docker Space and `docs/dev/hosting.md`.
-- Long answers come in pages instead of being refused: every row-returning tool (and the matching CLI commands,
-  `get-series`, `get-aligned-with-gbd`, `get-provenance`, `query-sql` and the analysis tools) takes `page` and
-  `pin`; each page carries real rows, the same provenance line as every answer, and the exact call for the next
-  page, and a pin keeps every page on one version of the data. `query_sql` adds `ORDER BY ALL` when a query has
-  no `ORDER BY`. The hosted server refuses to start with a limit of 0, a negative number, inf or nan, or with
-  `HDR_PAGE_CHARS` above `HDR_MAX_RESULT_CHARS`.
-- Hosted server hardening from review: request bodies over 1 MiB are refused with 413; session ids and pins are
-  signed (`HDR_SIGNING_KEY`), calls without a signed session id share one rate-limit bucket, and a refused call
-  spends no token; pins carry the answer's row count and row-key hash and may name only release tags; hub
-  downloads end by the call deadline and a stuck call never holds the engine past it; `serve --http` binds to
-  127.0.0.1 by default with Host and Origin checks; `query_sql` adds tie-breakers to its own `ORDER BY`.
 - Condition vocabulary: each catalog entry lists the publisher's own condition labels (`conditions:`, with
   where they come from), and `get_series`, `get_rate` and `get_trend` accept any of them through the semantic
   model's `generic_series`, with the same aggregation rules as the named series. `validate` fails when a local

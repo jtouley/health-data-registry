@@ -24,8 +24,7 @@ from typing import Any
 import duckdb
 
 from health_data_registry.registry import Dataset
-from health_data_registry.staging import StagingReport, stage
-from health_data_registry.store import Manifest, RawFetch
+from health_data_registry.store import Manifest, RawFetch, select_list
 
 LIVE_TTL_S = 600.0  # how long parsed publisher records stay in memory; never written to disk
 # How long a browser-read dashboard's records stay in memory (never on disk): its read takes minutes, its data
@@ -53,9 +52,8 @@ def kept_note(ds: Dataset, retrieved_at: str) -> str:
 
 
 def is_live(ds: Dataset) -> bool:
-    """A source whose terms forbid redistribution is served live, unless it is kept in its own private store
-    (``private_store: true``, read through private.read_rows)."""
-    return ds.entry.tier == "live"
+    """A source whose terms forbid redistribution is served live only."""
+    return not ds.entry.licence.redistribution
 
 
 def attribution(ds: Dataset) -> str:
@@ -122,16 +120,11 @@ def fetch_live(ds: Dataset, get: Any) -> LiveTable:
     return LiveTable(records=records, manifest=m, fetched=time.monotonic(), dashboard=ds.entry.source.browser)
 
 
-def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[str, Any]]) -> StagingReport:
-    """Stage records into an in-memory silver table named after the dataset (the same step as the lake).
+def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[str, Any]]) -> None:
+    """Normalise records into an in-memory table named after the dataset.
 
     Refuses a file-backed connection: the source's terms forbid keeping a copy (ADR 0009), so this checks the
     connection itself rather than trusting the caller. A table that can't be normalised leaves nothing behind.
-
-    The checks are the lake's, on purpose: an empty required value (a row with no country or year) or a declared
-    field that no record carries refuses the whole source for this session, as it would a stored load. Answering
-    from the other rows would drop rows from totals without saying so (hard rules 1 and 2); the refusal tells the
-    clinician the source is unavailable instead.
     """
     where = con.execute(
         "SELECT path FROM duckdb_databases() WHERE database_name = current_database()"
@@ -153,7 +146,6 @@ def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[st
                 f"INSERT INTO {q(raw)} VALUES ({marks})",  # noqa: S608 - quoted contract identifiers, bound values
                 [[r.get(f) for f in fields] for r in records],
             )
-        present = {k for r in records for k in r} or None
-        return stage(con, ds.contract, q(raw), table=ds.id, temp=True, present=present)
+        con.execute(f"CREATE TEMP TABLE {q(ds.id)} AS SELECT\n  {select_list(ds.contract)}\nFROM {q(raw)}")  # noqa: S608 - quoted contract identifiers
     finally:
         con.execute(f"DROP TABLE IF EXISTS {q(raw)}")
