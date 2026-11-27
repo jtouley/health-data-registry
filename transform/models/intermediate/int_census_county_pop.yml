@@ -86,9 +86,10 @@ models:
           check: total_matches
           checks: 'The sum of the population estimates (population), over every row, the nation and state rows included
             beside their counties, is the same in staging and the intermediate model. Each value is an estimate,
-            never summed in an answer: this sum is only a checksum between layers. It guards the generated intermediate
-            model, which today is a view with no join, filter or aggregation, so it checks our code, not the publisher''s
-            data; it becomes a reconciliation of the data once a mart can change the grain (#131).'
+            and this sum adds the nation and states to their counties: it is only a checksum between layers, not
+            an answer. It guards the generated intermediate model, which today is a view with no join, filter or
+            aggregation, so it checks our code, not the publisher''s data; it becomes a reconciliation of the data
+            once a mart can change the grain (#131).'
   columns:
   - name: sumlev
     data_type: varchar

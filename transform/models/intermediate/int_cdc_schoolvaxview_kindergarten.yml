@@ -228,7 +228,7 @@ models:
           check: total_matches
           checks: 'The total number of kindergartners with an exemption (number_of_exemptions), summed over every
             row, any total rows included, is the same in staging and the intermediate model: a checksum between
-            layers, never an answer (an answer never adds a total row to its parts). It guards the generated intermediate
+            layers, not an answer (it adds any total rows to their parts). It guards the generated intermediate
             model, which today is a view with no join, filter or aggregation, so it checks our code, not the publisher''s
             data; it becomes a reconciliation of the data once a mart can change the grain (#131).'
   columns:

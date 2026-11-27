@@ -179,10 +179,10 @@ models:
           contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
           check: total_matches
           checks: 'The total number of isolates tested (isolates_tested), summed over every row, is the same in
-            staging and the intermediate model: a checksum between layers, never an answer (an answer never adds
-            a total row to its parts). It guards the generated intermediate model, which today is a view with no
-            join, filter or aggregation, so it checks our code, not the publisher''s data; it becomes a reconciliation
-            of the data once a mart can change the grain (#131).'
+            staging and the intermediate model: a checksum between layers, not an answer (it adds any total rows
+            to their parts). It guards the generated intermediate model, which today is a view with no join, filter
+            or aggregation, so it checks our code, not the publisher''s data; it becomes a reconciliation of the
+            data once a mart can change the grain (#131).'
   - dbt_expectations.expect_table_aggregation_to_equal_other_table:
       name: cdc_nhsn_ar_hai_total_resistant_isolates_staging_to_intermediate
       arguments:
@@ -196,10 +196,10 @@ models:
           contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
           check: total_matches
           checks: 'The total number of resistant isolates (resistant_isolates), summed over every row, is the same
-            in staging and the intermediate model: a checksum between layers, never an answer (an answer never adds
-            a total row to its parts). It guards the generated intermediate model, which today is a view with no
-            join, filter or aggregation, so it checks our code, not the publisher''s data; it becomes a reconciliation
-            of the data once a mart can change the grain (#131).'
+            in staging and the intermediate model: a checksum between layers, not an answer (it adds any total rows
+            to their parts). It guards the generated intermediate model, which today is a view with no join, filter
+            or aggregation, so it checks our code, not the publisher''s data; it becomes a reconciliation of the
+            data once a mart can change the grain (#131).'
   columns:
   - name: source
     data_type: varchar

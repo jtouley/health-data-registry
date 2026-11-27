@@ -142,7 +142,7 @@ schema:
             implementation: {check: total_matches, model: intermediate, compare: staging}
             dimension: consistency
             severity: error
-            description: "The total of this week's reported cases (m1), summed over every row, the publisher's total-area rows included, is the same in staging and the intermediate model: a checksum between layers, never an answer (an answer never adds a total row to its parts). It guards the generated intermediate model, which today is a view with no join, filter or aggregation, so it checks our code, not the publisher's data; it becomes a reconciliation of the data once a mart can change the grain (#131)."
+            description: "The total of this week's reported cases (m1), summed over every row, the publisher's total-area rows included, is the same in staging and the intermediate model: a checksum between layers, not an answer (it adds any total rows to their parts). It guards the generated intermediate model, which today is a view with no join, filter or aggregation, so it checks our code, not the publisher's data; it becomes a reconciliation of the data once a mart can change the grain (#131)."
           - id: m1_empty_only_where_flagged
             dimension: consistency
             severity: warn
