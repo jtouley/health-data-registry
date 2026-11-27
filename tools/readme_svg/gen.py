@@ -133,10 +133,10 @@ def coverage(t: Theme) -> str:
             '<tspan font-style="italic">C. difficile</tspan> infections, national,',
             "from CDC surveillance sites",
         ],
-        ["Tuberculosis by country (WHO)"],
+        ["Tuberculosis and new HIV infections", "by country (WHO)"],
     ]
     nxt = [["Measles cases by Michigan county"], ["Detroit Health Department figures"]]
-    later = [["HIV"]]
+    later = [["HIV in the United States"]]
 
     def mark_now(y: float) -> str:
         return (
@@ -182,8 +182,8 @@ def coverage(t: Theme) -> str:
         "Covered now, from CDC: notifiable infections by US state, from C. auris to syphilis; antibiotic "
         "resistance in hospital infections, by state; COVID-19, flu and RSV hospitalization rates at CDC "
         "surveillance sites; C. difficile infections, national, from CDC surveillance sites. From WHO: "
-        "tuberculosis by country. "
-        "Coming next: measles cases by Michigan county; Detroit Health Department figures. Not covered yet: HIV.",
+        "tuberculosis and new HIV infections by country. Coming next: measles cases by Michigan county; Detroit "
+        "Health Department figures. Not covered yet: HIV in the United States.",
         body,
     )
 
