@@ -187,7 +187,7 @@ def test_search_datasets(registry: Registry) -> None:
 
 def test_suggest_datasets_says_why_not(registry: Registry) -> None:
     yes = tools.suggest_datasets(registry, "Is syphilis rising in Michigan since 2022?", fmt="json")
-    assert yes["rows"][0][:2] == ["toy_cases", "yes"]
+    assert yes["rows"][0][:2] == ["toy_cases", "unknown"]  # no places declared yet (#111): never a fit
     no = tools.suggest_datasets(registry, "Syphilis by county in Michigan in 2010", fmt="json")
     why = no["rows"][0][2]
     assert "county" in why and "2022-2024" in why

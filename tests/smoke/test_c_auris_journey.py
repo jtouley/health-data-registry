@@ -110,8 +110,11 @@ def test_the_trial_questions_are_the_four_dev_trials(trials: dict[str, ExpectedR
 
 def test_step1_suggest_routes_c_auris_to_nndss_only(journey: Journey) -> None:
     out = journey.call("suggest_datasets", question=QUESTION)
-    assert client.fitting_sources(out) == [NNDSS]
-    assert "places ['Michigan'], years [2024]" in out
+    assert (
+        client.fitting_sources(out) == []
+    )  # no source declares its places yet, so none is marked as fitting
+    assert client.candidate_sources(out) == [NNDSS]
+    assert "places Michigan, years 2024" in out
 
 
 def test_step2_describe_names_both_series_their_flags_and_caveats(journey: Journey) -> None:
@@ -219,7 +222,9 @@ def test_step7_an_uncatalogued_c_auris_source_shows_no_number(
     journey: Journey, source: str, source_id: str
 ) -> None:
     out = journey.call("suggest_datasets", question=f"C. auris in Michigan in 2024 from the {source}")
-    assert client.fitting_sources(out) == [NNDSS], out  # only NNDSS reports C. auris; nothing else fits
+    assert client.candidate_sources(out) == [NNDSS], (
+        out
+    )  # only NNDSS reports C. auris; nothing else is offered
     assert source_id not in out  # no entry is invented for the uncatalogued source
     out = journey.call("describe_dataset", source_id=source_id)
     assert "Use search_datasets to see what is available" in out
@@ -340,11 +345,6 @@ def test_trial_vaccination_is_declined_with_no_number(
     assert scored.a.passed and scored.a.prov_na, (reply, scored)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#37 item 9: suggest_datasets still offers cdc_respnet for 'HIV care' by word overlap",
-)
 def test_trial_hiv_care_is_declined_with_no_number(
     journey: Journey, trials: dict[str, ExpectedRecord]
 ) -> None:

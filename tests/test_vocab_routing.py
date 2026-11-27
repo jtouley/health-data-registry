@@ -417,7 +417,7 @@ def test_discovery_carries_provenance(vocab: tuple[Registry, Engine]) -> None:
     assert row["retrieved_at"] == "2026-11-24T12:00:00" and row["contract_status"] == "draft"
     sug = _json(tools.suggest_datasets(reg, "Q fever in Ohio 2022", engine=eng, fmt="json"))
     srow = dict(zip(sug["columns"], sug["rows"][0], strict=True))
-    assert srow["can_answer"] == "yes" and srow["what_it_supports"].startswith(
+    assert srow["can_answer"] == "unknown" and srow["what_it_supports"].startswith(
         "Q fever, Acute; Q fever, Chronic"
     )
     assert srow["source_url"] == "https://data.cdc.gov/d/toy0-toy0" and sug["presentation_rules"]
@@ -663,3 +663,20 @@ def test_real_rates_refuse_animal_counts(tmp_path: Path) -> None:
         "No rate per 100,000 people is given for 'Rabies, Animal': 'Rabies, Animal' counts rabid animals, not people."
     )
     assert rate["next_step"] == next_step_for("not_a_human_count")
+
+
+def test_header_counts_only_the_rows_returned(tmp_path: Path) -> None:
+    """#112 item 1: three Q fever labels match, but only one has a row in 2023, so the header names no mix."""
+    vocab = VOCAB.replace(
+        "labels: [{}]".format(", ".join(f'"{x}"' for x in LABELS)),
+        "labels: [{}]".format(
+            ", ".join(f'"{x}"' for x in ["Legionellosis", "Syphilis", "Tularemia", *SPELLED])
+        ),
+    )
+    later = {"states": "OHIO", "year": "2023", "label": "Q fever, Acute", "m1": "5", "m2": ""}
+    reg, eng = build(tmp_path, [*RECORDS, *SPELLED_ROWS, later], vocab=vocab)
+    out = _json(tools.get_series(reg, eng, condition="Q fever", year_start=2023, fmt="json"))
+    assert [(r[1], r[2], r[9]) for r in out["rows"]] == [(2023, 5, "Q fever, Acute")]
+    assert not any(n.startswith(("Rows cover", "Rows mix")) for n in out["notes"])
+    both = _json(tools.get_series(reg, eng, condition="Q fever", fmt="json"))
+    assert both["notes"][0].startswith("Rows cover 3 different condition labels")  # every label has rows

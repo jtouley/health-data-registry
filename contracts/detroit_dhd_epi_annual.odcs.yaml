@@ -2,7 +2,7 @@ apiVersion: v3.2.0
 kind: DataContract
 id: detroit_dhd_epi_annual
 name: Detroit and Michigan annual cases and rates (Detroit Health Department Epidemiology Dashboard)
-version: 0.1.0
+version: 0.1.1
 status: draft
 domain: infectious_disease
 description:
@@ -100,6 +100,7 @@ schema:
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: "SUM(Cases) flag"}
+          - {property: mayBeEmpty, value: true, description: "The dashboard adapter writes this field only on a mark the dashboard shows suppressed (adapters/tableau.py), so a read with no suppressed count carries none of it."}
           - {property: flagFor, value: cases}
           - {property: flagCodes, value: {"<6": "fewer than 6 cases: the marker the same dashboard's age charts show for a small count (AGG(Count Suppressed)); the count is suppressed and left empty"}}
     quality:

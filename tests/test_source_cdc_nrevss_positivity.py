@@ -52,7 +52,9 @@ def test_a_plain_question_about_rsv_test_positivity_routes_here() -> None:
     reg = load_registry(ROOT)
     rows = _rows(tools.suggest_datasets(reg, "RSV test positivity nationally"))
     assert rows[0]["source_id"] == DS
-    assert rows[0]["can_answer"] == "yes"
+    # No source declares its places yet (#111): offered first, with that one open question.
+    assert rows[0]["can_answer"] == "unknown"
+    assert rows[0]["why"] == "this source doesn't declare which places it covers yet"
 
 
 @pytest.mark.parametrize("question", ["RSV test positivity by region", "regional RSV test positivity"])

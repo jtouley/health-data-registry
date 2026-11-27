@@ -190,7 +190,7 @@ def test_suggest_datasets_exact(registry: Registry) -> None:
                   "public-domain-us-federal (https://www.cdc.gov/other/agencymaterials.html)",
                   "CDC. Toy table. https://data.cdc.gov/d/toy0-toy0", "draft"]],
         "notes": [
-            "Read as: condition words ['legionellosis'], places ['Michigan'], years [2019, 2021].",
+            "Read as: condition words legionellosis, places Michigan, years 2019 to 2021.",
             "Public data shows what and where; your hospital's own data, kept in approved systems, answers why.",
             "Never put patient information in the chat.",
             "Next step: Open describe_dataset for a source search_datasets lists, pick one of its condition labels, "
@@ -199,7 +199,11 @@ def test_suggest_datasets_exact(registry: Registry) -> None:
         "presentation_rules": tools.PRESENTATION_RULES,
     }  # fmt: skip
     ok = _json(tools.suggest_datasets(registry, "syphilis in Ohio 2023", fmt="json"))
-    assert ok["rows"][0][:3] == ["toy_cases", "yes", "fits"]
+    assert ok["rows"][0][:3] == [
+        "toy_cases",
+        "unknown",  # its catalog's level never declares places (#111)
+        "this source doesn't declare which places it covers yet, so it isn't known whether it covers Ohio",
+    ]
     off = _json(tools.suggest_datasets(registry, "measles", fmt="json"))
     assert off["rows"][0][1:3] == ["no", "doesn't cover this condition"]
 

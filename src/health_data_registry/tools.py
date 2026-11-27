@@ -18,7 +18,7 @@ from typing import Any, Literal, NamedTuple
 
 import duckdb
 
-from health_data_registry import geo
+from health_data_registry import coverage, geo
 from health_data_registry.deadline import DeadlineExceeded
 from health_data_registry.paging import paged, respond
 from health_data_registry.query import Engine, QueryRefused, next_step_for
@@ -383,31 +383,44 @@ def spelling_notes(labels: Sequence[str]) -> list[str]:
     ]
 
 
-def _all_labels(registry: Registry) -> dict[str, str]:
-    """Every condition label served here (catalog vocabulary and named series), normalised -> as published."""
+def _all_labels(registry: Registry, source_id: str | None = None) -> dict[str, str]:
+    """Every condition label served here (catalog vocabulary and named series), normalised -> as published; with
+    source_id, only that source's."""
     out: dict[str, str] = {}
     for ds in registry:
+        if source_id and ds.id != source_id:
+            continue
         for x in [*ds.condition_labels, *(s.label for s in ds.semantic.series)]:
             out.setdefault(norm_label(x), x)
     return out
 
 
-def unknown_condition(registry: Registry, condition: str, fmt: Fmt, what: str = "") -> Out:
+def unknown_condition(
+    registry: Registry, condition: str, fmt: Fmt, what: str = "", source_id: str | None = None
+) -> Out:
     """No source serves these words: say so, with spelling suggestions (did_you_mean), labels sharing a word
     (nearest_served) and, when the words name a GBD cause in a crosswalk, that cause by name (outside_registry).
-    GBD is never fetched."""
+    GBD is never fetched. With source_id, only that source is searched and suggested: the source asked for is
+    honoured, never swapped for another."""
     want = norm_label(condition)
-    labels = _all_labels(registry)
+    labels = _all_labels(registry, source_id)
     close = difflib.get_close_matches(want, list(labels), n=3, cutoff=0.75)
     did_you_mean = [labels[k] for k in close]
     # Only a label sharing a specific word (the pathogen or disease, never "virus" or "infection") is offered.
     words = {w for w in _specific_words(want) if len(w) >= 4}
     nearest = [v for k, v in sorted(labels.items()) if words & set(k.split()) and v not in did_you_mean][:8]
     outside = _gbd_causes_named(registry, condition)
+    who = f"{source_id} doesn't report" if source_id else "No loaded source reports"
     return message(
-        f"No loaded source reports '{condition}'" + (f" as {what}" if what else "") + ".",
+        f"{who} '{condition}'" + (f" as {what}" if what else "") + ".",
         fmt,
         refused="unknown_condition",
+        next_step=(
+            f"Use describe_dataset on {source_id} to see the conditions it reports, then ask again with one of "
+            "them, or ask without source_id."
+            if source_id
+            else None
+        ),
         did_you_mean=did_you_mean,
         nearest_served=nearest,
         outside_registry=outside,
@@ -716,52 +729,336 @@ def dimension_values(ds: Dataset, engine: Engine | None) -> dict[str, dict[str, 
     return out
 
 
+# Measures only GBD models: no source here holds them, so a question about one is handed to the IHME GBD connector.
+_GBD_MEASURE = re.compile(
+    r"\b(years? of life lost|ylls?|dalys?|disability[- ]adjusted|years? lived with disability|ylds?|"
+    r"life expectancy|burden of disease)\b",
+    re.IGNORECASE,
+)
+# A question about the literature (papers, abstracts, prior work), not about counts: it goes to the conference
+# abstract tables here and to the fellow's own PubMed and OpenAlex connectors, never to a surveillance source.
+_LITERATURE = re.compile(
+    r"\b(abstracts?|papers?|publications?|literature|prior work|previous work|presented at|posters?|"
+    r"case reports?|case series|systematic reviews?|meta-analys[ie]s|articles?|preprints?|"
+    r"has anyone (?:published|presented|reported|studied|written|looked)|published (?:on|about|work|studies))\b",
+    re.IGNORECASE,
+)
+# How often abstracts became papers: get_publication_outlook answers that here, from its reviewed base rates.
+_OUTLOOK = re.compile(
+    r"\b(?:became|become|becomes|turned into|go on to be|went on to be|end up as|published as)\b"
+    r"[^.?]{0,200}\b(?:papers?|publications?|articles?|published)\b",  # bounded: never scans a long text twice
+    re.IGNORECASE,
+)
+# A meeting alias that is also a condition's name is never read as a meeting on its own ("STI & HIV in Michigan" is
+# a data question; "STI & HIV World Congress" still names the meeting).
+_NOT_A_MEETING = frozenset(["aids", "sti & hiv", "sti and hiv"])
+# The longest question suggest_datasets reads: no clinician's question is longer, and it bounds every pattern below.
+MAX_QUESTION_CHARS = 2000
+# Words after which a capitalised word may be a place ("in Lagos", "from Brazil", "in Lagos and Brazil").
+_PLACE_LEAD = frozenset(["in", "for", "from", "across", "within", "at", "near", "to", "versus", "vs", "than",
+                         "between", "outside"])  # fmt: skip
+# Words of a literature question that say what kind of answer is wanted, never what it is about.
+_LITERATURE_WORDS = frozenset(
+    [
+        "abstract", "abstracts", "paper", "papers", "publication", "publications", "published", "literature",
+        "prior", "previous", "work", "presented", "presentation", "presentations", "poster", "posters", "report",
+        "reports", "reported", "series", "systematic", "review", "reviews", "meta-analysis", "meta-analyses",
+        "article", "articles", "preprint", "preprints", "anyone", "studied", "written", "looked", "studies",
+        "study", "conference", "conferences", "meeting", "meetings", "any", "about", "there", "been", "what",
+        "which", "who", "were", "share", "proportion", "percent", "often", "many", "much", "went", "go", "goes",
+        "become", "became", "becomes", "turned", "into", "end", "up", "full", "later", "eventually",
+    ]
+)  # fmt: skip
+# The connectors a literature question is handed to: the fellow's own, named here and never called by this server.
+LITERATURE_CONNECTORS = ("pubmed", "openalex")
+# The one way every answer names that hand-off.
+SEARCH_PUBMED = "search your PubMed connector (or OpenAlex, if you have it)"
+
+
+def abstract_search(sources: Sequence[Dataset]) -> str:
+    """The one sentence every answer gives for searching conference abstract tables here."""
+    ids = _listed([ds.id for ds in sources], "or")
+    pages = _listed([ds.entry.source.landing_url for ds in sources], "or")
+    return f"To search these abstracts now, use query_sql on {ids} (titles, DOIs and links), or browse them at {pages}."
+
+
+# Words a question uses that are neither a place nor a condition, so a capitalised one is never read as a place.
+_QUESTION_WORDS = frozenset(
+    [
+        "among", "between", "during", "after", "before", "latest", "recent", "last", "past", "give", "list",
+        "find", "tell", "me", "please", "number", "numbers", "january", "february", "march", "april", "may",
+        "june", "july", "august", "september", "october", "november", "december", "gbd", "ihme",
+    ]
+)  # fmt: skip
+
+
+def _unplaced(registry: Registry, text: str) -> list[str]:
+    """Capitalised words, written where a place goes ("in Lagos", "from Brazil", "in Lagos and Brazil"), that may
+    name a place this registry can't resolve: any that is not a known place, condition, publisher or question
+    word. A sentence's first word, a word anywhere else ("Did", "Black") and an acronym (TB, HIV) are never one.
+    One linear pass over the words, so a long text never makes it slow."""
+    known = set().union(*(_haystack(ds) for ds in registry)) | _STOP | STOP_WORDS | coverage.GENERIC_WORDS
+    known |= set(_GEO_WORDS) | _QUESTION_WORDS
+    out: list[str] = []
+    lead = False  # the last word that wasn't a capitalised word, "and", "or" or "the" says a place may follow
+    for w in re.findall(r"[A-Za-z][A-Za-z'-]*", text):
+        low = w.lower()
+        if low in _PLACE_LEAD:
+            lead = True
+        elif low in ("and", "or", "the"):
+            continue
+        elif lead and w[0].isupper():
+            if (
+                any(c.islower() for c in w)
+                and low.strip("'") not in known
+                and not (coverage.words(w) & known)
+            ):
+                out.append(w)
+        else:
+            lead = False
+    return list(dict.fromkeys(out))
+
+
+def _listed(items: Sequence[str], last: str = "and") -> str:
+    """Items in plain words: "A", "A and B", "A, B and C"."""
+    xs = list(items)
+    return xs[0] if len(xs) == 1 else f"{', '.join(xs[:-1])} {last} {xs[-1]}" if xs else ""
+
+
+def _level(key: str) -> str:
+    return "nation" if key == geo.NATION_KEY else "city" if "/" in key else "state"
+
+
+def _meeting_of(ds: Dataset) -> str | None:
+    """The meeting whose abstracts a source lists (the publication outlook's name for it), else None."""
+    from health_data_registry.publication import find_conference  # publication imports this module
+
+    key = ds.entry.source.conference
+    if ds.entry.source.portal != "doi" or not key:
+        return None
+    found = find_conference(key)
+    return found.name if found else ds.entry.source.conference_name or key
+
+
+def _meetings_named(registry: Registry, question: str) -> tuple[list[str], list[str]]:
+    """The meetings a question names, by the publication outlook's names and aliases or an abstract source's own
+    conference name, in the order they appear; and the words that named them."""
+    from health_data_registry.publication import load_base_rates  # publication imports this module
+
+    terms: dict[str, str] = {}
+    for c in load_base_rates().conferences:
+        for t in (c.name, c.full_name, *c.aliases):
+            if t.lower() not in _NOT_A_MEETING:
+                terms[t.lower()] = c.name
+    for ds in registry:
+        if (m := _meeting_of(ds)) and ds.entry.source.conference_name:
+            terms[ds.entry.source.conference_name.lower()] = m
+    found: dict[int, str] = {}  # where each name starts in the question -> the words as written
+    for t in sorted(terms, key=len, reverse=True):  # the longest name first, so "SHEA Spring" beats "SHEA"
+        for hit in re.finditer(rf"(?<![\w/&]){re.escape(t)}(?![\w/&])", question, re.IGNORECASE):
+            if not any(s <= hit.start() < s + len(w) for s, w in found.items()):
+                found[hit.start()] = hit.group(0)
+    said = [found[i] for i in sorted(found)]
+    return list(dict.fromkeys(terms[w.lower()] for w in said)), said
+
+
+def _literature_search(question: str, meeting_words: Sequence[str]) -> str:
+    """The question's own topic words, in its order, for the hand-off: what kind of answer is wanted, which meeting
+    and the question's filler words are left out."""
+    drop = _STOP | _QUESTION_WORDS | _LITERATURE_WORDS | {w.lower() for m in meeting_words for w in m.split()}
+    found = re.findall(
+        r"[A-Za-z]\.(?=\s)|[A-Za-z0-9](?:[\w\-]|\.(?=\w))*", question
+    )  # "C. auris" kept as written
+    kept = [w for w in found if w.lower() not in drop]
+    return " ".join(w for w in kept if not re.fullmatch(r"(19|20)\d\d", w))
+
+
+def _literature_row(
+    ds: Dataset, meetings: Sequence[str], y0: int | None, y1: int | None
+) -> tuple[str, str, str]:
+    """A source's verdict on a literature question: (can_answer, why, what_it_supports). Only a conference abstract
+    table can hold the answer; a surveillance source holds numbers, never papers or abstracts."""
+    e = ds.entry
+    meeting = _meeting_of(ds)
+    if meeting is None:
+        return "no", "holds numbers (counts, rates or populations), not papers or abstracts", ""
+    name = e.source.conference_name or meeting
+    supports = f"{name} abstracts, {_years(ds)}: the title, DOI and link of each"
+    if meetings and meeting not in meetings:
+        return "no", f"holds {name} abstracts only, not {_listed(meetings, 'or')}", supports
+    if y0 is not None and not coverage.declared_coverage(ds).holds_years(y0, y1):
+        return "no", f"holds {name} abstracts for {_years(ds)} only", supports
+    return "yes", "fits", supports
+
+
+def _suggest_literature(
+    registry: Registry, question: str, meetings: list[str], meeting_words: list[str], years: list[int],
+    engine: Engine | None, fmt: Fmt,
+) -> Out:  # fmt: skip
+    """suggest_datasets for a question about papers, abstracts or prior work: the conference abstract tables here,
+    then the hand-off to the fellow's PubMed and OpenAlex connectors for published papers."""
+    y0, y1 = (min(years), max(years)) if years else (None, None)
+    rows: list[list[Any]] = []
+    for ds in registry:
+        can, why, supports = _literature_row(ds, meetings, y0, y1)
+        rows.append([ds.entry.id, can, why, supports, *provenance_fields(ds, engine).values()])
+    rank = {"yes": 0, "unknown": 1, "no": 2}
+    rows.sort(key=lambda r: (rank[r[1]], r[0]))
+    search = _literature_search(question, meeting_words)
+    held = {m for ds in registry if (m := _meeting_of(ds))}
+    notes = [
+        f"Read as: a literature question (papers, abstracts or prior work) about '{search or 'no topic named'}', "
+        f"meetings {_listed(meetings) or 'any'}, years {_year_span(years)}.",
+        f"For published papers, {SEARCH_PUBMED}"
+        + (f" for '{search}'" if search else "")
+        + ". This server lists conference abstracts (title, DOI and link), not papers.",
+    ]
+    if fitting := [registry.get(r[0]) for r in rows if r[1] == "yes"]:
+        notes.append(abstract_search(fitting))
+    if outside := [m for m in meetings if m not in held]:
+        notes.append(
+            f"No abstract table here holds {_listed(outside)}: for its abstracts and papers, {SEARCH_PUBMED}."
+        )
+    if _OUTLOOK.search(question):
+        notes.insert(
+            1,
+            "For how often a meeting's presented abstracts became full papers, use get_publication_outlook"
+            + (f" with conference '{meetings[0]}'" if meetings else "")
+            + ": it answers from reviewed published base rates.",
+        )
+    notes.append(NO_PATIENT_DATA)
+    return Result(
+        ["source_id", "can_answer", "why", "what_it_supports", *PROVENANCE_COLUMNS],
+        rows,
+        notes,
+        extra={"presentation_rules": PRESENTATION_RULES, "hand_off_to": list(LITERATURE_CONNECTORS)},
+    ).render(fmt)
+
+
 def suggest_datasets(
     registry: Registry, question: str, *, engine: Engine | None = None, fmt: Fmt = "csv"
 ) -> Out:
-    q = question.lower()
-    want = _tokens(q)
-    states = sorted(
-        {
-            p.name
-            for p in geo.PLACES
-            if p.level == "state" and re.search(rf"\b{re.escape(p.name.lower())}\b", q)
-        }
-    )
-    levels = {lvl for w, lvl in _GEO_WORDS.items() if re.search(rf"\b{w}\b", q)}
-    if re.search(r"\bwho regions?\b", q):  # a WHO region is its own level, not a US (HHS) region
+    """Which sources' declared coverage (coverage.declared_coverage) holds the question's place, condition and
+    years. A place that can't be read, or a source whose coverage isn't declared, is "unknown", never a fit; a
+    fit needs a condition word the source declares, never a generic word alone ("cases", "years", "lost").
+
+    A question about papers, abstracts or prior work, or one that names a meeting, is routed to the conference
+    abstract tables and handed to the PubMed and OpenAlex connectors instead (_suggest_literature)."""
+    if len(question) > MAX_QUESTION_CHARS:
+        return message(
+            f"That question is longer than {MAX_QUESTION_CHARS} characters, so it wasn't read.",
+            fmt,
+            refused="question_too_long",
+            next_step="Ask a shorter question: one condition, place and time span at a time.",
+        )
+    meetings, meeting_words = _meetings_named(registry, question)
+    if meetings or _LITERATURE.search(question):
+        years_asked = [int(y) for y in re.findall(r"\b(19[5-9]\d|20[0-4]\d)\b", question)]
+        return _suggest_literature(registry, question, meetings, meeting_words, years_asked, engine, fmt)
+    named, rest = geo.places_named(question)
+    place_names = [n for n, _ in named]
+    unplaced = _unplaced(registry, rest)
+    low = rest.lower()
+    levels = {lvl for w, lvl in _GEO_WORDS.items() if re.search(rf"\b{w}\b", low)} | {
+        _level(k) for _, k in named
+    }
+    if re.search(r"\bwho regions?\b", low):  # a WHO region is its own level, not a US (HHS) region
         levels.discard("region")
         levels.add("who_region")
-    if states:
-        levels.add("state")
-    years = [int(y) for y in re.findall(r"\b(19[5-9]\d|20[0-4]\d)\b", q)]
+    years = [int(y) for y in re.findall(r"\b(19[5-9]\d|20[0-4]\d)\b", question)]
     y0, y1 = (min(years), max(years)) if years else (None, None)
-    place_words = {w for st in states for w in st.lower().split()}
-    topic_words = want - set(_GEO_WORDS) - place_words - {str(y) for y in years}
+    not_topic = set(_GEO_WORDS) | {w.lower() for w in unplaced}
+    topic_words = {w for w in _tokens(low) if w not in not_topic and not re.fullmatch(r"[\d-]+", w)}
+    specific = coverage.question_words(low) - not_topic - STOP_WORDS - coverage.GENERIC_WORDS - _STOP
+    specific = {w for w in specific if not re.fullmatch(r"[\d-]+", w) and w not in _QUESTION_WORDS}
+    gbd_measure = _GBD_MEASURE.search(question)
+    asks_population = re.search(r"\b(populations?|denominators?|residents)\b", low) is not None
     rows: list[list[Any]] = []
     for ds in registry:
         e = ds.entry
-        hits = sorted(topic_words & _haystack(ds))
-        why_not = []
-        if topic_words and not hits:
+        cov = coverage.declared_coverage(ds)
+        hits = sorted(coverage.condition_hits(specific, cov.condition_words))
+        why_not: list[str] = []
+        unknown: list[str] = []
+        if gbd_measure:
+            why_not.append(
+                f"{gbd_measure.group(0).lower()} is a modelled GBD estimate, which no source here holds"
+            )
+        elif asks_population and "denominator" in e.research_areas:
+            pass  # a population denominator answers a question about population, whatever the condition
+        elif not specific:
+            unknown.append("the question names no specific condition (a disease or pathogen)")
+        elif "denominator" in e.research_areas:
+            why_not.append("counts people, not cases: use it as the denominator of a rate (get_rate)")
+        elif e.shape == "registry":
+            why_not.append("lists conference abstracts, not counts or rates")
+        elif not cov.condition_words:
+            unknown.append("this source doesn't declare which conditions it covers")
+        elif not hits:
             why_not.append("doesn't cover this condition")
+        if unplaced:
+            unknown.append(_not_places(unplaced))
+        held = {name: cov.holds(key) for name, key in named}
+        if outside := [n for n, h in held.items() if h is False]:
+            why_not.append(f"covers {cov.place_words} only, not {_listed(outside, 'or')}")
+        elif cov.place_keys is not None and (cities := [n for n, h in held.items() if h is None]):
+            if "city" in e.geography:  # otherwise its levels already say no, below
+                unknown.append(
+                    f"covers {cov.place_words}, but doesn't declare which cities it reports apart from their "
+                    f"states, so not whether it reports {_listed(cities, 'or')}"
+                )
+        elif cov.place_keys is None and named:
+            unknown.append(
+                "this source doesn't declare which places it covers yet, so it isn't known whether it covers "
+                + _listed(list(dict.fromkeys(n for n, _ in named)))
+            )
+        elif any(h is None for h in held.values()) or (not named and cov.place_keys is None):
+            unknown.append("this source doesn't declare which places it covers yet")
+        elif not named and not cov.nationwide:
+            unknown.append(f"covers {cov.place_words} only; say which place you mean")
         missing = sorted(lvl for lvl in levels if lvl not in e.geography)
         if missing:
             why_not.append(f"goes down to {', '.join(e.geography)} only, not {', '.join(missing)}")
-        if years and not _years_overlap(ds, y0, y1):
+        if years and not cov.holds_years(y0, y1):
             why_not.append(f"covers {_years(ds)} only")
-        named = [f"{s.label} ({s.measure})" for s in ds.semantic.series[:4]]
-        labels = [x for x in ds.condition_labels if _tokens(x) & topic_words][:6]
-        supports = "; ".join(dict.fromkeys(labels + named))
-        rows.append([e.id, "yes" if not why_not else "no", "; ".join(why_not) or "fits", supports, len(hits),
+        listed = [f"{s.label} ({s.measure})" for s in ds.semantic.series[:4]]
+        labels = [x for x in ds.condition_labels if coverage.words(x) & specific][:6]
+        supports = "; ".join(dict.fromkeys(labels + listed))
+        can = "no" if why_not else "unknown" if unknown else "yes"
+        # A "no" gives only its reasons for no; what is unknown besides adds nothing a clinician can act on.
+        rows.append([e.id, can, "; ".join(why_not or unknown) or "fits", supports, (len(unknown), -len(hits)),
                      *provenance_fields(ds, engine).values()])  # fmt: skip
-    rows.sort(key=lambda r: (r[1] != "yes", -int(r[4]), r[0]))
+    rank = {"yes": 0, "unknown": 1, "no": 2}
+    rows.sort(key=lambda r: (rank[r[1]], r[4], r[0]))  # then fewest unknowns, most condition words matched
     notes = [
-        f"Read as: condition words {sorted(topic_words)}, places {states or 'none'}, years {years or 'any'}.",
+        f"Read as: condition words {_listed(sorted(specific)) or 'none'}, places {_listed(place_names) or 'none'}, "
+        f"years {_year_span(years)}.",
         "Public data shows what and where; your hospital's own data, kept in approved systems, answers why.",
         NO_PATIENT_DATA,
     ]
-    if not any(r[1] == "yes" for r in rows):
+    if gbd_measure:
+        notes.append(
+            f"For {gbd_measure.group(0).lower()}, ask the IHME GBD connector: GBD models it, and this server holds "
+            "observed data only."
+        )
+    # One next step, chosen by what kept the sources from fitting.
+    if any(r[1] == "yes" for r in rows) or gbd_measure:
+        pass
+    elif unplaced:
+        notes.append(
+            f"Next step: {_not_places(unplaced)} (it looks up US places only), so no source is marked as fitting "
+            "there. Name a US state, the United States, Detroit or New York City, or ask again "
+            "without the place."
+        )
+    elif not specific and not asks_population:
+        notes.append("Next step: name the condition (a disease or pathogen) and ask again.")
+    elif any(r[1] == "unknown" for r in rows):
+        notes.append(
+            "Next step: no source is marked as fitting because none declares all of what was asked yet. Use "
+            "describe_dataset on a source marked unknown to see its places, conditions and years, then use "
+            "get_series."
+        )
+    else:
         notes.append("Next step: " + next_step_for("unknown_condition"))
         notes += [
             f"Outside this registry: {x}" for x in _gbd_causes_named(registry, " ".join(sorted(topic_words)))
@@ -772,6 +1069,27 @@ def suggest_datasets(
         notes,
         extra={"presentation_rules": PRESENTATION_RULES},
     ).render(fmt)
+
+
+def _year_span(years: Sequence[int]) -> str:
+    """The years a question asks about, as the span it is read as: "any", "2024" or "2019 to 2021"."""
+    return (
+        "any"
+        if not years
+        else str(min(years))
+        if min(years) == max(years)
+        else f"{min(years)} to {max(years)}"
+    )
+
+
+def _quoted(words: Sequence[str]) -> str:
+    return _listed([f"'{w}'" for w in words])
+
+
+def _not_places(words: Sequence[str]) -> str:
+    """'Lagos' isn't a place / 'Lagos' and 'Brazil' aren't places, ... this server can look up."""
+    one = len(words) == 1
+    return f"{_quoted(words)} {'isn' if one else 'aren'}'t {'a place' if one else 'places'} this server can look up"
 
 
 # ------------------------------------------------------------------------------------------ series
@@ -992,16 +1310,24 @@ def get_series(
             fmt,
             refused="no_sex_split",
         )
+    if source_id and (no_series := source_without_series(registry, source_id, fmt)) is not None:
+        return no_series
     matches = series_for(registry, condition, measure, source_id)
     if not matches:
-        return unknown_condition(registry, condition, fmt, measure or "")
+        return unknown_condition(registry, condition, fmt, measure or "", source_id)
     columns = ["location", "year", "value", "lower", "upper", "observation_type", "period_status", "flag",
                "measure", "condition", "case_status", "case_definition", "source_id", "retrieved_at"]  # fmt: skip
     rows: list[list[Any]] = []
     notes: list[str] = []
     ran: list[tuple[Dataset, Series, list[str]]] = []
-    failed = False
+    failed: set[str] = set()
+    not_read: dict[str, str] = {}
     for ds, s in matches:
+        if ds.id in failed or ds.id in not_read:
+            continue  # one refusal per source: its other series are never tried again in the same answer
+        if (why := not_read_live(ds, locations)) is not None:
+            not_read[ds.id] = why
+            continue
         try:
             got, unmatched, method = series_rows(engine, ds, s, locations, year_start, year_end)
             m = engine.manifest(ds.id)
@@ -1009,7 +1335,7 @@ def get_series(
             raise  # out of time: no partial answer, whose pages could not be matched up later
         except Exception as e:  # noqa: BLE001 - one source failing must not hide the others' rows
             notes.append(f"{ds.id}: {plain(e)}")
-            failed = True
+            failed.add(ds.id)
             continue
         ran.append((ds, s, unmatched))
         for r in got:
@@ -1021,13 +1347,19 @@ def get_series(
         for place, note in sorted({(r.place, r.partial) for r in got if r.partial}):
             notes.append(f"{ds.id}: '{place}' here is {note}.")
         notes += _dataset_notes(ds, m, method, got)
+    notes += not_read.values()
     if not rows and ran and not failed:
-        return matched_nothing(engine, ran, condition, locations, year_start, year_end, fmt)
-    if len({s.measure for _, s in matches}) > 1:
+        return matched_nothing(
+            engine, ran, condition, locations, year_start, year_end, fmt, list(not_read.values())
+        )
+    if not rows and not ran and not failed:
+        return place_not_covered(condition, locations, not_read, fmt)
+    # Counted over the rows returned, never over series that matched but gave none (#112).
+    if len({r[columns.index("measure")] for r in rows}) > 1:
         notes.insert(
             0, "Rows mix measures (see the measure column); never compare or add them across measures."
         )
-    labels = sorted({s.label for _, s in matches})
+    labels = sorted({r[columns.index("condition")] for r in rows})
     conditions = {spelling_key(x) for x in labels}
     if len(conditions) > 1:
         notes.insert(
@@ -1043,6 +1375,62 @@ def get_series(
     return Result(columns, rows, notes)
 
 
+def source_without_series(registry: Registry, source_id: str, fmt: Fmt) -> Out | None:
+    """A source_id get_series can't honour, refused in plain words; None when the source has series to read."""
+    if source_id not in registry.datasets:
+        return message(
+            f"There's no source called '{source_id}', so nothing is shown.",
+            fmt,
+            refused="unknown_dataset",
+            next_step="Use list_sources to see each source's id, then ask again with one of them.",
+        )
+    ds = registry.get(source_id)
+    if ds.semantic.series:
+        return None
+    e = ds.entry
+    if e.shape == "registry":
+        return message(
+            f"{e.title} ({source_id}) is a list of conference abstracts, not counts or rates, so get_series has "
+            "no numbers to show from it.",
+            fmt,
+            refused="source_has_no_series",
+            next_step=f"{abstract_search([ds])} For published papers, {SEARCH_PUBMED}.",
+        )
+    return message(
+        f"{e.title} ({source_id}) has no series that get_series can read yet, so nothing is shown.",
+        fmt,
+        refused="source_has_no_series",
+        next_step="Use describe_dataset to see what this source holds.",
+    )
+
+
+def not_read_live(ds: Dataset, locations: Sequence[str]) -> str | None:
+    """Why a live source is not read for these places, or None to read it. A live read can take minutes, so it is
+    skipped only when the source's declared coverage (coverage.declared_coverage) rules out every place asked for
+    that this server can name. A source that declares no places, a place it may cover (a city inside a declared
+    state) and a place this server can't name (a country) are all read: unknown is never taken for "not covered".
+
+    Only get_series and get_aligned_with_gbd call this; the analysis tools read a source whatever the places."""
+    if ds.entry.tier != "live" or not locations:
+        return None
+    cov = coverage.declared_coverage(ds)
+    held = [cov.holds(k) for loc in locations if (k := geo.key_for(loc)) is not None]
+    if not held or any(h is not False for h in held):
+        return None
+    return f"{ds.id} was not read for {_listed(list(locations), 'or')}: it covers {cov.place_words} only."
+
+
+def place_not_covered(condition: str, locations: Sequence[str], not_read: Mapping[str, str], fmt: Fmt) -> Out:
+    """Every source of the condition was left unread because each declares coverage that leaves out the places."""
+    return message(
+        f"The sources that report '{condition}' don't cover {_listed(list(locations), 'or')}, so no numbers are "
+        "shown. " + " ".join(not_read.values()),
+        fmt,
+        refused="place_not_covered",
+        next_step="Ask again for a place one of these sources covers, as named above.",
+    )
+
+
 def matched_nothing(
     engine: Engine,
     ran: Sequence[tuple[Dataset, Series, list[str]]],
@@ -1051,10 +1439,11 @@ def matched_nothing(
     year_start: int | None,
     year_end: int | None,
     fmt: Fmt,
+    not_read: Sequence[str] = (),
 ) -> Out:
     """A condition that is served, filtered by places or years that match no row: decline with the values that
-    exist (available), the state that contains a county or city asked for (nearest_served), and the publisher's
-    own page when the years asked fall outside this copy (served_elsewhere)."""
+    exist (available), the state that contains a county or city asked for (nearest_served), the publisher's own
+    page when the years asked fall outside this copy (served_elsewhere), and each source left unread (not_read)."""
     available: dict[str, str] = {}
     nearest: list[str] = []
     elsewhere: list[str] = []
@@ -1080,7 +1469,9 @@ def matched_nothing(
             )
     asked = ", ".join([*(f"'{x}'" for x in locations), *(str(y) for y in (year_start, year_end) if y)])
     return message(
-        f"'{condition}' is served here, but no row matches {asked or 'what was asked'}.",
+        " ".join(
+            [f"'{condition}' is served here, but no row matches {asked or 'what was asked'}.", *not_read]
+        ),
         fmt,
         refused="filter_matched_nothing",
         nearest_served=list(dict.fromkeys(nearest)),
@@ -1132,10 +1523,17 @@ def get_aligned_with_gbd(
         f"GBD 2023 ends in {GBD_LAST_YEAR}; later observed years have no GBD match.",
         "Don't compare age-standardised GBD rates with crude or US 2000-standardised local rates.",
     ]
+    skipped: set[str] = set()
     for ds, s in matches:
         xw = next((g for g in ds.entry.gbd.causes if g.condition == s.condition), None)
         if xw is None:
             notes.append(f"{ds.id}: '{s.label}' has no GBD cause mapping in its catalog entry yet.")
+            continue
+        if ds.id in skipped:
+            continue  # one refusal per source: its other series are never tried again in the same answer
+        if (why := not_read_live(ds, locations)) is not None:
+            notes.append(why)
+            skipped.add(ds.id)
             continue
         try:
             got, unmatched, method = series_rows(engine, ds, s, locations, year_start, year_end)
@@ -1144,6 +1542,7 @@ def get_aligned_with_gbd(
             raise  # out of time: no partial answer, whose pages could not be matched up later
         except Exception as e:  # noqa: BLE001 - one source failing must not hide the others' rows
             notes.append(f"{ds.id}: {plain(e)}")
+            skipped.add(ds.id)
             continue
         # Only a whole US state or the nation has a GBD location; a partial area, the publisher's pooled sites, or
         # places whose basis (facility or residence) is unresolved are left unkeyed with the reason.
@@ -1341,6 +1740,23 @@ def _query_sql(engine: Engine, sql: str, fmt: Fmt) -> Result | Out:
         out = engine.query_sql(sql)
     except (SqlRefused, QueryRefused) as e:
         code = getattr(e, "code", "refused")
+        private = [
+            ds
+            for ds in engine.registry
+            if ds.entry.tier == "private" and re.search(rf"\b{re.escape(ds.id)}\b", sql, re.I)
+        ]
+        if private and code in ("private_store_unavailable", "private_store_refused"):
+            # No other tool reads the private abstract stores yet (#106), so none is offered as a way round.
+            names = _listed([ds.id for ds in private])
+            return message(
+                f"That query can't run: {e} No other tool reads {names} yet. A tool for searching conference "
+                "abstracts is planned.",
+                fmt,
+                refused=code,
+                next_step="For now, browse the abstracts at "
+                + _listed([ds.entry.source.landing_url for ds in private], "or")
+                + f". For published papers, {SEARCH_PUBMED}.",
+            )
         return message(
             f"That query can't run: {e} The other tools (get_series, describe_dataset) can usually answer the "
             "same question.",
