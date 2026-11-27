@@ -156,9 +156,10 @@ class Coverage:
     year_end: int | None
     # Places declared as only some of their counties: key -> the counties (None when the publisher doesn't list them)
     partial: Mapping[str, tuple[str, ...] | None] = field(default_factory=dict)
-    levels: frozenset[str] = (
-        frozenset()
-    )  # the levels the source's rows report (catalog geography); empty: any
+    # The levels the source's rows report (catalog geography); empty: any.
+    levels: frozenset[str] = frozenset()
+    # What this source's own national row includes (coverage.nationalScope); None when not declared.
+    national_scope: str | None = None
 
     def _declared_for(self, key: str) -> str | None:
         """The most specific declared place that is `key` or contains it."""
@@ -194,6 +195,13 @@ class Coverage:
                 return None
             return any(geo.within(c, key) for c in counties)
         return True
+
+    def scope_note(self, key: str) -> str | None:
+        """For the United States: what this source's national figure includes, in its own terms (the nation as
+        this publisher reports it, never redefined here); None for any other place, or when not declared."""
+        if key != geo.NATION_KEY or self.national_scope is None or self.holds(key) is not True:
+            return None
+        return f"its United States figure is {self.national_scope}"
 
     def partial_note(self, key: str) -> str | None:
         """Plain words for a held place this source covers only part of, or None for a whole place."""
@@ -286,4 +294,5 @@ def declared_coverage(ds: Dataset) -> Coverage:
         year_end=e.years.end,
         partial=partial,
         levels=frozenset(e.geography),
+        national_scope=decl.national_scope.includes if decl and decl.national_scope else None,
     )

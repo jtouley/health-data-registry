@@ -140,5 +140,11 @@ schema:
         required: true
         description: "The levels the source's rows report (catalog geography), space-separated."
         customProperties: [{property: role, value: attribute}]
+      - name: national_scope
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "What the source's own national (USA) row includes, from its codebook or an exact structural fact (coverage.nationalScope): the United States as this publisher reports it. Empty when the source declares no national row."
+        customProperties: [{property: role, value: attribute}, {property: mayBeEmpty, value: true}]
 customProperties:
   - {property: unreliableRule, value: {kind: none, description: "None: declarations about sources, not published numbers."}}

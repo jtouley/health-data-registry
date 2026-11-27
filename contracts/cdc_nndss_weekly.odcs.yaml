@@ -248,6 +248,10 @@ customProperties:
     value:
       kind: full
       denominator: not_stated
+      nationalScope:
+        includes: "the US RESIDENTS row: residents of the 50 states, DC and New York City; each territory, US TERRITORIES combined and NON-US RESIDENTS are separate rows, and TOTAL adds all three"
+        basisUrl: "https://data.cdc.gov/resource/x9gk-5huc.json"
+        basisQuote: "Structural, checked live 2026-11-24 (totalRows above): for Legionellosis 2024 week 52 the 51 state and DC rows plus New York City (7012 + 249) equal US RESIDENTS (7261), and US RESIDENTS + US TERRITORIES + NON-US RESIDENTS (7261 + 3 + 1) equal TOTAL (7265)."
       places:
         - placeKey: USA
           part: whole
@@ -262,7 +266,7 @@ customProperties:
           validFrom: 2022
           validTo: null
           basisUrl: "https://data.cdc.gov/resource/x9gk-5huc.json"
-          basisQuote: "Structural, checked live 2026-11-27: PUERTO RICO is a reporting area in every year 2022-2026; it is not in US RESIDENTS."
+          basisQuote: "Structural, checked live 2026-11-27: PUERTO RICO is a reporting area in every year 2022-2026; it is its own place, reported apart from US RESIDENTS."
           declaredInVersion: 0.1.0
           declaredAt: 2026-11-27
         - placeKey: US-60
@@ -270,7 +274,7 @@ customProperties:
           validFrom: 2022
           validTo: null
           basisUrl: "https://data.cdc.gov/resource/x9gk-5huc.json"
-          basisQuote: "Structural, checked live 2026-11-27: AMERICAN SAMOA is a reporting area in every year 2022-2026 (Commonwealth of Northern Mariana Islands from 2025 for the Northern Mariana Islands); it is not in US RESIDENTS."
+          basisQuote: "Structural, checked live 2026-11-27: AMERICAN SAMOA is a reporting area in every year 2022-2026 (Commonwealth of Northern Mariana Islands from 2025 for the Northern Mariana Islands); it is its own place, reported apart from US RESIDENTS."
           declaredInVersion: 0.1.0
           declaredAt: 2026-11-27
         - placeKey: US-66
@@ -278,7 +282,7 @@ customProperties:
           validFrom: 2022
           validTo: null
           basisUrl: "https://data.cdc.gov/resource/x9gk-5huc.json"
-          basisQuote: "Structural, checked live 2026-11-27: GUAM is a reporting area in every year 2022-2026 (Commonwealth of Northern Mariana Islands from 2025 for the Northern Mariana Islands); it is not in US RESIDENTS."
+          basisQuote: "Structural, checked live 2026-11-27: GUAM is a reporting area in every year 2022-2026 (Commonwealth of Northern Mariana Islands from 2025 for the Northern Mariana Islands); it is its own place, reported apart from US RESIDENTS."
           declaredInVersion: 0.1.0
           declaredAt: 2026-11-27
         - placeKey: US-69
@@ -286,7 +290,7 @@ customProperties:
           validFrom: 2022
           validTo: null
           basisUrl: "https://data.cdc.gov/resource/x9gk-5huc.json"
-          basisQuote: "Structural, checked live 2026-11-27: NORTHERN MARIANA ISLANDS is a reporting area in every year 2022-2026 (Commonwealth of Northern Mariana Islands from 2025 for the Northern Mariana Islands); it is not in US RESIDENTS."
+          basisQuote: "Structural, checked live 2026-11-27: NORTHERN MARIANA ISLANDS is a reporting area in every year 2022-2026 (Commonwealth of Northern Mariana Islands from 2025 for the Northern Mariana Islands); it is its own place, reported apart from US RESIDENTS."
           declaredInVersion: 0.1.0
           declaredAt: 2026-11-27
         - placeKey: US-78
@@ -294,7 +298,7 @@ customProperties:
           validFrom: 2022
           validTo: null
           basisUrl: "https://data.cdc.gov/resource/x9gk-5huc.json"
-          basisQuote: "Structural, checked live 2026-11-27: U.S. VIRGIN ISLANDS is a reporting area in every year 2022-2026 (Commonwealth of Northern Mariana Islands from 2025 for the Northern Mariana Islands); it is not in US RESIDENTS."
+          basisQuote: "Structural, checked live 2026-11-27: U.S. VIRGIN ISLANDS is a reporting area in every year 2022-2026 (Commonwealth of Northern Mariana Islands from 2025 for the Northern Mariana Islands); it is its own place, reported apart from US RESIDENTS."
           declaredInVersion: 0.1.0
           declaredAt: 2026-11-27
         - placeKey: US-36

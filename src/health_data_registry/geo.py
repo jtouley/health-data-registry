@@ -136,10 +136,22 @@ def parent_key(key: str) -> str | None:
     if len(key) == 8 and key.startswith("US-"):  # a county: US-<2-digit state><3-digit county>
         return key[:5]
     if len(key) == 5 and key.startswith("US-"):  # a state, DC or a territory
-        # The United States here is the 50 states and DC (FIPS 01-56), as in CDC's US-residents totals, the Census
-        # national population and GBD's "United States": Puerto Rico (72) and the other territories are apart.
-        return NATION_KEY if int(key[3:]) <= 56 else None
+        # A territory (FIPS above 56: Puerto Rico, Guam, ...) is its own place, related to USA (territory_of) but
+        # never part of it here, so coverage never sums it into USA or takes it out of USA. USA itself is the
+        # nation as each publisher reports it; what a source's national row includes is in its contract
+        # (coverage.nationalScope), never assumed here.
+        return None if is_territory(key) else NATION_KEY
     return None
+
+
+def is_territory(key: str) -> bool:
+    """Is the conformed key a US territory (state-level FIPS above 56)?"""
+    return len(key) == 5 and key.startswith("US-") and key[3:].isdigit() and int(key[3:]) > 56
+
+
+def territory_of(key: str) -> str | None:
+    """The nation a territory belongs to (USA), or None: a relation, never containment."""
+    return NATION_KEY if is_territory(key) else None
 
 
 def is_city(key: str) -> bool:

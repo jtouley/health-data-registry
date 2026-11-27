@@ -26,5 +26,6 @@ select
     declared_at,
     dataset_first_year,
     dataset_last_year,
-    reported_levels
+    reported_levels,
+    national_scope
 from declared

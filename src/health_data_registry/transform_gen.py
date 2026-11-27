@@ -568,20 +568,21 @@ def dim_place_sql(contract: Contract) -> str:
         cp["value"] for cp in contract.raw.get("customProperties") or [] if cp.get("property") == "places"
     )
     n = places["nation"]
-    rows: list[list[object]] = [[n["key"], n["name"], "nation", None, n["fips"], n["postal"]]]
+    rows: list[list[object]] = [[n["key"], n["name"], "nation", None, None, n["fips"], n["postal"]]]
     for name, postal, fips in places["states"]:
         key = f"US-{fips}"
-        rows.append([key, name, "state", geo.parent_key(key), fips, postal])
+        rows.append([key, name, "state", geo.parent_key(key), geo.territory_of(key), fips, postal])
     rows += [
-        [f"US-{f}", name, "state", geo.parent_key(f"US-{f}"), f, postal]
+        [f"US-{f}", name, "state", geo.parent_key(f"US-{f}"), geo.territory_of(f"US-{f}"), f, postal]
         for name, postal, f in places["territories"]
     ]
-    rows += [[c["key"], c["name"], "city", geo.parent_key(c["key"]), None, None] for c in places["cities"]]
-    rows += [[k, name, "country", None, None, None] for k, name in places["countries"]]
-    rows += [[r["key"], r["name"], "who_region", None, None, None] for r in places["whoRegions"]]
-    cols = [
-        (c, "varchar") for c in ("place_key", "place_name", "place_level", "parent_key", "fips", "postal")
+    rows += [
+        [c["key"], c["name"], "city", geo.parent_key(c["key"]), None, None, None] for c in places["cities"]
     ]
+    rows += [[k, name, "country", None, None, None, None] for k, name in places["countries"]]
+    rows += [[r["key"], r["name"], "who_region", None, None, None, None] for r in places["whoRegions"]]
+    names = ("place_key", "place_name", "place_level", "parent_key", "territory_of", "fips", "postal")
+    cols = [(c, "varchar") for c in names]
     return (
         f"-- {HEADER.format(src=str(MODEL_CONTRACTS / 'dim_place.odcs.yaml'))}\n"
         "-- The fixed places come from the contract's places list, the same list geo.py reads; counties come from the\n"
@@ -593,6 +594,7 @@ def dim_place_sql(contract: Contract) -> str:
         "    arg_max(county_name, year) as place_name,\n"
         "    'county' as place_level,\n"
         "    'US-' || state_fips as parent_key,\n"
+        "    cast(null as varchar) as territory_of,\n"
         "    state_fips || county_fips as fips,\n"
         "    cast(null as varchar) as postal\n"
         f"from {{{{ ref('int_{CENSUS}') }}}}\n"
@@ -607,7 +609,8 @@ def coverage_declarations_sql(registry: Registry) -> str:
             ("coverage_kind", "varchar"), ("denominator", "varchar"), ("time_unit", "varchar"), ("part", "varchar"),
             ("counties", "varchar"), ("basis_url", "varchar"), ("basis_quote", "varchar"),
             ("contract_version", "varchar"), ("declared_in_contract_version", "varchar"), ("declared_at", "date"),
-            ("dataset_first_year", "bigint"), ("dataset_last_year", "bigint"), ("reported_levels", "varchar")]  # fmt: skip
+            ("dataset_first_year", "bigint"), ("dataset_last_year", "bigint"), ("reported_levels", "varchar"),
+            ("national_scope", "varchar")]  # fmt: skip
     rows: list[list[object]] = []
     for ds in registry:
         cov = ds.contract.coverage
@@ -615,7 +618,8 @@ def coverage_declarations_sql(registry: Registry) -> str:
             continue
         e = ds.entry
         common = [cov.kind, cov.denominator, cov.time_unit]
-        tail = [e.years.start, e.years.end, " ".join(e.geography)]
+        tail = [e.years.start, e.years.end, " ".join(e.geography),
+                cov.national_scope.includes if cov.national_scope else None]  # fmt: skip
         if not cov.places:
             rows.append([ds.id, None, None, None, *common, None, None, None, None, ds.contract.version, None, None,
                          *tail])  # fmt: skip

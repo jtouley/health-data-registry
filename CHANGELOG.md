@@ -17,7 +17,10 @@ All notable changes to this project are documented here. The format follows
 - One list of place keys, `dim_place` (the United States, states, territories, counties, the cities reported
   apart from their states, ISO3 countries and WHO regions). The server's place names are read from it, and the
   registry refuses a contract whose coverage or `conformedDimensions` names a key that isn't there, or is
-  malformed, when it loads. "The United States" is the 50 states and DC; Puerto Rico is its own place.
+  malformed, when it loads. "The United States" is the nation as each publisher reports it; each source that
+  declares it says what its national row includes (NNDSS's US RESIDENTS row leaves the territories to their own
+  rows), and `suggest_datasets` names that scope. Puerto Rico and the other territories are their own places,
+  related to the United States but never summed into it or taken out of it.
 - dbt models: `coverage_declarations` (generated from the contracts), `dim_dataset_coverage` (SCD2 on the
   publisher's timeline, with when we learned each declaration), `fct_dataset_place_year_coverage`,
   `int_observed_places` and the `flag_coverage_mismatch` review queue, with tests that declared intervals don't

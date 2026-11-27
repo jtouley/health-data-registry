@@ -144,10 +144,14 @@ schema:
           - {property: unit, value: "persons"}
 customProperties:
   - property: coverage
-    description: "Which places the file covers, from the file itself (an exact structural fact, hard rule 1): its state rows and county rows. The United States here is the 50 states and DC; Puerto Rico is not in this file. Read by coverage.py and, through make contracts, by the dbt coverage models."
+    description: "Which places the file covers, from the file itself (an exact structural fact, hard rule 1): its state rows and county rows. It has no national row and no territory (Puerto Rico is not in this file); nationalScope says what its United States is. Read by coverage.py and, through make contracts, by the dbt coverage models."
     value:
       kind: full
       denominator: census_place
+      nationalScope:
+        includes: "no national row of its own: the 50 states and DC and their counties, with no territory; the United States population is the sum of the 51 state rows"
+        basisUrl: "https://www2.census.gov/programs-surveys/popest/datasets/2020-2025/counties/totals/co-est2025-alldata.csv"
+        basisQuote: "Structural, checked live 2026-11-24: the file's SUMLEV 040 rows are the 50 states and DC, and for every year 2020-2025 they sum to the United States row of NST-EST2025-ALLDATA (e.g. 341,784,857 for 2025)."
       places:
         - placeKey: USA
           part: whole

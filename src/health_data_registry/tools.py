@@ -1025,8 +1025,11 @@ def suggest_datasets(
         labels = [x for x in ds.condition_labels if coverage.words(x) & specific][:6]
         supports = "; ".join(dict.fromkeys(labels + listed))
         can = "no" if why_not else "unknown" if unknown else "yes"
-        # A place the source covers only part of still fits, with the caveat in plain words (#223).
-        partly = [n for _, k in named if (n := cov.partial_note(k))] if can == "yes" else []
+        # A place the source covers only part of still fits, with the caveat in plain words; for the United States
+        # the answer names what this source's national row includes (#223).
+        partly = (
+            [n for _, k in named if (n := cov.partial_note(k) or cov.scope_note(k))] if can == "yes" else []
+        )
         # A "no" gives only its reasons for no; what is unknown besides adds nothing a clinician can act on.
         why = "; ".join(why_not or unknown) or "; ".join(["fits", *dict.fromkeys(partly)])
         rows.append([e.id, can, why, supports, (len(unknown), -len(hits)),

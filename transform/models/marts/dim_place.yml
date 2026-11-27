@@ -50,7 +50,7 @@ models:
     - type: not_null
   - name: place_level
     data_type: varchar
-    description: 'What kind of place it is: nation, state (a state, DC or Puerto Rico), county, city, country or
+    description: 'What kind of place it is: nation, state (a state, DC or a territory), county, city, country or
       who_region.'
     meta:
       logical_type: string
@@ -63,14 +63,24 @@ models:
     - type: not_null
   - name: parent_key
     data_type: varchar
-    description: The key of the place this one is part of (a county's state, a state's nation, a city's county or
-      state); empty for the nation, a country, a WHO region and Puerto Rico. The United States here is the 50 states
-      and DC (state FIPS 01 to 56), as in CDC's US-residents totals, the Census national population and GBD's United
-      States, so Puerto Rico (FIPS 72) is not part of it.
+    description: The key of the place this one is part of (a county's state, a state's or DC's nation, a city's
+      county or state); empty for the nation, a country, a WHO region and a territory. A territory is its own place,
+      never part of USA here, so nothing is summed into USA or taken out of it; territory_of relates it to USA.
     meta:
       logical_type: string
       physical_type: VARCHAR
       source_field: parent_key
+      unit: null
+      codes: []
+      missing_codes: []
+  - name: territory_of
+    data_type: varchar
+    description: 'For a US territory (Puerto Rico, Guam, the U.S. Virgin Islands, American Samoa, the Northern Mariana
+      Islands), the nation it belongs to (USA): a relation, not containment. Empty elsewhere.'
+    meta:
+      logical_type: string
+      physical_type: VARCHAR
+      source_field: territory_of
       unit: null
       codes: []
       missing_codes: []

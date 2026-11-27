@@ -1,6 +1,6 @@
 # dbt unit tests for the coverage models (#223), on synthetic declarations and places only (hard rule 5). They pin
 # what the fact gets wrong without them: a place inside a declared one counted at a level the source doesn't
-# report, a city counted through its state, Puerto Rico counted inside the United States, a place declared as some
+# report, a city counted through its state, a territory silently summed into the United States, a place declared as some
 # of its counties called whole, a county outside the listed ones called covered, unlisted counties guessed, a year
 # between two intervals called covered, and a catchment's denominator lost. The server applies the same rule
 # (coverage.Coverage.holds; tests/test_coverage_model.py).
@@ -20,8 +20,9 @@ unit_tests:
           - {place_key: US-36001, place_level: county, parent_key: US-36}
           - {place_key: US-36005, place_level: county, parent_key: US-36}
           - {place_key: US-36/nyc, place_level: city, parent_key: US-36}
-          # Puerto Rico is not part of the United States here (dim_place), so a USA declaration never reaches it.
-          - {place_key: US-72, place_level: state, parent_key: null}
+          # A territory is its own place, related to USA (territory_of) but never inside it, so a USA declaration
+          # never reaches it: a source covers Puerto Rico only when it declares it.
+          - {place_key: US-72, place_level: state, parent_key: null, territory_of: USA}
       - input: ref('dim_dataset_coverage')
         rows:
           - {dim_dataset_coverage_sk: a, dataset_id: toy, place_key: USA, valid_from: 2023, valid_to: null, coverage_kind: full, part: whole, counties: null, denominator: census_place, dataset_first_year: 2023, dataset_last_year: 2023, reported_levels: "nation state county city"}

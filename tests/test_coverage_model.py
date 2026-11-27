@@ -60,12 +60,31 @@ def test_geo_reads_its_places_from_dim_place_and_every_key_it_emits_is_there() -
     assert "Alabama" not in (REPO / "src" / "health_data_registry" / "geo.py").read_text(encoding="utf-8")
 
 
-def test_the_united_states_is_the_50_states_and_dc() -> None:
-    assert geo.parent_key("US-26") == "USA" and geo.parent_key("US-56") == "USA"
-    assert geo.parent_key("US-72") is None and geo.parent_key("US-66") is None
+def test_a_territory_is_its_own_place_related_to_the_united_states() -> None:
+    """Maintainer decision, 27 Nov 2026: USA is the nation as each publisher reports it, never redefined here; a
+    territory is related to it but never silently summed into it or taken out of it."""
+    assert geo.parent_key("US-26") == "USA" and geo.parent_key("US-11") == "USA"
+    for t in ("US-72", "US-66", "US-78", "US-60", "US-69"):
+        assert geo.parent_key(t) is None and geo.territory_of(t) == "USA" and not geo.within("USA", t)
+    assert geo.territory_of("US-26") is None
+    assert geo.key_for("United States") == "USA" and geo.places_named("cases in the U.S.")[0] == [
+        ("United States", "USA")
+    ]
     assert geo.level_of("US-36/nyc") == "city" and geo.level_of("US-36005") == "county"
     assert geo.level_of("NGA") == "country" and geo.level_of("WHO-EUR") == "who_region"
     assert geo.is_place_key("US-36005") and not geo.is_place_key("US-99005") and not geo.is_place_key("usa")
+
+
+def test_each_national_declaration_says_what_its_national_row_includes(reg: Registry) -> None:
+    nndss = reg.get("cdc_nndss_weekly").contract.coverage
+    census = reg.get("census_county_pop").contract.coverage
+    assert nndss is not None and nndss.national_scope is not None and census is not None
+    assert "territor" in nndss.national_scope.includes and nndss.national_scope.basis_quote
+    assert census.national_scope is not None and "no territory" in census.national_scope.includes
+    out = tools.suggest_datasets(reg, "Syphilis in the United States 2023", fmt="json")
+    assert isinstance(out, dict)
+    got = {r[0]: r[2] for r in out["rows"]}
+    assert got["cdc_nndss_weekly"].startswith("fits; its United States figure is the US RESIDENTS row")
 
 
 def test_dim_place_sql_lists_every_fixed_key_once(reg: Registry) -> None:
@@ -264,7 +283,9 @@ def test_declared_coverage_reads_the_coverage_block(reg: Registry) -> None:
     )
     assert nndss.holds("US-36005") is None  # a county: NNDSS rows stop at reporting areas
     census = coverage.declared_coverage(reg.get("census_county_pop"))
-    assert census.holds("US-36005") and census.holds("US-72") is False  # Puerto Rico is not in the file
+    assert (
+        census.holds("US-36005") and census.holds("US-72") is False
+    )  # a territory: not declared, not in the file
     measles = coverage.declared_coverage(reg.get("mdhhs_measles_county"))
     assert measles.holds("US-26") and measles.holds("US-26163") and measles.holds("US-39") is False
     assert measles.holds("US-26163/detroit") is None  # a city counts only when declared itself

@@ -253,3 +253,15 @@ models:
       missing_codes: []
     constraints:
     - type: not_null
+  - name: national_scope
+    data_type: varchar
+    description: 'What the source''s own national (USA) row includes, from its codebook or an exact structural fact
+      (coverage.nationalScope): the United States as this publisher reports it. Empty when the source declares no
+      national row.'
+    meta:
+      logical_type: string
+      physical_type: VARCHAR
+      source_field: national_scope
+      unit: null
+      codes: []
+      missing_codes: []

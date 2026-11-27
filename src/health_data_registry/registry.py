@@ -843,6 +843,15 @@ class CoveredPlace:
 
 
 @dataclass(frozen=True)
+class NationalScope:
+    """What a source's own national (USA) row includes, as its codebook or an exact structural fact states it."""
+
+    includes: str  # plain words, e.g. "US residents of the 50 states and DC; territories reported apart"
+    basis_url: str
+    basis_quote: str
+
+
+@dataclass(frozen=True)
 class CoverageDeclaration:
     """Which places a source covers, how, and over which years: read only from the contract (hard rule 1)."""
 
@@ -850,6 +859,8 @@ class CoverageDeclaration:
     denominator: str
     time_unit: str
     places: tuple[CoveredPlace, ...]
+    # What the source's USA means: the nation as this publisher reports it (maintainer decision, 27 Nov 2026).
+    national_scope: NationalScope | None = None
 
 
 def _semver(v: str) -> tuple[int, ...] | None:
@@ -1002,7 +1013,7 @@ def _covered_place(item: Any, where: str, version: str) -> CoveredPlace:
 
 def parse_coverage(value: Any, where: str, version: str) -> CoverageDeclaration:
     """The contract's coverage block (#223), checked strictly: an unknown key, kind or place is refused."""
-    d = _only(value, ("kind", "denominator", "timeUnit", "places"), f"{where}: coverage")
+    d = _only(value, ("kind", "denominator", "timeUnit", "places", "nationalScope"), f"{where}: coverage")
     kind, denominator = str(d.get("kind") or ""), str(d.get("denominator") or "")
     time_unit = str(d.get("timeUnit") or "year")
     if kind not in COVERAGE_KINDS:
@@ -1033,7 +1044,28 @@ def parse_coverage(value: Any, where: str, version: str) -> CoverageDeclaration:
                 raise RegistryError(
                     f"{where}: coverage of {key} has overlapping intervals (from {b.valid_from})"
                 )
-    return CoverageDeclaration(kind, denominator, time_unit, places)
+    scope = None
+    if d.get("nationalScope") is not None:
+        n = _only(
+            d["nationalScope"], ("includes", "basisUrl", "basisQuote"), f"{where}: coverage.nationalScope"
+        )
+        scope = NationalScope(
+            str(n.get("includes") or "").strip(),
+            str(n.get("basisUrl") or ""),
+            str(n.get("basisQuote") or "").strip(),
+        )
+        if not scope.includes or not scope.basis_url.startswith("https://") or not scope.basis_quote:
+            raise RegistryError(
+                f"{where}: coverage.nationalScope says what the national row includes (includes) and cites the "
+                "codebook or structural fact that says so (basisUrl, https, and basisQuote)"
+            )
+    if any(p.place_key == geo.NATION_KEY for p in places) and scope is None:
+        raise RegistryError(
+            f"{where}: a source that declares USA says what its national row includes (coverage.nationalScope), "
+            "from its codebook or an exact structural fact; if that isn't stated, leave USA out and ask in "
+            "openQuestions"
+        )
+    return CoverageDeclaration(kind, denominator, time_unit, places, scope)
 
 
 @dataclass(frozen=True)
