@@ -561,9 +561,13 @@ class Column:
     partial_places: tuple[tuple[str, str], ...] = ()
     # Labels the publisher renamed between years: (later label, the earlier label it continues).
     renamed_labels: tuple[tuple[str, str], ...] = ()
-    # The flag code the publisher's codebook defines as "no reported cases" (NNDSS: '-'): an empty count with it
-    # is read as zero, labelled so; it is never stored as a number (hard rule 1).
+    # The flag code the publisher's codebook defines as "no reported cases" (NNDSS: '-'). An empty count with it
+    # has no number and keeps that meaning: never counted as 0, added up or turned into a rate (issue #173).
     no_cases_code: str | None = None
+    # Condition labels whose counts are not new cases of disease in the population (NNDSS: C. auris screening,
+    # which counts colonisation found by screening), each with the reason in plain words: (label, why). Declared
+    # on the condition column; get_rate, compare_rates and get_trend on rates give no rate per 100,000 for them.
+    not_incidence: tuple[tuple[str, str], ...] = ()
     # customProperties.mayBeEmpty: true when the contract says this field can be absent or empty in a whole
     # load (e.g. a field the publisher leaves empty in every row). Every other declared field must appear, and
     # it gets no fill-rate check (quality.fill_rate_rules).
@@ -756,7 +760,7 @@ def _custom(props: Any) -> dict[str, Any]:
     return out
 
 
-_PAIR_PROPS = ("flagCodes", "partialPlaces", "renamedLabels")
+_PAIR_PROPS = ("flagCodes", "partialPlaces", "renamedLabels", "notIncidence")
 
 
 def _pairs(value: Any, where: str) -> tuple[tuple[str, str], ...]:
@@ -854,6 +858,7 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
                 flag_codes=pairs["flagCodes"],
                 partial_places=pairs["partialPlaces"],
                 renamed_labels=pairs["renamedLabels"],
+                not_incidence=pairs["notIncidence"],
                 no_cases_code=None if zero is None else str(zero),
                 may_be_empty=may_be_empty,
             )
@@ -1111,6 +1116,23 @@ class SemanticModel(_Strict):
                 )
             _check_uncertainty(metric, m, measures)
         dims = {d.name: d for d in self.dimensions}
+        # A running total kept within each period (cumulative_latest's order_by) makes that dimension one whose
+        # per-period counts never add up to the period (late reports reach only the running total): the model
+        # declares it non_additive, and every such metric names the same one (query.within_period reads it).
+        within = {
+            str(m.order_by) for m in self.metrics if m.aggregation == "cumulative_latest" and m.order_by
+        }
+        if len({dims[w].column for w in within}) > 1:
+            raise ValueError(
+                "cumulative_latest metrics keep running totals along different columns "
+                f"({', '.join(sorted(within))}); order them all by one"
+            )
+        for w in within:
+            if not dims[w].non_additive:
+                raise ValueError(
+                    f"dimension {w}: a cumulative_latest metric keeps a running total along it, so counts never "
+                    "add up across it; declare non_additive: true with a non_additive_reason"
+                )
         summed = [m.name for m in self.metrics if m.aggregation == "sum"]
         undeclared = [d.name for d in self.dimensions if d.non_additive is None]
         declared = len(undeclared) < len(self.dimensions)
@@ -1281,6 +1303,17 @@ class Dataset:
     def not_a_human_case_count(self, label: str) -> str | None:
         """Why this label's counts are not cases in people (so no rate per 100,000 people), or None."""
         return self.entry.conditions.not_a_human_case_count.get(label)
+
+    def not_incidence(self, label: str) -> str | None:
+        """Why this publisher label's counts are not new cases of disease (so no rate per 100,000 people), or None.
+
+        Read only from the contract's notIncidence on the condition column, never guessed from the label's words.
+        """
+        dim = self.entry.conditions.dimension
+        if dim is None:
+            return None
+        column = self.contract.column(self.semantic.dimension(dim).column)
+        return dict(column.not_incidence).get(label)
 
     def condition_series(self, label: str) -> list[Series]:
         """Series for one catalogued label: the generic templates pinned to it, or, for a dataset that is one
@@ -1500,6 +1533,18 @@ def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticMode
             raise RegistryError(f"{entry.id}: {c.name} flags unknown column {c.flag_for}")
         if c.flag_codes and c.flag_for is None:
             raise RegistryError(f"{entry.id}: {c.name} lists flagCodes but flags no column (flagFor)")
+        if c.not_incidence:
+            label_col = dims[cond.dimension].column if cond.dimension in dims else None
+            if c.name != label_col:
+                raise RegistryError(
+                    f"{entry.id}: {c.name} declares notIncidence, which belongs on the condition column "
+                    f"({label_col or 'none: the catalog names no conditions.dimension'})"
+                )
+            unknown = [label for label, _ in c.not_incidence if label not in cond.labels]
+            if unknown:
+                raise RegistryError(
+                    f"{entry.id}: notIncidence names {unknown[0]!r}, which is not in the catalog's conditions.labels"
+                )
 
 
 def load_registry(root: Path | None = None) -> Registry:
