@@ -15,13 +15,11 @@ the PR why the mutant is equivalent.
 
 CI shards the run, one job per shard, and the aggregate step applies the floor to the summed counts. A module
 whose estimated mutants fit one shard is one shard, named after the module. A bigger one is split into shards
-named `<module>#<k>of<n>@<split>` (split_module, split_hash): each shard is a set of mutmut name globs, one per top-level function or
+named `<module>#<k>of<n>` (split_module): each shard is a set of mutmut name globs, one per top-level function or
 method (`<module>.x_f__mutmut_*`, `<module>.xǁClassǁm__mutmut_*`), and a function too big for one shard is split
 by the last digit of its mutant numbers (`<module>.x_f__mutmut_*[0123]`). The split is computed from the module's
-source alone, with the standard library, so --list and every shard compute the same one, and <split> is a hash
-of it: a shard whose module now splits differently (the source changed, or another Python's ast) is refused. A
-shard of a split module checks that every mutant of the module matches exactly one shard of the split, and fails
-if one does not. A shard none of whose names matches a generated mutant has nothing to mutate, and passes.
+source alone, with the standard library, so --list and every shard compute the same one. A shard of a split
+module checks that every mutant of the module matches exactly one shard of the split, and fails if one does not.
 
 It fails closed: a shard whose baseline failed, whose run left mutants not checked, interrupted or crashed
 (segfault), whose module has a mutant no shard covers, or that left no report fails the whole check, and so does
@@ -34,15 +32,12 @@ from __future__ import annotations
 import argparse
 import ast
 import fnmatch
-import hashlib
-import io
 import json
 import math
 import re
 import shutil
 import subprocess
 import sys
-import tokenize
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -58,23 +53,9 @@ KILLED_STATUSES = frozenset({"killed", "caught by type check"})
 INCOMPLETE_STATUSES = frozenset({"not checked", "check was interrupted by user", "segfault"})
 # Module names reach CI job names, artifact names and the mutmut command line: allow nothing else.
 MODULE_NAME = re.compile(r"^(?:health_data_registry|eval)(\.[a-z_][a-z0-9_]*)+$")
-# A shard id: a module name, alone (the whole module) or with `#<k>of<n>@<split>` (shard k of n of the split whose
-# hash is <split>, split_hash). `#` and `@` are valid in a GitHub job name, an artifact name and a file name; the
-# workflow and precheck quote the id wherever it reaches a shell.
-SHARD_ID = re.compile(
-    r"^(?P<module>[a-z_][a-z0-9_.]*)(?:#(?P<k>[1-9][0-9]*)of(?P<n>[1-9][0-9]*)(?:@(?P<split>[0-9a-f]{12}))?)?$"
-)
-# mutmut's message when no generated mutant matches the names it was given (mutmut/__main__.py). It comes after
-# the stats run, so the baseline passed: the shard has nothing to mutate.
-NOTHING_MATCHES = "Filtered for specific mutants, but nothing matches"
-# What mutmut never mutates (mutmut/mutation/file_mutation.py): these functions, these calls with their arguments,
-# and these methods of an enum class.
-NEVER_MUTATE_FUNCTION_NAMES = frozenset({"__getattribute__", "__setattr__", "__new__"})
-NEVER_MUTATE_FUNCTION_CALLS = frozenset({"len", "isinstance"})
-NEVER_MUTATE_ENUM_FUNCTION_NAMES = frozenset({"__init__", "_generate_next_value_"})
-ENUM_BASE_NAMES = frozenset({"Enum", "IntEnum", "StrEnum", "Flag", "IntFlag"})
-# coverage.py's default exclusion; mutmut ignores the statements it excludes, as under `# pragma: no mutate block`.
-NO_COVER = re.compile(r"#\s*(pragma|PRAGMA)[:\s]?\s*(no|NO)\s*(cover|COVER)")
+# A shard id: a module name, alone (the whole module) or with `#<k>of<n>` (shard k of n). `#` is valid in a GitHub
+# job name, an artifact name and a file name; the workflow and precheck quote it wherever it reaches a shell.
+SHARD_ID = re.compile(r"^(?P<module>[a-z_][a-z0-9_.]*)(?:#(?P<k>[1-9][0-9]*)of(?P<n>[1-9][0-9]*))?$")
 # mutmut's separator in a method's mutant name, x<SEP>Class<SEP>method (mutmut CLASS_NAME_SEPARATOR, U+01C1).
 SEP = "ǁ"
 
@@ -171,89 +152,11 @@ def _skipped_by_mutmut(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     )
 
 
-def _pragma_kind(comment: str) -> str | None:
-    """'block', 'start', 'end' or 'bare' for a `# pragma: no mutate` comment, else None (as mutmut reads it)."""
-    if "# pragma:" not in comment or "no mutate" not in comment:
-        return None
-    tokens = comment.partition("no mutate")[-1].strip().lstrip(": ").split(",", 1)[0].split()
-    return tokens[0] if tokens and tokens[0] in ("block", "start", "end") else "bare"
-
-
-def _spans(stmts: list[ast.stmt]) -> set[int]:
-    return {n for s in stmts for n in range(s.lineno, (s.end_lineno or s.lineno) + 1)}
-
-
-def _end(node: ast.AST) -> int:
-    return getattr(node, "end_lineno", None) or 0
-
-
-def _bodies(node: ast.AST) -> list[list[ast.stmt]]:
-    out = [
-        getattr(node, f) for f in ("body", "orelse", "finalbody") if isinstance(getattr(node, f, None), list)
-    ]
-    out += [h.body for h in getattr(node, "handlers", [])] + [c.body for c in getattr(node, "cases", [])]
-    return [b for b in out if b and isinstance(b[0], ast.stmt)]
-
-
-def ignored_lines(source: str, tree: ast.Module) -> set[int]:
-    """The lines mutmut does not mutate: under `# pragma: no mutate` (bare, block, start ... end) or excluded
-    from coverage (`# pragma: no cover`). An estimate for the split only; mutmut itself decides what it mutates."""
-    stmts = [n for n in ast.walk(tree) if isinstance(n, ast.stmt)]
-    compound = [(n, b[0][0].lineno) for n in [tree, *stmts] if (b := _bodies(n))]
-    lines = source.splitlines()
-    out: set[int] = set()
-    start: int | None = None
-    try:
-        comments = [
-            t for t in tokenize.generate_tokens(io.StringIO(source).readline) if t.type == tokenize.COMMENT
-        ]
-    except (tokenize.TokenError, SyntaxError):
-        return out
-    for tok in comments:
-        line = tok.start[0]
-        standalone = not lines[line - 1][: tok.start[1]].strip()
-        kind = _pragma_kind(tok.string)
-        if NO_COVER.search(tok.string) and not standalone:
-            out |= _spans([s for s in stmts if s.lineno == line])
-            continue
-        if kind == "bare":
-            out.add(line)
-        elif kind == "start":
-            start = line
-        elif kind == "end" and start is not None:
-            out.update(range(start, line + 1))
-            start = None
-        elif kind == "block" and not standalone:
-            # on a compound statement's header: the whole statement
-            out |= _spans(
-                [n for n, first in compound if isinstance(n, ast.stmt) and n.lineno <= line < first]
-            )
-            out.add(line)
-        elif kind == "block":
-            # on a line of its own: the rest of the innermost block that holds it
-            holders = [n for n, _ in compound if n is tree or getattr(n, "lineno", 0) < line <= _end(n)]
-            inner = max(holders, key=lambda n: getattr(n, "lineno", 0))
-            out |= _spans([s for b in _bodies(inner) for s in b if s.lineno > line])
-            out.add(line)
-    return out
-
-
-def _never_mutated_call(node: ast.AST) -> bool:
-    return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in NEVER_MUTATE_FUNCTION_CALLS
-    )
-
-
-def estimate_mutants(
-    fn: ast.FunctionDef | ast.AsyncFunctionDef, ignored_at: frozenset[int] = frozenset()
-) -> int:
+def estimate_mutants(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> int:
     """About how many mutants mutmut makes of one function: its constants, call arguments, operators,
-    comparisons, assignments and conditional expressions, leaving out the docstring, annotations, decorators,
-    `len` and `isinstance` calls, and lines in `ignored_at` (ignored_lines). 0 for a function mutmut never mutates.
+    comparisons, assignments and conditional expressions, leaving out the docstring, annotations and decorators.
     Only the balance of the split depends on it, never which mutants are run or counted."""
-    if _skipped_by_mutmut(fn) or fn.name in NEVER_MUTATE_FUNCTION_NAMES:
+    if _skipped_by_mutmut(fn):
         return 0
     ignored: set[int] = set()
     if fn.body and isinstance(fn.body[0], ast.Expr) and isinstance(fn.body[0].value, ast.Constant):
@@ -262,8 +165,6 @@ def estimate_mutants(
         for sub in (getattr(node, "annotation", None), getattr(node, "returns", None)):
             if isinstance(sub, ast.AST):
                 ignored.update(id(n) for n in ast.walk(sub))
-        if _never_mutated_call(node) or (node is not fn and getattr(node, "lineno", None) in ignored_at):
-            ignored.update(id(n) for n in ast.walk(node))
     n = 0
     for node in ast.walk(fn):
         if id(node) in ignored:
@@ -288,32 +189,18 @@ def estimate_mutants(
 def mutated_functions(source: str) -> list[tuple[str, int]]:
     """(mutmut key, estimated mutants) for every function mutmut can mutate, in source order: the top-level
     functions (`x_f`) and the methods of top-level classes (`xǁClassǁm`). A nested function is part of its outer
-    one, as in mutmut. A name defined more than once (`@overload` stubs and the function itself) is one key, with
-    the estimates summed, so each mutant name falls in one shard. A function mutmut never mutates (under
-    `# pragma: no mutate`, `__new__`, an enum's `__init__`, ...) weighs 0."""
-    tree = ast.parse(source)
-    ignored = frozenset(ignored_lines(source, tree))
-    out: dict[str, int] = {}
-
-    def add(key: str, fn: ast.FunctionDef | ast.AsyncFunctionDef, never: bool = False) -> None:
-        out[key] = out.get(key, 0) + (0 if never else estimate_mutants(fn, ignored))
-
-    for node in tree.body:
+    one, as in mutmut."""
+    out: list[tuple[str, int]] = []
+    for node in ast.parse(source).body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            add(f"x_{node.name}", node)
+            out.append((f"x_{node.name}", estimate_mutants(node)))
         elif isinstance(node, ast.ClassDef):
-            enum = any(
-                (b.attr if isinstance(b, ast.Attribute) else getattr(b, "id", None)) in ENUM_BASE_NAMES
-                for b in node.bases
-            )
-            for m in node.body:
-                if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    add(
-                        f"x{SEP}{node.name}{SEP}{m.name}",
-                        m,
-                        enum and m.name in NEVER_MUTATE_ENUM_FUNCTION_NAMES,
-                    )
-    return list(out.items())
+            out += [
+                (f"x{SEP}{node.name}{SEP}{m.name}", estimate_mutants(m))
+                for m in node.body
+                if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))
+            ]
+    return out
 
 
 def digit_groups(parts: int) -> list[str]:
@@ -366,8 +253,8 @@ def _pack(units: list[Unit], k: int) -> list[list[Unit]]:
 def split_module(source: str, target: int) -> list[list[Unit]]:
     """The module's shards, each a list of units; a single shard when the estimated total fits `target`.
 
-    Uses the fewest shards, from total / target up, whose heaviest stays within `target`, and never more shards
-    than units, so no shard is empty (a function too big for one shard is at most ten units). Each function is in exactly one shard, or each of its last-digit parts is, and every mutant name ends in one
+    Uses the fewest shards, from total / target up, whose heaviest stays within `target` (or one shard per unit).
+    Each function is in exactly one shard, or each of its last-digit parts is, and every mutant name ends in one
     digit, so every mutant of the module matches exactly one shard. Functions with no estimated mutant go in the
     first shard, so no shard is made of them alone.
     """
@@ -377,13 +264,12 @@ def split_module(source: str, target: int) -> list[list[Unit]]:
         return [[Unit(key, float(est)) for key, est in functions]]
     units = _units(functions, target)
     weighted = [u for u in units if u.weight > 0]
-    k = min(math.ceil(total / target), len(weighted))
+    k = math.ceil(total / target)
     while True:
         bins = _pack(weighted, k)
         if k >= len(weighted) or max(sum(u.weight for u in b) for b in bins) <= target:
             break
         k += 1
-    bins = [b for b in bins if b]  # none is empty while k <= len(weighted); kept so an empty one never runs
     bins[0] += [u for u in units if u.weight <= 0]
     return bins
 
@@ -393,36 +279,15 @@ def module_shards(module: str) -> list[list[Unit]]:
     return split_module(module_path(module).read_text(encoding="utf-8"), target)
 
 
-def split_hash(module: str, bins: list[list[Unit]]) -> str:
-    """12 hex digits of the sha256 of the split's globs, shard by shard: any change to which mutants a shard runs
-    changes it, so a shard listed from another version of the source (or another Python's ast) is refused."""
-    globs = [[u.glob(module) for u in b] for b in bins]
-    return hashlib.sha256(json.dumps(globs, ensure_ascii=False).encode("utf-8")).hexdigest()[:12]
-
-
-def shard_ids(module: str, bins: list[list[Unit]]) -> list[str]:
-    """`module` for a module that is one shard; `module#<k>of<n>@<split hash>` for each shard of a split one."""
-    if len(bins) == 1:
-        return [module]
-    h = split_hash(module, bins)
-    return [f"{module}#{k}of{len(bins)}@{h}" for k in range(1, len(bins) + 1)]
-
-
-def _match_shard_id(shard: str) -> re.Match[str]:
-    m = SHARD_ID.fullmatch(shard)
-    if not m or not MODULE_NAME.fullmatch(m["module"]):
-        raise ValueError(f"not a plain module name or shard id: {shard}")
-    return m
-
-
-def shard_split(shard: str) -> str | None:
-    """The split hash an id carries (`@<hash>`), or None."""
-    return _match_shard_id(shard)["split"]
+def shard_ids(module: str, count: int) -> list[str]:
+    return [module] if count == 1 else [f"{module}#{k}of{count}" for k in range(1, count + 1)]
 
 
 def parse_shard_id(shard: str) -> tuple[str, int, int]:
     """(module, k, n) of a shard id; a bare module name is shard 1 of 1. A malformed id is a ValueError."""
-    m = _match_shard_id(shard)
+    m = SHARD_ID.fullmatch(shard)
+    if not m or not MODULE_NAME.fullmatch(m["module"]):
+        raise ValueError(f"not a plain module name or shard id: {shard}")
     if m["k"] is None:
         return m["module"], 1, 1
     k, n = int(m["k"]), int(m["n"])
@@ -432,27 +297,15 @@ def parse_shard_id(shard: str) -> tuple[str, int, int]:
 
 
 def shard_globs(shard: str) -> list[str]:
-    """The mutmut name globs one shard runs, never none. A ValueError when the id carries no split hash, or the
-    module now splits into a different number of shards or a different split than the id says (the id was listed
-    from another version of the source, or by another Python)."""
+    """The mutmut name globs one shard runs. A ValueError when the module now splits into a different number of
+    shards than the id says (the id was listed from another version of the source)."""
     module, k, n = parse_shard_id(shard)
     if n == 1:
         return [f"{module}.*"]
-    listed = shard_split(shard)
-    if listed is None:
-        raise ValueError(
-            f"{shard}: a shard of a split module needs its split hash (@...); list the shards again"
-        )
     bins = module_shards(module)
     if len(bins) != n:
         raise ValueError(
             f"{shard}: {module} now splits into {len(bins)} shards, not {n}; list the shards again"
-        )
-    now = split_hash(module, bins)
-    if now != listed:
-        raise ValueError(
-            f"{shard}: {module} now splits differently (split {now}, listed {listed}): the source or the Python"
-            " changed since --list; list the shards again with the same source and Python"
         )
     return [u.glob(module) for u in bins[k - 1]]
 
@@ -472,7 +325,7 @@ def unassigned_mutants(names: list[str], module: str, bins: list[list[Unit]]) ->
 
 def list_shards(mods: list[str]) -> list[str]:
     """Every shard of the modules to mutate, module by module, shards in order."""
-    out = [s for m in select_modules(mods) for s in shard_ids(m, module_shards(m))]
+    out = [s for m in select_modules(mods) for s in shard_ids(m, len(module_shards(m)))]
     if len(out) > MAX_SHARDS:
         raise ValueError(
             f"{len(out)} shards is more than one CI matrix runs ({MAX_SHARDS}); raise SHARD_TARGET"
@@ -494,15 +347,15 @@ def select_shards(ids: list[str]) -> list[str]:
 
 def split_gaps(expected: list[str]) -> list[str]:
     """Modules the expected ids do not cover as one whole split: some shards of n only, or mixed counts."""
-    by_module: dict[str, list[tuple[int, int, str | None]]] = {}
+    by_module: dict[str, list[tuple[int, int]]] = {}
     for s in expected:
         module, k, n = parse_shard_id(s)
-        by_module.setdefault(module, []).append((k, n, shard_split(s)))
+        by_module.setdefault(module, []).append((k, n))
     gaps = []
     for module, kn in sorted(by_module.items()):
-        counts = {(n, h) for _, n, h in kn}
-        ks = sorted(k for k, _, _ in kn)
-        if len(counts) != 1 or ks != list(range(1, counts.pop()[0] + 1)):
+        counts = {n for _, n in kn}
+        ks = sorted(k for k, _ in kn)
+        if len(counts) != 1 or ks != list(range(1, counts.pop() + 1)):
             gaps.append(f"{module}: the expected shards {ks} are not one complete split of it")
     return gaps
 
@@ -532,16 +385,9 @@ def parse_results(text: str, shards: list[str], globs: list[str] | None = None) 
 def run_mutmut(shards: list[str]) -> ShardResult:
     print("Mutating:", ", ".join(shards))
     globs = [g for s in shards for g in shard_globs(s)]
-    if not globs:  # mutmut run with no names runs every mutant of the package: never do that
-        raise ValueError(f"{', '.join(shards)}: no mutant names to run; refusing to run mutmut on everything")
     shutil.rmtree(ROOT / "mutants", ignore_errors=True)
-    run = subprocess.run(["mutmut", "run", *globs], cwd=ROOT, check=False, stderr=subprocess.PIPE, text=True)
-    sys.stderr.write(run.stderr or "")
-    if run.returncode != 0 and NOTHING_MATCHES in (run.stderr or ""):
-        # The stats run passed and no generated mutant matches the shard's names: nothing to mutate. The results
-        # below still check that no mutant of the module is in no shard, or in several.
-        print("No generated mutant matches this shard's names: nothing to mutate here.")
-    elif run.returncode != 0:
+    run = subprocess.run(["mutmut", "run", *globs], cwd=ROOT, check=False)
+    if run.returncode != 0:
         # A failed baseline (the tests fail on the unmutated copy) checks nothing: never report it as a score.
         print(
             f"mutmut run failed (exit code {run.returncode}), so no mutant was checked. Fix the run above first."
@@ -650,11 +496,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.aggregate:
         if a.expect is None:  # without it a missing shard could never be noticed
             ap.error("--aggregate needs --expect (the --list output; pass '[]' explicitly for none)")
-        try:
-            expected = select_shards(json.loads(a.expect))
-        except (ValueError, TypeError) as e:  # json.JSONDecodeError is a ValueError
-            ap.error(f"--expect: {e}")
-        ok, lines = aggregate(load_reports(a.aggregate), a.floor, expected)
+        ok, lines = aggregate(load_reports(a.aggregate), a.floor, select_shards(json.loads(a.expect)))
         print("\n".join(lines))
         return 0 if ok else 1
 
@@ -669,7 +511,7 @@ def main(argv: list[str] | None = None) -> int:
             ap.error(f"--module {a.module} names no module to mutate")
         try:
             result = run_mutmut([a.module])
-        except ValueError as e:  # the split changed since --list, or no names: fail, never run other mutants
+        except ValueError as e:  # the split changed since --list: fail, never run a different set of mutants
             print(e)
             result = ShardResult(modules=[a.module], baseline_ok=False)
         a.report.parent.mkdir(parents=True, exist_ok=True)

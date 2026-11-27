@@ -115,16 +115,13 @@ class Robots:
             )
 
     def _rules(self, host: str) -> RobotFileParser | None:
-        from health_data_registry import deadline
         from health_data_registry.fetch import FetchRefused, fetch
 
         if host in self.rules:
             return self.rules[host]
         rp = RobotFileParser()
         try:
-            r = fetch(
-                f"https://{host}/robots.txt", allowed_hosts=self.hosts, timeout=deadline.cap(ROBOTS_TIMEOUT_S)
-            )
+            r = fetch(f"https://{host}/robots.txt", allowed_hosts=self.hosts, timeout=ROBOTS_TIMEOUT_S)
             status, body = r.status, r.content
         except FetchRefused as e:
             if e.status is None:
@@ -166,10 +163,8 @@ class Robots:
 
     def wait_turn(self, url: str) -> bool:
         """Refuse a blocked host, or a path robots.txt disallows (not on a government host); then wait out the
-        host's pace, within the budget. Returns True when robots.txt disallowed the path and the government-host
-        policy overrode it.
+        host's pace. Returns True when robots.txt disallowed the path and the government-host policy overrode it.
         """
-        from health_data_registry import deadline
         from health_data_registry.fetch import FetchRefused
 
         host = (urlsplit(url).hostname or "").lower()
@@ -193,9 +188,6 @@ class Robots:
             now = self.clock()
             due = self.last[host] + delay - now
             if due > 0:
-                left = deadline.remaining()
-                if left is not None and left <= due:  # inside a hosted call: never sleep past its deadline
-                    raise deadline.DeadlineExceeded()
                 ours = max(0.0, self.last[host] + floor - now)
                 charged = due - ours
                 if self.waited + charged > self.budget:
@@ -273,12 +265,7 @@ def fetcher(
     A URL whose catalog entry says `browser: true` is read with the browser fetcher; for a Tableau source the
     getter returns the view's captured bootstrapSession answer (the data), not the page around it, under the
     view's own URL (the session URL it was captured from is kept in the fetch log beside it).
-
-    Inside a call deadline (deadline.call_deadline, the hosted server), every attempt is capped by what is left of
-    the budget and no retry starts once the budget can't cover its back-off: the call stops with
-    deadline.DeadlineExceeded instead of retrying past it.
     """
-    from health_data_registry import deadline
     from health_data_registry.fetch import FetchRefused, fetch
 
     hosts = registry.hosts
@@ -287,11 +274,13 @@ def fetcher(
     paced = (policy or policy_for(registry)).paced  # retries back off at the pace even without robots.txt
     overridden: list[str] = []
 
-    def one(url: str, timeout: float) -> FetchResult:
+    def one(url: str) -> FetchResult:
         host = (urlsplit(url).hostname or "").lower()
         src = _source_for(registry, url)
         if src is None or not src.browser:
-            return fetch(url, allowed_hosts=hosts, headers={"Accept": "application/json"}, timeout=timeout)
+            return fetch(
+                url, allowed_hosts=hosts, headers={"Accept": "application/json"}, timeout=FETCH_TIMEOUT_S
+            )
         from health_data_registry.browser_fetch import browser_fetch
 
         tableau = src.portal == "tableau"
@@ -300,7 +289,7 @@ def fetcher(
             url,
             allowed_hosts=hosts,
             capture=[TABLEAU_DATA] if tableau else [],
-            timeout=timeout,
+            timeout=FETCH_TIMEOUT_S,
             allow=policy.allowed if policy is not None else None,
         )
         if not tableau:
@@ -335,9 +324,8 @@ def fetcher(
             raise
         for attempt in range(RETRIES):
             when = datetime.now(UTC)
-            budget = deadline.cap(FETCH_TIMEOUT_S)  # raises DeadlineExceeded when nothing is left
             try:
-                r = one(url, budget)
+                r = one(url)
             except FetchRefused as e:
                 if e.status in BLOCK_STATUSES and e.code != "blocked":
                     # fetch.py calls a 401/403/429 an http_error; under the access policy it is a block.
@@ -354,15 +342,8 @@ def fetcher(
                 # A slow or briefly unreachable publisher is retried, never sooner than the pace allows; a refused
                 # URL or host, and a block, never are.
                 if e.code not in ("timeout", "connect_failed") or attempt == RETRIES - 1:
-                    left = deadline.remaining()
-                    if e.code == "timeout" and left is not None and left <= 0:
-                        raise deadline.DeadlineExceeded() from e
                     raise e from None
-                pause = MIN_INTERVAL_S * 2**attempt if host in paced else 2 ** (attempt + 1)
-                left = deadline.remaining()
-                if left is not None and left <= pause:
-                    raise deadline.DeadlineExceeded() from e
-                sleep(pause)
+                sleep(MIN_INTERVAL_S * 2**attempt if host in paced else 2 ** (attempt + 1))
                 continue
             if r.status != 200:
                 msg = f"the publisher answered with status {r.status} instead of the data"

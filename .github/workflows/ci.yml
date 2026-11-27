@@ -160,14 +160,9 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      # The same pinned Python as the shards: the split comes from ast, and each shard refuses a split hash that
-      # differs from the one listed here. The script needs only the standard library, so no project install.
-      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
-        with:
-          python-version: "3.12"
       # Only the modules this change touches (spec: mutation tests on changed functions), as shard ids. The script
       # uses the standard library only (the split reads each module's source with ast) and rejects any name that
-      # is not a plain module name or `<module>#<k>of<n>@<split hash>`. A pull request compares with
+      # is not a plain module name or `<module>#<k>of<n>`. A pull request compares with
       # its base branch; a push to pre-pr/** has no base_ref and compares with main, the branch its PR will
       # target. fetch-depth 0 above fetched every branch, so origin/<base> exists; fail if it does not.
       - name: List changed modules
@@ -179,7 +174,7 @@ jobs:
             echo "The base branch origin/${BASE_REF} was not fetched, so the changed modules are unknown. Failing."
             exit 1
           fi
-          modules="$(uv run --no-project python scripts/mutate_changed.py --list --base "origin/${BASE_REF}")"
+          modules="$(python3 scripts/mutate_changed.py --list --base "origin/${BASE_REF}")"
           echo "Shards of the changed modules: ${modules}"
           echo "modules=${modules}" >> "$GITHUB_OUTPUT"
 
@@ -192,11 +187,10 @@ jobs:
     runs-on: ubuntu-latest
     # A shard holds about 500 estimated mutants (150 for registry.py, whose mutants run most of the suite each):
     # measured 25 Nov 2026 (PR #49), setup took 3.5 to 6.5 minutes and mutants ran at 54 to 145 a minute (13 for
-    # registry.py), so a shard needs about 10 to 20 minutes. 40 is twice the slowest expected shard: it stops a
-    # hung baseline or stats run (mutmut gives those no timeout of its own) within 40 minutes instead of holding
-    # runners. A shard that hits it leaves no report and fails the check; lower its module's target in
-    # scripts/mutate_changed.py rather than raising this.
-    timeout-minutes: 40
+    # registry.py), so a shard needs about 10 to 20 minutes. Whole modules were cut off at 60 minutes there
+    # (registry.py) before the split. 75 is a safety margin for slow runners, not the fix: a shard that hits it
+    # leaves no report and fails the check, so lower its module's target in scripts/mutate_changed.py.
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -210,9 +204,8 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies (locked)
         run: uv sync --locked
-      # MODULE is a shard id (a module, or `<module>#<k>of<n>@<split hash>`); it is always quoted, and `#` and `@`
-      # are valid in the report's file name and the artifact's name. The shard refuses a split hash that differs
-      # from its own split of the source.
+      # MODULE is a shard id (a module, or `<module>#<k>of<n>`); it is always quoted, and `#` is valid in the
+      # report's file name and the artifact's name.
       - name: Mutation tests on one shard
         env:
           MODULE: ${{ matrix.module }}
