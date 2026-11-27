@@ -249,14 +249,13 @@ def read_build(
                 if kind == "unit_test"
                 else str(config.get("severity") or "error").lower(),
                 "dimension": test_meta.get("dimension"),
+                # Every result names its contract rule, so a pass, a warning and a failure join to it alike.
+                "rule": test_meta.get("rule"),
                 "failures": r.get("failures"),
             }
             if status == "pass":
                 passed += 1
-                passes.append(
-                    {k: item[k] for k in ("test", "type", "severity", "dimension")}
-                    | {"rule": test_meta.get("rule")}
-                )
+                passes.append({k: v for k, v in item.items() if k != "failures"})
             elif status == "warn":
                 warnings.append(item)
             elif status == "fail":

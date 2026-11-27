@@ -1,8 +1,14 @@
-# dbt packages, each pinned to an exact version. `dbt deps` (make transform) installs them into dbt_packages/,
-# which is never committed; package-lock.yml records the exact versions resolved. Only data tests are used from
-# them, wired up in the generated model YAML (transform_gen.py); no package model is built.
+# dbt packages, each pinned to an exact version and, by scripts/dbt_packages.py, to the sha256 of its installed
+# files (package-digests.yml): a version is a git tag upstream, and a tag can be moved. `dbt deps` (make transform)
+# installs them into dbt_packages/, which is never committed; package-lock.yml records what dbt resolved, and
+# make transform and the refresh fail if `dbt deps` would change it. Never run `dbt deps --upgrade` casually: a
+# version bump is its own pull request, with the new digests. Only data tests are used from these packages, wired
+# up in the generated model YAML (transform_gen.py); no package model is built.
 packages:
   # Great Expectations-style dbt tests (Apache-2.0), Metaplane's maintained fork of calogica/dbt-expectations,
-  # which is no longer supported. Its one dependency, godatadriven/dbt_date, is pinned in package-lock.yml.
+  # which is no longer supported.
   - package: metaplane/dbt_expectations
     version: 0.10.10
+  # dbt_expectations' one dependency (Apache-2.0), pinned here too so its version is never left to the resolver.
+  - package: godatadriven/dbt_date
+    version: 0.21.0

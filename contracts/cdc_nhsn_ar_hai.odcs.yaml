@@ -56,11 +56,11 @@ schema:
         implementation: {check: row_count_matches, model: intermediate, compare: staging}
         dimension: consistency
         severity: error
-        description: "The intermediate model has exactly as many rows as staging: it only adds columns beside each staging row (an exact structural fact)."
+        description: "The intermediate model has exactly as many rows as staging: it only adds columns beside each staging row (an exact structural fact). It guards the generated intermediate model, which today is a view with no join, filter or aggregation, so it checks our code, not the publisher's data; it becomes a reconciliation of the data once a mart can change the grain (#131)."
       - id: load_within_refresh
         type: custom
         engine: dbt-expectations
-        implementation: {check: load_within_sla, sla: frequency}
+        implementation: {check: load_within_sla, model: staging, sla: frequency}
         dimension: timeliness
         severity: warn
         description: "The latest load is no older than the annual cadence in slaProperties frequency. It times our copy, not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold."
@@ -182,7 +182,7 @@ schema:
             implementation: {check: total_matches, model: intermediate, compare: staging}
             dimension: consistency
             severity: error
-            description: "The total of isolates_tested, a count, is the same in staging and the intermediate model: a checksum between layers, never an answer."
+            description: "The total number of isolates tested (isolates_tested), summed over every row, is the same in staging and the intermediate model: a checksum between layers, never an answer (an answer never adds a total row to its parts). It guards the generated intermediate model, which today is a view with no join, filter or aggregation, so it checks our code, not the publisher's data; it becomes a reconciliation of the data once a mart can change the grain (#131)."
       - name: resistant_isolates
         physicalType: BIGINT
         logicalType: integer
@@ -199,7 +199,7 @@ schema:
             implementation: {check: total_matches, model: intermediate, compare: staging}
             dimension: consistency
             severity: error
-            description: "The total of resistant_isolates, a count, is the same in staging and the intermediate model: a checksum between layers, never an answer."
+            description: "The total number of resistant isolates (resistant_isolates), summed over every row, is the same in staging and the intermediate model: a checksum between layers, never an answer (an answer never adds a total row to its parts). It guards the generated intermediate model, which today is a view with no join, filter or aggregation, so it checks our code, not the publisher's data; it becomes a reconciliation of the data once a mart can change the grain (#131)."
       - name: percent_resistant
         physicalType: DOUBLE
         logicalType: number
@@ -241,10 +241,10 @@ schema:
           - id: percent_resistant_in_range
             type: custom
             engine: dbt-expectations
-            implementation: {check: values_between, min: 0, max: 100}
+            implementation: {check: values_between, model: staging, min: 0, max: 100}
             dimension: conformity
             severity: error
-            description: "A percent of tested isolates (resistant / tested x 100, column description), so it lies from 0 to 100."
+            description: "A percent of tested isolates (resistant / tested x 100, column description), so it lies from 0 to 100. Rows with no percent are skipped, so an all-empty column passes this check; only the fill-rate warning (fill_rate_percent_resistant) flags that."
       - name: suppressed
         physicalType: BOOLEAN
         logicalType: boolean
@@ -294,7 +294,7 @@ customProperties:
   - {property: unreliableRule, value: {kind: publisher_suppressed, threshold: 20, description: "Publisher: resistant counts and percent resistant are shown only when at least 20 isolates were tested; smaller cells are empty (column descriptions of isolates_resistant and percent_resistant)."}}
   - property: openQuestions
     value:
-      - "Freshness: the publisher's own last-update time is not stored, so load_within_refresh times our latest load against the annual cadence (slaProperties frequency), not the publisher's update. Store the publisher's update time (e.g. Socrata rowsUpdatedAt) in the snapshot manifest, then check that instead."
+      - "Freshness: the publisher's own last-update time is not stored, so load_within_refresh times our latest load against the annual cadence (slaProperties frequency), not the publisher's update. The weekly refresh fetches every source into an empty lake, so there the load is minutes old and the check passes; it says something about the data only once it times the publisher's update. Store the publisher's update time (e.g. Socrata rowsUpdatedAt) in the snapshot manifest, then check that instead."
       - "Freshness grace: how long past the annual cadence should a load count as stale? Nothing the publisher states sets a grace period, so load_within_refresh warns at exactly the cadence. Maintainer to decide."
       - "Licence: no licence field in the Socrata metadata; public-domain-us-federal assumed from its being a CDC work."
       - "Dataset id stability: the title carries the year range (2011-2025) and the Socrata asset was created in November 2026. Does CDC publish a new 4x4 id each year? If so the adapter needs a lookup step."

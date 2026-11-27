@@ -249,7 +249,14 @@ def test_a_clean_build_passes_and_is_served_only_once_confirmed(tmp_path: Path) 
     assert build.servable and build.reason() == ""
     assert (build.models_built, build.tests_passed) == (1, 2)
     assert build.warnings == [
-        {"test": "fill_a", "type": "test", "severity": "warn", "dimension": "conformity", "failures": 3}
+        {
+            "test": "fill_a",
+            "type": "test",
+            "severity": "warn",
+            "dimension": "conformity",
+            "rule": None,
+            "failures": 3,
+        }
     ]
     assert build.build_id.startswith("build-") and len(build.build_id) == 18
     row = rg.decide(ops, build, now=T0, run_date="2026-11-25")

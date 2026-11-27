@@ -66,23 +66,12 @@ models:
         meta:
           dimension: consistency
           rule: rows_staging_to_intermediate
+          contract: contracts/census_county_pop.odcs.yaml
           check: row_count_matches
           checks: 'The intermediate model has exactly as many rows as staging: it only adds columns beside each
-            staging row (an exact structural fact).'
-  - dbt_expectations.expect_row_values_to_have_recent_data:
-      name: census_county_pop_load_within_refresh
-      arguments:
-        column_name: strptime(left(_snapshot_id, 16), '%Y%m%dT%H%M%SZ')
-        datepart: year
-        interval: 1
-      config:
-        severity: warn
-        meta:
-          dimension: timeliness
-          rule: load_within_refresh
-          check: load_within_sla
-          checks: The latest load is no older than the annual cadence in slaProperties frequency. It times our copy,
-            not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold.
+            staging row (an exact structural fact). It guards the generated intermediate model, which today is a
+            view with no join, filter or aggregation, so it checks our code, not the publisher''s data; it becomes
+            a reconciliation of the data once a mart can change the grain (#131).'
   - dbt_expectations.expect_table_aggregation_to_equal_other_table:
       name: census_county_pop_total_population_staging_to_intermediate
       arguments:
@@ -93,9 +82,13 @@ models:
         meta:
           dimension: consistency
           rule: total_population_staging_to_intermediate
+          contract: contracts/census_county_pop.odcs.yaml
           check: total_matches
-          checks: 'The total of population, a count, is the same in staging and the intermediate model: a checksum
-            between layers, never an answer.'
+          checks: 'The sum of the population estimates (population), over every row, the nation and state rows included
+            beside their counties, is the same in staging and the intermediate model. Each value is an estimate,
+            never summed in an answer: this sum is only a checksum between layers. It guards the generated intermediate
+            model, which today is a view with no join, filter or aggregation, so it checks our code, not the publisher''s
+            data; it becomes a reconciliation of the data once a mart can change the grain (#131).'
   columns:
   - name: sumlev
     data_type: varchar

@@ -50,11 +50,19 @@ def validate(registry: Registry, lake: Path) -> int:
     against the catalog's list. A label the catalog doesn't list fails: add it from the publisher's codebook."""
     from health_data_registry.query import Engine
     from health_data_registry.tools import unlisted_condition_labels
+    from health_data_registry.transform_gen import model_contracts
 
     for ds in registry:
         print(
             f"ok   {ds.id}: contract {ds.contract.version} ({ds.entry.status}), {len(ds.semantic.metrics)} metrics"
         )
+    try:
+        models = model_contracts(registry.root)
+    except RegistryError as e:
+        print(f"FAIL {e}", file=sys.stderr)
+        return 1
+    for path, contract in models:
+        print(f"ok   {contract.id}: model contract {contract.version} ({path})")
     engine = Engine(registry=registry, lake=lake, hub=None, fetch_at_run_time=False)
     failed = 0
     for ds_id, extra in unlisted_condition_labels(registry, engine).items():

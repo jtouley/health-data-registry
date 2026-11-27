@@ -210,37 +210,12 @@ models:
         meta:
           dimension: consistency
           rule: rows_staging_to_intermediate
+          contract: contracts/cdc_nndss_weekly.odcs.yaml
           check: row_count_matches
           checks: 'The intermediate model has exactly as many rows as staging: it only adds columns beside each
-            staging row (an exact structural fact).'
-  - dbt_expectations.expect_row_values_to_have_recent_data:
-      name: cdc_nndss_weekly_load_within_refresh
-      arguments:
-        column_name: strptime(left(_snapshot_id, 16), '%Y%m%dT%H%M%SZ')
-        datepart: day
-        interval: 7
-      config:
-        severity: warn
-        meta:
-          dimension: timeliness
-          rule: load_within_refresh
-          check: load_within_sla
-          checks: The latest load is no older than the weekly cadence in slaProperties frequency. It times our copy,
-            not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold.
-  - dbt_expectations.expect_column_values_to_be_between:
-      name: cdc_nndss_weekly_week_in_range
-      arguments:
-        column_name: '"week"'
-        min_value: 1
-        max_value: 53
-        row_condition: '"week" is not null'
-      config:
-        severity: error
-        meta:
-          dimension: conformity
-          rule: week_in_range
-          check: values_between
-          checks: The codebook gives the MMWR week as 1-52, or 53 in 53-week years (the column description).
+            staging row (an exact structural fact). It guards the generated intermediate model, which today is a
+            view with no join, filter or aggregation, so it checks our code, not the publisher''s data; it becomes
+            a reconciliation of the data once a mart can change the grain (#131).'
   - dbt_expectations.expect_table_aggregation_to_equal_other_table:
       name: cdc_nndss_weekly_total_m1_staging_to_intermediate
       arguments:
@@ -251,9 +226,13 @@ models:
         meta:
           dimension: consistency
           rule: total_m1_staging_to_intermediate
+          contract: contracts/cdc_nndss_weekly.odcs.yaml
           check: total_matches
-          checks: 'The total of m1, a count, is the same in staging and the intermediate model: a checksum between
-            layers, never an answer.'
+          checks: 'The total of this week''s reported cases (m1), summed over every row, the publisher''s total-area
+            rows included, is the same in staging and the intermediate model: a checksum between layers, never an
+            answer (an answer never adds a total row to its parts). It guards the generated intermediate model,
+            which today is a view with no join, filter or aggregation, so it checks our code, not the publisher''s
+            data; it becomes a reconciliation of the data once a mart can change the grain (#131).'
   columns:
   - name: states
     data_type: varchar

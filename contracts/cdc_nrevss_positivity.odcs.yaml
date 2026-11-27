@@ -56,11 +56,11 @@ schema:
         implementation: {check: row_count_matches, model: intermediate, compare: staging}
         dimension: consistency
         severity: error
-        description: "The intermediate model has exactly as many rows as staging: it only adds columns beside each staging row (an exact structural fact)."
+        description: "The intermediate model has exactly as many rows as staging: it only adds columns beside each staging row (an exact structural fact). It guards the generated intermediate model, which today is a view with no join, filter or aggregation, so it checks our code, not the publisher's data; it becomes a reconciliation of the data once a mart can change the grain (#131)."
       - id: load_within_refresh
         type: custom
         engine: dbt-expectations
-        implementation: {check: load_within_sla, sla: frequency}
+        implementation: {check: load_within_sla, model: staging, sla: frequency}
         dimension: timeliness
         severity: warn
         description: "The latest load is no older than the weekly cadence in slaProperties frequency. It times our copy, not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold."
@@ -149,8 +149,8 @@ customProperties:
   - {property: unreliableRule, value: {kind: none, description: "None stated in the dataset metadata: no percent is marked unreliable or suppressed for a small number of tests."}}
   - property: openQuestions
     value:
-      - "Freshness: the publisher's own last-update time is not stored, so load_within_refresh times our latest load against the weekly cadence (slaProperties frequency), not the publisher's update. Store the publisher's update time (e.g. Socrata rowsUpdatedAt) in the snapshot manifest, then check that instead."
-      - "Freshness grace: how long past the weekly cadence should a load count as stale? Nothing the publisher states sets a grace period, so load_within_refresh warns at exactly the cadence. Maintainer to decide."
+      - "Freshness: the publisher's own last-update time is not stored, so load_within_refresh times our latest load against the weekly cadence (slaProperties frequency), not the publisher's update. The weekly refresh fetches every source into an empty lake, so there the load is minutes old and the check passes; it says something about the data only once it times the publisher's update. Store the publisher's update time (e.g. Socrata rowsUpdatedAt) in the snapshot manifest, then check that instead."
+      - "Freshness grace: how long past the weekly cadence should a load count as stale? Nothing the publisher states sets a grace period, so load_within_refresh warns at exactly the cadence. With the warning at exactly the cadence, one missed weekly refresh warns only if this run reaches the test later in the day than last week's load was stamped, so a single miss is caught only some of the time. Maintainer to decide."
       - "Licence: the Socrata metadata has no licence field (2026-11-25). public-domain-us-federal is assumed from its being a CDC work; a maintainer confirms the wording."
       - "How many tests and laboratories stand behind each week's percent, and has the set of reporting laboratories changed over time? Not in the table; the NREVSS page was not fetched."
       - "Influenza: the dataset description says NREVSS 'includes clinical, public health and commercial laboratories', but that 'Influenza results include clinical laboratory test results from NREVSS and influenza collaborating laboratories'. Does the influenza percent include public health or commercial laboratory results, and which test types (the RSV and COVID-19 rows are NAAT only)?"

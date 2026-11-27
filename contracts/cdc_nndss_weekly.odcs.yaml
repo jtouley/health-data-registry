@@ -58,11 +58,11 @@ schema:
         implementation: {check: row_count_matches, model: intermediate, compare: staging}
         dimension: consistency
         severity: error
-        description: "The intermediate model has exactly as many rows as staging: it only adds columns beside each staging row (an exact structural fact)."
+        description: "The intermediate model has exactly as many rows as staging: it only adds columns beside each staging row (an exact structural fact). It guards the generated intermediate model, which today is a view with no join, filter or aggregation, so it checks our code, not the publisher's data; it becomes a reconciliation of the data once a mart can change the grain (#131)."
       - id: load_within_refresh
         type: custom
         engine: dbt-expectations
-        implementation: {check: load_within_sla, sla: frequency}
+        implementation: {check: load_within_sla, model: staging, sla: frequency}
         dimension: timeliness
         severity: warn
         description: "The latest load is no older than the weekly cadence in slaProperties frequency. It times our copy, not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold."
@@ -102,7 +102,7 @@ schema:
           - id: week_in_range
             type: custom
             engine: dbt-expectations
-            implementation: {check: values_between, min: 1, max: 53}
+            implementation: {check: values_between, model: staging, min: 1, max: 53}
             dimension: conformity
             severity: error
             description: "The codebook gives the MMWR week as 1-52, or 53 in 53-week years (the column description)."
@@ -142,7 +142,7 @@ schema:
             implementation: {check: total_matches, model: intermediate, compare: staging}
             dimension: consistency
             severity: error
-            description: "The total of m1, a count, is the same in staging and the intermediate model: a checksum between layers, never an answer."
+            description: "The total of this week's reported cases (m1), summed over every row, the publisher's total-area rows included, is the same in staging and the intermediate model: a checksum between layers, never an answer (an answer never adds a total row to its parts). It guards the generated intermediate model, which today is a view with no join, filter or aggregation, so it checks our code, not the publisher's data; it becomes a reconciliation of the data once a mart can change the grain (#131)."
           - id: m1_empty_only_where_flagged
             dimension: consistency
             severity: warn
@@ -282,8 +282,8 @@ customProperties:
   - {property: unreliableRule, value: {kind: none, description: "None: the publisher marks no counts as unreliable and publishes no rates. Empty counts carry a flag ('-' no reported cases; U, N, NN, NP, NC)."}}
   - property: openQuestions
     value:
-      - "Freshness: the publisher's own last-update time is not stored, so load_within_refresh times our latest load against the weekly cadence (slaProperties frequency), not the publisher's update. Store the publisher's update time (e.g. Socrata rowsUpdatedAt) in the snapshot manifest, then check that instead."
-      - "Freshness grace: how long past the weekly cadence should a load count as stale? Nothing the publisher states sets a grace period, so load_within_refresh warns at exactly the cadence. Maintainer to decide."
+      - "Freshness: the publisher's own last-update time is not stored, so load_within_refresh times our latest load against the weekly cadence (slaProperties frequency), not the publisher's update. The weekly refresh fetches every source into an empty lake, so there the load is minutes old and the check passes; it says something about the data only once it times the publisher's update. Store the publisher's update time (e.g. Socrata rowsUpdatedAt) in the snapshot manifest, then check that instead."
+      - "Freshness grace: how long past the weekly cadence should a load count as stale? Nothing the publisher states sets a grace period, so load_within_refresh warns at exactly the cadence. With the warning at exactly the cadence, one missed weekly refresh warns only if this run reaches the test later in the day than last week's load was stamped, so a single miss is caught only some of the time. Maintainer to decide."
       - "Is next year's prior-year year-to-date (m4) a like-for-like restatement of a year's own year-to-date (m3)? Nothing in the codebook says so, and for Candida auris, clinical they differ widely (m3 at the year's last week vs next year's m4 at its last week, live data 2026-11-24: California 2023 1275 vs 551; Georgia 2023 390 vs 191; Georgia 2024 651 vs 365; Michigan 2023 103 vs 110). Until a domain reviewer answers (semantic resolution_policy: require_domain_review), both are returned as separate observations (year_end_ytd, provisional; subsequent_year_restatement, unverified_restatement) and neither is called final."
       - "Supporting evidence for the reviewer on the m3/m4 question, not a verification: for Michigan 2024, CDC's C. auris tracking page shows 184 clinical cases; NNDSS clinical is 174 at year end (m3) and 184 in the next year's table (m4); NNDSS screening is 643 at year end and 689 restated (spec research, branch claude/cauris-source-contracts, commit 1e4740c, docs/sources/c-auris/; not in this branch, not re-checked here). One matching state-year does not show the two count the same thing, and the California 2023 gap (1275 vs 551) is unexplained, so resolution_policy stays require_domain_review."
       - "Case definition for Candida auris: CSTE position statement 22-ID-05, CDC's 2023 case definition at https://ndc.services.cdc.gov/case-definitions/candida-auris-2023/ (found 2026-11-25 on the case-definition site the dataset notes cite; it defines the clinical and screening subtypes the notIncidence declaration quotes). Maintainer to confirm and add it as an authoritativeDefinitions link. A note, not a blocker: the notIncidence declaration stands on the maintainer's review."

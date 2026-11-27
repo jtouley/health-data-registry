@@ -50,6 +50,7 @@ from health_data_registry.registry import (
     Contract,
     Dataset,
     Registry,
+    RegistryError,
     label_key,
     label_key_sql,
     load_registry,
@@ -234,6 +235,7 @@ def _model_yml(
     *,
     provenance: bool = False,
     extra_tests: list[dict[str, Any]] | None = None,
+    column_tests: Mapping[str, list[dict[str, Any]]] | None = None,
 ) -> str:
     schema = (contract.raw.get("schema") or [{}])[0]
     pk = primary_key(contract)
@@ -256,7 +258,7 @@ def _model_yml(
         ]
     if extra_tests:
         entry["data_tests"] = entry.get("data_tests", []) + extra_tests
-    entry["columns"] = _columns(contract, model)
+    entry["columns"] = _with_column_tests(_columns(contract, model), column_tests or {})
     if provenance:
         entry["columns"] += [
             {
@@ -278,17 +280,25 @@ def staging_yml(ds: Dataset) -> str:
         ["staging"],
         provenance=True,
         extra_tests=dq_tests(ds, "staging"),
+        column_tests=dq_column_tests(ds, "staging"),
     )
 
 
 def model_contracts(root: Path) -> list[tuple[Path, Contract]]:
-    """The contracts of models computed in dbt (contracts/models/<id>.odcs.yaml), each parsed like a dataset's."""
+    """The contracts of models computed in dbt (contracts/models/<id>.odcs.yaml), each parsed like a dataset's.
+
+    A model contract may not declare dbt-expectations checks yet: they compare a source's layers, which a model
+    computed in dbt doesn't have. Refused here, where the contract is parsed, so `validate` says so plainly."""
     out = []
     for path in sorted((root / MODEL_CONTRACTS).glob("*.odcs.yaml")):
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-        out.append(
-            (path.relative_to(root), parse_contract(doc, expected_id=path.name.removesuffix(".odcs.yaml")))
-        )
+        contract = parse_contract(doc, expected_id=path.name.removesuffix(".odcs.yaml"))
+        if contract.checks:
+            raise RegistryError(
+                f"{contract.id}: dbt-expectations checks are declared on source contracts only, so far; "
+                "declare a library or sql quality rule on a model contract"
+            )
+        out.append((path.relative_to(root), contract))
     return out
 
 
@@ -432,11 +442,36 @@ def quality_tests(ds: Dataset) -> list[dict[str, Any]]:
 
 
 def dq_tests(ds: Dataset, model: str) -> list[dict[str, Any]]:
-    """The dbt-expectations tests the contract declares on one layer (staging or intermediate), as dbt config.
+    """The dbt-expectations tests the contract declares on one layer (staging or intermediate) that run on the
+    model, as dbt config. Each is a `custom` quality rule in the contract; dq_checks.CHECK_TYPES maps its check
+    type to the test. Tests dbt runs under a column are in dq_column_tests."""
+    return [
+        dbt_test(c, ds.id, ds.entry.contract)
+        for c in ds.contract.checks
+        if c.model == model and not c.on_column
+    ]
 
-    Each is a `custom` quality rule in the contract; dq_checks.CHECK_TYPES maps its check type to the test.
-    """
-    return [dbt_test(c, ds.id) for c in ds.contract.checks if c.model == model]
+
+def dq_column_tests(ds: Dataset, model: str) -> dict[str, list[dict[str, Any]]]:
+    """The dbt-expectations tests on one layer that dbt runs under their column, by column name."""
+    out: dict[str, list[dict[str, Any]]] = {}
+    for c in ds.contract.checks:
+        if c.model == model and c.on_column and c.column is not None:
+            out.setdefault(c.column, []).append(dbt_test(c, ds.id, ds.entry.contract))
+    return out
+
+
+def _with_column_tests(
+    columns: list[dict[str, Any]], tests: Mapping[str, list[dict[str, Any]]]
+) -> list[dict[str, Any]]:
+    """The columns, each with the column tests given for it added to its own data_tests."""
+    unknown = sorted(set(tests) - {c["name"] for c in columns})
+    if unknown:
+        raise ValueError(f"a column check names {unknown[0]}, which the model has no column for")
+    return [
+        {**c, "data_tests": c.get("data_tests", []) + tests[c["name"]]} if c["name"] in tests else c
+        for c in columns
+    ]
 
 
 def dq_test_severities(ds: Dataset) -> dict[str, str]:
@@ -502,7 +537,7 @@ def intermediate_yml(ds: Dataset) -> str:
             "contract_status": ds.contract.status,
         },
         "data_tests": quality_tests(ds) + dq_tests(ds, "intermediate"),
-        "columns": columns,
+        "columns": _with_column_tests(columns, dq_column_tests(ds, "intermediate")),
     }
     return _dump(HEADER.format(src=ds.entry.contract), {"version": 2, "models": [entry]})
 
@@ -517,10 +552,6 @@ def generate(registry: Registry) -> dict[Path, str]:
         out[INTERMEDIATE_DIR / f"int_{ds.id}.yml"] = intermediate_yml(ds)
     out[UNMAPPED_LABELS] = unmapped_labels_sql(registry)
     for path, contract in model_contracts(registry.root):
-        if contract.checks:
-            raise ValueError(
-                f"{contract.id}: dbt-expectations checks are declared on source contracts only, so far"
-            )
         layer = model_layer(contract)
         out[MODELS_DIR / layer / f"{contract.id}.yml"] = _model_yml(contract, contract.id, str(path), [layer])
     return out

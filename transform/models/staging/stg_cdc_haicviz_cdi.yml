@@ -25,9 +25,25 @@ models:
         meta:
           dimension: consistency
           rule: rows_raw_to_staging
+          contract: contracts/cdc_haicviz_cdi.odcs.yaml
           check: row_count_matches
           checks: 'Staging has exactly as many rows as the raw load it types: staging drops and adds no row (an
             exact structural fact of the generated staging model).'
+  - dbt_expectations.expect_row_values_to_have_recent_data:
+      name: cdc_haicviz_cdi_load_within_refresh
+      arguments:
+        column_name: try_strptime(left(_snapshot_id, 16), '%Y%m%dT%H%M%SZ')
+        datepart: year
+        interval: 1
+      config:
+        severity: warn
+        meta:
+          dimension: timeliness
+          rule: load_within_refresh
+          contract: contracts/cdc_haicviz_cdi.odcs.yaml
+          check: load_within_sla
+          checks: The latest load is no older than the annual cadence in slaProperties frequency. It times our copy,
+            not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold.
   columns:
   - name: yearname
     data_type: bigint

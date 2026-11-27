@@ -35,7 +35,7 @@ from typing import Any
 
 import duckdb
 
-from health_data_registry.dq_checks import is_check
+from health_data_registry.dq_checks import RULE_ID, is_check
 from health_data_registry.sql_guard import SqlRefused, guard_sql, require_single_select
 
 DIMENSIONS = frozenset(
@@ -124,6 +124,10 @@ def _rule(item: Mapping[str, Any], column: str | None, where: str, columns: froz
     rid = str(item.get("id") or "").strip()
     if not rid:
         raise QualityRuleInvalid(f"{where}: every quality rule needs an id")
+    if not RULE_ID.match(rid):  # it names a dbt test, which the release gate matches by name
+        raise QualityRuleInvalid(
+            f"{where}: rule id {rid!r} must be lower-case letters, digits and underscores"
+        )
     where = f"{where}.{rid}"
     kind = str(item.get("type") or "")
     if kind not in ("library", "sql"):

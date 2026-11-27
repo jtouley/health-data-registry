@@ -1401,6 +1401,14 @@ def load_dataset(root: Path, entry_path: Path) -> Dataset:
         if not p.is_file():
             raise RegistryError(f"{entry.id}: missing {p.relative_to(root)}")
     contract = parse_contract(_yaml(contract_path), expected_id=entry.id)
+    if contract.checks and not entry.licence.redistribution:
+        # dbt-expectations checks run only in the dbt build, which reads stored sources (transform_gen.stored):
+        # on a live or restricted source such a check would be accepted and never run.
+        raise RegistryError(
+            f"{entry.id}: dbt-expectations checks run only in the dbt build, which reads stored sources, and "
+            f"{entry.licence.id} keeps this source out of the lake; declare a library or sql quality rule, "
+            "which runs on every live read"
+        )
     try:
         semantic = SemanticModel.model_validate(_yaml(semantic_path))
     except ValidationError as e:

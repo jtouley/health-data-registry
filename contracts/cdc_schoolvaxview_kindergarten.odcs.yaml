@@ -60,11 +60,11 @@ schema:
         implementation: {check: row_count_matches, model: intermediate, compare: staging}
         dimension: consistency
         severity: error
-        description: "The intermediate model has exactly as many rows as staging: it only adds columns beside each staging row (an exact structural fact)."
+        description: "The intermediate model has exactly as many rows as staging: it only adds columns beside each staging row (an exact structural fact). It guards the generated intermediate model, which today is a view with no join, filter or aggregation, so it checks our code, not the publisher's data; it becomes a reconciliation of the data once a mart can change the grain (#131)."
       - id: load_within_refresh
         type: custom
         engine: dbt-expectations
-        implementation: {check: load_within_sla, sla: frequency}
+        implementation: {check: load_within_sla, model: staging, sla: frequency}
         dimension: timeliness
         severity: warn
         description: "The latest load is no older than the annual cadence in slaProperties frequency. It times our copy, not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold."
@@ -217,7 +217,7 @@ schema:
             implementation: {check: total_matches, model: intermediate, compare: staging}
             dimension: consistency
             severity: error
-            description: "The total of number_of_exemptions, a count, is the same in staging and the intermediate model: a checksum between layers, never an answer."
+            description: "The total number of kindergartners with an exemption (number_of_exemptions), summed over every row, any total rows included, is the same in staging and the intermediate model: a checksum between layers, never an answer (an answer never adds a total row to its parts). It guards the generated intermediate model, which today is a view with no join, filter or aggregation, so it checks our code, not the publisher's data; it becomes a reconciliation of the data once a mart can change the grain (#131)."
       - name: survey_type
         physicalType: VARCHAR
         logicalType: string
@@ -251,7 +251,7 @@ customProperties:
         - {vaccine: "Exemption", causes: [], note: "Exemptions have no cause."}
   - property: openQuestions
     value:
-      - "Freshness: the publisher's own last-update time is not stored, so load_within_refresh times our latest load against the annual cadence (slaProperties frequency), not the publisher's update. Store the publisher's update time (e.g. Socrata rowsUpdatedAt) in the snapshot manifest, then check that instead."
+      - "Freshness: the publisher's own last-update time is not stored, so load_within_refresh times our latest load against the annual cadence (slaProperties frequency), not the publisher's update. The weekly refresh fetches every source into an empty lake, so there the load is minutes old and the check passes; it says something about the data only once it times the publisher's update. Store the publisher's update time (e.g. Socrata rowsUpdatedAt) in the snapshot manifest, then check that instead."
       - "Freshness grace: how long past the annual cadence should a load count as stale? Nothing the publisher states sets a grace period, so load_within_refresh warns at exactly the cadence. Maintainer to decide."
       - "Survey type: survey_type differs by state and year (census, sample, voluntary response, mixed public/private). Can a sample-based state's estimate be set beside a census state's? CDC's methods must say so; until then answers show each row's survey type through query_sql and describe_dataset, and states are never ranked here."
       - "Footnote symbols: the footnote key (footnoteKey) gives the symbols' meanings, separately for coverage and exemption rows. Published symbols outside the key (≥, >=, and the replacement character where a symbol was garbled) have no stated meaning. A maintainer reads CDC's key and decides how each symbol is shown; nothing reads them into a number."

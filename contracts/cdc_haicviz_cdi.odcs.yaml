@@ -56,11 +56,11 @@ schema:
         implementation: {check: row_count_matches, model: intermediate, compare: staging}
         dimension: consistency
         severity: error
-        description: "The intermediate model has exactly as many rows as staging: it only adds columns beside each staging row (an exact structural fact)."
+        description: "The intermediate model has exactly as many rows as staging: it only adds columns beside each staging row (an exact structural fact). It guards the generated intermediate model, which today is a view with no join, filter or aggregation, so it checks our code, not the publisher's data; it becomes a reconciliation of the data once a mart can change the grain (#131)."
       - id: load_within_refresh
         type: custom
         engine: dbt-expectations
-        implementation: {check: load_within_sla, sla: frequency}
+        implementation: {check: load_within_sla, model: staging, sla: frequency}
         dimension: timeliness
         severity: warn
         description: "The latest load is no older than the annual cadence in slaProperties frequency. It times our copy, not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold."
@@ -130,7 +130,7 @@ customProperties:
   - {property: unreliableRule, value: {kind: none, description: "None stated: data.cdc.gov publishes no codebook or small-number rule for these EIP figures (see openQuestions)."}}
   - property: openQuestions
     value:
-      - "Freshness: the publisher's own last-update time is not stored, so load_within_refresh times our latest load against the annual cadence (slaProperties frequency), not the publisher's update. Store the publisher's update time (e.g. Socrata rowsUpdatedAt) in the snapshot manifest, then check that instead."
+      - "Freshness: the publisher's own last-update time is not stored, so load_within_refresh times our latest load against the annual cadence (slaProperties frequency), not the publisher's update. The weekly refresh fetches every source into an empty lake, so there the load is minutes old and the check passes; it says something about the data only once it times the publisher's update. Store the publisher's update time (e.g. Socrata rowsUpdatedAt) in the snapshot manifest, then check that instead."
       - "Freshness grace: how long past the annual cadence should a load count as stale? Nothing the publisher states sets a grace period, so load_within_refresh warns at exactly the cadence. Maintainer to decide."
       - "Licence: no licence field in the Socrata metadata; public-domain-us-federal assumed from its being a CDC work."
       - "No column descriptions or codebook are published on data.cdc.gov. Which EIP sites and counties contribute, and did the catchment change over 2011-2022? (EIP site page on www.cdc.gov not fetched.)"
