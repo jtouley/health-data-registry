@@ -38,7 +38,8 @@ production traffic nor widen the CAs trusted for a publisher (``SSL_CERT_FILE`` 
 for every TLS context, in or out of proxy mode). Proxy mode logs one
 warning per process saying that the address checks are advisory. Because of that, the hosted server
 (``serve --http``) refuses to start with ``HDR_HTTPS_PROXY`` set unless ``HDR_PROXY_ENFORCES_ALLOWLIST=1``
-declares that the proxy enforces the same egress allowlist (``hosted.check_egress``); the local CLI is unchanged.
+declares that the proxy itself allows only the catalogued publisher hosts on public addresses
+(``hosted.check_egress``); the local CLI is unchanged.
 
 Failures raise :class:`FetchRefused` with a short machine ``code`` and a plain sentence.
 """
@@ -235,8 +236,9 @@ class _Proxy:
     port: int
 
 
-def _proxy_from_env() -> _Proxy | None:
-    value = os.environ.get(PROXY_ENV, "").strip()
+def _proxy_from_env(environ: Mapping[str, str] | None = None) -> _Proxy | None:
+    """The proxy HDR_HTTPS_PROXY names (blank reads as unset), or FetchRefused("proxy_config") on a bad value."""
+    value = (os.environ if environ is None else environ).get(PROXY_ENV, "").strip()
     if not value:
         return None
     try:

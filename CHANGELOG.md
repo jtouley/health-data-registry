@@ -9,9 +9,11 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 
 - The hosted server (`serve --http`) refuses to start while `HDR_HTTPS_PROXY` is set, because behind a proxy
-  the check against private and loopback addresses is advisory (#270). An operator whose proxy enforces the same
-  egress allowlist opts in with `HDR_PROXY_ENFORCES_ALLOWLIST=1` (docs/dev/hosting.md). Local use is unchanged,
-  and the Space sets no proxy.
+  the check against private or loopback addresses is advisory (#270). An operator whose proxy itself allows only
+  the catalogued publisher hosts on public addresses opts in with `HDR_PROXY_ENFORCES_ALLOWLIST=1`
+  (docs/dev/hosting.md). Its other startup refusals (a bad limit such as `HDR_PAGE_CHARS`) now print a plain
+  message instead of a traceback too. Nothing changes for clinicians, local use is unchanged, and the Space sets
+  no proxy.
 - Release blockers from #173, where the served path returned wrong numbers:
   - NNDSS's `-` (no reported cases) is read as not reported (the maintainer's declaration of 25 Nov 2026). It
     comes back empty with its flag, never as 0 and never as a rate: `get_rate` gives no rate, `compare_rates`
