@@ -31,8 +31,8 @@ schema:
       - {type: businessDefinition, url: "https://ghoapi.azureedge.net/api/SDGHIV"}
     customProperties:
       - property: totalRows
-        value: "spatial_dim_type IN ('REGION', 'WORLDBANKINCOMEGROUP', 'GLOBAL') OR dim1 = 'SEX_BTSX'"
-        description: "Aggregates: WHO regions and the globe (SpatialDimType values on 2026-11-25: COUNTRY 14,898 rows, REGION 648, GLOBAL 108), and the Both sexes rows (SEX_BTSX in WHO's SEX dimension), which cover the female and male rows beside them. Rates are never added, so this marks them only."
+        value: "spatial_dim_type IN ('REGION', 'GLOBAL')"
+        description: "Place aggregates: WHO regions and the globe (SpatialDimType values on 2026-11-25: COUNTRY 14,898 rows, REGION 648, GLOBAL 108; no other kind). Both sexes is not marked here: it is WHO's own estimate for everyone, not a total of the female and male rows, and the semantic model's sex dimension is non-additive. Rates are never added, so this marks them only."
       - {property: tableShape, value: estimate_table}
       - property: idDimensions
         value:
@@ -73,8 +73,8 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "Kind of place: COUNTRY, REGION (WHO region), WORLDBANKINCOMEGROUP or GLOBAL."
-        enum: [{value: COUNTRY}, {value: REGION}, {value: WORLDBANKINCOMEGROUP}, {value: GLOBAL}]
+        description: "Kind of place: COUNTRY, REGION (WHO region) or GLOBAL, the only three kinds in this indicator on 2026-11-25."
+        enum: [{value: COUNTRY}, {value: REGION}, {value: GLOBAL}]
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: SpatialDimType}
@@ -114,8 +114,8 @@ schema:
       - name: dim1
         physicalType: VARCHAR
         logicalType: string
-        required: false
-        description: "Sex, as a code of WHO's SEX dimension: SEX_BTSX both sexes, SEX_FMLE female, SEX_MLE male. Both sexes is its own estimate, not the sum of the other two."
+        required: true
+        description: "Sex, as a code of WHO's SEX dimension: SEX_BTSX both sexes, SEX_FMLE female, SEX_MLE male, given on every one of the 15,654 rows on 2026-11-27 (an exact structural fact; sex is part of the grain, so a row without it would be dropped by every metric). Both sexes is its own estimate, not the sum of the other two."
         examples: ["SEX_BTSX", "SEX_FMLE", "SEX_MLE"]
         customProperties:
           - {property: role, value: dimension}
@@ -126,9 +126,9 @@ schema:
             severity: warn
             type: library
             metric: invalidValues
-            arguments: {validValues: ["SEX_BTSX", "SEX_FMLE", "SEX_MLE", "SEX_NOA"]}
+            arguments: {validValues: ["SEX_BTSX", "SEX_FMLE", "SEX_MLE"]}
             mustBe: 0
-            description: "WHO's SEX dimension lists these four codes (DIMENSION/SEX/DimensionValues). Another code is a warning to review, never a reason to refuse the source."
+            description: "The three codes of WHO's SEX dimension (DIMENSION/SEX/DimensionValues) that this indicator uses, and the only ones the two metrics read. Any other code, WHO's fourth code SEX_NOA (not applicable) included, is a row no answer would show, so it warns for review; on this live source a failed check is a caveat on the answer, never a refusal."
       - name: value_text
         physicalType: VARCHAR
         logicalType: string
@@ -151,8 +151,8 @@ schema:
             dimension: conformity
             severity: error
             type: sql
-            description: "WHO's unit is cases per 1000 population, so an estimate is never negative."
-            query: "SELECT COUNT(*) FROM {object} WHERE numeric_value < 0"
+            description: "WHO's unit is cases per 1000 population, so neither an estimate nor either of its bounds is ever negative."
+            query: "SELECT COUNT(*) FROM {object} WHERE numeric_value < 0 OR low < 0 OR high < 0"
             mustBe: 0
           - id: some_estimates_present
             dimension: completeness
@@ -165,8 +165,8 @@ schema:
             dimension: consistency
             severity: warn
             type: sql
-            description: "WHO publishes the low and high bounds as the estimate's uncertainty range (its display string reads estimate [low - high]), so the estimate lies between them where all three are given."
-            query: "SELECT COUNT(*) FROM {object} WHERE low > numeric_value OR high < numeric_value"
+            description: "WHO publishes the low and high bounds as the estimate's uncertainty range (its display string reads estimate [low - high]), so the estimate lies between them where all three are given, and the low bound is never above the high one."
+            query: "SELECT COUNT(*) FROM {object} WHERE low > numeric_value OR high < numeric_value OR low > high"
             mustBe: 0
       - name: low
         physicalType: DOUBLE
@@ -226,4 +226,5 @@ customProperties:
       - "The United States of America has no row in this indicator (2026-11-25). Is that a WHO publication choice or a gap? Not stated; answers for the United States are declined, never filled."
       - "STI and hepatitis indicators (also from WHO's Global HIV, Hepatitis and STIs Programmes) are separate GHO indicator codes; each would be its own catalog entry on this adapter, one indicator per entry."
       - "WHO has announced a successor to the GHO OData API; when ghoapi.azureedge.net is retired the adapter and api_url must move. Current status not checked."
-      - "GBD location crosswalk: spatial_dim holds ISO3 codes for countries; WHO region codes have no GBD equivalent and must not be mapped."
+      - "GBD location crosswalk: spatial_dim holds ISO3 codes for countries; WHO region codes have no GBD equivalent and must not be mapped. Until a reviewed ISO3-to-GBD-name crosswalk exists, no row is keyed to a GBD location and places are asked for by code (follow-up #266)."
+      - "Severity on the live tier: a failed error-severity rule here becomes a caveat on the answer (worded as a failure), not a refusal, because a live read has no snapshot or release gate to stop. Should an error failure on a live read refuse the source for the session? (follow-up #267)"

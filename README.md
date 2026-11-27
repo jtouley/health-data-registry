@@ -23,7 +23,7 @@ For example:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/coverage-dark.svg">
-  <img src="assets/readme/coverage-light.svg" width="440" alt="What it covers. Covered now, from CDC: notifiable infections by US state, from C. auris to syphilis; antibiotic resistance in hospital infections, by state; COVID-19, flu and RSV hospitalization rates at CDC surveillance sites; and C. difficile infections, national, from CDC surveillance sites. From WHO: tuberculosis by country. Coming next: measles cases by Michigan county, and Detroit Health Department figures. Not covered yet: HIV.">
+  <img src="assets/readme/coverage-light.svg" width="440" alt="What it covers. Covered now, from CDC: notifiable infections by US state, from C. auris to syphilis; antibiotic resistance in hospital infections, by state; COVID-19, flu and RSV hospitalization rates at CDC surveillance sites; and C. difficile infections, national, from CDC surveillance sites. From WHO: tuberculosis and new HIV infections by country. Coming next: measles cases by Michigan county, and Detroit Health Department figures. Not covered yet: HIV in the United States.">
 </picture>
 
 ## Start in Claude

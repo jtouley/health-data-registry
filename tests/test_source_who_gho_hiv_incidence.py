@@ -115,7 +115,80 @@ def test_a_place_with_no_who_row_gets_nothing_rather_than_a_guess(
 ) -> None:
     reg, eng, _ = live
     out = tools.get_series(reg, eng, condition="HIV", locations=["USA"], source_id=DS, fmt="json")
-    assert isinstance(out, dict) and out.get("rows") in ([], None)
+    assert isinstance(out, dict) and out.get("refused") == "filter_matched_nothing", out
+    assert "ZAF" in out["available"][f"{DS} places"]
+
+
+def test_both_sexes_metric_keeps_region_and_global_rows(live: tuple[Registry, Engine, Path]) -> None:
+    """totalRows marks the region and GLOBAL rows; the metric must still return them (exclude_total_rows: false)."""
+    reg, eng, _ = live
+    out = tools.get_series(reg, eng, condition="HIV", locations=["GLOBAL"], source_id=DS, fmt="json")
+    assert [(r["location"], r["year"], r["value"]) for r in _table(out)] == [("GLOBAL", 2024, 0.2)]
+
+
+def test_gbd_alignment_keeps_whos_bounds(live: tuple[Registry, Engine, Path]) -> None:
+    """Hard rule 2: the published uncertainty range comes back beside the estimate, never dropped."""
+    reg, eng, _ = live
+    out = tools.get_aligned_with_gbd(reg, eng, condition="HIV", locations=["ZAF"], fmt="json")
+    rows = [r for r in _table(out) if r["source_id"] == DS]
+    assert [(r["year"], r["observed_value"], r["lower"], r["upper"]) for r in rows] == [
+        (2023, 4.0, 3.5, 4.6),
+        (2024, 3.8, 3.2, 4.4),
+    ]
+    assert any("published bounds are in lower and upper" in n for n in out["notes"])
+
+
+def test_a_failed_data_check_reaches_the_get_series_answer(tmp_path: Path) -> None:
+    """A live read has no release gate: a failed check must reach the clinician as a caveat on the answer."""
+    reg = load_registry(ROOT)
+    bad = [*ROWS[:3], _row(4, "ZAF", "COUNTRY", 2024, "SEX_BTSX", -1.0, 3.2, 4.4), ROWS[4]]
+    eng = Engine(registry=reg, lake=tmp_path / "lake", hub=None, fetch_at_run_time=True, getter=_get(bad))
+    out = tools.get_series(reg, eng, condition="HIV", locations=["ZAF"], source_id=DS, fmt="json")
+    assert (2024, -1.0) in [(r["year"], r["value"]) for r in _table(out)]  # shown as published
+    assert any("A data check on this source failed" in n and "ever negative" in n for n in out["notes"]), out[
+        "notes"
+    ]
+
+
+def _status(rows: list[dict[str, Any]]) -> dict[str, str]:
+    reg = load_registry(ROOT)
+    got = load_live(
+        duckdb.connect(),
+        reg.get(DS),
+        [{k: (None if v is None else str(v)) for k, v in r.items()} for r in rows],
+    )
+    return {r["test"]: r["status"] for r in got.quality.results}
+
+
+@pytest.mark.parametrize(
+    ("rule", "status", "rows"),
+    [
+        ("one_row_per_place_year_and_sex", "fail", [*ROWS, ROWS[0] | {"Id": 9}]),
+        ("indicator_is_sdghiv", "fail", [*ROWS[:4], ROWS[4] | {"IndicatorCode": "HIV_0000000026"}]),
+        ("sex_is_a_who_sex_code", "warn", [*ROWS, _row(9, "ZAF", "COUNTRY", 2025, "SEX_NOA", 3.0, 2.5, 3.6)]),
+        ("rate_not_negative", "fail", [*ROWS[:4], _row(9, "GLOBAL", "GLOBAL", 2024, "SEX_BTSX", -0.1, 0.1, 0.2)]),
+        ("rate_not_negative", "fail", [*ROWS[:4], _row(9, "GLOBAL", "GLOBAL", 2024, "SEX_BTSX", 0.1, -0.1, 0.2)]),
+        ("bounds_hold_the_estimate", "warn", [*ROWS[:4], ROWS[4] | {"NumericValue": None, "Low": 0.3}]),
+        ("some_estimates_present", "fail", [r | {"NumericValue": None} for r in ROWS]),
+    ],
+    ids=["repeated_cell", "other_indicator", "sex_noa", "negative_estimate", "negative_bound", "inverted_bounds",
+         "no_estimates"],
+)  # fmt: skip
+def test_each_rule_fails_when_it_should(rule: str, status: str, rows: list[dict[str, Any]]) -> None:
+    assert _status(ROWS)[rule] == "pass"
+    assert _status(rows)[rule] == status
+
+
+def test_a_row_without_a_sex_refuses_the_source() -> None:
+    """Sex is part of the grain and both metrics select on it, so an empty one stops the read, never drops rows."""
+    reg = load_registry(ROOT)
+    rows = [*ROWS[:4], ROWS[4] | {"Dim1": None}]
+    with pytest.raises(Exception, match="dim1|Dim1"):
+        load_live(
+            duckdb.connect(),
+            reg.get(DS),
+            [{k: (None if v is None else str(v)) for k, v in r.items()} for r in rows],
+        )
 
 
 def test_a_us_state_question_is_told_no() -> None:

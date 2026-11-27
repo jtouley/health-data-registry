@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 812" width="660" height="812" role="img" aria-labelledby="t d" font-family="-apple-system, BlinkMacSystemFont, &apos;Segoe UI&apos;, &apos;Noto Sans&apos;, Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 848" width="660" height="848" role="img" aria-labelledby="t d" font-family="-apple-system, BlinkMacSystemFont, &apos;Segoe UI&apos;, &apos;Noto Sans&apos;, Helvetica, Arial, sans-serif">
 <title id="t">What it covers</title>
-<desc id="d">Covered now, from CDC: notifiable infections by US state, from C. auris to syphilis; antibiotic resistance in hospital infections, by state; COVID-19, flu and RSV hospitalization rates at CDC surveillance sites; C. difficile infections, national, from CDC surveillance sites. From WHO: tuberculosis by country. Coming next: measles cases by Michigan county; Detroit Health Department figures. Not covered yet: HIV.</desc>
+<desc id="d">Covered now, from CDC: notifiable infections by US state, from C. auris to syphilis; antibiotic resistance in hospital infections, by state; COVID-19, flu and RSV hospitalization rates at CDC surveillance sites; C. difficile infections, national, from CDC surveillance sites. From WHO: tuberculosis and new HIV infections by country. Coming next: measles cases by Michigan county; Detroit Health Department figures. Not covered yet: HIV in the United States.</desc>
 <text x="0" y="36.0" font-size="32" font-weight="600" fill="#f0f6fc">Covered now</text>
 <text x="0" y="76.0" font-size="28" fill="#9198a1">From CDC, except where marked</text>
 <circle cx="14" cy="122.0" r="13" fill="#4fbfb6"/><path d="M8 122.0l4 4 8-8.5" stroke="#0d1117" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
@@ -16,15 +16,16 @@
 <text x="44" y="384.0" font-size="28" fill="#f0f6fc"><tspan font-style="italic">C. difficile</tspan> infections, national,</text>
 <text x="44" y="420.0" font-size="28" fill="#f0f6fc">from CDC surveillance sites</text>
 <circle cx="14" cy="458.0" r="13" fill="#4fbfb6"/><path d="M8 458.0l4 4 8-8.5" stroke="#0d1117" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="44" y="468.0" font-size="28" fill="#f0f6fc">Tuberculosis by country (WHO)</text>
-<path d="M0 500.0H660" stroke="#3d444d" stroke-width="1"/>
-<text x="0" y="552.0" font-size="32" font-weight="600" fill="#f0f6fc">Coming next</text>
-<circle cx="14" cy="598.0" r="12" fill="none" stroke="#4fbfb6" stroke-width="3" stroke-dasharray="5 4"/>
-<text x="44" y="608.0" font-size="28" fill="#f0f6fc">Measles cases by Michigan county</text>
-<circle cx="14" cy="646.0" r="12" fill="none" stroke="#4fbfb6" stroke-width="3" stroke-dasharray="5 4"/>
-<text x="44" y="656.0" font-size="28" fill="#f0f6fc">Detroit Health Department figures</text>
-<path d="M0 688.0H660" stroke="#3d444d" stroke-width="1"/>
-<text x="0" y="740.0" font-size="32" font-weight="600" fill="#f0f6fc">Not covered yet</text>
-<path d="M4 786.0h20" stroke="#9198a1" stroke-width="3" stroke-linecap="round"/>
-<text x="44" y="796.0" font-size="28" fill="#f0f6fc">HIV</text>
+<text x="44" y="468.0" font-size="28" fill="#f0f6fc">Tuberculosis and new HIV infections</text>
+<text x="44" y="504.0" font-size="28" fill="#f0f6fc">by country (WHO)</text>
+<path d="M0 536.0H660" stroke="#3d444d" stroke-width="1"/>
+<text x="0" y="588.0" font-size="32" font-weight="600" fill="#f0f6fc">Coming next</text>
+<circle cx="14" cy="634.0" r="12" fill="none" stroke="#4fbfb6" stroke-width="3" stroke-dasharray="5 4"/>
+<text x="44" y="644.0" font-size="28" fill="#f0f6fc">Measles cases by Michigan county</text>
+<circle cx="14" cy="682.0" r="12" fill="none" stroke="#4fbfb6" stroke-width="3" stroke-dasharray="5 4"/>
+<text x="44" y="692.0" font-size="28" fill="#f0f6fc">Detroit Health Department figures</text>
+<path d="M0 724.0H660" stroke="#3d444d" stroke-width="1"/>
+<text x="0" y="776.0" font-size="32" font-weight="600" fill="#f0f6fc">Not covered yet</text>
+<path d="M4 822.0h20" stroke="#9198a1" stroke-width="3" stroke-linecap="round"/>
+<text x="44" y="832.0" font-size="28" fill="#f0f6fc">HIV in the United States</text>
 </svg>

@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- A failed data check on a source read live (WHO) now reaches `get_series` and `get_aligned_with_gbd` answers as a
+  caveat; before, only `query_sql` showed it. `get_aligned_with_gbd` now returns a publisher's own uncertainty
+  bounds in `lower` and `upper` (WHO's modelled estimates) instead of dropping them (hard rule 2).
 - Release blockers from #173, where the served path returned wrong numbers:
   - NNDSS's `-` (no reported cases) is read as not reported (the maintainer's declaration of 25 Nov 2026). It
     comes back empty with its flag, never as 0 and never as a rate: `get_rate` gives no rate, `compare_rates`

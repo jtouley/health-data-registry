@@ -19,7 +19,7 @@ Every row says which kind of number it is, in its `measure` column. There are fo
 | `cases` (a count) | Cases reported to a health department, as the publisher counted them | NNDSS weekly tables | Yes, across places, with the publisher's total rows left out |
 | `rate` | Cases per 100,000 population, as the publisher worked it out | RESP-NET hospitalisation rates; HAICViz C. diff rates | Never |
 | `percent` | A share, such as percent of isolates resistant | NHSN antimicrobial resistance | Never |
-| `estimate` | A modelled value, not a count of reported cases | WHO tuberculosis incidence | Never |
+| `estimate` | A modelled value, not a count of reported cases | WHO tuberculosis incidence; WHO new HIV infections | Never |
 
 - **Counts are added; nothing else is.** When a place or year needs a count added up, the tool adds the count
   column and leaves out the publisher's own total rows, so nothing is counted twice. Rates, percents and estimates
@@ -91,6 +91,7 @@ reported cases" (NNDSS `-`): the cell stays empty, with its flag and that meanin
 | NHSN resistance | Resistant count and percent resistant are shown only when at least 20 isolates were tested; smaller cells are empty. |
 | RESP-NET | Some estimated cumulative rates for the current season are published empty. |
 | WHO tuberculosis | No value published for that country and year. |
+| WHO new HIV infections | No value published for that place, year and sex. WHO publishes no row for the United States. |
 
 NNDSS's `-` is stored and returned as published (empty, with the flag). The maintainer declared on 25 Nov 2026
 that it means not reported, never a zero; the declaration is in the contract.
@@ -104,6 +105,8 @@ that it means not reported, never a zero; the declaration is in the contract.
   - **NHSN:** 95% mid-P exact confidence intervals around percent resistant. They describe precision only.
   - **WHO tuberculosis:** WHO's low and high bounds around its estimate. Whether they are 95% intervals is not
     stated in WHO's data feed; this is an open question in the contract.
+  - **WHO new HIV infections:** the same: WHO's low and high bounds around its estimate, per 1000 uninfected
+    people. Whether they are 95% intervals is an open question in the contract.
 - **GBD values** (from the IHME GBD connector, not this tool) are modelled and come with 95% uncertainty
   intervals.
 - **The analysis tools** (`get_rate`, `compare_rates`, `get_trend`, `age_adjust`, `check_signal`) return each
@@ -135,6 +138,8 @@ Place traps the tool reports with each answer:
 - **NHSN:** small territories are in the national figures but not shown as states; Puerto Rico is shown as a state
   but left out of regions.
 - **WHO regions are not GBD regions.** Rows for regions, income groups and the globe are aggregates, not countries.
+- **WHO countries are asked for by ISO3 code for now** (`ZAF`, not "South Africa"), and WHO rows are not yet keyed
+  to GBD location names.
 - **Out-Wayne County reports exclude the City of Detroit,** which has its own health department.
 
 Population (Census): states, DC and counties, 2020–2025. The national figure is the 50 states plus DC; Puerto
@@ -184,6 +189,8 @@ like it rose or fell.
 - **HAICViz** splits C. diff into healthcare-associated and community-associated by the EIP's epidemiologic
   classification; its exact definitions are not on data.cdc.gov and are an open question.
 - **WHO** tuberculosis incidence covers new and relapse tuberculosis of all forms, including people with HIV.
+- **WHO** new HIV infections are per 1000 uninfected people, not per 100,000 population. Both sexes is WHO's own
+  estimate, not the female and male rows added up.
 - `describe_dataset` and `get_provenance` show the case definition where the contract records one. Where the
   contract records the year a definition took effect (`caseDefinitions`), `get_trend` splits the trend there and
   `compare_rates` says so; no real contract records one yet.
@@ -225,6 +232,7 @@ The crosswalk from each source's conditions to GBD names, as recorded in [`catal
 | COVID-19 hospitalisations (RESP-NET) | COVID-19 | |
 | C. difficile infection (HAICViz) | Diarrheal diseases | Clostridium difficile |
 | Tuberculosis incidence (WHO) | Tuberculosis | |
+| New HIV infections (WHO) | HIV/AIDS (proposed, not yet reviewed) | |
 
 `get_aligned_with_gbd` returns these names with each row, and the exact IHME GBD connector call to run next:
 `get_multi_location_trend` for a cause, or `get_etiology` when the condition maps to a pathogen.

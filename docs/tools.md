@@ -215,8 +215,10 @@ run next. This tool never calls GBD and never judges the two against each other.
 | `locations` | no | As for `get_series` |
 | `year_start`, `year_end` | no | As for `get_series` |
 
-**Returns:** `gbd_location_name`, `fips`, `year`, `condition`, `observed_value`, `period_status`, `measure`,
-`case_status`, `source_id`, `retrieved_at`, `gbd_cause`, `gbd_pathogen`, `suggested_gbd_call`. The suggested call
+**Returns:** `gbd_location_name`, `fips`, `location_as_published`, `year`, `condition`, `observed_value`, `lower`,
+`upper`, `observation_type`, `period_status`, `flag`, `measure`, `case_status`, `source_id`, `retrieved_at`,
+`gbd_cause`, `gbd_pathogen`, `suggested_gbd_call`. `lower` and `upper` are the publisher's own bounds, given only
+where the publisher's value is a modelled estimate (WHO); observed counts have none. The suggested call
 is `get_multi_location_trend` (for a cause) or `get_etiology` (for a pathogen), with years capped at 2023, the last
 GBD 2023 year. Notes repeat the [GBD rules](data-conventions.md#using-it-with-gbd).
 

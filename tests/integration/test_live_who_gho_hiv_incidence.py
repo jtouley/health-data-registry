@@ -34,8 +34,10 @@ def test_contract_structure(live: Any) -> None:
 
 
 def test_sex_codes_and_grain(live: Any) -> None:
+    """Stricter than the contract on purpose: sex_is_a_who_sex_code only warns on a live read, but a new or
+    missing sex code here is drift the maintainer must see, because no metric would show such a row."""
     _cat, _con, _sem, rows, _ = live
-    assert {r.get("Dim1") for r in rows} <= {"SEX_BTSX", "SEX_FMLE", "SEX_MLE", "SEX_NOA"}
+    assert {r.get("Dim1") for r in rows} <= {"SEX_BTSX", "SEX_FMLE", "SEX_MLE"}
     keys = [(r.get("SpatialDim"), r.get("TimeDim"), r.get("Dim1")) for r in rows]
     assert len(set(keys)) == len(keys)
     assert {r.get("IndicatorCode") for r in rows} == {"SDGHIV"}

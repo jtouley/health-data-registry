@@ -935,6 +935,11 @@ def provenance_note(ds: Dataset, m: Any) -> str:
 def _dataset_notes(ds: Dataset, m: Any, method: str, got: Sequence[SeriesRow]) -> list[str]:
     """The lines every answer from a dataset carries: method, provenance, caveats, review state, flags."""
     notes = [f"{ds.id}: {method}", provenance_note(ds, m)]
+    if m.origin in ("publisher", "private"):
+        # A run-time read's own notes after the first (which the method already opens with): what was kept, and
+        # every data check this read failed, as query_sql and query_metric carry them. A live source has no
+        # release gate, so this is the only place a failed check reaches the clinician.
+        notes += [f"{ds.id}: {n}" for n in m.notes[1:]]
     notes += [f"{ds.id}: {c}" for c in ds.entry.caveats[:3]]
     if ds.entry.status != "reviewed":
         notes.append(f"{ds.id}: this source's contract is still a draft; no maintainer has reviewed it yet.")
@@ -1120,15 +1125,16 @@ def get_aligned_with_gbd(
     if not matches:
         return unknown_condition(registry, condition, fmt)
     columns = ["gbd_location_name", "fips", "location_as_published", "year", "condition", "observed_value",
-               "observation_type", "period_status", "flag", "measure", "case_status", "source_id", "retrieved_at",
-               "gbd_cause", "gbd_pathogen", "suggested_gbd_call"]  # fmt: skip
+               "lower", "upper", "observation_type", "period_status", "flag", "measure", "case_status", "source_id",
+               "retrieved_at", "gbd_cause", "gbd_pathogen", "suggested_gbd_call"]  # fmt: skip
     rows: list[list[Any]] = []
     notes = [
         "This server never calls GBD and never judges GBD against local data: run the suggested call with the "
         "IHME GBD connector and compare them yourself.",
-        "GBD values are modelled, with 95% uncertainty intervals; observed counts have none. GBD's interval is not "
-        "a test of observed surveillance data: before reading anything into a difference, establish how the two "
-        "differ in case definition, ascertainment, geography and uncertainty model.",
+        "GBD values are modelled, with 95% uncertainty intervals. Observed counts have none; where the publisher's "
+        "own value is a modelled estimate (such as WHO's), its published bounds are in lower and upper. GBD's "
+        "interval is not a test of observed surveillance data: before reading anything into a difference, establish "
+        "how the two differ in case definition, ascertainment, geography and uncertainty model.",
         f"GBD 2023 ends in {GBD_LAST_YEAR}; later observed years have no GBD match.",
         "Don't compare age-standardised GBD rates with crude or US 2000-standardised local rates.",
     ]
@@ -1157,7 +1163,8 @@ def get_aligned_with_gbd(
         for r in got:
             p = geo.place(r.place) if r.place in keyed else None
             rows.append(
-                [p.name if p else "", p.fips if p else "", r.place, r.year, s.label, r.value, r.observation_type,
+                [p.name if p else "", p.fips if p else "", r.place, r.year, s.label, r.value, r.lower, r.upper,
+                 r.observation_type,
                  r.status, r.flag, s.measure, s.case_status or "", ds.id, m.retrieved_at[:19], xw.cause,
                  xw.pathogen or "", call if p else ""]
             )  # fmt: skip

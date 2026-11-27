@@ -14,6 +14,9 @@ measures:
   - {name: hiv_incidence, column: numeric_value, kind: estimate, unit: "per 1000 uninfected population per year", description: "WHO estimated new HIV infections."}
   - {name: hiv_incidence_low, column: low, kind: lower_bound, unit: "per 1000 uninfected population per year", description: "Lower uncertainty bound."}
   - {name: hiv_incidence_high, column: high, kind: upper_bound, unit: "per 1000 uninfected population per year", description: "Upper uncertainty bound."}
+# Every metric here needs exclude_total_rows: false. The contract's totalRows marks the WHO region and GLOBAL
+# rows, and Metric.exclude_total_rows defaults to true, so a metric without that line would silently return
+# countries only (test_both_sexes_metric_keeps_region_and_global_rows pins this).
 metrics:
   - name: hiv_incidence_rate
     description: "WHO's estimated new HIV infections per 1000 uninfected people per year, both sexes, with its uncertainty range."
@@ -22,6 +25,8 @@ metrics:
     exclude_total_rows: false
     filters: ["dim1 = 'SEX_BTSX'"]
     uncertainty: {lower: hiv_incidence_low, upper: hiv_incidence_high}
+  # No series reads this metric yet (get_series answers for both sexes only); it is reached through
+  # query_sql and the engine, and it is what proves female and male are never added to make both sexes.
   - name: hiv_incidence_rate_by_sex
     description: "WHO's estimated new HIV infections per 1000 uninfected people per year for one sex (female or male), with its uncertainty range; never added to make both sexes."
     measure: hiv_incidence

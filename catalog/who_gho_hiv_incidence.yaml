@@ -27,13 +27,13 @@ source:
   api_url: https://ghoapi.azureedge.net/api/SDGHIV
 codebook_url: https://www.who.int/data/gho/indicator-metadata-registry/imr-details/4752
 caveats:
+  # Every answer shows only the first three (tools._dataset_notes), so they carry what matters when reading
+  # a number: what kind of figure it is, its unit and sexes, and how places are named.
   - "These are WHO model estimates with uncertainty bounds, not reported HIV diagnoses; WHO's indicator page says most countries rely on modelling (such as Spectrum) and that newly reported cases should not be used to estimate new infections. Quote the bounds with the estimate."
-  - "The rate is per 1000 uninfected people, not per 100,000 population, so it can't be set beside a rate per 100,000 without saying so."
-  - "Each row is for both sexes, females or males. Both sexes is its own estimate, not the sum of the two; never add rates."
+  - "The rate is per 1000 uninfected people, not per 100,000 population, so it can't be set beside a rate per 100,000 without saying so. Each row is for both sexes, females or males; both sexes is its own estimate, not the sum of the two, and rates are never added."
+  - "Places are ISO 3166-1 alpha-3 country codes (ZAF for South Africa), WHO region codes and GLOBAL; ask by code, as country names aren't matched yet and no row is keyed to a GBD location name yet. Regions and the globe are aggregates, and GHO WHO regions differ from GBD regions. On 2026-11-25 WHO published no row for the United States of America in this indicator."
   - "WHO re-estimates the whole series each year, so earlier years can change between releases."
   - "WHO's Terms and Conditions for datasets (https://www.who.int/about/policies/publishing/data-policy/terms-and-conditions, read 2026-11-25) allow use for public health purposes with attribution, forbid use in promoting a commercial enterprise, and allow only minimal changes without WHO's written authorization; the data are fetched from WHO at run time, never mirrored, and the terms are shown with every result."
-  - "Rows for WHO regions and the globe are aggregates, not countries. On 2026-11-25 WHO published no row for the United States of America in this indicator."
-  - "Country is given as an ISO 3166-1 alpha-3 code; GHO WHO regions differ from GBD regions."
 gbd:
   location_column: spatial_dim
   causes:
