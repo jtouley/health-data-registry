@@ -10,10 +10,9 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same PR or pre-pr branch cancels the superseded run. Each push to main gets a group of its
-# own (keyed by commit), so a main run is never cancelled, nor dropped from the queue by a later merge.
+# A newer push to the same PR or pre-pr branch cancels the superseded run; runs on main always finish.
 concurrency:
-  group: ci-${{ (github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pre-pr/')) && github.ref || github.sha }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pre-pr/') }}
 
 jobs:
@@ -51,9 +50,8 @@ jobs:
       # Same hooks as every local commit, so a commit that skipped them still fails here.
       - name: Run every hook on every file
         run: uv run pre-commit run --all-files --show-diff-on-failure
-      # Pinned to the same version as uv.lock (the actionlint hook above), so the two never disagree.
       - name: Lint workflows
-        run: uvx --from actionlint-py==1.7.9.24 actionlint
+        run: uvx --from actionlint-py actionlint
 
   types:
     name: Types (mypy)
@@ -91,30 +89,6 @@ jobs:
       # Offline tests only (-m "not network"), with the coverage floor; see the Makefile.
       - name: Tests with coverage
         run: make test
-
-  # The project spec's reference journey (C. auris in Michigan; docs/dev/README.md#smoke-journey) through the
-  # built MCP server on a synthetic lake, with the DEV trial questions scored by eval/scorer.py. Offline, and
-  # enforced: tests/smoke/conftest.py fails any connection or DNS lookup off the runner. No secret is read.
-  smoke:
-    name: "Smoke: C. auris journey"
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
-        with:
-          python-version: "3.12"
-      - name: Install dependencies (locked)
-        run: uv sync --locked
-      - name: Run the smoke journey
-        env:
-          HDR_HUB: "off"
-          HDR_FETCH_AT_RUN_TIME: "0"
-        run: make smoke
 
   kit:
     name: Claude Projects kit

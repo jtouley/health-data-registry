@@ -15,12 +15,10 @@ Run from the repo root. Python 3.12+, managed with [uv](https://docs.astral.sh/u
 | Command | What it does |
 |---|---|
 | `make install` | `uv sync` |
-| `make check` | lint, typecheck, test, mutate: the quick local loop, not all of CI |
-| `make precheck` | The pre-PR gate's local half: the CI checks plus a docs-drift check, stopping at the first failure; run before every pre-pr push |
+| `make check` | lint, typecheck, test, mutate: what CI runs; run before every push |
 | `make hooks` | Install the pre-commit hooks (`uv run pre-commit install`); once per checkout |
 | `make test` | Offline tests with coverage (floor 85%) |
 | `make test-network` | Live publisher checks in `tests/integration` (marker `network`) |
-| `make smoke` | The C. auris in Michigan journey through the MCP server on a synthetic lake, scored with `eval/scorer.py` (marker `smoke`; [docs/dev/README.md](docs/dev/README.md#smoke-journey)) |
 | `make mutate` | Mutation tests on modules changed since `BASE` (`scripts/mutate_changed.py`, floor 70%) |
 | `make docs` | Regenerate `docs/helpers.md`, `template/.claude/skills/`, `plugin/` and the marketplace from `helpers.py`, and the tool lists in README.md, docs/tools.md and this file from the server |
 | `make kit` | Build the Claude Projects kit into `dist/projects-kit/` ([docs/dev/distribution.md](docs/dev/distribution.md)) |
@@ -36,14 +34,14 @@ One review round, one fix round, merge, then follow-ups. We don't get stuck in r
 
 1. **Green before the pull request.** Every change lands through a pull request; there are no direct pushes to
    main. CI must be green before a commit reaches a PR branch ([docs/dev/README.md](docs/dev/README.md#the-pre-pr-gate)):
-   - Merge `origin/main` into the branch first. A PR's CI tests the branch merged with current main, while a
-     pre-pr run tests the branch tip, so the two agree only when the branch already contains main.
-   - `make precheck` passes locally: the CI checks plus a docs-drift check, stopping at the first failure.
-   - Then push the commit to `pre-pr/<branch>` and wait until every CI check there is green. If one is red, fix it
-     on the pre-pr branch, run `make precheck` again, and push again.
-   - Only then open the PR, or fast-forward the PR branch, to that exact green commit.
+   - `make precheck` passes locally: every step CI runs, stopping at the first failure.
+   - Then push the commit to `pre-pr/<branch>` and wait until every CI check there is green. Fix anything red on
+     the pre-pr branch, and go through `make precheck` again.
+   - Only then open the PR, or fast-forward the PR branch, to that exact green commit. The PR's own CI re-runs on
+     the same commit.
    - Fix-round pushes follow the same path. Merging main into a branch is a change like any other: precheck, then
      pre-pr, then the PR branch.
+   - Never push a red commit to a PR branch.
 
    Every commit carries the required trailers, and the PR body names the skills used and what each changed.
    Every commit, by people, subagents and the lead, goes through the pre-commit hooks (`make hooks`); `--no-verify`

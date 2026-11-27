@@ -11,10 +11,9 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same PR or pre-pr branch cancels the superseded run. Pushes to main and scheduled runs
-# each get a group of their own (keyed by commit), so none is cancelled or dropped from the queue.
+# A newer push to the same PR or pre-pr branch cancels the superseded run; main and scheduled runs always finish.
 concurrency:
-  group: codeql-${{ github.event_name }}-${{ (github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pre-pr/')) && github.ref || github.sha }}
+  group: codeql-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pre-pr/') }}
 
 jobs:
