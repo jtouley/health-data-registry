@@ -1,7 +1,6 @@
 # 0007. ODCS v3.2.0 contracts and dbt-style semantic models; the contract facts rule
 
-- **Status:** Accepted; rule 2 below (aggregation) superseded by
-  [ADR 0018](0018-show-everything-qualify-dont-decide.md) on 27 Nov 2026
+- **Status:** Accepted
 - **Date:** 2026-11-24
 - **Spec:** "Semantic layer"
 

@@ -6,14 +6,20 @@
 - **Supersedes:** the aggregation rule in [ADR 0007](0007-odcs-contracts-and-semantic-models.md) (rule 2 of the
   "rules carried over from the earlier contract work (ADR017)": "Frequency tables sum their count column and
   exclude total rows. Estimate and rate tables are never summed."), which became hard rule 2 in
-  [CLAUDE.md](../../CLAUDE.md#hard-rules). The rest of ADR 0007 stands, including the contract facts rule.
+  [CLAUDE.md](../../CLAUDE.md#hard-rules). The rest of ADR 0007 stands, including the contract facts rule. As
+  the [index](README.md) says, records are not rewritten: ADR 0007 itself is unchanged, and the index marks its
+  aggregation rule superseded.
 - **Related:** [ADR 0003](0003-provenance-on-every-result.md) (provenance on every result),
   [ADR 0004](0004-aligned-data-no-gbd-verdicts.md) (no GBD verdicts), [ADR 0012](0012-built-for-clinicians.md)
-  (built for clinicians), [ADR 0015](0015-elt-raw-data-stored-as-sent.md) (raw data stored as sent); issues
-  [#186](https://github.com/jtouley/health-data-registry/pull/186) (`-` never read as 0),
+  (built for clinicians), [ADR 0015](0015-elt-raw-data-stored-as-sent.md) (raw data stored as sent),
+  [ADR 0017](0017-immutable-raw-reproducible-builds.md) (proposed; see Consequences); pull request
+  [#186](https://github.com/jtouley/health-data-registry/pull/186) (`-` never read as 0); issues
   [#222](https://github.com/jtouley/health-data-registry/issues/222) (a check that never ran),
   [#223](https://github.com/jtouley/health-data-registry/issues/223) (coverage and gaps as data),
-  [#225](https://github.com/jtouley/health-data-registry/issues/225) (quality records cited in answers)
+  [#225](https://github.com/jtouley/health-data-registry/issues/225) (quality records cited in answers),
+  [#226](https://github.com/jtouley/health-data-registry/issues/226) (#186's refusals become qualified answers),
+  [#243](https://github.com/jtouley/health-data-registry/issues/243) (a failed data check qualifies instead of
+  holding a copy back)
 
 ## Context
 
@@ -41,35 +47,39 @@ Hard rule 2 becomes **show everything; qualify, don't decide**:
 1. **Every row the publisher sent is returned,** each with its flag and what the flag means: `-` (not reported,
    never turned into 0), suppressed cells, total rows, catchment areas and screening counts.
 2. **Any figure we compute (a sum, a rate, a trend) is computed when asked.**
-3. **Where our contracts or data-quality findings say the figure may mislead,** the answer says so in plain words
-   and puts the safer figure beside it. For example:
+3. **Where our contracts or data checks say the figure may mislead,** the answer says so in plain words and,
+   where there is one, puts the figure without that problem beside it (the sum without the total row, CDC's
+   year-to-date count, the clinical figure). For example:
    - "this adds the US total row to the states; without it: N";
    - "weekly counts undercount the year; CDC's year-to-date figure: N";
    - "catchment area only; the state population overstates the denominator";
    - "screening detections, not incidence".
-4. **Every qualification cites its source:** a contract rule, a quality-rule result or a recorded finding (#225).
+4. **Every qualification cites its source:** a contract rule, a data check's result or a recorded finding (#225).
 5. **Gaps are first-class data** that a researcher can ask for (#223).
 6. **Published uncertainty ranges are still always returned.**
-7. **One thing still blocks: a quality check that never ran** (#222). Telling physicians the data was checked when
-   it wasn't would break their trust. That block is about our own honesty, not a decision made for them.
+7. **One thing still blocks: a data check that never ran** (#222). A copy of the data whose quality rules were
+   not all run is never served. Telling physicians the data was checked when it wasn't would break their trust.
+   That block is about our own honesty, not a decision made for them.
 
 Hard rule 1 still governs every fact that changes a number. A qualification is such a fact: it comes from a
-contract rule, a quality-rule result or a recorded finding, never from a guess, and names which one.
+contract rule, a data check's result or a recorded finding, never from a guess, and names which one.
 
 Qualifying is not judging. As in ADR 0004, the server never says which figure is "right"; it says what each figure
-is and what it leaves out, and the physician decides.
+is and what it leaves out, and the physician decides. That is why the figure beside a qualification is described
+by what it is ("without the total row", "CDC's year-to-date figure"), never as the safer or better one.
 
 ## What changes from the old rule
 
 | Case | Old rule 2 | This rule |
 |---|---|---|
 | Total rows | Left out of every sum | Returned as rows, flagged. A sum that includes one says so and gives the figure without it |
-| Rates, percents, estimates | Never summed; the tool refuses | Computed when asked, with what the figure can't mean and the safer figure beside it |
+| Rates, percents, estimates | Never summed; the tool refuses | Computed when asked, with what the figure can't mean and the published figures beside it |
 | Weekly counts into a year | Not added; the year-to-date column is read instead | Added when asked, qualified: "weekly counts undercount the year", with CDC's year-to-date figure |
 | NNDSS `-` | Read as 0 | Returned as sent, with its flag and meaning; never 0 |
 | Clinical and screening C. auris | Kept apart; never added | Added when asked, qualified: "screening detections, not incidence" |
 | Published uncertainty ranges | Always returned | Always returned |
-| A quality check that never ran | Not covered | Blocks the answer |
+| A data check that never ran | Not covered | Holds the copy back; the copy before it is served |
+| A data check that ran and failed | Not covered (the code holds the copy back) | Served, with a qualification citing the failed rule |
 
 ## Consequences
 
@@ -78,12 +88,18 @@ is and what it leaves out, and the physician decides.
   covers and over which years (#223), which rules ran and what they found (#225). Prose alone in a contract is
   not enough.
 - Quality results move from gatekeeping to evidence. A check that ran and failed becomes a qualification citing
-  its rule, not a silent drop. Today a failed error-severity rule still holds a copy back (`quality.py`); changing
-  that is code work for a later pull request. A check that never ran still blocks (#222).
+  its rule, not a silent drop. Today a failed error-severity rule still holds a copy back (`quality.py`
+  `QualityReport.blocking`; `store._promote` keeps `LATEST` on the copy before it), and changing that is #243. A
+  check that never ran still blocks; one kind of it (rules that returned no results) isn't caught yet (#222).
 - Code catches up separately. This record changes no code. #186 already returns `-` empty with its flag, never
   as 0. It also added refusals (a sum of weekly counts, a sum over a count with no number, no rate for counts that
   are not new cases of disease, such as *C. auris* screening); under this rule each becomes a figure with a
-  qualification, in follow-up pull requests, as do the total rows that sums still leave out. Until they land, [docs/data-conventions.md](../data-conventions.md)
-  and [docs/tools.md](../tools.md) say where today's tools still refuse or leave rows out.
-- Tests and code comments that cite "hard rule 2" for a refusal pin the old rule; they change with the code that
-  implements this one.
+  qualification, as do the total rows that sums still leave out (#226). Until that lands,
+  [docs/data-conventions.md](../data-conventions.md) and [docs/tools.md](../tools.md) say where today's tools
+  still refuse or leave rows out.
+- Tests, code comments and the tool text Claude receives (`server.py`, `tools.py`) that cite "hard rule 2" for a
+  refusal, or tell Claude never to add two series, pin the old rule; they change with the code that implements
+  this one (#226). The README's *C. auris* line describes today's behaviour and changes in the same pull request.
+- [ADR 0017](0017-immutable-raw-reproducible-builds.md), still proposed, plans a blocking "non-additive guard" and
+  says rates and estimates are never summed, both citing hard rule 2. Those parts refer to the superseded rule and
+  are to be revised against this record before 0017 is accepted.

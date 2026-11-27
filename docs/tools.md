@@ -66,10 +66,12 @@ The same list, as the server itself describes each tool to Claude:
   files.
 - **Everything the publisher sent, with notes where a figure may mislead.** Every row comes back with its flag
   and what it means: empty cells, suppressed cells, total rows, catchment areas, screening counts. A figure you ask
-  for is worked out, and where the source's contract or a data-quality check says it may mislead, a note says so
-  in plain words, puts the safer figure beside it and names its source. Only a data check that never ran stops an
-  answer. Today some tools still refuse, or leave total rows out of a sum, instead (see [When a tool says no](#when-a-tool-says-no));
-  [Data conventions](data-conventions.md#show-everything-qualify-dont-decide) has the rule and where today differs.
+  for is worked out, and where the source's contract or a data check says it may mislead, a note says so in plain
+  words, names its source and, where there is one, puts the figure without that problem beside it. A copy of the
+  data whose checks never ran is never used. Today some tools still refuse, or leave total rows out of a sum,
+  instead (see [When a tool says no](#when-a-tool-says-no)), and a copy that failed a serious data check is held
+  back too, so you get the copy before it. [Data conventions](data-conventions.md#show-everything-qualify-dont-decide)
+  has the rule and where today differs.
 - **Every number is labelled.** The `measure` column says whether it is a count, rate, percent or estimate, and
   `period_status`, on every row, says how final it is (provisional, a running total so far, incomplete, or what the
   publisher marks). See [Data conventions](data-conventions.md).
@@ -420,21 +422,22 @@ the contract's rules too: across places it leaves the publisher's total rows out
 so); it never adds weekly counts or year-to-date counts across weeks; an empty value (CDC's `-` included) stops
 it rather than counting as 0; and it refuses a filter on the count it adds up, which would drop the empty values
 unseen. These rules cover sums only, not other ways of combining values (an average, a product, a largest
-value). Prefer the named tools: they apply every rule of the contract for you. Under the rule
-[show everything; qualify, don't decide](data-conventions.md#show-everything-qualify-dont-decide), these
-refusals and the dropped total rows become sums with a note and the safer figure beside them, as the code
-catches up.
+value). Prefer the named tools: they apply every rule of the contract for you. This is changing, under the rule
+[show everything; qualify, don't decide](data-conventions.md#show-everything-qualify-dont-decide): these
+refusals and the dropped total rows will become sums with a note, and the figure without the problem beside
+them.
 
 ## When a tool says no
 
 A tool never shows a stack trace or an error code to you. It says, in plain words, what happened and what to try.
 
 Under the rule [show everything; qualify, don't decide](data-conventions.md#show-everything-qualify-dont-decide),
-the only data problem that stops an answer is a data check that never ran; a figure that may mislead comes back
-with a note instead. Today some tools still refuse a sum, a running total asked the wrong way, or a rate for
-counts that are not new cases of disease (the rows below about adding up, running totals, sums with a count that
-has no number, and "no rate per 100,000"). Those become answers with notes as the code catches up, in follow-up
-pull requests to [#186](https://github.com/jtouley/health-data-registry/pull/186).
+a figure that may mislead comes back with a note instead of a refusal, and the only data problem that holds data
+back is a data check that never ran. Today some tools still refuse a sum, a running total asked the wrong way, or
+a rate for counts that are not new cases of disease: the rows marked "(today; this is changing)" below. Today a
+copy of the data that failed a serious data check is also held back. Neither case shows you a refusal: the tool
+answers from the copy before it, and the fetch time in the provenance line says how old that copy is. If the
+numbers look older than the publisher's page, run the [Something's wrong](helpers.md#somethings-wrong) helper.
 
 The common ones:
 
@@ -443,13 +446,13 @@ The common ones:
 | "No loaded source reports '…'. Conditions available now: …" | The condition isn't in any loaded source, or is spelt differently | Use one of the listed names, or ask `suggest_datasets` |
 | "… has no rows for: …" | That place isn't in the source (for example, a state in a source that covers EIP sites only) | Check `describe_dataset` for the places it covers |
 | "None of the loaded sources split this by sex yet" | No sex breakdown in these series | Ask again without sex |
-| "Rates and estimates can't be added up …" | More than one published rate matches, and rates are never combined | Choose the breakdown it names |
-| "… is a running total, so it is read once per …" or "… is read at one …" | A running total asked for the wrong way | Ask by year, for one place at a time, or at one week |
+| "Rates and estimates can't be added up …" | More than one published rate matches, and rates are never combined (today; this is changing) | Choose the breakdown it names |
+| "… is a running total, so it is read once per …" or "… is read at one …" | A running total asked for the wrong way (today; this is changing) | Ask by year, for one place at a time, or at one week |
 | "'…' matches more than one series …" | `compare_rates` needs the same series on both sides | Use the full name of one series |
-| "No rate per 100,000 people is given for '…'" | The counts are not new cases of disease in people (animal rabies; *C. auris* screening, which finds colonisation) | Use `get_series` for the counts, or, for *C. auris*, ask about the clinical cases |
-| "This would add up counts across several weeks …" | Adding up a year's weekly counts gives too few cases: late reports reach only the year-to-date count | Ask `get_series` for the year, or ask for one week |
-| "This sum includes a count that has no number …" or "This sum filters on the count it adds up …" | `query_sql` met a count with no number (CDC's `-`, unavailable or suppressed), which is never counted as 0 or left out unseen | Ask for the rows without adding them up, or use `get_series` |
-| "A rate for … can't be worked out …" | `compare_rates`: one side gets no rate (see [`get_rate`](#get_rate)) | Use `get_series` for the counts on that side |
+| "No rate per 100,000 people is given for '…'" | The counts are not new cases of disease in people (animal rabies; *C. auris* screening, which finds colonisation) (today; this is changing) | Use `get_series` for the counts, or, for *C. auris*, ask about the clinical cases |
+| "This would add up counts across several weeks …" | Adding up a year's weekly counts gives too few cases: late reports reach only the year-to-date count (today; this is changing) | Ask `get_series` for the year, or ask for one week |
+| "This sum includes a count that has no number …" or "This sum filters on the count it adds up …" | `query_sql` met a count with no number (CDC's `-`, unavailable or suppressed), which is never counted as 0 or left out unseen (today; this is changing) | Ask for the rows without adding them up, or use `get_series` |
+| "A rate for … can't be worked out …" | `compare_rates`: one side gets no rate (see [`get_rate`](#get_rate)) (today; this is changing) | Use `get_series` for the counts on that side |
 | "Population counts (Census) aren't loaded yet …" | `get_rate` has no denominator on this setup | Use `get_series`, or a published rate |
 | "… could not be reached to download …" | A restricted source (WHO) is fetched from the publisher, and the publisher's site didn't answer | Try again in a few minutes |
 | "The hub release … has no file …" or "… does not list …" | The hub release the server reads from is incomplete | Try again later, or [open an issue](https://github.com/jtouley/health-data-registry/issues) |
