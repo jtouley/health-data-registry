@@ -490,7 +490,7 @@ def test_only_the_guards_own_error_is_read_as_an_empty_value() -> None:
 def test_a_blocked_sample_names_its_own_kind(quality: dict[str, Any], says: str) -> None:
     from health_data_registry.quality import sample_blocked_message
 
-    msg = sample_blocked_message("toy", quality)
+    msg = sample_blocked_message("toy", quality, expected=())
     assert msg and says in msg and "never published" in msg
     assert ("--max-rows rows" in msg) == (quality.get("tool") == "contract-rules")
 
