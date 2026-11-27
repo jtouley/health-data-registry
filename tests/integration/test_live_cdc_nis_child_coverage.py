@@ -49,8 +49,14 @@ def test_michigan_mmr_by_24_months_two_ways(live):
     want = [
         r
         for r in rows
-        if r["geography"] == "Michigan" and r["dimension"] == "24 Months" and r["coverage_estimate"] != "NA"
+        if r["geography"] == "Michigan"
+        and r["dimension"] == "24 Months"
+        and r["coverage_estimate"] != "NA"
+        and r["year_season"].isdigit()  # a single birth year, never a cohort
     ]
+    assert want, (
+        "no Michigan MMR estimate by 24 months for a single birth year in the slice: check the contract"
+    )
     latest = max(want, key=lambda r: r["year_season"])
     value = _live.duckdb_metric(
         con,

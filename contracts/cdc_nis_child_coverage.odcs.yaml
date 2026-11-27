@@ -49,14 +49,21 @@ schema:
         severity: warn
         type: sql
         query: "SELECT COUNT(*) FROM {object} WHERE coverage_estimate IS NOT NULL AND (ci_95 IS NULL OR trim(ci_95) = '')"
-        mustBeLessThan: 50
-        description: "Fill rate. Every published estimate should come with its 95% interval (column description: 'The 95% confidence interval of the estimate of vaccination coverage'). Live data on 2026-11-25 had 25 rows with an estimate and no interval (2,114 NA estimates, 2,139 empty intervals); many more means the interval column has changed. Why those rows have none is an open question."
+        mustBeLessOrEqualTo: 25
+        description: "Fill rate. Every published estimate should come with its 95% interval (column description: 'The 95% confidence interval of the estimate of vaccination coverage'). Live data on 2026-11-25 had 25 rows with an estimate and no interval (2,114 NA estimates, 2,139 empty intervals), so the bound is those 25 rows and any new gap is a warning to review. Provisional until a maintainer sets it (open question 'Empty interval'); why those rows have none is an open question too."
+      - id: grain_is_unique
+        dimension: uniqueness
+        severity: warn
+        type: sql
+        query: "SELECT COUNT(*) FROM (SELECT vaccine FROM {object} GROUP BY vaccine, coalesce(dose, ''), geography, year_season, dimension_type, dimension HAVING COUNT(*) > 1)"
+        mustBe: 0
+        description: "Structural: one row per vaccine, dose, place, birth year or cohort, and age or group held over the whole table on 2026-11-25 (141,052 rows). A repeat would put two estimates in one cell, and every series would then decline to answer. A warning, not a declared key: the maintainer confirms the key (open question 'Grain'). No dose and an empty dose count as the same."
     properties:
       - name: vaccine
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "The vaccine the coverage is for, as CDC names it (column description: 'The name of the vaccine for which estimates are calculated'); for MMR and varicella the dose is part of the name ('≥1 Dose MMR'), and the Combined 7 Series is the combined childhood series as CDC defines it."
+        description: "The vaccine the coverage is for, as CDC names it (column description: 'The name of the vaccine for which estimates are calculated'); for MMR and varicella the dose is part of the name ('≥1 Dose MMR'). What the Combined 7 Series counts is not yet read from CDC's codebook (an open question in the contract)."
         examples: ["DTaP", "≥1 Dose MMR", "Hep B", "Combined 7 Series", "Rotavirus"]
         customProperties:
           - {property: role, value: dimension}
@@ -74,7 +81,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: false
-        description: "The dose or series the coverage counts (column description: the dose of vaccine, ≥1 to ≥4), e.g. '≥3 Doses', '≥4 Doses', 'Full Series' or 'Primary Series' for Hib, '≥1 Dose, 3 Day (Birth Dose)' for hepatitis B. Empty when the vaccine name carries it (MMR, varicella) or for the Combined 7 Series, influenza and rotavirus. What each series counts is an open question until the codebook is read."
+        description: "The dose or series the coverage counts (column description: the dose of vaccine, ≥1 to ≥4). Examples are '≥3 Doses', '≥4 Doses', 'Full Series' or 'Primary Series' for Hib, and '≥1 Dose, 3 Day (Birth Dose)' for hepatitis B. No value when the vaccine name carries it (MMR, varicella) or for the Combined 7 Series, influenza and rotavirus. What each series counts is an open question until the codebook is read."
         examples: ["≥3 Doses", "≥4 Doses", "Full Series", "≥1 Dose, 3 Day (Birth Dose)", ""]
         customProperties:
           - {property: role, value: dimension}
@@ -88,6 +95,15 @@ schema:
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: geography_type}
+        quality:
+          - id: geography_type_labels
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["HHS Regions/National", "States/Local Areas"]}
+            mustBe: 0
+            description: "The two kinds of place listed in the column's enum, as published on 2026-11-25. A new kind is a new set of places to review."
       - name: geography
         physicalType: VARCHAR
         logicalType: string
@@ -128,7 +144,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "The age by which the dose was given (e.g. '24 Months', '35 Months', '0-3 Days'), or the population group within dimension_type for the four-year cohorts (e.g. 'Any Medicaid', 'Hispanic', '<133% FPL'). CDC's column description: the ages vary by vaccine and dose. Ages and groups overlap, so estimates are never added or averaged across them."
+        description: "The age by which the dose was given (e.g. '24 Months', '35 Months', '8 Months' for rotavirus, '0-3 Days' for the hepatitis B birth dose), or the population group within dimension_type for the four-year cohorts (e.g. 'Any Medicaid', 'Hispanic', '<133% FPL'). CDC's column description: the ages vary by vaccine and dose. Ages and groups overlap, so estimates are never added or averaged across them."
         examples: ["24 Months", "35 Months", "8 Months", "0-3 Days", "Overall", "Any Medicaid"]
         customProperties:
           - {property: role, value: dimension}
@@ -137,7 +153,7 @@ schema:
         physicalType: DOUBLE
         logicalType: number
         required: false
-        description: "Estimated percent of children in the group vaccinated with the vaccine and dose by the given age (a weighted survey estimate; column 'Estimate (%)', description 'The estimated percent of children vaccinated'). NA is stored as no value, never as zero."
+        description: "Estimated percent of children in the group vaccinated with the vaccine and dose by the given age (a weighted survey estimate; column 'Estimate (%)', description 'The estimated percent of children vaccinated'). NA is stored as no value, never as zero; CDC doesn't define NA for this table (an open question in the contract)."
         customProperties:
           - {property: role, value: measure}
           - {property: sourceField, value: coverage_estimate}
@@ -155,7 +171,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: false
-        description: "CDC's 95% confidence interval for the coverage estimate, in percent, exactly as CDC writes it: the lower and upper ends in one text field, 'lower to upper' (column '95% CI (%)', e.g. '92.2 to 96.1'). Kept as sent: splitting it into two numbers changes the value, so it waits for a staging extension (#172). Empty when CDC gives no interval."
+        description: "CDC's 95% confidence interval for the coverage estimate, in percent, exactly as CDC writes it: the lower and upper ends in one text field, 'lower to upper' (column '95% CI (%)'). An example is '92.2 to 96.1'. Kept as sent: splitting it into two numbers changes the value, so it waits for a staging extension (#172). No value when CDC gives no interval."
         examples: ["92.2 to 96.1", "88.7 to 94.7"]
         customProperties:
           - {property: role, value: attribute}
@@ -208,12 +224,12 @@ customProperties:
       - "Interval (ci_95): CDC publishes the 95% confidence interval as one text field, 'lower to upper'. Splitting it into lower and upper numbers changes the value, so under hard rule 15 it belongs in a staging extension, not the load; until that extension lands (#172), the interval is kept and shown as sent, and get_series answers say it is not split yet. Which interval method does CDC use? ChildVaxView's data source page (not yet read) should say. On 2026-11-25, 3 rows had an estimate outside its own interval: a question for CDC once the interval is split."
       - "NA: this dataset's column description doesn't define NA (2,114 rows on 2026-11-25; 4 of them have a sample size). The teen and kindergarten tables call NA 'not applicable'; is it the same here, or an estimate suppressed for a small sample? Until the codebook says, NA is no value and the answer says the cell is empty."
       - "Doses and series: what do the Combined 7 Series, Hib's Full and Primary Series and the hepatitis B 1-, 2- and 3-day birth doses count, by birth year? Codebook only; until read, each label is shown exactly as CDC writes it and series are not joined across a definition change."
-      - "Ages: the series read coverage by 24 months (rotavirus by 8 months, hepatitis B birth dose by 3 days). Which age CDC treats as its headline for each vaccine is in ChildVaxView's pages, not yet read; a maintainer confirms. Ages are never added either way."
-      - "Birth years and cohorts: single birth years, two-year cohorts and four-year cohorts sit in one column. A maintainer decides whether the series should read single years only; until then each row shows its period as CDC writes it."
+      - "Ages and doses: the series read coverage by 24 months (rotavirus by 8 months, hepatitis B birth dose by 3 days), and one dose or series per vaccine (DTaP and PCV at least four doses, polio and hepatitis B at least three, Hib the full series rather than the primary series or at least three doses). These are draft choices, not CDC's: which age and dose CDC treats as its headline for each vaccine is in ChildVaxView's pages, not yet read, and a maintainer confirms or changes them (each series label names its dose and age, and the catalog caveats say they are pending review). Ages and doses are never added either way."
+      - "Birth years and cohorts: single birth years, two-year cohorts and four-year cohorts sit in one column. Until a maintainer decides, the series read single birth years only (metric vaccination_coverage_by_birth_year, a structural filter: a four-character period), so a year range never returns a cohort that reaches outside it (a period of 2021 would otherwise return the 2021-2022 cohort and miss 2020-2021). The cohorts stay in the table, readable with query_sql. Should cohort series be offered, and with which period bounds?"
       - "Suppression: does CDC blank or flag estimates from small samples or with wide intervals (e.g. a relative standard error rule)? Until the codebook says, unreliableRule is none and every estimate is shown with its interval and sample size."
       - "Local areas: how does each local area map to a place: the cities ('IL-City of Chicago', 'NY-City of New York', 'TX-City of Houston', 'PA-Philadelphia'), the Texas counties, and the 'Rest of state' areas? None is Detroit. Until a maintainer declares the mapping, local areas are not keyed to GBD locations (GBD stops at states)."
       - "Revisions: does CDC revise earlier birth years when weights or definitions change? Each annual load is stored whole, so a revision shows as a difference between snapshots; whether one has happened is not stated."
-      - "Empty interval: 25 rows published on 2026-11-25 had an estimate but no interval. Why (an interval not calculated, or a missing value)?"
+      - "Empty interval: 25 rows published on 2026-11-25 had an estimate but no interval. Why (an interval not calculated, or a missing value)? The quality rule interval_filled_where_estimate warns above those 25 rows; the bound is provisional until a maintainer sets it."
       - "Grain: vaccine x dose x geography x birth year or cohort x dimension_type x dimension was unique over the whole table on 2026-11-25 (141,052 rows). A maintainer confirms it as the key before one is declared."
       - "Licence: the Socrata metadata has no licence field; public-domain-us-federal is assumed from its being a CDC work (17 USC 105). Maintainer to confirm the wording before the first public release (the catalog says hosting: public, as every catalogued CDC source does, and the contract stays draft until then)."
       - "GBD mapping: review the GBD cause proposals in gbdCauseProposals. None is asserted until a maintainer approves it."

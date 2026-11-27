@@ -59,3 +59,28 @@ unit_tests:
     - geography: C
       suppressed: null
       percent_resistant: null
+- name: stg_cdc_nis_child_coverage_na_is_no_value_and_the_interval_stays_as_sent
+  model: stg_cdc_nis_child_coverage
+  given:
+  - input: source('raw', 'cdc_nis_child_coverage')
+    format: sql
+    rows: |
+      select '85.0 to 94.0' as "_95_ci", '90.0' as "coverage_estimate", cast(null as varchar) as "dimension", cast(null as varchar) as "dimension_type", cast(null as varchar) as "dose", 'A' as "geography", cast(null as varchar) as "geography_type", '300' as "population_sample_size", cast(null as varchar) as "vaccine", cast(null as varchar) as "year_season", cast(null as varchar) as "_snapshot_id", cast(null as varchar) as "_raw_sha256"
+      union all
+      select '' as "_95_ci", 'NA' as "coverage_estimate", cast(null as varchar) as "dimension", cast(null as varchar) as "dimension_type", cast(null as varchar) as "dose", 'B' as "geography", cast(null as varchar) as "geography_type", '' as "population_sample_size", cast(null as varchar) as "vaccine", cast(null as varchar) as "year_season", cast(null as varchar) as "_snapshot_id", cast(null as varchar) as "_raw_sha256"
+      union all
+      select cast(null as varchar) as "_95_ci", ' NA ' as "coverage_estimate", cast(null as varchar) as "dimension", cast(null as varchar) as "dimension_type", cast(null as varchar) as "dose", 'C' as "geography", cast(null as varchar) as "geography_type", '300.0' as "population_sample_size", cast(null as varchar) as "vaccine", cast(null as varchar) as "year_season", cast(null as varchar) as "_snapshot_id", cast(null as varchar) as "_raw_sha256"
+  expect:
+    rows:
+    - geography: A
+      coverage_estimate: 90.0
+      ci_95: 85.0 to 94.0
+      population_sample_size: 300
+    - geography: B
+      coverage_estimate: null
+      ci_95: ''
+      population_sample_size: null
+    - geography: C
+      coverage_estimate: null
+      ci_95: null
+      population_sample_size: 300
