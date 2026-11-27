@@ -89,9 +89,24 @@ def test_an_empty_run_with_an_empty_manifest_is_not_servable(tmp_path: Path) -> 
 def test_every_test_the_contracts_expect_must_run(tmp_path: Path) -> None:
     assert rg.read_build(target(tmp_path, GOOD), expected=TOY).servable
     missing = rg.read_build(target(tmp_path, GOOD[:2] + GOOD[3:], invocation="no-fill"), expected=TOY)
-    assert not missing.servable and missing.rule_errors == [
-        {"test": "fill_a", "type": "test", "error": "expected by the contracts, did not run"}
-    ]
+    # A test with no result was never evaluated (#222): it holds the release, apart from a rule error.
+    assert (
+        not missing.servable
+        and missing.rule_errors == []
+        and missing.not_evaluated
+        == [
+            {
+                "test": "fill_a",
+                "type": "test",
+                "error": "expected by the contracts, no result",
+                "reason": "no_result",
+            }
+        ]
+    )
+    # The label comes from the structured reason, never the error text, so rewording the text moves nothing.
+    reworded = replace(missing, not_evaluated=[{**missing.not_evaluated[0], "error": "x"}])
+    assert reworded.reason() == missing.reason()
+    assert missing.reason() == ("1 check(s) the contracts expect have no result (fill_a)")
     no_model = rg.read_build(target(tmp_path, GOOD[1:], invocation="no-model"), expected=TOY)
     assert no_model.model_errors == [
         {"model": "stg_a", "type": "model", "error": "expected by the contracts, not built"}

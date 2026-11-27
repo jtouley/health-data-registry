@@ -200,6 +200,7 @@ caveats; a rule error never becomes a caveat about the numbers.
 |---|---|---|---|
 | Contract quality rules, severity error: data failure | yes | yes | the contract (hard rule 1) |
 | Contract quality rules: a rule that cannot run (rule error) | yes | yes | stage b's `QualityReport.blocking` |
+| An expected check with no result: a contract rule or generated check missing from the record, a status no run writes, or a record with no result at all (issue #222); whatever its severity | yes | yes | the contract's checks (`rules_for`, `expected_ids`); in the release gate, the tests the contracts expect (`expected_from`) |
 | An error-severity value rule over a column whose fill-rate check reports it all empty | no; reported as not evaluated, never as a pass | no; the card says not evaluated | the same rule plus the fill-rate check |
 | `has_rows`; for staging models (1:1 with the snapshot), row count equal to the snapshot manifest's | yes | yes | structural fact |
 | Declared key unique and not null, per model | yes | yes | the contract's key columns, generated for every model |
@@ -210,6 +211,9 @@ caveats; a rule error never becomes a caveat about the numbers.
 | Reproducibility (section 5) | no (CI fails the PR on fixtures; a nightly mismatch holds the next release) | yes | this ADR |
 | Partial snapshot | no; caveat | yes | `--max-rows` |
 | Draft contract | no; caveat | no; caveat on the card | hard rule 3 |
+
+A live or private table has no `LATEST` and is never published. It is refused for the question when any of its
+checks has no result or could not run; a check that ran and failed reaches its answers as a caveat.
 
 Reconciliation reports **not evaluated**, with the reason, when any part is suppressed or flagged (for NNDSS, U, N,
 NP or NC) or the contract declares no tolerance. A publisher's own release that doesn't add up is a fact about the
