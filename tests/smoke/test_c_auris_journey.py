@@ -147,7 +147,7 @@ def test_step3_series_come_back_separate_never_summed_with_totals_left_out(journ
                 "unverified_restatement" in r["period_status"]
                 and "not a final disease count" in r["period_status"]
             )
-    assert "draft" in out and "'-' means no cases were reported" in out
+    assert "draft" in out and "'-' is CDC's 'no reported cases'" in out and "read as not reported" in out
     assert_provenance_on_every_number(journey, out)
 
 
