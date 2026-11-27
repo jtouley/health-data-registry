@@ -52,6 +52,9 @@ All notable changes to this project are documented here. The format follows
   confirmed cases only), on the existing Socrata adapter. Counts by county of residence, case status, sex and age
   group add up to a state or the nation; CDC's 'Suppressed' labels are kept, and the eras are never joined into
   one trend.
+- New source, draft (contract not yet reviewed): `cdc_nrevss_positivity`, CDC's weekly national percent of laboratory tests
+  positive for COVID-19, influenza and RSV (NREVSS, data.cdc.gov seuz-s2cv), on the existing Socrata adapter. One
+  figure for the whole country each week; a question about a state or region is told so.
 - SchoolVaxView kindergarten coverage and exemptions (`cdc_schoolvaxview_kindergarten`, CDC data.cdc.gov
   ijqb-a7ye): the percent of kindergartners vaccinated, or with an exemption, by vaccine and dose or exemption
   type, state and school year, as each state reported it, read as published and never added up. Draft contract.
