@@ -340,17 +340,18 @@ def series_for(
     for ds in registry:
         if source_id and ds.id != source_id:
             continue
-        named = [
-            s
-            for s in ds.semantic.series
-            if _names_match(want, {s.condition, s.label}) and _asked_with(want, s)
-        ]
+
+        # A series kept to questions using its asked_with words answers any question once the source is named.
+        def asked(s: Series) -> bool:
+            return bool(source_id) or _asked_with(want, s)
+
+        named = [s for s in ds.semantic.series if _names_match(want, {s.condition, s.label})]
         if named:
-            found += [(ds, s) for s in named if fits(s)]
+            found += [(ds, s) for s in named if fits(s) and asked(s)]
             continue
         # Any other label the publisher uses (the catalog's vocabulary) reads through the generic series.
         for label in catalogued_labels(ds, condition):
-            found += [(ds, s) for s in ds.condition_series(label) if fits(s)]
+            found += [(ds, s) for s in ds.condition_series(label) if fits(s) and asked(s)]
     return found
 
 

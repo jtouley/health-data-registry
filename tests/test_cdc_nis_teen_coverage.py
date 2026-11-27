@@ -153,8 +153,15 @@ def test_a_vaccination_question_reaches_its_series(asked: str, label: str | None
 
 def test_every_catalogued_vaccine_has_a_named_series() -> None:
     ds = load_registry(ROOT).get(DS)
-    assert not ds.semantic.generic_series
-    assert {s.filters["vaccine"] for s in ds.semantic.series} == set(ds.condition_labels)
+    assert {s.condition for s in ds.semantic.series} == set(ds.condition_labels)
+    assert all(s.filters["vaccine"] == s.condition for s in ds.semantic.series)
+    assert all(g.asked_with for g in ds.semantic.generic_series)
+
+
+def test_naming_the_source_reads_the_publisher_label_as_asked() -> None:
+    """With source_id given, CDC's own label ('Tetanus') reads its coverage series: the question is about it."""
+    got = [s.label for _ds, s in tools.series_for(load_registry(ROOT), "Tetanus", source_id=DS)]
+    assert got == ["Tdap vaccination, at least one dose, teens 13-17"]
 
 
 def test_a_childhood_vaccination_question_gets_teen_rows_labelled_as_teens(

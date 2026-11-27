@@ -1016,7 +1016,8 @@ class Series(_Strict):
     # An age-specific series (age_adjust): counts or populations split by this age-group dimension.
     age_dimension: str | None = None
     # Words, one of which a question must use for this series to answer it (e.g. "vaccination"): a vaccination
-    # coverage series answers a question about the vaccine, never one that names only the disease. Empty: any.
+    # coverage series answers a question about the vaccine, never one that names only the disease. Not applied
+    # when the caller names this source (source_id). Empty: any question.
     asked_with: list[str] = Field(default_factory=list)
 
     def held_dimensions(self) -> list[str]:
@@ -1051,6 +1052,7 @@ class GenericSeries(_Strict):
     case_definition: str | None = None
     week_dimension: str | None = None
     age_dimension: str | None = None
+    asked_with: list[str] = Field(default_factory=list)  # as on Series
 
     def bind(self, label: str, dimension: str | None) -> Series:
         """The series for one publisher label: the template with `dimension` filtered to exactly that label."""
