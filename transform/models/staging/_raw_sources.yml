@@ -60,6 +60,182 @@ sources:
       data_type: varchar
       description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
         the exact bytes the publisher sent.'
+  - name: cdc_lyme_county
+    description: 'Raw records of Lyme disease public use aggregated data with geography, 2022 onward as the adapter
+      hands them on, every value as text: the publisher''s own fields, or for a wide table the adapter''s structural
+      reshaping of them (see the staging model). Only the full load the dataset''s LATEST pointer names is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_lyme_county.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - age_cat_yrs
+      - case_status
+      - fips
+      - frequency
+      - sex
+      - state
+      - year
+    columns:
+    - name: age_cat_yrs
+      data_type: varchar
+      description: Publisher field age_cat_yrs, as text; read into age_cat_yrs (Patient age group in years, 0-19
+        or 20+ (column description), or Unknown, or Suppressed when CDC withheld it.)
+    - name: case_status
+      data_type: varchar
+      description: 'Publisher field case_status, as text; read into case_status (Surveillance case classification
+        as determined by local and state public health authorities (column description): Confirmed or Probable.)'
+    - name: fips
+      data_type: varchar
+      description: Publisher field fips, as text; read into fips (The county of residence as a five-digit FIPS code,
+        two digits for the state and three for the county (column description), kept as text so the leading zero
+        stays. 'Suppressed' when CDC withheld the county, 'Unknown' when it was not reported. Connecticut's codes
+        change to its planning regions from 2023.)
+    - name: frequency
+      data_type: varchar
+      description: 'Publisher field frequency, as text; read into frequency (Number of Lyme disease cases with this
+        year, county of residence, sex, age group and case status (column description). A count: rows add up.)'
+    - name: sex
+      data_type: varchar
+      description: 'Publisher field sex, as text; read into sex (Patient sex as reported to health authorities (column
+        description): Female, Male, Unknown, or Suppressed when CDC withheld it.)'
+    - name: state
+      data_type: varchar
+      description: Publisher field state, as text; read into state (The state of residence as a two-letter postal
+        abbreviation (column description), or 'Suppressed' when CDC withheld it to protect privacy, or 'Unknown'
+        when it was not reported.)
+    - name: year
+      data_type: varchar
+      description: Publisher field year, as text; read into year (Reporting year (2022 and 2023 on 2026-11-25).
+        The publisher sends it as text.)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
+  - name: cdc_lyme_county_1992_2007
+    description: 'Raw records of Lyme disease public use aggregated data with geography, 1992-2007 as the adapter
+      hands them on, every value as text: the publisher''s own fields, or for a wide table the adapter''s structural
+      reshaping of them (see the staging model). Only the full load the dataset''s LATEST pointer names is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_lyme_county_1992_2007.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - age_cat_yrs
+      - case_status
+      - fips
+      - frequency
+      - sex
+      - state
+      - year
+    columns:
+    - name: age_cat_yrs
+      data_type: varchar
+      description: Publisher field age_cat_yrs, as text; read into age_cat_yrs (Patient age group in years, 0-19
+        or 20+ (column description), or Unknown, or Suppressed when CDC withheld it.)
+    - name: case_status
+      data_type: varchar
+      description: 'Publisher field case_status, as text; read into case_status (Surveillance case classification
+        as determined by local and state public health authorities (column description): Confirmed in every row
+        of these years, as the probable definition began in 2008.)'
+    - name: fips
+      data_type: varchar
+      description: Publisher field fips, as text; read into fips (The county of residence as a five-digit FIPS code,
+        two digits for the state and three for the county (column description), kept as text so the leading zero
+        stays. 'Suppressed' when CDC withheld the county, 'Unknown' when it was not reported.)
+    - name: frequency
+      data_type: varchar
+      description: 'Publisher field frequency, as text; read into frequency (Number of Lyme disease cases with this
+        year, county of residence, sex, age group and case status (column description). A count: rows add up.)'
+    - name: sex
+      data_type: varchar
+      description: 'Publisher field sex, as text; read into sex (Patient sex as reported to health authorities (column
+        description): Female, Male, Unknown, or Suppressed when CDC withheld it.)'
+    - name: state
+      data_type: varchar
+      description: Publisher field state, as text; read into state (The state of residence as a two-letter postal
+        abbreviation (column description), or 'Suppressed' when CDC withheld it to protect privacy, or 'Unknown'
+        when it was not reported.)
+    - name: year
+      data_type: varchar
+      description: Publisher field year, as text; read into year (Reporting year (1992 to 2007). The publisher sends
+        it as text.)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
+  - name: cdc_lyme_county_2008_2021
+    description: 'Raw records of Lyme disease public use aggregated data with geography, 2008-2021 as the adapter
+      hands them on, every value as text: the publisher''s own fields, or for a wide table the adapter''s structural
+      reshaping of them (see the staging model). Only the full load the dataset''s LATEST pointer names is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_lyme_county_2008_2021.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - age_cat_yrs
+      - case_status
+      - fips
+      - frequency
+      - sex
+      - state
+      - year
+    columns:
+    - name: age_cat_yrs
+      data_type: varchar
+      description: Publisher field age_cat_yrs, as text; read into age_cat_yrs (Patient age group in years, 0-19
+        or 20+ (column description), or Unknown, or Suppressed when CDC withheld it.)
+    - name: case_status
+      data_type: varchar
+      description: 'Publisher field case_status, as text; read into case_status (Surveillance case classification
+        as determined by local and state public health authorities (column description): Confirmed or Probable.)'
+    - name: fips
+      data_type: varchar
+      description: Publisher field fips, as text; read into fips (The county of residence as a five-digit FIPS code,
+        two digits for the state and three for the county (column description), kept as text so the leading zero
+        stays. 'Suppressed' when CDC withheld the county, 'Unknown' when it was not reported.)
+    - name: frequency
+      data_type: varchar
+      description: 'Publisher field frequency, as text; read into frequency (Number of Lyme disease cases with this
+        year, county of residence, sex, age group and case status (column description). A count: rows add up.)'
+    - name: sex
+      data_type: varchar
+      description: 'Publisher field sex, as text; read into sex (Patient sex as reported to health authorities (column
+        description): Female, Male, Unknown, or Suppressed when CDC withheld it.)'
+    - name: state
+      data_type: varchar
+      description: Publisher field state, as text; read into state (The state of residence as a two-letter postal
+        abbreviation (column description), or 'Suppressed' when CDC withheld it to protect privacy, or 'Unknown'
+        when it was not reported.)
+    - name: year
+      data_type: varchar
+      description: Publisher field year, as text; read into year (Reporting year (2008 to 2021). The publisher sends
+        it as text.)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
   - name: cdc_nhsn_ar_hai
     description: 'Raw records of National Healthcare Safety Network - Antimicrobial Resistance (2011-2025) as the
       adapter hands them on, every value as text: the publisher''s own fields, or for a wide table the adapter''s

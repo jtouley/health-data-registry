@@ -1,0 +1,3 @@
+{"year": "1992", "state": "PA", "fips": "42  .", "case_status": "Confirmed", "sex": "Unknown", "age_cat_yrs": "Unknown", "frequency": "9"}
+{"year": "2007", "state": "NY", "fips": "36001", "case_status": "Confirmed", "sex": "Female", "age_cat_yrs": "20+", "frequency": "8"}
+{"year": "2007", "state": "Suppressed", "fips": "51059", "case_status": "Confirmed", "sex": "Male", "age_cat_yrs": "0-19", "frequency": "1"}

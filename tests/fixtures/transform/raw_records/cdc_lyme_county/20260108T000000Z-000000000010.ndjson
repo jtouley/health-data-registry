@@ -1,0 +1,5 @@
+{"year": "2022", "state": "MI", "fips": "26163", "case_status": "Confirmed", "sex": "Female", "age_cat_yrs": "20+", "frequency": "3"}
+{"year": "2022", "state": "MI", "fips": "26163", "case_status": "Probable", "sex": "Male", "age_cat_yrs": "0-19", "frequency": "2"}
+{"year": "2023", "state": "MI", "fips": "Suppressed", "case_status": "Probable", "sex": "Suppressed", "age_cat_yrs": "Suppressed", "frequency": "1"}
+{"year": "2023", "state": "Unknown", "fips": "26005", "case_status": "Confirmed", "sex": "Unknown", "age_cat_yrs": "Unknown", "frequency": "4"}
+{"year": "2023", "state": "Suppressed", "fips": "Suppressed", "case_status": "Probable", "sex": "Female", "age_cat_yrs": "20+", "frequency": "5"}

@@ -1,0 +1,4 @@
+{"year": "2020", "state": "PA", "fips": "42001", "case_status": "Confirmed", "sex": "Male", "age_cat_yrs": "20+", "frequency": "7"}
+{"year": "2020", "state": "PA", "fips": "42001", "case_status": "Probable", "sex": "Male", "age_cat_yrs": "20+", "frequency": "6"}
+{"year": "2021", "state": "PA", "fips": "Unknown", "case_status": "Confirmed", "sex": "Female", "age_cat_yrs": "0-19", "frequency": "2"}
+{"year": "2021", "state": "Suppressed", "fips": "Suppressed", "case_status": "Probable", "sex": "Suppressed", "age_cat_yrs": "Suppressed", "frequency": "3"}

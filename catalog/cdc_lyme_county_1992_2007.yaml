@@ -1,0 +1,51 @@
+id: cdc_lyme_county_1992_2007
+title: "Lyme disease public use aggregated data with geography, 1992-2007"
+agency: CDC
+publisher: "Centers for Disease Control and Prevention, National Center for Emerging and Zoonotic Infectious Diseases, Division of Vector-Borne Diseases (National Notifiable Diseases Surveillance System)"
+level: federal
+country: US
+research_areas: [infectious_disease]
+id_areas: [vector_borne]
+years: {start: 1992, end: 2007}
+# County of residence (FIPS), state (postal code) and, by adding every row, the nation. A county or state CDC
+# suppressed is written 'Suppressed' and stays in the national count only.
+geography: [nation, state, county]
+shape: frequency_table
+grain: "One row is one year, county of residence, case status (confirmed only in these years), sex and age group (0-19 or 20+ years), with the number of Lyme disease cases reported to NNDSS for that combination. Where fewer than 5 records shared a combination, CDC wrote 'Suppressed' in place of the county, state, sex or age group, and kept the row and its count."
+refresh: annual
+licence:
+  # Socrata metadata license field (https://data.cdc.gov/api/views/84rx-ksgd.json, read 2026-11-25): "Public Domain
+  # U.S. Government", terms https://www.usa.gov/government-works.
+  id: public-domain-us-federal
+  redistribution: true
+  terms_url: https://www.usa.gov/government-works
+citation: "Centers for Disease Control and Prevention, Division of Vector-Borne Diseases. Lyme disease public use aggregated data with geography, 1992-2007. https://data.cdc.gov/d/84rx-ksgd (accessed <retrieved_at>)."
+source:
+  portal: socrata
+  host: data.cdc.gov
+  dataset: 84rx-ksgd
+  landing_url: https://www.cdc.gov/lyme/data-research/facts-stats/surveillance-data-1.html
+  api_url: https://data.cdc.gov/resource/84rx-ksgd.json
+codebook_url: https://data.cdc.gov/api/views/84rx-ksgd.json
+caveats:
+  - "These years have confirmed cases only: CDC's probable case definition began in 2008. Years 2008 to 2021 (cdc_lyme_county_2008_2021) and 2022 onward (cdc_lyme_county) are separate sources and are never joined to this one into one trend."
+  - "Counts are confirmed cases reported to NNDSS by county of residence. CDC says not every case is reported, some reported cases may be another illness, and a sudden change can reflect a state's capacity to capture and classify cases rather than a true change in disease."
+  - "Where fewer than 5 records share a county, state, sex and age group, CDC writes 'Suppressed' in place of those values and keeps the row. Those cases count in the national total (and the state's, when only the county is withheld) but can't be placed in a county; they are never dropped and never spread across places."
+  - "A state's figure adds only the rows whose state column names it. Two rows (2 cases) have a suppressed state but a county code on 2026-11-25; they count only in the national total until a maintainer reviews how to place them."
+  - "Counts are by reporting year; CDC updates the table once a year after health departments verify the data."
+gbd:
+  # GBD 2023 has no Lyme disease cause (IHME GBD connector lookup_term, 2026-11-25: no match), so nothing is keyed
+  # to a GBD cause. States are written as postal codes, which geo.py resolves to the GBD state names.
+  location_column: state
+  causes: []
+conditions:
+  dimension: null
+  # Provenance: the dataset title on data.cdc.gov ("Lyme disease public use aggregated data with geography").
+  source: "CDC's name for the one condition this table counts, from the dataset's title on data.cdc.gov (checked 25 Nov 2026)."
+  labels:
+    - "Lyme disease"
+  aliases: []
+contract: contracts/cdc_lyme_county_1992_2007.odcs.yaml
+semantic_model: semantic/cdc_lyme_county_1992_2007.yaml
+status: draft
+hosting: public

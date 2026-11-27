@@ -41,6 +41,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- New sources, draft (contracts not yet reviewed): CDC's Lyme disease public use aggregated data with geography,
+  as three sources because CDC splits them where the case definition changed: `cdc_lyme_county` (2022 onward,
+  data.cdc.gov x5j9-wybp), `cdc_lyme_county_2008_2021` (qtbi-xd4i) and `cdc_lyme_county_1992_2007` (84rx-ksgd,
+  confirmed cases only), on the existing Socrata adapter. Counts by county of residence, case status, sex and age
+  group add up to a state or the nation; CDC's 'Suppressed' labels are kept, and the eras are never joined into
+  one trend.
 - SchoolVaxView kindergarten coverage and exemptions (`cdc_schoolvaxview_kindergarten`, CDC data.cdc.gov
   ijqb-a7ye): the percent of kindergartners vaccinated, or with an exemption, by vaccine and dose or exemption
   type, state and school year, as each state reported it, read as published and never added up. Draft contract.

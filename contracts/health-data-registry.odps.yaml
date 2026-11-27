@@ -94,6 +94,27 @@ outputPorts:
     contractId: cdc_haicviz_cdi
     customProperties:
       - {property: hosted, value: true}
+  - name: cdc_lyme_county
+    description: CDC Lyme disease cases by county of residence, case status, sex and age group, 2022 onward (2022 case definition).
+    type: tables
+    version: 0.1.0
+    contractId: cdc_lyme_county
+    customProperties:
+      - {property: hosted, value: true}
+  - name: cdc_lyme_county_1992_2007
+    description: CDC Lyme disease confirmed cases by county of residence, sex and age group, 1992-2007.
+    type: tables
+    version: 0.1.0
+    contractId: cdc_lyme_county_1992_2007
+    customProperties:
+      - {property: hosted, value: true}
+  - name: cdc_lyme_county_2008_2021
+    description: CDC Lyme disease cases by county of residence, case status, sex and age group, 2008-2021.
+    type: tables
+    version: 0.1.0
+    contractId: cdc_lyme_county_2008_2021
+    customProperties:
+      - {property: hosted, value: true}
   - name: cdc_nhsn_ar_hai
     description: NHSN antimicrobial resistance in healthcare-associated infections, 2011-2025.
     type: tables

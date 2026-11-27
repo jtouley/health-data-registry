@@ -1,0 +1,71 @@
+# Hand-written dbt unit tests of the three Lyme disease sources (cdc_lyme_county, _2008_2021, _1992_2007), all on
+# the generated typing (staging.typed_select) and the generated intermediate rule:
+#   - year and the case count become whole numbers; a count of 0 stays 0 and an empty count stays empty, never 0;
+#   - CDC's 'Suppressed' and 'Unknown' labels, and a FIPS value outside the codebook's five digits ('42  .', seen
+#     in the 1992-2007 table), are kept exactly as sent;
+#   - is_total_row is false on every row: the contracts declare no total rows, so every count can be added.
+# Inputs are SQL so the raw source needn't be loaded first; every raw column is listed, as format: sql requires.
+version: 2
+unit_tests:
+- name: stg_cdc_lyme_county_types_counts_and_keeps_suppressed_labels_as_sent
+  model: stg_cdc_lyme_county
+  given:
+  - input: source('raw', 'cdc_lyme_county')
+    format: sql
+    rows: |
+      select '20+' as "age_cat_yrs", 'Confirmed' as "case_status", '26163' as "fips", '12' as "frequency", 'Female' as "sex", 'MI' as "state", '2023' as "year", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select 'Suppressed' as "age_cat_yrs", 'Probable' as "case_status", 'Suppressed' as "fips", '0' as "frequency", 'Suppressed' as "sex", 'MI' as "state", '2023' as "year", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select 'Unknown' as "age_cat_yrs", 'Probable' as "case_status", '26005' as "fips", ' ' as "frequency", 'Unknown' as "sex", 'Unknown' as "state", '2022' as "year", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select '0-19' as "age_cat_yrs", 'Confirmed' as "case_status", '09110' as "fips", cast(null as varchar) as "frequency", 'Male' as "sex", 'CT' as "state", '2023' as "year", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+  expect:
+    rows:
+    - {year: 2023, state: MI, fips: '26163', age_cat_yrs: 20+, frequency: 12, _snapshot_id: s1, _raw_sha256: h1}
+    - {year: 2023, state: MI, fips: Suppressed, age_cat_yrs: Suppressed, frequency: 0, _snapshot_id: s1, _raw_sha256: h1}
+    - {year: 2022, state: Unknown, fips: '26005', age_cat_yrs: Unknown, frequency: null, _snapshot_id: s1, _raw_sha256: h1}
+    - {year: 2023, state: CT, fips: '09110', age_cat_yrs: 0-19, frequency: null, _snapshot_id: s1, _raw_sha256: h1}
+- name: stg_cdc_lyme_county_1992_2007_keeps_a_fips_outside_the_codebook_as_sent
+  model: stg_cdc_lyme_county_1992_2007
+  given:
+  - input: source('raw', 'cdc_lyme_county_1992_2007')
+    format: sql
+    rows: |
+      select 'Unknown' as "age_cat_yrs", 'Confirmed' as "case_status", '42  .' as "fips", '1173' as "frequency", 'Unknown' as "sex", 'PA' as "state", '1992' as "year", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select '0-19' as "age_cat_yrs", 'Confirmed' as "case_status", '51059' as "fips", '1' as "frequency", 'Female' as "sex", 'Suppressed' as "state", '2007' as "year", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+  expect:
+    rows:
+    - {year: 1992, state: PA, fips: '42  .', frequency: 1173}
+    - {year: 2007, state: Suppressed, fips: '51059', frequency: 1}
+- name: int_cdc_lyme_county_2008_2021_has_no_total_rows
+  model: int_cdc_lyme_county_2008_2021
+  given:
+  - input: ref('stg_cdc_lyme_county_2008_2021')
+    rows:
+    - {year: 2015, state: MN, fips: '27003', case_status: Confirmed, sex: Female, age_cat_yrs: 20+, frequency: 4, _snapshot_id: s1, _raw_sha256: h1}
+    - {year: 2015, state: Suppressed, fips: Suppressed, case_status: Probable, sex: Suppressed, age_cat_yrs: Suppressed, frequency: 2, _snapshot_id: s1, _raw_sha256: h1}
+  expect:
+    rows:
+    - {fips: '27003', frequency: 4, is_total_row: false}
+    - {fips: Suppressed, frequency: 2, is_total_row: false}
+- name: fct_cdc_lyme_county_keeps_every_row_labels_its_era_and_flags_withheld_places
+  model: fct_cdc_lyme_county
+  given:
+  - input: ref('int_cdc_lyme_county_1992_2007')
+    rows:
+    - {year: 1992, state: PA, fips: '42  .', case_status: Confirmed, sex: Unknown, age_cat_yrs: Unknown, frequency: 9, _snapshot_id: s0, _raw_sha256: h0, is_total_row: false}
+  - input: ref('int_cdc_lyme_county_2008_2021')
+    rows:
+    - {year: 2021, state: Suppressed, fips: Suppressed, case_status: Probable, sex: Suppressed, age_cat_yrs: Suppressed, frequency: 3, _snapshot_id: s1, _raw_sha256: h1, is_total_row: false}
+  - input: ref('int_cdc_lyme_county')
+    rows:
+    - {year: 2023, state: Unknown, fips: '26005', case_status: Confirmed, sex: Unknown, age_cat_yrs: Unknown, frequency: 4, _snapshot_id: s2, _raw_sha256: h2, is_total_row: false}
+    - {year: 2023, state: MI, fips: '26163', case_status: Confirmed, sex: Female, age_cat_yrs: 20+, frequency: null, _snapshot_id: s2, _raw_sha256: h2, is_total_row: false}
+  expect:
+    rows:
+    - {source_id: cdc_lyme_county_1992_2007, case_definition_era: 1992-2007, fips: '42  .', frequency: 9, state_withheld: false, county_withheld: true}
+    - {source_id: cdc_lyme_county_2008_2021, case_definition_era: 2008-2021, fips: Suppressed, frequency: 3, state_withheld: true, county_withheld: true}
+    - {source_id: cdc_lyme_county, case_definition_era: 2022 onward, fips: '26005', frequency: 4, state_withheld: true, county_withheld: false}
+    - {source_id: cdc_lyme_county, case_definition_era: 2022 onward, fips: '26163', frequency: null, state_withheld: false, county_withheld: false}

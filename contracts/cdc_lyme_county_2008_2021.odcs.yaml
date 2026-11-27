@@ -1,0 +1,196 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: cdc_lyme_county_2008_2021
+name: "Lyme disease public use aggregated data with geography, 2008-2021"
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Annual counts of Lyme disease cases reported to CDC's National Notifiable Diseases Surveillance System for 2008 to 2021, by county of residence, case status, sex and age group (dataset description, https://data.cdc.gov/api/views/qtbi-xd4i.json)."
+  usage: "Add the frequency column to get cases for a county, a state or the nation in one year; every row is a separate group of cases, so they add up. Never set these years beside 2022 or later in one trend: the case definitions changed between the tables."
+  limitations: "Surveillance counts, under-reported and sometimes misclassified (dataset's Data Limitations); low-frequency combinations have their county, state, sex or age written 'Suppressed'; no population, rate or interval is published."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://data.cdc.gov/d/qtbi-xd4i", description: "Publisher dataset page"}
+    - {type: businessDefinition, url: "https://data.cdc.gov/api/views/qtbi-xd4i.json", description: "Socrata metadata: dataset description, Data Limitations, Glossary/Methodology (data suppression), column descriptions and licence, read 2026-11-25"}
+    - {type: businessDefinition, url: "https://ndc.services.cdc.gov/conditions/lyme-disease/", description: "Lyme disease surveillance case definitions by year, linked from the dataset description (not fetched; see openQuestions)"}
+    - {type: businessDefinition, url: "https://www.cdc.gov/mmwr/volumes/73/wr/mm7306a1.htm", description: "MMWR on the 2022 case definition change, linked from the dataset description (not fetched)"}
+servers:
+  - id: data_cdc_gov
+    server: data.cdc.gov
+    type: api
+    location: https://data.cdc.gov/resource/qtbi-xd4i.json
+schema:
+  - name: cdc_lyme_county_2008_2021
+    physicalName: cdc_lyme_county_2008_2021
+    physicalType: table
+    logicalType: object
+    description: "Frequency table: one count of Lyme disease cases per year, county of residence, case status, sex and age group."
+    dataGranularityDescription: "year x state x county FIPS x case status x sex x age group"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://data.cdc.gov/api/views/qtbi-xd4i.json"}
+    customProperties:
+      - property: totalRows
+        value: none
+        description: "No row sums other rows: every distinct year, state, fips, case_status, sex and age_cat_yrs on the full table (40,468 rows, 2026-11-25) names one group of residents, and the frequency column description says each count reflects one geographic, sex, age and case status combination. Suppressed values replace a label; they never make a total row."
+      - {property: tableShape, value: frequency_table}
+      - property: idDimensions
+        value:
+          condition: null
+          caseDefinition: null
+          caseStatus: case_status
+          organismResistance: null
+          period: year
+          provisionalFlag: null
+        description: "One condition, Lyme disease (the dataset title). Case status is Confirmed or Probable. The surveillance case definition in force each year is on CDC's case definition page, not in the data. No provisional flag: CDC updates the table once a year after health departments verify it."
+    properties:
+      - name: year
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "Reporting year (2008 to 2021). The publisher sends it as text."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: year}
+        quality:
+          - id: year_in_this_tables_era
+            dimension: conformity
+            severity: error
+            type: sql
+            description: "The dataset description says Lyme disease data are split into separate tables for 1992 to 2007, 2008 to 2021 and 2022 to current, because the case definitions changed. A year outside 2008 to 2021 here would put two case definitions in one table."
+            query: "SELECT COUNT(*) FROM {object} WHERE year < 2008 OR year > 2021"
+            mustBe: 0
+      - name: state
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "The state of residence as a two-letter postal abbreviation (column description), or 'Suppressed' when CDC withheld it to protect privacy, or 'Unknown' when it was not reported."
+        examples: ["MI", "PA", "Suppressed", "Unknown"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: state}
+        quality:
+          - id: state_is_a_postal_code_or_a_marker
+            dimension: conformity
+            severity: warn
+            type: sql
+            description: "The column description says a two-character abbreviation, and the Glossary/Methodology says suppressed values read 'suppressed' and unknown values are marked as such. Anything else is a label to look at, not a reason to stop the load."
+            query: "SELECT COUNT(*) FROM {object} WHERE NOT regexp_full_match(state, '[A-Z]{2}') AND state NOT IN ('Suppressed', 'Unknown')"
+            mustBe: 0
+      - name: fips
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 3
+        description: "The county of residence as a five-digit FIPS code, two digits for the state and three for the county (column description), kept as text so the leading zero stays. 'Suppressed' when CDC withheld the county, 'Unknown' when it was not reported."
+        examples: ["26163", "09110", "Suppressed", "Unknown"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: fips}
+        quality:
+          - id: fips_is_five_digits_or_a_marker
+            dimension: conformity
+            severity: warn
+            type: sql
+            description: "The column description says a five-digit code made up of the two-digit state and three-digit county codes; the Glossary/Methodology adds the suppressed and unknown markers."
+            query: "SELECT COUNT(*) FROM {object} WHERE NOT regexp_full_match(fips, '[0-9]{5}') AND fips NOT IN ('Suppressed', 'Unknown')"
+            mustBe: 0
+      - name: case_status
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 4
+        description: "Surveillance case classification as determined by local and state public health authorities (column description): Confirmed or Probable."
+        examples: ["Confirmed", "Probable"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: case_status}
+        quality:
+          - id: case_status_is_confirmed_or_probable
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["Confirmed", "Probable"]}
+            mustBe: 0
+            description: "The dataset description names confirmed and probable case definitions (a probable definition since 2008). A new status is a warning to review, never a reason to stop the load."
+      - name: sex
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 5
+        description: "Patient sex as reported to health authorities (column description): Female, Male, Unknown, or Suppressed when CDC withheld it."
+        examples: ["Female", "Male", "Unknown", "Suppressed"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: sex}
+      - name: age_cat_yrs
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 6
+        description: "Patient age group in years, 0-19 or 20+ (column description), or Unknown, or Suppressed when CDC withheld it."
+        examples: ["0-19", "20+", "Unknown", "Suppressed"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: age_cat_yrs}
+      - name: frequency
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Number of Lyme disease cases with this year, county of residence, sex, age group and case status (column description). A count: rows add up."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: frequency}
+          - {property: unit, value: "cases"}
+        quality:
+          - id: case_counts_not_negative
+            dimension: conformity
+            severity: error
+            type: sql
+            description: "The column description says the frequency is a count of cases, so it is never negative."
+            query: "SELECT COUNT(*) FROM {object} WHERE frequency < 0"
+            mustBe: 0
+          - id: some_case_counts_present
+            dimension: completeness
+            severity: error
+            type: sql
+            description: "Fill rate at error level: an all-empty frequency column passes the check above, and a table with no counts can't answer anything (every one of 40,468 rows had a count on 2026-11-25). The generated fill-rate check says the same at warn level."
+            query: "SELECT COUNT(*) FROM {object} WHERE frequency IS NOT NULL"
+            mustBeGreaterThan: 0
+    quality:
+      - id: one_row_per_group
+        dimension: uniqueness
+        severity: error
+        type: sql
+        description: "Grain: one count per year, state, county, case status, sex and age group (an exact structural fact of the full table, 40,468 rows, on 2026-11-25). A repeat would count one group of cases twice when rows are added."
+        query: "SELECT COUNT(*) FROM (SELECT year, state, fips, case_status, sex, age_cat_yrs FROM {object} GROUP BY year, state, fips, case_status, sex, age_cat_yrs HAVING COUNT(*) > 1)"
+        mustBe: 0
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: licenceSource, value: "Socrata metadata license field, read 2026-11-25: 'Public Domain U.S. Government', terms https://www.usa.gov/government-works."}
+  - {property: citation, value: "Centers for Disease Control and Prevention, Division of Vector-Borne Diseases. Lyme disease public use aggregated data with geography, 2008-2021. https://data.cdc.gov/d/qtbi-xd4i. Accessed on <date>."}
+  - {property: refresh, value: annual}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "Each refresh stores the complete table as a dated, append-only load. Incremental loading waits for a reviewed row key and the publisher's update field."
+  - {property: geographyBasis, value: "County (five-digit FIPS) and state (postal code) of residence; the nation is every row added, suppressed and unknown places included"}
+  - property: unreliableRule
+    value:
+      kind: publisher_suppressed
+      threshold: 5
+      description: "Glossary/Methodology: cells are suppressed for low frequency (fewer than 5 Lyme disease records with the same combination of county, state, sex and age group); the suppressed values are re-coded 'suppressed' and the records are never removed. The count is kept; only the label is withheld."
+  - property: openQuestions
+    value:
+      - "Case definition: which CSTE Lyme disease case definitions apply to each year 2008 to 2021 is on CDC's case definition page, not in the data. Add as caseDefinitions after a maintainer reads them."
+      - "Which high-incidence states used other surveillance methods whose data were not reportable to CDC before 2022, and in which years (dataset Data Limitations)? Needed before any state is compared across years."
+      - "State and county are withheld independently. On 2026-11-25 every row with a suppressed or unknown state also has a suppressed or unknown county (83 suppressed-state rows, 561 cases), so these count only in the national total."
+      - "Revisions: CDC updates the table annually after verification. Are earlier years in this table revised when a new year is added?"
+      - "GBD: GBD 2023 has no Lyme disease cause (IHME connector lookup, 2026-11-25). A maintainer confirms that no GBD cause is mapped."
