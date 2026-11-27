@@ -39,10 +39,11 @@ Hard rule 11 now allows three kinds of source:
 
 The guard on covariates:
 
-- **Only alongside an infectious-disease answer.** A covariate is never a topic of its own. No tool answers a
-  question about a covariate alone ("What is this county's SVI?"), and a covariate is never offered as a condition,
-  a series or a rate. It is read by place, next to an infectious-disease figure: through a mart keyed to the same
-  places, `query_sql` or `describe_dataset`.
+- **Only alongside an infectious-disease answer.** A covariate is never a topic of its own. It is never offered as
+  a condition, a series or a rate, and `suggest_datasets` offers it only beside an infectious-disease source that
+  fits the same question. A question about a covariate alone ("What is this county's SVI?") is told that it
+  needs an infectious disease to sit beside. A covariate is read by place, next to an infectious-disease figure:
+  through a mart keyed to the same places, or `query_sql`, which can read any loaded table.
 - **Never a denominator.** A covariate's own population column (SVI's `E_TOTPOP`) is never used to compute a rate.
   Rates keep the Census denominators.
 - **No new disease areas.** Covariates don't open the door to other fields' outcome data (cancer, cardiology,
@@ -59,7 +60,8 @@ its licence checked before anything is mirrored.
 - A covariate's catalog entry names its research area `covariate`, not `infectious_disease` or `denominator`, so
   `search_datasets` and `list_sources` can tell the three apart.
 - A covariate has no conditions and no named series, so `get_series`, `get_rate`, `compare_rates`, `get_trend`,
-  `age_adjust` and `check_signal` never return its values as an answer.
+  `age_adjust` and `check_signal` never return its values as an answer. The registry refuses a covariate that
+  declares a series, a condition, a GBD cause or a disease area.
 - A covariate's measures follow the publisher's own rules. SVI's percentile ranks are estimates: they are never
   summed, and an average of them is qualified rather than refused (hard rule 2 as the maintainer changed it on
   27 Nov 2026, [#242](https://github.com/jtouley/health-data-registry/pull/242)), with the publisher's warning
