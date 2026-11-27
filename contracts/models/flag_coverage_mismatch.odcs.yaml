@@ -1,0 +1,60 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: flag_coverage_mismatch
+name: Review queue - declared coverage that disagrees with the rows
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Lists every place-year a stored source's rows name that its declared coverage doesn't cover (observed_not_declared), and every place-year a declaration covers that has no rows (declared_no_rows), so a wrong or stale declaration is reviewed, never passed silently."
+  usage: "A review queue for maintainers; it removes and changes nothing. observed_not_declared fails the build (a named dbt test); declared_no_rows is a warning, since it may be suppression or a late report."
+  limitations: "Only sources whose contract says where their rows name their place (coverage.observed)."
+schema:
+  - name: flag_coverage_mismatch
+    physicalName: flag_coverage_mismatch
+    physicalType: table
+    logicalType: object
+    description: "One row per source, place, year and kind of mismatch."
+    customProperties:
+      - {property: layer, value: flag}
+      - {property: totalRows, value: none}
+      - {property: tableShape, value: registry}
+    properties:
+      - name: dataset_id
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The catalogued source."
+        customProperties: [{property: role, value: dimension}]
+      - name: place_key
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The place's conformed key (dim_place)."
+        customProperties: [{property: role, value: dimension}]
+      - name: year
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "The year."
+        customProperties: [{property: role, value: dimension}]
+      - name: mismatch
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "observed_not_declared (rows for a place-year the declaration doesn't cover) or declared_no_rows (a covered place-year with no rows)."
+        customProperties: [{property: role, value: dimension}]
+      - name: row_count
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "How many rows name the place and year (0 for declared_no_rows)."
+        customProperties: [{property: role, value: attribute}]
+      - name: reason
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Why the row is in the queue, in plain words."
+        customProperties: [{property: role, value: attribute}]
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None: declarations about sources, not published numbers."}}

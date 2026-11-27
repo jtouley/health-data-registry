@@ -147,6 +147,12 @@ schema:
           - {property: sourceField, value: estimate}
           - {property: unit, value: "see estimate_type: /100000 or %"}
 customProperties:
+  - property: coverage
+    description: "RESP-NET site catchment areas, rates per 100,000 site catchment population (geographyBasis and rateDenominator above). Which sites and counties, and when they changed, are open questions (no place is declared until the publisher's own pages are read), so routing treats the places as unknown and no place's Census population is ever its denominator."
+    value:
+      kind: catchment
+      denominator: catchment_population
+      places: []
   - {property: licence, value: public-domain-us-federal}
   - {property: licenceSource, value: "Socrata metadata licence 'Public Domain U.S. Government', https://www.usa.gov/government-works"}
   - {property: citation, value: "RESP-NET: Respiratory Virus Hospitalization Surveillance Network, Centers for Disease Control and Prevention. https://data.cdc.gov/d/kvib-3txy. Accessed on <date>."}

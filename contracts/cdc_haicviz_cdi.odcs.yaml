@@ -95,6 +95,12 @@ schema:
           - {property: sourceField, value: value}
           - {property: unit, value: "see topic: 1 (cases) or /100000"}
 customProperties:
+  - property: coverage
+    description: "The Emerging Infections Program catchment areas combined, rates per 100,000 catchment population (geographyBasis and rateDenominator above). Which sites and counties, and when they changed, are open questions (no place is declared until the publisher's own pages are read), so routing treats the places as unknown and no place's Census population is ever its denominator."
+    value:
+      kind: catchment
+      denominator: catchment_population
+      places: []
   - {property: licence, value: public-domain-us-federal}
   - {property: citation, value: "Centers for Disease Control and Prevention, Emerging Infections Program HAIC. HAICViz - CDI. https://data.cdc.gov/d/abgz-qs4g"}
   - {property: refresh, value: annual}

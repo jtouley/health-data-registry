@@ -35,6 +35,16 @@ schema:
         value: "location2 IS NOT NULL AND upper(location2) NOT IN ('NON-US RESIDENTS', 'NON-U.S. RESIDENTS')"
         description: "Summary areas (TOTAL, US RESIDENTS, US TERRITORIES and the nine census divisions) carry location2; single jurisdictions carry location1. Non-U.S. Residents also carries location2 but is its own bucket, not a sum. Structural fact checked live 2026-11-24: for Legionellosis 2024 week 52 the 51 state/DC rows plus New York City (7012 + 249) equal US RESIDENTS (7261), and US RESIDENTS + US TERRITORIES + NON-US RESIDENTS (7261 + 3 + 1) equal TOTAL (7265)."
       - {property: tableShape, value: surveillance_series}
+      - property: conformedDimensions
+        value:
+          place:
+            match: state_name
+            column: states
+            places:
+              US RESIDENTS: {key: USA, level: nation}
+              Commonwealth of Northern Mariana Islands: {key: US-69}
+          time: {year: year, dateBasis: "the MMWR year of the report"}
+        description: "A reporting area is matched to dim_place by its name, ignoring case and dots, so MICHIGAN (2022-2024) and Michigan (2025 on) are both US-26 and NEW YORK CITY is US-36/nyc. Two labels don't carry their place's name: US RESIDENTS (U.S. Residents from 2025) is the United States, the 50 states and DC (structural check under totalRows), and Commonwealth of Northern Mariana Islands is the 2025 name of the Northern Mariana Islands (renamedLabels). TOTAL, US TERRITORIES, NON-US RESIDENTS and the census divisions are not places in dim_place."
       - property: idDimensions
         value:
           condition: label
@@ -233,6 +243,77 @@ schema:
           - {property: role, value: attribute}
           - {property: sourceField, value: sort_order}
 customProperties:
+  - property: coverage
+    description: "Which places the weekly tables cover, from the reporting areas the publisher's rows carry (an exact structural fact, hard rule 1). New York State is reported without New York City, which is its own area. A state where a condition is not reportable still has rows, flagged N, so coverage of a place says nothing about a condition there. Read by coverage.py and, through make contracts, by the dbt coverage models."
+    value:
+      kind: full
+      denominator: not_stated
+      places:
+        - placeKey: USA
+          part: whole
+          validFrom: 2022
+          validTo: null
+          basisUrl: "https://data.cdc.gov/resource/x9gk-5huc.json"
+          basisQuote: "Structural, checked live 2026-11-27: every year 2022-2026 has the same 70 reporting areas, among them each of the 50 states, DISTRICT OF COLUMBIA and US RESIDENTS (U.S. Residents from 2025); for Legionellosis 2024 week 52 the 51 state and DC rows plus New York City (7012 + 249) equal US RESIDENTS (7261), checked 2026-11-24."
+          declaredInVersion: 0.1.0
+          declaredAt: 2026-11-27
+        - placeKey: US-72
+          part: whole
+          validFrom: 2022
+          validTo: null
+          basisUrl: "https://data.cdc.gov/resource/x9gk-5huc.json"
+          basisQuote: "Structural, checked live 2026-11-27: PUERTO RICO is a reporting area in every year 2022-2026; it is not in US RESIDENTS."
+          declaredInVersion: 0.1.0
+          declaredAt: 2026-11-27
+        - placeKey: US-60
+          part: whole
+          validFrom: 2022
+          validTo: null
+          basisUrl: "https://data.cdc.gov/resource/x9gk-5huc.json"
+          basisQuote: "Structural, checked live 2026-11-27: AMERICAN SAMOA is a reporting area in every year 2022-2026 (Commonwealth of Northern Mariana Islands from 2025 for the Northern Mariana Islands); it is not in US RESIDENTS."
+          declaredInVersion: 0.1.0
+          declaredAt: 2026-11-27
+        - placeKey: US-66
+          part: whole
+          validFrom: 2022
+          validTo: null
+          basisUrl: "https://data.cdc.gov/resource/x9gk-5huc.json"
+          basisQuote: "Structural, checked live 2026-11-27: GUAM is a reporting area in every year 2022-2026 (Commonwealth of Northern Mariana Islands from 2025 for the Northern Mariana Islands); it is not in US RESIDENTS."
+          declaredInVersion: 0.1.0
+          declaredAt: 2026-11-27
+        - placeKey: US-69
+          part: whole
+          validFrom: 2022
+          validTo: null
+          basisUrl: "https://data.cdc.gov/resource/x9gk-5huc.json"
+          basisQuote: "Structural, checked live 2026-11-27: NORTHERN MARIANA ISLANDS is a reporting area in every year 2022-2026 (Commonwealth of Northern Mariana Islands from 2025 for the Northern Mariana Islands); it is not in US RESIDENTS."
+          declaredInVersion: 0.1.0
+          declaredAt: 2026-11-27
+        - placeKey: US-78
+          part: whole
+          validFrom: 2022
+          validTo: null
+          basisUrl: "https://data.cdc.gov/resource/x9gk-5huc.json"
+          basisQuote: "Structural, checked live 2026-11-27: U.S. VIRGIN ISLANDS is a reporting area in every year 2022-2026 (Commonwealth of Northern Mariana Islands from 2025 for the Northern Mariana Islands); it is not in US RESIDENTS."
+          declaredInVersion: 0.1.0
+          declaredAt: 2026-11-27
+        - placeKey: US-36
+          part: counties
+          counties: [US-36001, US-36003, US-36007, US-36009, US-36011, US-36013, US-36015, US-36017, US-36019, US-36021, US-36023, US-36025, US-36027, US-36029, US-36031, US-36033, US-36035, US-36037, US-36039, US-36041, US-36043, US-36045, US-36049, US-36051, US-36053, US-36055, US-36057, US-36059, US-36063, US-36065, US-36067, US-36069, US-36071, US-36073, US-36075, US-36077, US-36079, US-36083, US-36087, US-36089, US-36091, US-36093, US-36095, US-36097, US-36099, US-36101, US-36103, US-36105, US-36107, US-36109, US-36111, US-36113, US-36115, US-36117, US-36119, US-36121, US-36123]
+          validFrom: 2022
+          validTo: null
+          basisUrl: "https://data.cdc.gov/resource/x9gk-5huc.json"
+          basisQuote: "Structural, checked 2026-11-24: NEW YORK and NEW YORK CITY are separate reporting areas, and the 51 state and DC rows plus New York City add up to US RESIDENTS, so NEW YORK is New York State without New York City (the counties listed are New York's 62 Census counties less the five boroughs: Bronx 005, Kings 047, New York 061, Queens 081, Richmond 085)."
+          declaredInVersion: 0.1.0
+          declaredAt: 2026-11-27
+        - placeKey: US-36/nyc
+          part: whole
+          validFrom: 2022
+          validTo: null
+          basisUrl: "https://data.cdc.gov/resource/x9gk-5huc.json"
+          basisQuote: "Structural, checked live 2026-11-27: NEW YORK CITY is a reporting area in every year 2022-2026."
+          declaredInVersion: 0.1.0
+          declaredAt: 2026-11-27
   - {property: licence, value: public-domain-us-federal}
   - {property: citation, value: "Centers for Disease Control and Prevention. National Notifiable Diseases Surveillance System (NNDSS). NNDSS Weekly Data. https://data.cdc.gov/d/x9gk-5huc"}
   - {property: refresh, value: weekly}

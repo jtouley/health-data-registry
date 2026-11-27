@@ -6,8 +6,14 @@ GBD location names for US states are the plain state names, and "United States" 
 
 from __future__ import annotations
 
+import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, cast
+
+import yaml
 
 
 @dataclass(frozen=True)
@@ -18,24 +24,36 @@ class Place:
     level: str  # nation | state
 
 
-_STATES = [
-    ("Alabama", "AL", "01"), ("Alaska", "AK", "02"), ("Arizona", "AZ", "04"), ("Arkansas", "AR", "05"),
-    ("California", "CA", "06"), ("Colorado", "CO", "08"), ("Connecticut", "CT", "09"), ("Delaware", "DE", "10"),
-    ("District of Columbia", "DC", "11"), ("Florida", "FL", "12"), ("Georgia", "GA", "13"), ("Hawaii", "HI", "15"),
-    ("Idaho", "ID", "16"), ("Illinois", "IL", "17"), ("Indiana", "IN", "18"), ("Iowa", "IA", "19"),
-    ("Kansas", "KS", "20"), ("Kentucky", "KY", "21"), ("Louisiana", "LA", "22"), ("Maine", "ME", "23"),
-    ("Maryland", "MD", "24"), ("Massachusetts", "MA", "25"), ("Michigan", "MI", "26"), ("Minnesota", "MN", "27"),
-    ("Mississippi", "MS", "28"), ("Missouri", "MO", "29"), ("Montana", "MT", "30"), ("Nebraska", "NE", "31"),
-    ("Nevada", "NV", "32"), ("New Hampshire", "NH", "33"), ("New Jersey", "NJ", "34"), ("New Mexico", "NM", "35"),
-    ("New York", "NY", "36"), ("North Carolina", "NC", "37"), ("North Dakota", "ND", "38"), ("Ohio", "OH", "39"),
-    ("Oklahoma", "OK", "40"), ("Oregon", "OR", "41"), ("Pennsylvania", "PA", "42"), ("Rhode Island", "RI", "44"),
-    ("South Carolina", "SC", "45"), ("South Dakota", "SD", "46"), ("Tennessee", "TN", "47"), ("Texas", "TX", "48"),
-    ("Utah", "UT", "49"), ("Vermont", "VT", "50"), ("Virginia", "VA", "51"), ("Washington", "WA", "53"),
-    ("West Virginia", "WV", "54"), ("Wisconsin", "WI", "55"), ("Wyoming", "WY", "56"), ("Puerto Rico", "PR", "72"),
-]  # fmt: skip
+PLACE_CONTRACT = Path("contracts") / "models" / "dim_place.odcs.yaml"
 
-PLACES: tuple[Place, ...] = (Place("United States", "US", "00", "nation"),) + tuple(
-    Place(n, p, f, "state") for n, p, f in _STATES
+
+def _place_contract() -> Path:
+    """dim_place's contract: under HDR_REGISTRY when it has one, else the repo checkout, else the wheel's copy."""
+    here = Path(__file__).resolve()
+    env = os.environ.get("HDR_REGISTRY")
+    roots = ([Path(env)] if env else []) + [here.parents[2], here.parent / "_registry"]
+    for root in roots:
+        if (root / PLACE_CONTRACT).is_file():
+            return root / PLACE_CONTRACT
+    raise RuntimeError(f"no {PLACE_CONTRACT} found: the place keys are defined there")
+
+
+def _declared_places() -> Mapping[str, Any]:
+    """The `places` property of contracts/models/dim_place.odcs.yaml: the one list of fixed place keys."""
+    doc = yaml.safe_load(_place_contract().read_text(encoding="utf-8"))
+    for cp in doc.get("customProperties") or []:
+        if cp.get("property") == "places":
+            return cast(Mapping[str, Any], cp["value"])
+    raise RuntimeError(f"{PLACE_CONTRACT} declares no places")
+
+
+_DECLARED = _declared_places()
+_NATION = _DECLARED["nation"]
+_STATES = [(str(n), str(p), str(f)) for n, p, f in _DECLARED["states"]]
+
+PLACES: tuple[Place, ...] = (
+    Place(str(_NATION["name"]), str(_NATION["postal"]), str(_NATION["fips"]), "nation"),
+    *(Place(n, p, f, "state") for n, p, f in _STATES),
 )
 
 # No "total": a publisher's TOTAL row (NNDSS) also counts territories and non-US residents, so it isn't the US.
@@ -79,9 +97,11 @@ def containing_state(text: str) -> Place | None:
 # --------------------------------------------------------------------------------------------- place keys
 
 # Conformed place keys: USA for the nation, US-<state FIPS> for a state, US-<state FIPS><county FIPS> for a county,
-# and <bigger place's key>/<name> for a declared part of one. This module is their only definition for now: no
-# dim_place model declares them yet, and when one does (#223) it becomes the one definition this module reads.
-NATION_KEY = "USA"
+# <bigger place's key>/<name> for a declared part of one, an ISO 3166-1 alpha-3 code for any other country, and
+# WHO-<region code> for a WHO region. The fixed keys are declared once, in dim_place's contract (read above); county
+# keys follow the grammar, and dim_place lists the ones the Census file has.
+NATION_KEY = str(_NATION["key"])
+KEY_GRAMMAR = re.compile(r"^(?:USA|US-\d{2}(?:\d{3})?(?:/[a-z0-9-]+)?|[A-Z]{3}|WHO-[A-Z]{3,4})$")
 
 
 @dataclass(frozen=True)
@@ -91,12 +111,17 @@ class City:
     aliases: tuple[str, ...] = ()
 
 
-# Only the cities a catalogued source reports apart from its state. Detroit's key names its county (Wayne); New
-# York City's says only that it is part of New York State, which is all a coverage check needs.
-CITIES: tuple[City, ...] = (
-    City("Detroit", "US-26163/detroit", ("city of detroit",)),
-    City("New York City", "US-36/nyc", ("nyc", "new york city")),
+# Only the cities a catalogued source reports apart from its state (dim_place's contract says why each key is so).
+CITIES: tuple[City, ...] = tuple(
+    City(str(c["name"]), str(c["key"]), tuple(str(a) for a in c.get("aliases") or ()))
+    for c in _DECLARED["cities"]
 )
+WHO_REGIONS: tuple[tuple[str, str], ...] = tuple(
+    (str(r["key"]), str(r["name"])) for r in _DECLARED["whoRegions"]
+)
+COUNTRIES: tuple[tuple[str, str], ...] = tuple((str(k), str(n)) for k, n in _DECLARED["countries"])
+# Territories other than Puerto Rico: keys only, never read from a question's words (their GBD names aren't confirmed).
+TERRITORIES: tuple[tuple[str, str], ...] = tuple((f"US-{f}", str(n)) for n, _p, f in _DECLARED["territories"])
 
 
 def key_of(p: Place) -> str:
@@ -110,8 +135,10 @@ def parent_key(key: str) -> str | None:
         return key.rsplit("/", 1)[0]
     if len(key) == 8 and key.startswith("US-"):  # a county: US-<2-digit state><3-digit county>
         return key[:5]
-    if len(key) == 5 and key.startswith("US-"):  # a state
-        return NATION_KEY
+    if len(key) == 5 and key.startswith("US-"):  # a state, DC or a territory
+        # The United States here is the 50 states and DC (FIPS 01-56), as in CDC's US-residents totals, the Census
+        # national population and GBD's "United States": Puerto Rico (72) and the other territories are apart.
+        return NATION_KEY if int(key[3:]) <= 56 else None
     return None
 
 
@@ -128,6 +155,38 @@ def within(outer: str, inner: str) -> bool:
             return True
         k = parent_key(k)
     return False
+
+
+def fixed_keys() -> frozenset[str]:
+    """Every key dim_place's contract lists itself: the nation, states, cities, countries and WHO regions."""
+    return _FIXED
+
+
+def is_place_key(key: str) -> bool:
+    """Is `key` a conformed place key: one dim_place's contract lists, or a county key inside a listed state?
+
+    A county's own existence is checked in dbt, against the Census file dim_place reads (its relationships test)."""
+    if key in _FIXED:
+        return True
+    return bool(re.fullmatch(r"US-\d{5}", key)) and key[:5] in _FIXED
+
+
+def level_of(key: str) -> str:
+    """The kind of place a conformed key names: nation, state, county, city, country or who_region."""
+    if key == NATION_KEY:
+        return "nation"
+    if "/" in key:
+        return "city"
+    if key.startswith("WHO-"):
+        return "who_region"
+    if key.startswith("US-"):
+        return "county" if len(key) == 8 else "state"
+    return "country"
+
+
+def name_of(key: str) -> str:
+    """A conformed key's place name, or the key itself when it names no listed place (a county)."""
+    return _NAMES.get(key, key)
 
 
 # Names written out in full, matched as whole words in any case; postal codes only as written ("US", "U.S.").
@@ -176,3 +235,13 @@ def key_for(text: str) -> str | None:
             return c.key
     st = containing_state(text)
     return key_of(st) if st is not None else None
+
+
+_NAMES: dict[str, str] = {
+    **{key_of(p): p.name for p in PLACES},
+    **{c.key: c.name for c in CITIES},
+    **dict(WHO_REGIONS),
+    **dict(COUNTRIES),
+    **dict(TERRITORIES),
+}
+_FIXED: frozenset[str] = frozenset(_NAMES)

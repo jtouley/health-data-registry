@@ -18,6 +18,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import Field, ValidationError, field_validator, model_validator
 
+from health_data_registry import geo
 from health_data_registry.source_config import (
     BLOCK_REQUIRED,
     CONFIG_MODELS,
@@ -787,6 +788,254 @@ def _raw_load(value: Any, where: str, columns: frozenset[str], required: frozens
     )
 
 
+# --------------------------------------------------------------------------------------------- coverage
+
+COVERAGE_KINDS = ("full", "catchment", "sentinel", "study_reported", "unknown")
+DENOMINATORS = ("census_place", "catchment_population", "not_stated")
+PLACE_PARTS = ("whole", "counties")
+TIME_UNITS = ("year", "season")
+_SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+@dataclass(frozen=True)
+class ConformedPlace:
+    """One place a contract's conformedDimensions names: fixed for the whole table, or for one publisher label.
+
+    `key` is its conformed key (dim_place); None for a part of a place with no key of its own (a network's sites
+    combined), which names only its `parent`, and is never coverage."""
+
+    key: str | None
+    label: str | None = None  # the publisher's place label it stands for; None for the table's fixed place
+    parent: str | None = None
+    level: str | None = None
+
+
+PLACE_MATCHES = ("state_name", "fips", "iso3", "fixed", "none")
+_CONFORMED_LEVELS = ("nation", "state", "county", "city", "country", "who_region", "catchment")
+
+
+@dataclass(frozen=True)
+class ConformedDimensions:
+    """The schema's conformedDimensions: how a row's place (and year) is read as conformed keys."""
+
+    match: str  # state_name: a label matched by name; fips: built from FIPS; iso3; fixed: one place; none
+    places: tuple[ConformedPlace, ...] = ()
+    column: str | None = None  # the place label column (state_name, iso3, none)
+    state_column: str | None = None  # fips
+    county_column: str | None = None  # fips, when the rows go down to counties
+    year_column: str | None = None  # time.year (or time.mmwrYear)
+
+
+@dataclass(frozen=True)
+class CoveredPlace:
+    """One interval of a source's declared coverage of one place (the contract's coverage block)."""
+
+    place_key: str
+    part: str  # whole: the whole place; counties: some of its counties (listed, or None when not stated)
+    counties: tuple[str, ...] | None
+    valid_from: int  # in the coverage's time unit: data year, or a season's first year
+    valid_to: int | None  # None: still in force
+    basis_url: str  # the publisher's own page or file that states it
+    basis_quote: str  # what that page says, or the exact structural fact checked against the file
+    declared_in_version: str  # the contract version that first declared it: when we learned it
+    declared_at: str  # the date it was declared (ISO 8601)
+
+
+@dataclass(frozen=True)
+class CoverageDeclaration:
+    """Which places a source covers, how, and over which years: read only from the contract (hard rule 1)."""
+
+    kind: str
+    denominator: str
+    time_unit: str
+    places: tuple[CoveredPlace, ...]
+
+
+def _semver(v: str) -> tuple[int, ...] | None:
+    m = _SEMVER.fullmatch(v)
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def _only(value: Any, allowed: Iterable[str], where: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise RegistryError(f"{where} must be a mapping")
+    extra = sorted(str(k) for k in value if k not in set(allowed))
+    if extra:
+        raise RegistryError(f"{where}: unknown key {extra[0]!r} (allowed: {', '.join(allowed)})")
+    return value
+
+
+def _place_key(value: Any, where: str) -> str:
+    key = str(value or "")
+    if not geo.KEY_GRAMMAR.fullmatch(key) or not geo.is_place_key(key):
+        raise RegistryError(
+            f"{where}: {key!r} is not a conformed place key in dim_place (contracts/models/dim_place.odcs.yaml): "
+            "USA, US-<state FIPS>, US-<state FIPS><county FIPS>, a listed city, an ISO3 country or WHO-<region>"
+        )
+    return key
+
+
+def _conformed_entry(value: Any, where: str, label: str | None) -> ConformedPlace:
+    d = _only(value, ("key", "parent", "level", "name", "note"), where)
+    key = None if d.get("key") is None else _place_key(d["key"], where)
+    parent = None if d.get("parent") is None else _place_key(d["parent"], f"{where}.parent")
+    level = None if d.get("level") is None else str(d["level"])
+    if key is None and parent is None:
+        raise RegistryError(f"{where}: a place names its key, or the parent it is part of when it has no key")
+    if level is not None and (
+        level not in _CONFORMED_LEVELS
+        or (key is not None and level != "catchment" and level != geo.level_of(key))
+    ):
+        raise RegistryError(
+            f"{where}: level {level!r} must be one of {', '.join(_CONFORMED_LEVELS)} and agree with the key"
+        )
+    return ConformedPlace(key, label, parent, level)
+
+
+def parse_conformed_dimensions(value: Any, where: str, columns: frozenset[str]) -> ConformedDimensions:
+    """The schema's conformedDimensions, checked strictly (#247): an unknown key, a match it doesn't know, a place
+    label written as a list, a key dim_place doesn't have (unpadded, lower case, misspelled) or a column the contract
+    lacks is refused when the registry loads, never at question time."""
+    dims = _only(value, ("countedUnit", "condition", "place", "time"), f"{where}: conformedDimensions")
+    raw_place = dims.get("place")
+    if raw_place is None:
+        return ConformedDimensions(match="none")
+    at = f"{where}: conformedDimensions.place"
+    place = _only(
+        raw_place, ("match", "column", "fixed", "places", "stateColumn", "countyColumn", "unresolved"), at
+    )
+    match = str(place.get("match") or "")
+    if match not in PLACE_MATCHES:
+        raise RegistryError(f"{at}: match must be one of {', '.join(PLACE_MATCHES)}")
+    needs = {
+        "state_name": "column",
+        "iso3": "column",
+        "fips": "stateColumn",
+        "fixed": "fixed",
+        "none": "unresolved",
+    }
+    if place.get(needs[match]) is None:
+        raise RegistryError(f"{at}: match {match} needs {needs[match]}")
+    entries: list[ConformedPlace] = []
+    if place.get("fixed") is not None:
+        entries.append(_conformed_entry(place["fixed"], f"{at}.fixed", None))
+    labels = place.get("places")
+    if labels is not None:
+        if not isinstance(labels, Mapping):
+            raise RegistryError(
+                f"{at}.places must map each publisher label to {{key: ...}} or {{parent: ...}}"
+            )
+        entries += [_conformed_entry(v, f"{at}.places[{k!r}]", str(k)) for k, v in labels.items()]
+    time = dims.get("time")
+    if time is not None and not isinstance(time, Mapping):
+        raise RegistryError(f"{where}: conformedDimensions.time must be a mapping")
+    year = (time or {}).get("year") or (time or {}).get("mmwrYear")
+    named = {
+        "column": place.get("column"),
+        "stateColumn": place.get("stateColumn"),
+        "countyColumn": place.get("countyColumn"),
+        "time.year": year,
+    }
+    for name, col in named.items():
+        if col is not None and str(col) not in columns:
+            raise RegistryError(f"{where}: conformedDimensions {name} {col!r} is not a contract column")
+    return ConformedDimensions(
+        match=match,
+        places=tuple(entries),
+        column=None if place.get("column") is None else str(place["column"]),
+        state_column=None if place.get("stateColumn") is None else str(place["stateColumn"]),
+        county_column=None if place.get("countyColumn") is None else str(place["countyColumn"]),
+        year_column=None if year is None else str(year),
+    )
+
+
+_PLACE_FIELDS = ("placeKey", "part", "counties", "validFrom", "validTo", "basisUrl", "basisQuote",
+                 "declaredInVersion", "declaredAt")  # fmt: skip
+
+
+def _covered_place(item: Any, where: str, version: str) -> CoveredPlace:
+    d = _only(item, _PLACE_FIELDS, where)
+    key = _place_key(d.get("placeKey"), where)
+    part = str(d.get("part") or "")
+    if part not in PLACE_PARTS:
+        raise RegistryError(f"{where}: part must be one of {', '.join(PLACE_PARTS)}")
+    raw_counties = d.get("counties")
+    counties: tuple[str, ...] | None = None
+    if part == "whole" and raw_counties is not None:
+        raise RegistryError(f"{where}: a whole place lists no counties")
+    if raw_counties is not None:
+        if not isinstance(raw_counties, list) or not raw_counties:
+            raise RegistryError(
+                f"{where}: counties is a non-empty list of county keys, or null when not stated"
+            )
+        counties = tuple(_place_key(c, f"{where}.counties") for c in raw_counties)
+        bad = [c for c in counties if geo.level_of(c) != "county" or not geo.within(key, c)]
+        if bad:
+            raise RegistryError(f"{where}: {bad[0]} is not a county inside {key}")
+        if len(set(counties)) != len(counties):
+            raise RegistryError(f"{where}: a county is listed twice")
+    start, end = d.get("validFrom"), d.get("validTo")
+    if (
+        not isinstance(start, int)
+        or isinstance(start, bool)
+        or (end is not None and (not isinstance(end, int) or isinstance(end, bool) or end < start))
+    ):
+        raise RegistryError(f"{where}: validFrom is a whole year and validTo is null or a year not before it")
+    url, quote = str(d.get("basisUrl") or ""), str(d.get("basisQuote") or "").strip()
+    if not url.startswith("https://") or not quote:
+        raise RegistryError(
+            f"{where}: every declared place cites its basis: basisUrl (https, the publisher's own page or file) "
+            "and basisQuote (what it says)"
+        )
+    declared_in, declared_at = str(d.get("declaredInVersion") or ""), str(d.get("declaredAt") or "")
+    v, mine = _semver(declared_in), _semver(version)
+    if v is None or mine is None or v > mine:
+        raise RegistryError(
+            f"{where}: declaredInVersion must be the contract version (x.y.z) that first declared it, not later "
+            f"than this contract's {version}"
+        )
+    if not _DATE.fullmatch(declared_at):
+        raise RegistryError(f"{where}: declaredAt must be the date it was declared, as YYYY-MM-DD")
+    return CoveredPlace(key, part, counties, start, end, url, quote, declared_in, declared_at)
+
+
+def parse_coverage(value: Any, where: str, version: str) -> CoverageDeclaration:
+    """The contract's coverage block (#223), checked strictly: an unknown key, kind or place is refused."""
+    d = _only(value, ("kind", "denominator", "timeUnit", "places"), f"{where}: coverage")
+    kind, denominator = str(d.get("kind") or ""), str(d.get("denominator") or "")
+    time_unit = str(d.get("timeUnit") or "year")
+    if kind not in COVERAGE_KINDS:
+        raise RegistryError(f"{where}: coverage.kind must be one of {', '.join(COVERAGE_KINDS)}")
+    if denominator not in DENOMINATORS:
+        raise RegistryError(f"{where}: coverage.denominator must be one of {', '.join(DENOMINATORS)}")
+    if time_unit not in TIME_UNITS:
+        raise RegistryError(f"{where}: coverage.timeUnit must be one of {', '.join(TIME_UNITS)}")
+    raw_places = d.get("places") or []
+    if not isinstance(raw_places, list):
+        raise RegistryError(f"{where}: coverage.places must be a list")
+    places = tuple(
+        _covered_place(p, f"{where}: coverage.places[{i}]", version) for i, p in enumerate(raw_places)
+    )
+    if kind in ("study_reported", "unknown") and places:
+        raise RegistryError(f"{where}: a {kind} source declares no places (each study's place is its own)")
+    if kind == "catchment" and any(p.part == "whole" for p in places):
+        raise RegistryError(f"{where}: a catchment covers some counties of a place, never the whole place")
+    if denominator == "census_place" and kind != "full":
+        raise RegistryError(f"{where}: only full coverage can use the Census population of the place")
+    by_key: dict[str, list[CoveredPlace]] = {}
+    for p in places:
+        by_key.setdefault(p.place_key, []).append(p)
+    for key, spans in by_key.items():
+        spans.sort(key=lambda p: p.valid_from)
+        for a, b in zip(spans, spans[1:], strict=False):
+            if a.valid_to is None or a.valid_to >= b.valid_from:
+                raise RegistryError(
+                    f"{where}: coverage of {key} has overlapping intervals (from {b.valid_from})"
+                )
+    return CoverageDeclaration(kind, denominator, time_unit, places)
+
+
 @dataclass(frozen=True)
 class Contract:
     """The subset of an ODCS v3 contract the server relies on. `raw` keeps the whole document."""
@@ -808,6 +1057,15 @@ class Contract:
     # The contract's quality rules (quality.Rule), run on every snapshot and live read and as named dbt tests.
     quality: tuple[Any, ...] = ()
     raw_load: RawLoad = field(default_factory=RawLoad)
+    # How a row's place and year are read as conformed keys (the schema's conformedDimensions, checked on load).
+    conformed: ConformedDimensions | None = None
+    # Which places the source covers, how and when (the coverage block); None when not declared yet.
+    coverage: CoverageDeclaration | None = None
+
+    @property
+    def conformed_places(self) -> tuple[ConformedPlace, ...]:
+        """The places conformedDimensions names (fixed, or per publisher label)."""
+        return self.conformed.places if self.conformed else ()
 
     @property
     def unreliable_rule(self) -> str:
@@ -952,10 +1210,34 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
         raise RegistryError(f"{expected_id}: duplicate column names in contract")
     top_custom = _custom(doc.get("customProperties"))
     oq = top_custom.get("openQuestions") or []
+    version = str(doc.get("version", ""))
+    if "conformedDimensions" in top_custom:
+        raise RegistryError(
+            f"{expected_id}: declare conformedDimensions on the schema object, not the contract"
+        )
+    misnamed = [
+        k
+        for k in (*obj_custom, *top_custom)
+        if k.lower().startswith("conformed") and k != "conformedDimensions"
+    ]
+    if misnamed:
+        raise RegistryError(
+            f"{expected_id}: {misnamed[0]!r} is not a property; did you mean conformedDimensions?"
+        )
+    conformed = (
+        parse_conformed_dimensions(obj_custom["conformedDimensions"], expected_id, frozenset(names))
+        if "conformedDimensions" in obj_custom
+        else None
+    )
+    coverage = (
+        parse_coverage(top_custom["coverage"], expected_id, version)
+        if top_custom.get("coverage") is not None
+        else None
+    )
     total_s = str(total).strip()
     return Contract(
         id=expected_id,
-        version=str(doc.get("version", "")),
+        version=version,
         status=str(doc.get("status", "")),
         columns=tuple(cols),
         total_rows=None if total_s.lower() == "none" else total_s,
@@ -972,6 +1254,8 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
             frozenset(names),
             frozenset(c.name for c in cols if c.required),
         ),
+        conformed=conformed,
+        coverage=coverage,
     )
 
 
@@ -1605,6 +1889,7 @@ def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticMode
             )
     _check_additive_needs_totals_excluded(entry.id, contract, semantic)
     _check_load_metadata(entry, contract)
+    _check_coverage_years(entry, contract)
     for c in contract.columns:
         if c.flag_for is not None and c.flag_for not in cols:
             raise RegistryError(f"{entry.id}: {c.name} flags unknown column {c.flag_for}")
@@ -1622,6 +1907,17 @@ def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticMode
                 raise RegistryError(
                     f"{entry.id}: notIncidence names {unknown[0]!r}, which is not in the catalog's conditions.labels"
                 )
+
+
+def _check_coverage_years(entry: CatalogEntry, contract: Contract) -> None:
+    """A declared interval lies inside the catalog's years: coverage never claims a year the source doesn't have."""
+    for p in contract.coverage.places if contract.coverage else ():
+        first, last = entry.years.start, entry.years.end
+        if p.valid_from < first or (last is not None and (p.valid_to is None or p.valid_to > last)):
+            raise RegistryError(
+                f"{entry.id}: coverage of {p.place_key} from {p.valid_from} to {p.valid_to or 'now'} lies outside "
+                f"the catalog's years ({first} to {last or 'now'})"
+            )
 
 
 def _check_load_metadata(entry: CatalogEntry, contract: Contract) -> None:

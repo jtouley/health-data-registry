@@ -16,7 +16,7 @@ import pytest
 from health_data_registry import coverage, geo, tools
 from health_data_registry.live import load_live
 from health_data_registry.query import Engine
-from health_data_registry.registry import Registry, load_registry
+from health_data_registry.registry import Dataset, Registry, load_registry, parse_contract
 from tests.conftest import CATALOG, write_registry
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -273,10 +273,9 @@ def test_a_data_question_is_not_read_as_literature(reg: Registry, question: str)
 def test_generic_words_alone_never_fit(reg: Registry) -> None:
     got = verdicts(reg, "Cases and deaths per year in Ohio")
     assert "yes" not in {v[0] for v in got.values()}
-    assert got["cdc_nndss_weekly"] == (
+    assert got["cdc_nndss_weekly"] == (  # it declares Ohio (#223): only the condition is missing
         "unknown",
-        "the question names no specific condition (a disease or pathogen); this source doesn't declare which "
-        "places it covers yet, so it isn't known whether it covers Ohio",
+        "the question names no specific condition (a disease or pathogen)",
     )
 
 
@@ -284,11 +283,20 @@ def _declaring(registry: Registry, ds_id: str, place: dict[str, Any]) -> Registr
     """The registry with one source's contract declaring its conformed places (as stage c's contracts will)."""
     from dataclasses import replace
 
-    ds = registry.get(ds_id)
-    schema = {**ds.contract.raw["schema"][0], "customProperties": [{"property": "conformedDimensions",
-                                                                     "value": {"place": place}}]}  # fmt: skip
-    declared = replace(ds, contract=replace(ds.contract, raw={**ds.contract.raw, "schema": [schema]}))
-    return replace(registry, datasets={**registry.datasets, ds_id: declared})
+    return replace(registry, datasets={**registry.datasets, ds_id: _conforming(registry.get(ds_id), place)})
+
+
+def _conforming(ds: Dataset, place: dict[str, Any]) -> Dataset:
+    """The source with its contract also declaring conformedDimensions.place, parsed by the registry (#247): the
+    same checks a contract file gets when the registry loads, never a patched `raw`."""
+    from dataclasses import replace
+
+    schema = dict(ds.contract.raw["schema"][0])
+    schema["customProperties"] = [
+        *schema.get("customProperties", []),
+        {"property": "conformedDimensions", "value": {"place": place}},
+    ]
+    return replace(ds, contract=parse_contract({**ds.contract.raw, "schema": [schema]}, expected_id=ds.id))
 
 
 def test_a_question_fits_only_a_source_that_declares_its_place(reg: Registry) -> None:
@@ -304,6 +312,11 @@ def test_a_question_fits_only_a_source_that_declares_its_place(reg: Registry) ->
         "unknown",
         "this source doesn't declare which places it covers yet, so it isn't known whether it covers Detroit",
     )
+
+
+# Sources whose contracts declare their places from an exact structural fact (#223): NNDSS's reporting areas, the
+# Census file's states and counties, and the MDHHS dashboard's 83 Michigan counties.
+DECLARES_PLACES = frozenset({"cdc_nndss_weekly", "census_county_pop", "mdhhs_measles_county"})
 
 
 @pytest.mark.parametrize(
@@ -326,11 +339,15 @@ def test_a_question_fits_only_a_source_that_declares_its_place(reg: Registry) ->
     ],
 )
 def test_a_question_reaches_its_source(reg: Registry, question: str, source: str, place: str | None) -> None:
-    """No source declares its places yet, so each is "unknown" for the place alone: offered, with the one open
-    question named, and never ranked under a source that can't answer."""
+    """A source whose contract declares the place fits ("yes"); any other is "unknown" for the place alone: offered,
+    with the one open question named, and never ranked under a source that can't answer."""
     rows = _json(tools.suggest_datasets(reg, question, fmt="json"))["rows"]
     at = [r[0] for r in rows].index(source)
     why = "this source doesn't declare which places it covers yet"
+    if source in DECLARES_PLACES:
+        assert rows[at][1:3] == ["yes", "fits"]
+        assert all(r[1] == "yes" for r in rows[:at])
+        return
     assert rows[at][1:3] == [
         "unknown",
         f"{why}, so it isn't known whether it covers {place}" if place else why,
@@ -361,15 +378,16 @@ def test_a_federal_catchment_source_is_never_a_fit_for_a_state_it_may_not_cover(
 def test_a_nationwide_declaration_is_unknown_for_a_city(reg: Registry) -> None:
     """A country declaration says nothing about which cities a source reports apart from their states."""
     declared = _declaring(
-        reg, "cdc_nndss_weekly", {"match": "fixed", "fixed": {"name": "United States", "key": "USA"}}
+        reg, "cdc_nhsn_ar_hai", {"match": "fixed", "fixed": {"name": "United States", "key": "USA"}}
     )
-    cov = coverage.declared_coverage(declared.get("cdc_nndss_weekly"))
+    cov = coverage.declared_coverage(declared.get("cdc_nhsn_ar_hai"))
     assert cov.nationwide and cov.holds("US-36") and cov.holds("US-36/nyc") is None
-    got = verdicts(declared, "Tuberculosis in Detroit 2023")
-    assert got["cdc_nndss_weekly"] == (
-        "unknown",
-        "covers the United States, but doesn't declare which cities it reports apart from their states, so not "
-        "whether it reports Detroit",
+    # NNDSS declares New York City itself (a reporting area), never Detroit.
+    nndss = coverage.declared_coverage(reg.get("cdc_nndss_weekly"))
+    assert nndss.holds("US-36/nyc") and nndss.holds("US-26163/detroit") is None
+    got = verdicts(reg, "Tuberculosis in Detroit 2023")
+    assert got["cdc_nndss_weekly"][0] == "unknown" and got["cdc_nndss_weekly"][1].endswith(
+        "but doesn't declare which cities it reports apart from their states, so not whether it reports Detroit"
     )
     assert got["cdc_respnet"][0] == "no" and "cities" not in got["cdc_respnet"][1]  # its levels stop at state
 
@@ -411,42 +429,35 @@ CONFORMED = {
 
 
 def test_declared_coverage_reads_the_contracts_conformed_places(reg: Registry) -> None:
-    from dataclasses import replace
 
     ds = reg.get("detroit_dhd_epi_annual")
     undeclared = coverage.declared_coverage(ds)  # main's contract declares no places yet
     assert undeclared.place_keys is None and undeclared.place_words == "no places declared yet"
     assert undeclared.holds("US-26") is None and not undeclared.nationwide
-    schema = dict(ds.contract.raw["schema"][0])
-    schema["customProperties"] = [*schema.get("customProperties", []), CONFORMED]
-    declared = replace(ds, contract=replace(ds.contract, raw={**ds.contract.raw, "schema": [schema]}))
-    cov = coverage.declared_coverage(declared)
+    cov = coverage.declared_coverage(_conforming(ds, CONFORMED["value"]["place"]))
     assert cov.place_keys == {"US-26163/detroit", "US-26"}
     assert cov.place_words == "Detroit and Michigan" and not cov.nationwide
-    assert cov.holds("US-26") and cov.holds("US-26163/detroit") and cov.holds("US-26163")
+    assert cov.holds("US-26") and cov.holds("US-26163/detroit")
+    assert cov.holds("US-26163") is None  # a county: this source's rows don't go down to counties
     assert cov.holds("US-06") is False and cov.holds("USA") is False
     assert {"tuberculosis", "chlamydia", "syphilis"} <= cov.condition_words
     assert not {"detroit", "health", "cases", "rate"} & cov.condition_words
 
 
 def test_a_fixed_place_is_declared_coverage(reg: Registry) -> None:
-    from dataclasses import replace
 
     ds = reg.get("detroit_dhd_covid_archive_daily")
     place = {"match": "fixed", "fixed": {"name": "City of Detroit", "key": "US-26163/detroit"}}
-    schema = {**ds.contract.raw["schema"][0], "customProperties": [{"property": "conformedDimensions",
-                                                                     "value": {"place": place}}]}  # fmt: skip
-    declared = replace(ds, contract=replace(ds.contract, raw={**ds.contract.raw, "schema": [schema]}))
-    cov = coverage.declared_coverage(declared)
+    cov = coverage.declared_coverage(_conforming(ds, place))
     assert cov.place_keys == {"US-26163/detroit"} and cov.place_words == "Detroit"
     assert cov.holds("US-26") is False
 
 
 def test_declared_coverage_from_the_catalog(reg: Registry) -> None:
     nndss = coverage.declared_coverage(reg.get("cdc_nndss_weekly"))
-    assert (
-        nndss.place_keys is None and not nndss.nationwide and nndss.holds("US-36") is None
-    )  # level: federal
+    # Declared in the contract's coverage block (#223), never read from level: federal.
+    assert nndss.place_keys is not None and nndss.nationwide and nndss.holds("US-36")
+    assert nndss.partial_note("US-36") is not None and nndss.partial_note("US-39") is None
     assert {"legionella", "candida", "syphilis"} <= nndss.condition_words  # GBD crosswalk pathogens count too
     assert nndss.holds_years(2020, 2023) and nndss.holds_years(2030, None) and nndss.holds_years(2022, 2022)
     assert not nndss.holds_years(None, 2021) and not nndss.holds_years(2010, 2021)
@@ -652,13 +663,10 @@ def test_an_mdhhs_read_with_no_suppressed_county_loads(reg: Registry) -> None:
 
 def test_a_live_state_source_is_read_for_a_city_inside_it(reg: Registry) -> None:
     """A state declaration says nothing about a city reported apart from it: unknown, so it is read."""
-    from dataclasses import replace
 
     ds = reg.get("detroit_dhd_epi_annual")
     place = {"match": "fixed", "fixed": {"name": "Michigan", "key": "US-26"}}
-    schema = {**ds.contract.raw["schema"][0], "customProperties": [{"property": "conformedDimensions",
-                                                                     "value": {"place": place}}]}  # fmt: skip
-    state_only = replace(ds, contract=replace(ds.contract, raw={**ds.contract.raw, "schema": [schema]}))
+    state_only = _conforming(ds, place)
     assert tools.not_read_live(state_only, ["Michigan"]) is None
     assert tools.not_read_live(state_only, ["Detroit"]) is None
     assert tools.not_read_live(state_only, ["Ohio"]) == (

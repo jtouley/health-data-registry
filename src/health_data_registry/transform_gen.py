@@ -20,7 +20,13 @@ Nothing in transform/models/staging/ is written by hand. For each catalogued sou
 
 For each contract in contracts/models/ (a model computed in dbt, such as the MMWR calendar) it writes
 transform/models/<layer>/<id>.yml (layer: reference, intermediate or marts), the same enforced dbt contract; the
-model's SQL is hand-written beside it.
+model's SQL is hand-written beside it, except for four models whose rows come from the registry itself:
+
+    marts/dim_place.sql                     the place list in dim_place's contract (the one definition geo.py
+                                            reads too), and the counties the Census file lists
+    reference/coverage_declarations.sql     every contract's coverage block, one row per declared place and interval
+    intermediate/int_observed_places.sql    the places and years each stored source's rows name (coverage.observed)
+    flag/flag_unmapped_labels.sql           labels missing from each source's catalog list
 So every column of every model has its type, description and constraints from an ODCS contract, and dbt has
 no seeds and no data files (owner decision, 25 Nov).
 
@@ -43,6 +49,7 @@ from typing import Any
 
 import yaml
 
+from health_data_registry import geo
 from health_data_registry.dbt_raw import PROVENANCE, SHA256_COLUMN, SNAPSHOT_COLUMN
 from health_data_registry.quality import condition_sql, measure_sql, rules_for
 from health_data_registry.registry import (
@@ -532,6 +539,161 @@ def unmapped_labels_sql(registry: Registry) -> str:
     )
 
 
+CENSUS = "census_county_pop"
+
+
+def _sql_value(v: object, typ: str = "varchar") -> str:
+    return (
+        f"cast(null as {typ})"
+        if v is None
+        else _lit(str(v))
+        if typ == "varchar"
+        else f"cast({_lit(str(v))} as {typ})"
+    )
+
+
+def _values(columns: list[tuple[str, str]], rows: list[list[object]]) -> str:
+    """A typed VALUES list: every value cast to its column's type, so an empty first value can't set the type."""
+    names = ", ".join(n for n, _t in columns)
+    body = ",\n    ".join(
+        "(" + ", ".join(_sql_value(v, t) for v, (_n, t) in zip(row, columns, strict=True)) + ")"
+        for row in rows
+    )
+    return f"(values\n    {body}\n) as t({names})"
+
+
+def dim_place_sql(contract: Contract) -> str:
+    """dim_place: the fixed places its contract lists (the one definition geo.py reads), then the Census counties."""
+    places = next(
+        cp["value"] for cp in contract.raw.get("customProperties") or [] if cp.get("property") == "places"
+    )
+    n = places["nation"]
+    rows: list[list[object]] = [[n["key"], n["name"], "nation", None, n["fips"], n["postal"]]]
+    for name, postal, fips in places["states"]:
+        key = f"US-{fips}"
+        rows.append([key, name, "state", geo.parent_key(key), fips, postal])
+    rows += [
+        [f"US-{f}", name, "state", geo.parent_key(f"US-{f}"), f, postal]
+        for name, postal, f in places["territories"]
+    ]
+    rows += [[c["key"], c["name"], "city", geo.parent_key(c["key"]), None, None] for c in places["cities"]]
+    rows += [[k, name, "country", None, None, None] for k, name in places["countries"]]
+    rows += [[r["key"], r["name"], "who_region", None, None, None] for r in places["whoRegions"]]
+    cols = [
+        (c, "varchar") for c in ("place_key", "place_name", "place_level", "parent_key", "fips", "postal")
+    ]
+    return (
+        f"-- {HEADER.format(src=str(MODEL_CONTRACTS / 'dim_place.odcs.yaml'))}\n"
+        "-- The fixed places come from the contract's places list, the same list geo.py reads; counties come from the\n"
+        "-- Census county population file (SUMLEV 050 rows), named as in its latest year. No data file is read.\n"
+        f"select * from {_values(cols, rows)}\n"
+        "union all\n"
+        "select\n"
+        "    'US-' || state_fips || county_fips as place_key,\n"
+        "    arg_max(county_name, year) as place_name,\n"
+        "    'county' as place_level,\n"
+        "    'US-' || state_fips as parent_key,\n"
+        "    state_fips || county_fips as fips,\n"
+        "    cast(null as varchar) as postal\n"
+        f"from {{{{ ref('int_{CENSUS}') }}}}\n"
+        "where sumlev = '050' and state_fips is not null and county_fips is not null\n"
+        "group by state_fips, county_fips\n"
+    )
+
+
+def coverage_declarations_sql(registry: Registry) -> str:
+    """Every contract's coverage block as rows: the input of dim_dataset_coverage (no seed, no data file)."""
+    cols = [("dataset_id", "varchar"), ("place_key", "varchar"), ("valid_from", "bigint"), ("valid_to", "bigint"),
+            ("coverage_kind", "varchar"), ("denominator", "varchar"), ("time_unit", "varchar"), ("part", "varchar"),
+            ("counties", "varchar"), ("basis_url", "varchar"), ("basis_quote", "varchar"),
+            ("contract_version", "varchar"), ("declared_in_contract_version", "varchar"), ("declared_at", "date"),
+            ("dataset_first_year", "bigint"), ("dataset_last_year", "bigint"), ("reported_levels", "varchar")]  # fmt: skip
+    rows: list[list[object]] = []
+    for ds in registry:
+        cov = ds.contract.coverage
+        if cov is None:
+            continue
+        e = ds.entry
+        common = [cov.kind, cov.denominator, cov.time_unit]
+        tail = [e.years.start, e.years.end, " ".join(e.geography)]
+        if not cov.places:
+            rows.append([ds.id, None, None, None, *common, None, None, None, None, ds.contract.version, None, None,
+                         *tail])  # fmt: skip
+        for pl in cov.places:
+            rows.append([ds.id, pl.place_key, pl.valid_from, pl.valid_to, *common, pl.part,
+                         " ".join(pl.counties) if pl.counties else None, pl.basis_url, pl.basis_quote,
+                         ds.contract.version, pl.declared_in_version, pl.declared_at, *tail])  # fmt: skip
+    # Each SQL line is its own list item, built only from quoted literals (_lit) and fixed names.
+    empty = ", ".join(f"cast(null as {t}) as {n}" for n, t in cols)
+    body = "\n".join(
+        ["select *", f"from {_values(cols, rows)}", ""] if rows else [f"select {empty}", "where false", ""]
+    )
+    return (
+        f"-- {HEADER.format(src='contracts/ (customProperties.coverage)')}\n"
+        "-- One row per declared place and interval; a source that declares no place has one row with no place.\n"
+        + body
+    )
+
+
+def observed_places_sql(registry: Registry) -> str:
+    """The places and years each stored source's rows name, keyed to dim_place by its conformedDimensions."""
+    parts = []
+    for ds in stored(registry):
+        cd = ds.contract.conformed
+        if cd is None or cd.year_column is None or cd.match not in ("state_name", "fips"):
+            continue
+        year = _q(cd.year_column)
+        if cd.match == "fips":
+            state = f"src.{_q(cd.state_column or '')}"
+            county = f"src.{_q(cd.county_column)}" if cd.county_column else None
+            tail = f" || CASE WHEN {county} = '000' THEN '' ELSE {county} END" if county else ""
+            key, join, where = f"'US-' || {state}{tail}", "", f"{state} IS NOT NULL"
+        else:
+            levels = ", ".join(_lit(x) for x in ds.entry.geography)
+            labels = "".join(
+                f"\n        union select {_lit(label_key(c.label))}, {_lit(c.key)}"
+                for c in cd.places
+                if c.label is not None and c.key is not None
+            )
+            join = "\n".join(
+                [
+                    "",
+                    "join (",
+                    f"        select {label_key_sql('place_name')} as label_key, place_key",
+                    "        from {{ ref('dim_place') }}",
+                    f"        where place_level in ({levels}){labels}",
+                    f"    ) as k on {_key_sql_src(cd.column or '')} = k.label_key",
+                ]
+            )
+            key, where = "k.place_key", f"src.{_q(cd.column or '')} IS NOT NULL"
+        parts.append(
+            "\n".join(
+                [
+                    f"select {_lit(ds.id)} as dataset_id, {key} as place_key, cast(src.{year} as bigint) as year,",
+                    "    count(*) as row_count",
+                    f"from {{{{ ref('int_{ds.id}') }}}} as src{join}",
+                    f"where {where} and src.{year} IS NOT NULL",
+                    "group by all",
+                ]
+            )
+        )
+    body = "\nunion all\n".join(parts) or (
+        "select cast(null as varchar) as dataset_id, cast(null as varchar) as place_key, "
+        "cast(null as bigint) as year, cast(0 as bigint) as row_count where false"
+    )
+    return (
+        f"-- {HEADER.format(src='contracts/ (schema customProperties.conformedDimensions)')}\n"
+        "-- A place label matches dim_place by name (label_key: case, edge spaces and dots ignored) at the levels the\n"
+        "-- source reports, or by its contract's conformedDimensions label; FIPS sources build the key (county 000 is\n"
+        "-- the Census file's state row). A label that names no place in dim_place is left out.\n"
+        f"{body}\n"
+    )
+
+
+def _key_sql_src(col: str) -> str:
+    return label_key_sql(f"src.{_q(col)}")
+
+
 def intermediate_yml(ds: Dataset) -> str:
     schema = (ds.contract.raw.get("schema") or [{}])[0]
     columns = [
@@ -573,6 +735,12 @@ def generate(registry: Registry) -> dict[Path, str]:
     for path, contract in model_contracts(registry.root):
         layer = model_layer(contract)
         out[MODELS_DIR / layer / f"{contract.id}.yml"] = _model_yml(contract, contract.id, str(path), [layer])
+        if contract.id == "dim_place":
+            out[MODELS_DIR / layer / "dim_place.sql"] = dim_place_sql(contract)
+        elif contract.id == "coverage_declarations":
+            out[MODELS_DIR / layer / "coverage_declarations.sql"] = coverage_declarations_sql(registry)
+        elif contract.id == "int_observed_places":
+            out[MODELS_DIR / layer / "int_observed_places.sql"] = observed_places_sql(registry)
     return out
 
 

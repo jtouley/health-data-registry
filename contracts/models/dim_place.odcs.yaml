@@ -1,0 +1,395 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: dim_place
+name: Places - the one list of conformed place keys
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Every place a source's coverage or rows can name, under one conformed key: the United States (USA), each state, DC, Puerto Rico and the other territories (US-<state FIPS>), each county (US-<state FIPS><county FIPS>), the cities a catalogued source reports apart from their states (<bigger place's key>/<name>), every other country (its ISO 3166-1 alpha-3 code) and the six WHO regions (WHO-<GHO region code>)."
+  usage: "Join a coverage declaration or a source's place to this table on place_key. The fixed places (nation, states, cities, countries, WHO regions) are listed once, in the places property below: the server's geo module reads that same list, and the registry refuses a contract whose coverage names a key that isn't here. Counties come from the Census county population file (census_county_pop), so they exist only where that file lists them. Built by the generated dbt model transform/models/marts/dim_place.sql."
+  limitations: "The territories other than Puerto Rico have keys but can't yet be named in a question, and no country has a parent (WHO region membership is not declared; see openQuestions). A county key exists only for a county the latest Census load lists."
+  authoritativeDefinitions:
+    - {type: businessDefinition, url: "https://www.census.gov/library/reference/code-lists/ansi.html", description: "Census Bureau, ANSI/FIPS codes for states and counties (the state FIPS codes below)"}
+    - {type: businessDefinition, url: "https://www.iso.org/iso-3166-country-codes.html", description: "ISO 3166-1 country codes; alpha-3 is the code WHO's Global Health Observatory uses for countries (SpatialDim)"}
+    - {type: businessDefinition, url: "https://ghoapi.azureedge.net/api/DIMENSION/REGION/DimensionValues", description: "WHO GHO region codes (AFR, AMR, SEAR, EUR, EMR, WPR)"}
+schema:
+  - name: dim_place
+    physicalName: dim_place
+    physicalType: table
+    logicalType: object
+    description: "One row per place key: the nation, each state, each county the Census file lists, each city reported apart from its state, each country and each WHO region."
+    customProperties:
+      - {property: layer, value: marts}
+      - {property: totalRows, value: none}
+      - {property: tableShape, value: registry}
+    properties:
+      - name: place_key
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "The conformed place key: USA, US-<2-digit state FIPS>, US-<5-digit county FIPS>, <bigger place's key>/<city name>, an ISO 3166-1 alpha-3 country code, or WHO-<region code>."
+        customProperties: [{property: role, value: dimension}]
+      - name: place_name
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The place's name in plain words; for the nation and the states, also the GBD location name."
+        customProperties: [{property: role, value: attribute}]
+      - name: place_level
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "What kind of place it is: nation, state (a state, DC or Puerto Rico), county, city, country or who_region."
+        customProperties: [{property: role, value: attribute}]
+      - name: parent_key
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "The key of the place this one is part of (a county's state, a state's nation, a city's county or state); empty for the nation, a country, a WHO region and Puerto Rico. The United States here is the 50 states and DC (state FIPS 01 to 56), as in CDC's US-residents totals, the Census national population and GBD's United States, so Puerto Rico (FIPS 72) is not part of it."
+        customProperties: [{property: role, value: attribute}, {property: mayBeEmpty, value: true}]
+      - name: fips
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "The Census FIPS code of a US place (2 digits for a state, 5 for a county, 00 for the nation); empty elsewhere."
+        customProperties: [{property: role, value: attribute}, {property: mayBeEmpty, value: true}]
+      - name: postal
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "The postal abbreviation of the nation, a state, DC or Puerto Rico; empty elsewhere."
+        customProperties: [{property: role, value: attribute}, {property: mayBeEmpty, value: true}]
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None: a list of places, not published numbers."}}
+  - property: places
+    description: "The one definition of the fixed place keys. geo.py reads this list (it is no longer written in Python), the registry checks every declared coverage key against it, and make contracts writes it into the dim_place model. States and territories are [name, postal, FIPS]; countries are [ISO 3166-1 alpha-3, ISO short name], without the United States, which is the nation row."
+    value:
+      nation: {key: USA, name: United States, postal: US, fips: "00"}
+      states:
+        - ["Alabama", "AL", "01"]
+        - ["Alaska", "AK", "02"]
+        - ["Arizona", "AZ", "04"]
+        - ["Arkansas", "AR", "05"]
+        - ["California", "CA", "06"]
+        - ["Colorado", "CO", "08"]
+        - ["Connecticut", "CT", "09"]
+        - ["Delaware", "DE", "10"]
+        - ["District of Columbia", "DC", "11"]
+        - ["Florida", "FL", "12"]
+        - ["Georgia", "GA", "13"]
+        - ["Hawaii", "HI", "15"]
+        - ["Idaho", "ID", "16"]
+        - ["Illinois", "IL", "17"]
+        - ["Indiana", "IN", "18"]
+        - ["Iowa", "IA", "19"]
+        - ["Kansas", "KS", "20"]
+        - ["Kentucky", "KY", "21"]
+        - ["Louisiana", "LA", "22"]
+        - ["Maine", "ME", "23"]
+        - ["Maryland", "MD", "24"]
+        - ["Massachusetts", "MA", "25"]
+        - ["Michigan", "MI", "26"]
+        - ["Minnesota", "MN", "27"]
+        - ["Mississippi", "MS", "28"]
+        - ["Missouri", "MO", "29"]
+        - ["Montana", "MT", "30"]
+        - ["Nebraska", "NE", "31"]
+        - ["Nevada", "NV", "32"]
+        - ["New Hampshire", "NH", "33"]
+        - ["New Jersey", "NJ", "34"]
+        - ["New Mexico", "NM", "35"]
+        - ["New York", "NY", "36"]
+        - ["North Carolina", "NC", "37"]
+        - ["North Dakota", "ND", "38"]
+        - ["Ohio", "OH", "39"]
+        - ["Oklahoma", "OK", "40"]
+        - ["Oregon", "OR", "41"]
+        - ["Pennsylvania", "PA", "42"]
+        - ["Rhode Island", "RI", "44"]
+        - ["South Carolina", "SC", "45"]
+        - ["South Dakota", "SD", "46"]
+        - ["Tennessee", "TN", "47"]
+        - ["Texas", "TX", "48"]
+        - ["Utah", "UT", "49"]
+        - ["Vermont", "VT", "50"]
+        - ["Virginia", "VA", "51"]
+        - ["Washington", "WA", "53"]
+        - ["West Virginia", "WV", "54"]
+        - ["Wisconsin", "WI", "55"]
+        - ["Wyoming", "WY", "56"]
+        - ["Puerto Rico", "PR", "72"]
+      # The territories other than Puerto Rico, [name, postal, FIPS]: state-level keys outside the United States (FIPS
+      # above 56), not in geo's state list, so a question naming one isn't read as a state until GBD names are confirmed.
+      territories:
+        - ["American Samoa", "AS", "60"]
+        - ["Guam", "GU", "66"]
+        - ["Northern Mariana Islands", "MP", "69"]
+        - ["U.S. Virgin Islands", "VI", "78"]
+      # Only the cities a catalogued source reports apart from its state. Detroit's key names its county (Wayne,
+      # 26163); New York City's says only that it is part of New York State, which is all a coverage check needs.
+      cities:
+        - {key: US-26163/detroit, name: Detroit, aliases: [city of detroit]}
+        - {key: US-36/nyc, name: New York City, aliases: [nyc, new york city]}
+      whoRegions:
+        - {key: WHO-AFR, name: African Region}
+        - {key: WHO-AMR, name: Region of the Americas}
+        - {key: WHO-SEAR, name: South-East Asia Region}
+        - {key: WHO-EUR, name: European Region}
+        - {key: WHO-EMR, name: Eastern Mediterranean Region}
+        - {key: WHO-WPR, name: Western Pacific Region}
+      countries:
+        - ["ABW", "Aruba"]
+        - ["AFG", "Afghanistan"]
+        - ["AGO", "Angola"]
+        - ["AIA", "Anguilla"]
+        - ["ALA", "Åland Islands"]
+        - ["ALB", "Albania"]
+        - ["AND", "Andorra"]
+        - ["ARE", "United Arab Emirates"]
+        - ["ARG", "Argentina"]
+        - ["ARM", "Armenia"]
+        - ["ASM", "American Samoa"]
+        - ["ATA", "Antarctica"]
+        - ["ATF", "French Southern Territories"]
+        - ["ATG", "Antigua and Barbuda"]
+        - ["AUS", "Australia"]
+        - ["AUT", "Austria"]
+        - ["AZE", "Azerbaijan"]
+        - ["BDI", "Burundi"]
+        - ["BEL", "Belgium"]
+        - ["BEN", "Benin"]
+        - ["BES", "Bonaire, Sint Eustatius and Saba"]
+        - ["BFA", "Burkina Faso"]
+        - ["BGD", "Bangladesh"]
+        - ["BGR", "Bulgaria"]
+        - ["BHR", "Bahrain"]
+        - ["BHS", "Bahamas"]
+        - ["BIH", "Bosnia and Herzegovina"]
+        - ["BLM", "Saint Barthélemy"]
+        - ["BLR", "Belarus"]
+        - ["BLZ", "Belize"]
+        - ["BMU", "Bermuda"]
+        - ["BOL", "Bolivia, Plurinational State of"]
+        - ["BRA", "Brazil"]
+        - ["BRB", "Barbados"]
+        - ["BRN", "Brunei Darussalam"]
+        - ["BTN", "Bhutan"]
+        - ["BVT", "Bouvet Island"]
+        - ["BWA", "Botswana"]
+        - ["CAF", "Central African Republic"]
+        - ["CAN", "Canada"]
+        - ["CCK", "Cocos (Keeling) Islands"]
+        - ["CHE", "Switzerland"]
+        - ["CHL", "Chile"]
+        - ["CHN", "China"]
+        - ["CIV", "Côte d'Ivoire"]
+        - ["CMR", "Cameroon"]
+        - ["COD", "Congo, The Democratic Republic of the"]
+        - ["COG", "Congo"]
+        - ["COK", "Cook Islands"]
+        - ["COL", "Colombia"]
+        - ["COM", "Comoros"]
+        - ["CPV", "Cabo Verde"]
+        - ["CRI", "Costa Rica"]
+        - ["CUB", "Cuba"]
+        - ["CUW", "Curaçao"]
+        - ["CXR", "Christmas Island"]
+        - ["CYM", "Cayman Islands"]
+        - ["CYP", "Cyprus"]
+        - ["CZE", "Czechia"]
+        - ["DEU", "Germany"]
+        - ["DJI", "Djibouti"]
+        - ["DMA", "Dominica"]
+        - ["DNK", "Denmark"]
+        - ["DOM", "Dominican Republic"]
+        - ["DZA", "Algeria"]
+        - ["ECU", "Ecuador"]
+        - ["EGY", "Egypt"]
+        - ["ERI", "Eritrea"]
+        - ["ESH", "Western Sahara"]
+        - ["ESP", "Spain"]
+        - ["EST", "Estonia"]
+        - ["ETH", "Ethiopia"]
+        - ["FIN", "Finland"]
+        - ["FJI", "Fiji"]
+        - ["FLK", "Falkland Islands (Malvinas)"]
+        - ["FRA", "France"]
+        - ["FRO", "Faroe Islands"]
+        - ["FSM", "Micronesia, Federated States of"]
+        - ["GAB", "Gabon"]
+        - ["GBR", "United Kingdom"]
+        - ["GEO", "Georgia"]
+        - ["GGY", "Guernsey"]
+        - ["GHA", "Ghana"]
+        - ["GIB", "Gibraltar"]
+        - ["GIN", "Guinea"]
+        - ["GLP", "Guadeloupe"]
+        - ["GMB", "Gambia"]
+        - ["GNB", "Guinea-Bissau"]
+        - ["GNQ", "Equatorial Guinea"]
+        - ["GRC", "Greece"]
+        - ["GRD", "Grenada"]
+        - ["GRL", "Greenland"]
+        - ["GTM", "Guatemala"]
+        - ["GUF", "French Guiana"]
+        - ["GUM", "Guam"]
+        - ["GUY", "Guyana"]
+        - ["HKG", "Hong Kong"]
+        - ["HMD", "Heard Island and McDonald Islands"]
+        - ["HND", "Honduras"]
+        - ["HRV", "Croatia"]
+        - ["HTI", "Haiti"]
+        - ["HUN", "Hungary"]
+        - ["IDN", "Indonesia"]
+        - ["IMN", "Isle of Man"]
+        - ["IND", "India"]
+        - ["IOT", "British Indian Ocean Territory"]
+        - ["IRL", "Ireland"]
+        - ["IRN", "Iran, Islamic Republic of"]
+        - ["IRQ", "Iraq"]
+        - ["ISL", "Iceland"]
+        - ["ISR", "Israel"]
+        - ["ITA", "Italy"]
+        - ["JAM", "Jamaica"]
+        - ["JEY", "Jersey"]
+        - ["JOR", "Jordan"]
+        - ["JPN", "Japan"]
+        - ["KAZ", "Kazakhstan"]
+        - ["KEN", "Kenya"]
+        - ["KGZ", "Kyrgyzstan"]
+        - ["KHM", "Cambodia"]
+        - ["KIR", "Kiribati"]
+        - ["KNA", "Saint Kitts and Nevis"]
+        - ["KOR", "Korea, Republic of"]
+        - ["KWT", "Kuwait"]
+        - ["LAO", "Lao People's Democratic Republic"]
+        - ["LBN", "Lebanon"]
+        - ["LBR", "Liberia"]
+        - ["LBY", "Libya"]
+        - ["LCA", "Saint Lucia"]
+        - ["LIE", "Liechtenstein"]
+        - ["LKA", "Sri Lanka"]
+        - ["LSO", "Lesotho"]
+        - ["LTU", "Lithuania"]
+        - ["LUX", "Luxembourg"]
+        - ["LVA", "Latvia"]
+        - ["MAC", "Macao"]
+        - ["MAF", "Saint Martin (French part)"]
+        - ["MAR", "Morocco"]
+        - ["MCO", "Monaco"]
+        - ["MDA", "Moldova, Republic of"]
+        - ["MDG", "Madagascar"]
+        - ["MDV", "Maldives"]
+        - ["MEX", "Mexico"]
+        - ["MHL", "Marshall Islands"]
+        - ["MKD", "North Macedonia"]
+        - ["MLI", "Mali"]
+        - ["MLT", "Malta"]
+        - ["MMR", "Myanmar"]
+        - ["MNE", "Montenegro"]
+        - ["MNG", "Mongolia"]
+        - ["MNP", "Northern Mariana Islands"]
+        - ["MOZ", "Mozambique"]
+        - ["MRT", "Mauritania"]
+        - ["MSR", "Montserrat"]
+        - ["MTQ", "Martinique"]
+        - ["MUS", "Mauritius"]
+        - ["MWI", "Malawi"]
+        - ["MYS", "Malaysia"]
+        - ["MYT", "Mayotte"]
+        - ["NAM", "Namibia"]
+        - ["NCL", "New Caledonia"]
+        - ["NER", "Niger"]
+        - ["NFK", "Norfolk Island"]
+        - ["NGA", "Nigeria"]
+        - ["NIC", "Nicaragua"]
+        - ["NIU", "Niue"]
+        - ["NLD", "Netherlands"]
+        - ["NOR", "Norway"]
+        - ["NPL", "Nepal"]
+        - ["NRU", "Nauru"]
+        - ["NZL", "New Zealand"]
+        - ["OMN", "Oman"]
+        - ["PAK", "Pakistan"]
+        - ["PAN", "Panama"]
+        - ["PCN", "Pitcairn"]
+        - ["PER", "Peru"]
+        - ["PHL", "Philippines"]
+        - ["PLW", "Palau"]
+        - ["PNG", "Papua New Guinea"]
+        - ["POL", "Poland"]
+        - ["PRI", "Puerto Rico"]
+        - ["PRK", "Korea, Democratic People's Republic of"]
+        - ["PRT", "Portugal"]
+        - ["PRY", "Paraguay"]
+        - ["PSE", "Palestine, State of"]
+        - ["PYF", "French Polynesia"]
+        - ["QAT", "Qatar"]
+        - ["REU", "Réunion"]
+        - ["ROU", "Romania"]
+        - ["RUS", "Russian Federation"]
+        - ["RWA", "Rwanda"]
+        - ["SAU", "Saudi Arabia"]
+        - ["SDN", "Sudan"]
+        - ["SEN", "Senegal"]
+        - ["SGP", "Singapore"]
+        - ["SGS", "South Georgia and the South Sandwich Islands"]
+        - ["SHN", "Saint Helena, Ascension and Tristan da Cunha"]
+        - ["SJM", "Svalbard and Jan Mayen"]
+        - ["SLB", "Solomon Islands"]
+        - ["SLE", "Sierra Leone"]
+        - ["SLV", "El Salvador"]
+        - ["SMR", "San Marino"]
+        - ["SOM", "Somalia"]
+        - ["SPM", "Saint Pierre and Miquelon"]
+        - ["SRB", "Serbia"]
+        - ["SSD", "South Sudan"]
+        - ["STP", "Sao Tome and Principe"]
+        - ["SUR", "Suriname"]
+        - ["SVK", "Slovakia"]
+        - ["SVN", "Slovenia"]
+        - ["SWE", "Sweden"]
+        - ["SWZ", "Eswatini"]
+        - ["SXM", "Sint Maarten (Dutch part)"]
+        - ["SYC", "Seychelles"]
+        - ["SYR", "Syrian Arab Republic"]
+        - ["TCA", "Turks and Caicos Islands"]
+        - ["TCD", "Chad"]
+        - ["TGO", "Togo"]
+        - ["THA", "Thailand"]
+        - ["TJK", "Tajikistan"]
+        - ["TKL", "Tokelau"]
+        - ["TKM", "Turkmenistan"]
+        - ["TLS", "Timor-Leste"]
+        - ["TON", "Tonga"]
+        - ["TTO", "Trinidad and Tobago"]
+        - ["TUN", "Tunisia"]
+        - ["TUR", "Türkiye"]
+        - ["TUV", "Tuvalu"]
+        - ["TWN", "Taiwan, Province of China"]
+        - ["TZA", "Tanzania, United Republic of"]
+        - ["UGA", "Uganda"]
+        - ["UKR", "Ukraine"]
+        - ["UMI", "United States Minor Outlying Islands"]
+        - ["URY", "Uruguay"]
+        - ["UZB", "Uzbekistan"]
+        - ["VAT", "Holy See (Vatican City State)"]
+        - ["VCT", "Saint Vincent and the Grenadines"]
+        - ["VEN", "Venezuela, Bolivarian Republic of"]
+        - ["VGB", "Virgin Islands, British"]
+        - ["VIR", "Virgin Islands, U.S."]
+        - ["VNM", "Viet Nam"]
+        - ["VUT", "Vanuatu"]
+        - ["WLF", "Wallis and Futuna"]
+        - ["WSM", "Samoa"]
+        - ["YEM", "Yemen"]
+        - ["ZAF", "South Africa"]
+        - ["ZMB", "Zambia"]
+        - ["ZWE", "Zimbabwe"]
+  - property: openQuestions
+    value:
+      - "The territories other than Puerto Rico (American Samoa, Guam, the Northern Mariana Islands, the U.S. Virgin Islands) have keys here but are not in the server's list of places a question can name (geo.PLACES), whose names are also GBD location names: add them there once a maintainer confirms their GBD names."
+      - "Which WHO region each country belongs to (WHO's own list) is not declared, so no country has a parent key yet."

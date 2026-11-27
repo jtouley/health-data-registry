@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Coverage is declared in the contracts and modelled in dbt (#223, #247). `suggest_datasets` can now say "yes, fits"
+  for a place: NNDSS for its reporting areas (each state, DC, New York City, Puerto Rico and the other territories;
+  New York State without New York City, said in the answer), Census population for every state and county, and the
+  MDHHS measles dashboard for Michigan and its counties. Each declaration cites the publisher's own file or page.
+  The EIP and RESP-NET catchments are declared as catchments with their places unknown, so they are never a fit for
+  a whole state, and the conference abstract lists cover no place. A source that declares nothing stays "unknown".
+- One list of place keys, `dim_place` (the United States, states, territories, counties, the cities reported
+  apart from their states, ISO3 countries and WHO regions). The server's place names are read from it, and the
+  registry refuses a contract whose coverage or `conformedDimensions` names a key that isn't there, or is
+  malformed, when it loads. "The United States" is the 50 states and DC; Puerto Rico is its own place.
+- dbt models: `coverage_declarations` (generated from the contracts), `dim_dataset_coverage` (SCD2 on the
+  publisher's timeline, with when we learned each declaration), `fct_dataset_place_year_coverage`,
+  `int_observed_places` and the `flag_coverage_mismatch` review queue, with tests that declared intervals don't
+  overlap, that every declaration cites its basis, and that every place-year in a source's rows is declared.
+
 ### Fixed
 
 - `suggest_datasets` marks a source "fits" only when its declared coverage holds the question's place,

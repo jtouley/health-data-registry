@@ -149,6 +149,20 @@ schema:
         query: "SELECT COUNT(*) FROM {object} WHERE outbreak_cases > total_cases"
         mustBe: 0
 customProperties:
+  - property: coverage
+    description: "Which places the dashboard covers, from its own rows (an exact structural fact, hard rule 1): one row for each of Michigan's 83 counties, zero included. Read live, so there are no stored rows to reconcile in dbt. Read by coverage.py and, through make contracts, by the dbt coverage models."
+    value:
+      kind: full
+      denominator: not_stated
+      places:
+        - placeKey: US-26
+          part: whole
+          validFrom: 2026
+          validTo: null
+          basisUrl: "https://mdhhstableau-public.michigan.gov/views/MeaslesTrackingDashboardv2/CaseMap"
+          basisQuote: "Structural, checked live 2026-11-24: the Case By Cty Map worksheet has 83 rows, one per Michigan county, zero included, and no total row."
+          declaredInVersion: 0.1.1
+          declaredAt: 2026-11-27
   - {property: licence, value: no-terms-stated}
   - {property: redistribution, value: false}
   - {property: citation, value: "Michigan Department of Health and Human Services. Measles Tracking Dashboard, Case Map. https://mdhhstableau-public.michigan.gov/views/MeaslesTrackingDashboardv2/CaseMap"}

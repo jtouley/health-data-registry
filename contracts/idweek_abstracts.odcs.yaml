@@ -411,6 +411,12 @@ schema:
       query: "SELECT COUNT(*) FROM {object} WHERE europepmc_retrieved_at IS NOT NULL AND NOT regexp_full_match(europepmc_retrieved_at, '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+]00:00')"
       mustBe: 0
 customProperties:
+- property: coverage
+  description: "A list of conference abstracts: each study names its own place, so the list as a whole covers no place (hard rule 9: a study's place is never extracted into stored data without a reviewed rule)."
+  value:
+    kind: study_reported
+    denominator: not_stated
+    places: []
 - property: licence
   value: doi-abstracts-mixed
 - property: licenceNote

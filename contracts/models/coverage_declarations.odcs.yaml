@@ -1,0 +1,132 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: coverage_declarations
+name: Coverage declarations - every contract's coverage block
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Every catalogued source's declared coverage, as its ODCS contract states it (customProperties.coverage): one row per declared place and interval, with the source's coverage kind and denominator, and one row with no place for a source that declares none, so its kind and denominator are still recorded."
+  usage: "The input of dim_dataset_coverage. Generated from contracts/ by `make contracts` into transform/models/reference/coverage_declarations.sql (no seed, no data file); CI fails when it differs from what the contracts generate. It stands in for the control-plane export #223 describes until the control plane exports its records."
+  limitations: "A declaration is only as good as its basis; a source whose contract has no coverage block has no row here, which means unknown."
+schema:
+  - name: coverage_declarations
+    physicalName: coverage_declarations
+    physicalType: table
+    logicalType: object
+    description: "One row per source and declared place and interval (the place is empty for a source that declares no place)."
+    customProperties:
+      - {property: layer, value: reference}
+      - {property: totalRows, value: none}
+      - {property: tableShape, value: registry}
+    properties:
+      - name: dataset_id
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "The catalogued source the declaration is about."
+        customProperties: [{property: role, value: dimension}]
+      - name: place_key
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "The declared place's conformed key (dim_place); empty on a source's row that declares no place."
+        customProperties: [{property: role, value: dimension}, {property: mayBeEmpty, value: true}]
+      - name: valid_from
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        primaryKey: true
+        primaryKeyPosition: 3
+        description: "First year (or season's first year) the declaration holds, in the publisher's own time unit; empty on a row with no place."
+        customProperties: [{property: role, value: dimension}, {property: mayBeEmpty, value: true}]
+      - name: valid_to
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Last year the declaration holds; empty while it is still in force or on a row with no place."
+        customProperties: [{property: role, value: attribute}, {property: mayBeEmpty, value: true}]
+      - name: coverage_kind
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "How the source covers its places, as its contract declares: full (every row is the whole place), catchment (a surveillance catchment: some counties of each place), sentinel (selected sites), study_reported (each study names its own place) or unknown."
+        customProperties: [{property: role, value: attribute}]
+      - name: denominator
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "What a rate for the place divides by: census_place (the Census population of the place, so get_rate may use it), catchment_population (the catchment's own population: never the Census population of the whole place) or not_stated."
+        customProperties: [{property: role, value: attribute}]
+      - name: time_unit
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The unit of valid_from and valid_to: year (data year) or season (the season's first year)."
+        customProperties: [{property: role, value: attribute}]
+      - name: part
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "whole (the whole place) or counties (only some of its counties); empty on a source's row with no place."
+        customProperties: [{property: role, value: attribute}, {property: mayBeEmpty, value: true}]
+      - name: counties
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "The county keys a counties declaration lists, space-separated; empty for a whole place, or when the publisher doesn't list the counties (then a county's coverage is unknown)."
+        customProperties: [{property: role, value: attribute}, {property: mayBeEmpty, value: true}]
+      - name: basis_url
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "The publisher's own page or file that states the coverage (hard rule 1); empty only on a source's row with no place."
+        customProperties: [{property: role, value: attribute}, {property: mayBeEmpty, value: true}]
+      - name: basis_quote
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "What that page says, or the exact structural fact checked against the file, and when."
+        customProperties: [{property: role, value: attribute}, {property: mayBeEmpty, value: true}]
+      - name: contract_version
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The source contract's version this row was generated from."
+        customProperties: [{property: role, value: attribute}]
+      - name: declared_in_contract_version
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "The contract version that first declared this place: when we learned it, apart from when it was true (valid_from, valid_to)."
+        customProperties: [{property: role, value: attribute}, {property: mayBeEmpty, value: true}]
+      - name: declared_at
+        physicalType: DATE
+        logicalType: date
+        required: false
+        description: "The date the declaration was made."
+        customProperties: [{property: role, value: attribute}, {property: mayBeEmpty, value: true}]
+      - name: dataset_first_year
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "The source's first year (catalog years.start)."
+        customProperties: [{property: role, value: attribute}]
+      - name: dataset_last_year
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "The source's last year (catalog years.end); empty while it is still published."
+        customProperties: [{property: role, value: attribute}, {property: mayBeEmpty, value: true}]
+      - name: reported_levels
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The levels the source's rows report (catalog geography), space-separated: a place inside a declared one is covered only at one of these levels."
+        customProperties: [{property: role, value: attribute}]
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None: declarations about sources, not published numbers."}}

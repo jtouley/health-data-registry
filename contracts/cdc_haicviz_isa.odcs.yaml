@@ -171,6 +171,12 @@ schema:
         query: "SELECT COUNT(*) FROM (SELECT yearname, topic, series FROM {object} WHERE viewby IN ('Age', 'Sex', 'Race', 'Epi class') AND series <> 'All cases' GROUP BY yearname, topic, series HAVING COUNT(*) > 1)"
         mustBe: 0
 customProperties:
+  - property: coverage
+    description: "The Emerging Infections Program sites that run iSA surveillance, combined (geographyBasis above); the denominator is unresolved. Which sites and counties, and when they changed, are open questions (no place is declared until the publisher's own pages are read), so routing treats the places as unknown and no place's Census population is ever its denominator."
+    value:
+      kind: catchment
+      denominator: not_stated
+      places: []
   - {property: licence, value: public-domain-us-federal}
   - {property: licenceSource, value: "No licence field in the Socrata metadata (read 2026-11-25). A CDC work on data.cdc.gov, a US federal work under 17 USC 105. A maintainer confirms the wording (see openQuestions)."}
   - {property: citation, value: "Centers for Disease Control and Prevention, Emerging Infections Program HAIC. HAICViz - iSA. https://data.cdc.gov/d/ssz5-s49e"}

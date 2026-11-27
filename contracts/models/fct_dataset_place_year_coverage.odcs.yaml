@@ -1,0 +1,66 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: fct_dataset_place_year_coverage
+name: Fact - coverage of each place in each year, per source
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "For each source, each place its declarations reach and each year of the source: covered, partial_catchment, not_covered or unknown, with the denominator a rate may use. Routing and the rate tools read this rule."
+  usage: "Read one source, place and year. A place inside a declared one appears only at a level the source reports (its catalog geography), and a city only when declared itself. Built by transform/models/marts/fct_dataset_place_year_coverage.sql from dim_dataset_coverage and dim_place; coverage.py applies the same rule in the server."
+  limitations: "A place absent here is not declared, which means unknown, never not covered. Years run to the source's last year, or to the dbt variable coverage_through_year while it is still published."
+schema:
+  - name: fct_dataset_place_year_coverage
+    physicalName: fct_dataset_place_year_coverage
+    physicalType: table
+    logicalType: object
+    description: "One row per source, place and year (or season)."
+    customProperties:
+      - {property: layer, value: marts}
+      - {property: totalRows, value: none}
+      - {property: tableShape, value: registry}
+    properties:
+      - name: dataset_id
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "The catalogued source."
+        customProperties: [{property: role, value: dimension}]
+      - name: place_key
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "The place's conformed key (dim_place)."
+        customProperties: [{property: role, value: dimension}]
+      - name: year
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 3
+        description: "The year (or season's first year), in the declaration's time unit."
+        customProperties: [{property: role, value: dimension}]
+      - name: coverage_status
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "covered (the whole place, every row of it), partial_catchment (only part of the place: a catchment or some counties; answers say so), not_covered (the declaration leaves this place or year out) or unknown (inside a declaration that doesn't list its counties)."
+        customProperties: [{property: role, value: attribute}]
+      - name: denominator
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "What a rate for the place divides by: census_place (the Census population of the place, so get_rate may use it), catchment_population (the catchment's own population: never the Census population of the whole place) or not_stated."
+        customProperties: [{property: role, value: attribute}]
+      - name: dim_dataset_coverage_sk
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "The declaration version that decides the row (the most specific one whose interval holds the year); empty when none holds the year."
+        customProperties: [{property: role, value: attribute}, {property: mayBeEmpty, value: true}]
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None: declarations about sources, not published numbers."}}

@@ -1025,8 +1025,11 @@ def suggest_datasets(
         labels = [x for x in ds.condition_labels if coverage.words(x) & specific][:6]
         supports = "; ".join(dict.fromkeys(labels + listed))
         can = "no" if why_not else "unknown" if unknown else "yes"
+        # A place the source covers only part of still fits, with the caveat in plain words (#223).
+        partly = [n for _, k in named if (n := cov.partial_note(k))] if can == "yes" else []
         # A "no" gives only its reasons for no; what is unknown besides adds nothing a clinician can act on.
-        rows.append([e.id, can, "; ".join(why_not or unknown) or "fits", supports, (len(unknown), -len(hits)),
+        why = "; ".join(why_not or unknown) or "; ".join(["fits", *dict.fromkeys(partly)])
+        rows.append([e.id, can, why, supports, (len(unknown), -len(hits)),
                      *provenance_fields(ds, engine).values()])  # fmt: skip
     rank = {"yes": 0, "unknown": 1, "no": 2}
     rows.sort(key=lambda r: (rank[r[1]], r[4], r[0]))  # then fewest unknowns, most condition words matched

@@ -1,0 +1,79 @@
+# dbt unit tests for the coverage models (#223), on synthetic declarations and places only (hard rule 5). They pin
+# what the fact gets wrong without them: a place inside a declared one counted at a level the source doesn't
+# report, a city counted through its state, Puerto Rico counted inside the United States, a place declared as some
+# of its counties called whole, a county outside the listed ones called covered, unlisted counties guessed, a year
+# between two intervals called covered, and a catchment's denominator lost. The server applies the same rule
+# (coverage.Coverage.holds; tests/test_coverage_model.py).
+version: 2
+
+unit_tests:
+  - name: fct_dataset_place_year_coverage_most_specific_declaration_decides
+    model: fct_dataset_place_year_coverage
+    given:
+      - input: ref('dim_place')
+        rows:
+          - {place_key: USA, place_level: nation, parent_key: null}
+          - {place_key: US-26, place_level: state, parent_key: USA}
+          - {place_key: US-26163, place_level: county, parent_key: US-26}
+          - {place_key: US-26163/detroit, place_level: city, parent_key: US-26163}
+          - {place_key: US-36, place_level: state, parent_key: USA}
+          - {place_key: US-36001, place_level: county, parent_key: US-36}
+          - {place_key: US-36005, place_level: county, parent_key: US-36}
+          - {place_key: US-36/nyc, place_level: city, parent_key: US-36}
+          # Puerto Rico is not part of the United States here (dim_place), so a USA declaration never reaches it.
+          - {place_key: US-72, place_level: state, parent_key: null}
+      - input: ref('dim_dataset_coverage')
+        rows:
+          - {dim_dataset_coverage_sk: a, dataset_id: toy, place_key: USA, valid_from: 2023, valid_to: null, coverage_kind: full, part: whole, counties: null, denominator: census_place, dataset_first_year: 2023, dataset_last_year: 2023, reported_levels: "nation state county city"}
+          - {dim_dataset_coverage_sk: b, dataset_id: toy, place_key: US-36, valid_from: 2023, valid_to: null, coverage_kind: full, part: counties, counties: "US-36001", denominator: census_place, dataset_first_year: 2023, dataset_last_year: 2023, reported_levels: "nation state county city"}
+          - {dim_dataset_coverage_sk: c, dataset_id: toy, place_key: US-36/nyc, valid_from: 2023, valid_to: null, coverage_kind: full, part: whole, counties: null, denominator: census_place, dataset_first_year: 2023, dataset_last_year: 2023, reported_levels: "nation state county city"}
+          # A state-level source: no county row, though its declaration holds every county.
+          - {dim_dataset_coverage_sk: d, dataset_id: states_only, place_key: USA, valid_from: 2023, valid_to: null, coverage_kind: full, part: whole, counties: null, denominator: not_stated, dataset_first_year: 2023, dataset_last_year: 2023, reported_levels: "nation state"}
+    expect:
+      rows:
+        - {dataset_id: toy, place_key: USA, year: 2023, coverage_status: covered, dim_dataset_coverage_sk: a}
+        - {dataset_id: toy, place_key: US-26, year: 2023, coverage_status: covered, dim_dataset_coverage_sk: a}
+        - {dataset_id: toy, place_key: US-26163, year: 2023, coverage_status: covered, dim_dataset_coverage_sk: a}
+        - {dataset_id: toy, place_key: US-36, year: 2023, coverage_status: partial_catchment, dim_dataset_coverage_sk: b}
+        - {dataset_id: toy, place_key: US-36001, year: 2023, coverage_status: covered, dim_dataset_coverage_sk: b}
+        - {dataset_id: toy, place_key: US-36005, year: 2023, coverage_status: not_covered, dim_dataset_coverage_sk: b}
+        - {dataset_id: toy, place_key: US-36/nyc, year: 2023, coverage_status: covered, dim_dataset_coverage_sk: c}
+        - {dataset_id: states_only, place_key: USA, year: 2023, coverage_status: covered, dim_dataset_coverage_sk: d}
+        - {dataset_id: states_only, place_key: US-26, year: 2023, coverage_status: covered, dim_dataset_coverage_sk: d}
+        - {dataset_id: states_only, place_key: US-36, year: 2023, coverage_status: covered, dim_dataset_coverage_sk: d}
+
+  - name: fct_dataset_place_year_coverage_catchment_gaps_and_unlisted_counties
+    model: fct_dataset_place_year_coverage
+    given:
+      - input: ref('dim_place')
+        rows:
+          - {place_key: USA, place_level: nation, parent_key: null}
+          - {place_key: US-26, place_level: state, parent_key: USA}
+          - {place_key: US-26163, place_level: county, parent_key: US-26}
+      - input: ref('dim_dataset_coverage')
+        rows:
+          # A catchment in Michigan whose counties the publisher doesn't list, 2020 and again from 2022.
+          - {dim_dataset_coverage_sk: e, dataset_id: net, place_key: US-26, valid_from: 2020, valid_to: 2020, coverage_kind: catchment, part: counties, counties: null, denominator: catchment_population, dataset_first_year: 2020, dataset_last_year: 2022, reported_levels: "state county"}
+          - {dim_dataset_coverage_sk: f, dataset_id: net, place_key: US-26, valid_from: 2022, valid_to: null, coverage_kind: catchment, part: counties, counties: null, denominator: catchment_population, dataset_first_year: 2020, dataset_last_year: 2022, reported_levels: "state county"}
+    expect:
+      rows:
+        - {dataset_id: net, place_key: US-26, year: 2020, coverage_status: partial_catchment, denominator: catchment_population, dim_dataset_coverage_sk: e}
+        - {dataset_id: net, place_key: US-26, year: 2021, coverage_status: not_covered, denominator: catchment_population, dim_dataset_coverage_sk: null}
+        - {dataset_id: net, place_key: US-26, year: 2022, coverage_status: partial_catchment, denominator: catchment_population, dim_dataset_coverage_sk: f}
+        - {dataset_id: net, place_key: US-26163, year: 2020, coverage_status: unknown, denominator: catchment_population, dim_dataset_coverage_sk: e}
+        - {dataset_id: net, place_key: US-26163, year: 2021, coverage_status: not_covered, denominator: catchment_population, dim_dataset_coverage_sk: null}
+        - {dataset_id: net, place_key: US-26163, year: 2022, coverage_status: unknown, denominator: catchment_population, dim_dataset_coverage_sk: f}
+
+  - name: dim_dataset_coverage_keeps_every_version_and_marks_the_latest_current
+    model: dim_dataset_coverage
+    given:
+      - input: ref('coverage_declarations')
+        rows:
+          - {dataset_id: toy, place_key: US-26, valid_from: 2020, valid_to: 2020, coverage_kind: catchment, part: counties, declared_in_contract_version: 0.1.0}
+          - {dataset_id: toy, place_key: US-26, valid_from: 2022, valid_to: null, coverage_kind: catchment, part: counties, declared_in_contract_version: 0.2.0}
+          # A source that declares no place has no version here (its coverage is unknown).
+          - {dataset_id: abstracts, place_key: null, valid_from: null, valid_to: null, coverage_kind: study_reported}
+    expect:
+      rows:
+        - {dim_dataset_coverage_sk: bce351626110b03a0138da5f0c90bd79, dataset_id: toy, place_key: US-26, valid_from: 2020, valid_to: 2020, is_current: false, declared_in_contract_version: 0.1.0}
+        - {dim_dataset_coverage_sk: 7752ac59b32f1c664600a3e934519d2c, dataset_id: toy, place_key: US-26, valid_from: 2022, valid_to: null, is_current: true, declared_in_contract_version: 0.2.0}

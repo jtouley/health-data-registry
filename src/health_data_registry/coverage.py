@@ -5,24 +5,29 @@ source whose coverage isn't declared covers "unknown", and an unknown never coun
 
 Where it reads today, in order:
 
-- places: the contract's ``conformedDimensions`` (conformed place keys as geo defines them: USA, US-<state FIPS>,
-  US-<state FIPS><county FIPS>, or a declared part of one, e.g. US-26163/detroit). Nothing else, and never the
+- places: the contract's coverage block (#223: which places, whole or some counties, over which years, on which
+  publisher basis) and its schema's ``conformedDimensions`` place keys, both parsed and checked by the registry
+  against dim_place (contracts/models/dim_place.odcs.yaml, the one list of place keys). Nothing else, and never the
   catalog's ``level`` or ``country``: those say who publishes a source, not where its rows are (a federal network
   can cover a few counties in some states, and an international abstract list covers no country). A source with no
-  conformed places covers "unknown" until its coverage is declared (#223).
+  declared places covers "unknown".
 - conditions: the catalog's condition labels and aliases, its GBD crosswalk, and the semantic model's series.
 - years: the catalog's ``years``.
 
-The seam: once the transform's ``dim_dataset_coverage`` mart carries each source's place, condition and time keys,
-``declared_coverage`` reads them from the mart instead; its callers don't change.
+The same coverage blocks feed the dbt models (``make contracts`` writes them into ``coverage_declarations``; then
+``dim_dataset_coverage``, an SCD2 dimension, and ``fct_dataset_place_year_coverage``, one row per place and year).
+``holds`` applies the rule that fact applies: the most specific declaration of a place decides, a place inside a
+declared one counts only at a level the source reports (its catalog ``geography``), and a city counts only when
+declared itself. The dimension replaces places only; conditions and years still come from the catalog and the
+semantic model. The stdio server has no dbt build to read, so this module reads the contracts the marts are built
+from; its callers don't change.
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
 
 from health_data_registry import geo
 from health_data_registry.registry import Dataset
@@ -149,20 +154,55 @@ class Coverage:
     condition_words: frozenset[str]  # the specific words of the conditions it declares; empty means unknown
     year_start: int
     year_end: int | None
+    # Places declared as only some of their counties: key -> the counties (None when the publisher doesn't list them)
+    partial: Mapping[str, tuple[str, ...] | None] = field(default_factory=dict)
+    levels: frozenset[str] = (
+        frozenset()
+    )  # the levels the source's rows report (catalog geography); empty: any
+
+    def _declared_for(self, key: str) -> str | None:
+        """The most specific declared place that is `key` or contains it."""
+        k: str | None = key
+        while k is not None:
+            if k in (self.place_keys or ()):
+                return k
+            k = geo.parent_key(k)
+        return None
 
     def holds(self, key: str) -> bool | None:
-        """Does the declared coverage contain the place `key`? None when nothing is declared.
+        """Does the declared coverage contain the place `key`? None when nothing is declared, or when it can't say.
 
-        A city a publisher reports apart from its state (Detroit, New York City) is held only when the city itself
-        is declared: a country or state declaration says which states a source reports, never which cities it
-        reports apart from them, so a nationwide source is "unknown" for a city, never a fit (#111)."""
+        The most specific declaration decides. A place inside a declared one is held only at a level the source
+        reports (a state-level source doesn't report a county), and inside a place declared as some of its counties
+        only when that county is listed (unknown when the counties aren't). A city a publisher reports apart from
+        its state (Detroit, New York City) is held only when the city itself is declared: a country or state
+        declaration says which states a source reports, never which cities it reports apart from them (#111)."""
         if self.place_keys is None:
             return None
-        if not any(geo.within(outer, key) for outer in self.place_keys):
+        outer = self._declared_for(key)
+        if outer is None:
             return False
-        if geo.is_city(key) and not any(geo.is_city(o) and geo.within(o, key) for o in self.place_keys):
+        if geo.is_city(key) and outer != key:
             return None
+        if outer == key:
+            return True
+        if self.levels and geo.level_of(key) not in self.levels:
+            return None
+        if outer in self.partial:
+            counties = self.partial[outer]
+            if counties is None:
+                return None
+            return any(geo.within(c, key) for c in counties)
         return True
+
+    def partial_note(self, key: str) -> str | None:
+        """Plain words for a held place this source covers only part of, or None for a whole place."""
+        outer = self._declared_for(key) if self.place_keys is not None else None
+        if outer != key or key not in self.partial:
+            return None
+        counties = self.partial[key]
+        some = f"{len(counties)} of its counties" if counties else "some of its counties, not listed"
+        return f"its {geo.name_of(key)} rows cover only part of {geo.name_of(key)} ({some}), not all of it"
 
     def holds_years(self, start: int | None, end: int | None) -> bool:
         """Do the declared years overlap the years asked for (either end may be open)?"""
@@ -210,35 +250,26 @@ def condition_hits(asked: set[str], declared: frozenset[str]) -> set[str]:
     return hits
 
 
-def _conformed_places(ds: Dataset) -> list[str]:
-    """The place keys the contract's conformedDimensions declares: a fixed place, or the keys its labels are."""
-    schema = (ds.contract.raw.get("schema") or [{}])[0]
-    for cp in schema.get("customProperties") or []:
-        if not isinstance(cp, Mapping) or cp.get("property") != "conformedDimensions":
-            continue
-        place: Mapping[str, Any] = (cp.get("value") or {}).get("place") or {}
-        decl = [place.get("fixed") or {}, *(place.get("places") or {}).values()]
-        return [str(d["key"]) for d in decl if isinstance(d, Mapping) and d.get("key")]
-    return []
-
-
 def _place_name(key: str) -> str:
-    if key == geo.NATION_KEY:
-        return "the United States"
-    for c in geo.CITIES:
-        if c.key == key:
-            return c.name
-    for p in geo.PLACES:
-        if geo.key_of(p) == key:
-            return p.name
-    return key
+    return "the United States" if key == geo.NATION_KEY else geo.name_of(key)
 
 
 def declared_coverage(ds: Dataset) -> Coverage:
     """The source's declared coverage (see the module docstring for where each part is read)."""
     e = ds.entry
-    keys = set(_conformed_places(ds))
-    place_words = " and ".join(sorted(_place_name(k) for k in keys)) if keys else "no places declared yet"
+    decl = ds.contract.coverage
+    keys = {p.key for p in ds.contract.conformed_places if p.key} | {
+        p.place_key for p in (decl.places if decl else ())
+    }
+    partial = {p.place_key: p.counties for p in (decl.places if decl else ()) if p.part == "counties"}
+    names = [
+        _place_name(k) + (" (part of it)" if k in partial else "") for k in sorted(keys, key=_place_name)
+    ]
+    place_words = (
+        (", ".join(names[:-1]) + " and " + names[-1] if len(names) > 1 else names[0])
+        if names
+        else ("no places declared yet")
+    )
     parts = [*e.conditions.labels, *(a.alias for a in e.conditions.aliases)]
     parts += [f"{c.cause} {c.pathogen or ''}" for c in e.gbd.causes]
     parts += [s.label for s in ds.semantic.series]
@@ -253,4 +284,6 @@ def declared_coverage(ds: Dataset) -> Coverage:
         condition_words=frozenset(w for w in words(" ".join(parts)) - not_conditions if not w.isdigit()),
         year_start=e.years.start,
         year_end=e.years.end,
+        partial=partial,
+        levels=frozenset(e.geography),
     )
