@@ -1,0 +1,18 @@
+{
+  "dataset": "cdc_covid_adult_coverage",
+  "snapshot_id": "20260108T000000Z-000000000012",
+  "contract_version": "synthetic",
+  "semantic_version": "synthetic",
+  "catalog_status": "draft",
+  "retrieved_at": "2026-01-08T00:00:00+00:00",
+  "source_urls": [
+    "https://example.invalid/synthetic/cdc_covid_adult_coverage.json"
+  ],
+  "raw_sha256": [
+    "2222222222222222222222222222222222222222222222222222222222222222"
+  ],
+  "row_count": 4,
+  "licence": "synthetic",
+  "redistribution": true,
+  "partial": false
+}

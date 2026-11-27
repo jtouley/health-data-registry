@@ -1,0 +1,50 @@
+dataset: cdc_covid_adult_coverage
+# 0.1.0: first draft. Every figure is read from its one published cell; nothing is added. A vaccination coverage
+# percent names COVID-19 but is not a measure of the disease, so every series answers only a question that asks
+# about vaccination (asked_with).
+version: 0.1.0
+dimensions:
+  - {name: vaccine, column: vaccine, type: categorical, non_additive: true, non_additive_reason: "each vaccine's coverage is its own percent", description: "The vaccine: COVID."}
+  - {name: place, column: geographic_name, type: categorical, non_additive: true, non_additive_reason: "the nation, HHS regions, states and parts of states overlap", description: "National, an HHS region, a state, or a part of a state."}
+  - {name: group_kind, column: demographic_level, type: categorical, non_additive: true, non_additive_reason: "Overall sits beside the groups, and each kind of group covers all adults again", description: "The kind of group: Overall, an age breakdown, race and ethnicity, sex and others."}
+  - {name: group, column: demographic_name, type: categorical, non_additive: true, non_additive_reason: "percents for different groups can't be added", description: "The group, such as '18+ years', '65+ years' or 'Female'."}
+  - {name: measure_kind, column: indicator_label, type: categorical, non_additive: true, non_additive_reason: "coverage and the vaccination and intent levels are different measures", description: "Up-to-date (coverage) or 4-level vaccination and intent."}
+  - {name: category, column: indicator_category_label, type: categorical, non_additive: true, non_additive_reason: "categories of one measure are shares of the same adults and are never added here", description: "Yes for coverage, or a vaccination and intent level."}
+  - {name: week_ending, column: week_ending, type: time, non_additive: true, non_additive_reason: "each week's estimate is cumulative through that week, so weeks overlap", description: "The date the survey week ends."}
+measures:
+  - {name: coverage_percent, column: estimate, kind: percent, unit: "% of adults", description: "Weighted percent of adults, cumulative through the week."}
+metrics:
+  - name: weekly_vaccination_coverage
+    description: "Weekly cumulative percent of adults in one place and group who received this season's COVID-19 vaccine (Up-to-date, Yes), read as published and never added up."
+    measure: coverage_percent
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["indicator_label = 'Up-to-date'"]
+    uncertainty: none
+    # Structural: CDC's interval is a half width, which get_series can't show as lower and upper bounds yet.
+    uncertainty_reason: "CDC publishes the 95% confidence interval as a half width (ci_half_width_95pct, percentage points) beside each estimate; read it with query_sql, since it can't be shown here as lower and upper bounds yet (#172)."
+  - name: weekly_vaccination_and_intent
+    description: "Weekly percent of adults in one place and group in one level of vaccination and intent (vaccinated, definitely will, probably will or unsure, definitely or probably will not), read as published and never added up."
+    measure: coverage_percent
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["indicator_label = '4-level vaccination and intent'"]
+    uncertainty: none
+    uncertainty_reason: "CDC publishes the 95% confidence interval as a half width (ci_half_width_95pct, percentage points) beside each estimate; read it with query_sql, since it can't be shown here as lower and upper bounds yet (#172)."
+series:
+  - condition: "COVID-19 vaccination"
+    label: "COVID-19 vaccination coverage, adults 18 and older (up to date this season, NIS-FRVM survey, weekly cumulative)"
+    metric: weekly_vaccination_coverage
+    measure: percent
+    filters: {group_kind: "Overall", group: "18+ years", measure_kind: "Up-to-date", category: "Yes"}
+    location_dimension: place
+    time_dimension: week_ending
+    asked_with: ["vaccination", "vaccinated", "vaccine", "coverage", "up to date", "immunization", "uptake"]
+  - condition: "COVID-19 vaccination"
+    label: "COVID-19 vaccination coverage, adults 65 and older (up to date this season, NIS-FRVM survey, weekly cumulative)"
+    metric: weekly_vaccination_coverage
+    measure: percent
+    filters: {group_kind: "Age (3 Level)", group: "65+ years", measure_kind: "Up-to-date", category: "Yes"}
+    location_dimension: place
+    time_dimension: week_ending
+    asked_with: ["vaccination", "vaccinated", "vaccine", "coverage", "up to date", "immunization", "uptake"]

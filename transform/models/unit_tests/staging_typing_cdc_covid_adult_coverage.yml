@@ -1,0 +1,92 @@
+# Hand-written dbt unit tests of cdc_covid_adult_coverage: the generated staging typing (staging.typed_select) and the hand-written
+# fact (fct_cdc_covid_adult_coverage). One file per source, beside staging_typing.yml, so new-source pull requests don't edit the same
+# file. Column types are held by the enforced model contracts; these tests check values: the estimate and its half
+# width are read exactly as published (never rescaled), a suppressed estimate (the field left out, so NULL) stays
+# empty rather than zero and keeps CDC's flag, and the fact keeps every row and says why an estimate is empty.
+version: 2
+unit_tests:
+- name: stg_cdc_covid_adult_coverage_estimates_stay_as_published_and_suppressed_ones_stay_empty
+  model: stg_cdc_covid_adult_coverage
+  given:
+  - input: source('raw', 'cdc_covid_adult_coverage')
+    format: sql
+    rows: 'select ''COVID'' as "vaccine", ''State'' as "geographic_level", ''Michigan'' as "geographic_name", ''Overall'' as "demographic_level", ''18+ years'' as "demographic_name", ''Up-to-date'' as "indicator_label",
+      ''Yes'' as "indicator_category_label", ''November Week 1'' as "month_week", ''2025-11-01T00:00:00.000'' as "week_ending", ''10.1'' as "estimate", ''3.2000000000000002'' as "ci_half_width_95pct", ''500''
+      as "unweighted_sample_size", ''2026-10-31T00:00:00.000'' as "current_season_week_ending", ''2025-2026'' as "covid_season", ''0'' as "suppression_flag", ''s1'' as "_snapshot_id", ''h1'' as "_raw_sha256"
+
+      union all select ''COVID'', ''State'', ''Ohio'', ''Overall'', ''18+ years'', ''Up-to-date'', ''Yes'', ''November Week 1'', ''2025-11-01T00:00:00.000'', cast(null as varchar), cast(null as varchar),
+      ''12'', ''2026-10-31T00:00:00.000'', ''2025-2026'', ''1'', ''s1'', ''h1''
+
+      union all select ''COVID'', ''State'', ''Iowa'', ''Overall'', ''18+ years'', ''Up-to-date'', ''Yes'', ''November Week 1'', ''2025-11-01T00:00:00.000'', ''0.0'', '' 0.5 '', ''500'', ''2026-10-31T00:00:00.000'',
+      ''2025-2026'', ''0'', ''s1'', ''h1''
+
+      '
+  expect:
+    rows:
+    - geographic_name: Michigan
+      week_ending: '2025-11-01'
+      current_season_week_ending: '2026-10-31'
+      estimate: 10.1
+      ci_half_width_95pct: 3.2
+      unweighted_sample_size: 500
+      suppression_flag: '0'
+    - geographic_name: Ohio
+      week_ending: '2025-11-01'
+      current_season_week_ending: '2026-10-31'
+      estimate: null
+      ci_half_width_95pct: null
+      unweighted_sample_size: 12
+      suppression_flag: '1'
+    - geographic_name: Iowa
+      week_ending: '2025-11-01'
+      current_season_week_ending: '2026-10-31'
+      estimate: 0.0
+      ci_half_width_95pct: 0.5
+      unweighted_sample_size: 500
+      suppression_flag: '0'
+- name: fct_cdc_covid_adult_coverage_keeps_every_row_and_says_why_an_estimate_is_empty
+  model: fct_cdc_covid_adult_coverage
+  given:
+  - input: ref('int_cdc_covid_adult_coverage')
+    rows:
+    - geographic_name: Michigan
+      geographic_level: State
+      demographic_level: Overall
+      demographic_name: 18+ years
+      indicator_label: Up-to-date
+      indicator_category_label: 'Yes'
+      week_ending: '2025-11-01'
+      covid_season: 2025-2026
+      estimate: 10.1
+      suppression_flag: '0'
+    - geographic_name: Ohio
+      geographic_level: State
+      demographic_level: Overall
+      demographic_name: 18+ years
+      indicator_label: Up-to-date
+      indicator_category_label: 'Yes'
+      week_ending: '2025-11-01'
+      covid_season: 2025-2026
+      estimate: null
+      suppression_flag: '1'
+    - geographic_name: Iowa
+      geographic_level: State
+      demographic_level: Overall
+      demographic_name: 18+ years
+      indicator_label: Up-to-date
+      indicator_category_label: 'Yes'
+      week_ending: '2025-11-01'
+      covid_season: 2025-2026
+      estimate: null
+      suppression_flag: '0'
+  expect:
+    rows:
+    - place: Michigan
+      estimate: 10.1
+      value_status: published
+    - place: Ohio
+      estimate: null
+      value_status: suppressed by CDC (small sample)
+    - place: Iowa
+      estimate: null
+      value_status: not published

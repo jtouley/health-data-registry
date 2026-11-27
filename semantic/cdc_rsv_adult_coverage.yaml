@@ -1,0 +1,50 @@
+dataset: cdc_rsv_adult_coverage
+# 0.1.0: first draft. Every figure is read from its one published cell, never added and never rescaled (the
+# estimate is published as a proportion though labelled %: an open question). A vaccination coverage share names
+# RSV but is not a measure of the disease, so every series answers only a question that asks about vaccination.
+version: 0.1.0
+dimensions:
+  - {name: vaccine, column: vaccine, type: categorical, non_additive: true, non_additive_reason: "each vaccine's coverage is its own share", description: "The vaccine: RSV."}
+  - {name: age, column: age_group, type: categorical, non_additive: true, non_additive_reason: "each age group's coverage is its own share", description: "75+ years, or 50-74 years (high risk)."}
+  - {name: place, column: geography_name, type: categorical, non_additive: true, non_additive_reason: "the nation includes the HHS regions", description: "National, or an HHS region ('Region 1' to 'Region 10')."}
+  - {name: group_kind, column: demographic_level, type: categorical, non_additive: true, non_additive_reason: "Overall sits beside the groups, and each kind of group covers all adults again", description: "The kind of group: Overall, Age, race and ethnicity, sex and others."}
+  - {name: group, column: demographic_name, type: categorical, non_additive: true, non_additive_reason: "shares for different groups can't be added", description: "The group, such as '75+ years' or 'Female'."}
+  - {name: measure_kind, column: indicator_label, type: categorical, non_additive: true, non_additive_reason: "coverage and the vaccination and intent levels are different measures", description: "Up-to-date (coverage) or 4-level vaccination and intent."}
+  - {name: category, column: indicator_category_label, type: categorical, non_additive: true, non_additive_reason: "categories of one measure are shares of the same adults and are never added here", description: "Yes for coverage, or a vaccination and intent level."}
+  - {name: week_ending, column: week_ending, type: time, non_additive: true, non_additive_reason: "each week's estimate is cumulative through that week, so weeks overlap", description: "The date the survey week ends."}
+measures:
+  - {name: coverage_share, column: estimate, kind: percent, unit: "proportion of adults (0 to 1) as published; the column is labelled %", description: "Weighted share of adults, cumulative through the week, as published (0 to 1)."}
+metrics:
+  - name: weekly_vaccination_coverage
+    description: "Weekly cumulative share of adults in one age group, place and demographic group ever vaccinated against RSV (Up-to-date, Yes), as published (a proportion from 0 to 1) and never added up."
+    measure: coverage_share
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["indicator_label = 'Up-to-date'"]
+    uncertainty: none
+    uncertainty_reason: "CDC publishes a 95% confidence interval half width (ci_half_width_95pct) that reads as percentage points beside an estimate published as a proportion; with the two on different scales no interval is built here (open question 'Scale'); read it with query_sql."
+  - name: weekly_vaccination_and_intent
+    description: "Weekly share of adults in one age group, place and demographic group in one level of vaccination and intent, as published (a proportion from 0 to 1) and never added up."
+    measure: coverage_share
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["indicator_label = '4-level vaccination and intent'"]
+    uncertainty: none
+    uncertainty_reason: "CDC publishes a 95% confidence interval half width (ci_half_width_95pct) that reads as percentage points beside an estimate published as a proportion; with the two on different scales no interval is built here (open question 'Scale'); read it with query_sql."
+series:
+  - condition: "RSV vaccination"
+    label: "RSV vaccination coverage, adults 75 and older (ever vaccinated, NIS-FRVM survey, weekly cumulative; a proportion from 0 to 1 as CDC publishes it)"
+    metric: weekly_vaccination_coverage
+    measure: percent
+    filters: {age: "75+ years", group_kind: "Overall", measure_kind: "Up-to-date", category: "Yes"}
+    location_dimension: place
+    time_dimension: week_ending
+    asked_with: ["vaccination", "vaccinated", "vaccine", "coverage", "up to date", "immunization", "uptake"]
+  - condition: "RSV vaccination"
+    label: "RSV vaccination coverage, adults 50 to 74 with a high-risk condition (ever vaccinated, NIS-FRVM survey, weekly cumulative; a proportion from 0 to 1 as CDC publishes it)"
+    metric: weekly_vaccination_coverage
+    measure: percent
+    filters: {age: "50-74 years (high risk)", group_kind: "Overall", measure_kind: "Up-to-date", category: "Yes"}
+    location_dimension: place
+    time_dimension: week_ending
+    asked_with: ["vaccination", "vaccinated", "vaccine", "coverage", "up to date", "immunization", "uptake"]
