@@ -10,7 +10,7 @@
 - **Related:** [ADR 0003](0003-provenance-on-every-result.md) (provenance on every result),
   [ADR 0004](0004-aligned-data-no-gbd-verdicts.md) (no GBD verdicts), [ADR 0012](0012-built-for-clinicians.md)
   (built for clinicians), [ADR 0015](0015-elt-raw-data-stored-as-sent.md) (raw data stored as sent); issues
-  [#186](https://github.com/jtouley/health-data-registry/pull/186) (the code change),
+  [#186](https://github.com/jtouley/health-data-registry/pull/186) (`-` never read as 0),
   [#222](https://github.com/jtouley/health-data-registry/issues/222) (a check that never ran),
   [#223](https://github.com/jtouley/health-data-registry/issues/223) (coverage and gaps as data),
   [#225](https://github.com/jtouley/health-data-registry/issues/225) (quality records cited in answers)
@@ -80,8 +80,10 @@ is and what it leaves out, and the physician decides.
 - Quality results move from gatekeeping to evidence. A check that ran and failed becomes a qualification citing
   its rule, not a silent drop. Today a failed error-severity rule still holds a copy back (`quality.py`); changing
   that is code work for a later pull request. A check that never ran still blocks (#222).
-- Code catches up separately. This record changes no code. #186 starts the change (`-` is never 0); refusals and
-  drops that remain are brought in line by its follow-ups. Until they land, [docs/data-conventions.md](../data-conventions.md)
+- Code catches up separately. This record changes no code. #186 already returns `-` empty with its flag, never
+  as 0. It also added refusals (a sum of weekly counts, a sum over a count with no number, no rate for counts that
+  are not new cases of disease, such as *C. auris* screening); under this rule each becomes a figure with a
+  qualification, in follow-up pull requests, as do the total rows that sums still leave out. Until they land, [docs/data-conventions.md](../data-conventions.md)
   and [docs/tools.md](../tools.md) say where today's tools still refuse or leave rows out.
 - Tests and code comments that cite "hard rule 2" for a refusal pin the old rule; they change with the code that
   implements this one.

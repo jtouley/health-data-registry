@@ -33,9 +33,10 @@ what it leaves out.
 - **One thing stops an answer: a data check that never ran.** The tool won't let a number look checked when it
   wasn't.
 
-**Today the tools don't yet do all of this.** Some still refuse a sum, leave the publisher's total rows out of
-one, or read NNDSS's `-` as 0; the sections below say where. These change as the code catches up
-([#186](https://github.com/jtouley/health-data-registry/pull/186) and its follow-ups).
+**Today the tools don't yet do all of this.** Every empty cell, NNDSS's `-` included, already comes back empty
+with its flag, never as 0. But some tools still refuse a sum or a rate, or leave the publisher's total rows out of
+a sum, where this rule would work the figure out and qualify it; the sections below say where. These change in
+follow-up pull requests to [#186](https://github.com/jtouley/health-data-registry/pull/186).
 
 ## Measures, never mixed
 
@@ -89,14 +90,20 @@ Recent surveillance counts change as late reports arrive. Every row from a runni
 How NNDSS annual counts are read: the tool takes CDC's running year-to-date column at the last week published for
 that year. Adding up weekly counts undercounts the year, because late reports land in the running total, not in
 the week they happened: for Michigan in 2023, adding the weekly column gives 62 cases, the year-end running total
-103. If you ask for the weekly sum, the answer gives it with that note and CDC's year-to-date figure beside it
-("weekly counts undercount the year; CDC's year-to-date figure: 103"). **Today** the tool doesn't add weeks into a
-year, and it adds a year-to-date column across places only at one week, refusing otherwise.
+103. Under the [rule above](#show-everything-qualify-dont-decide), a weekly sum you ask for is given with that
+note and CDC's year-to-date figure beside it ("weekly counts undercount the year; CDC's year-to-date figure:
+103"). **Today** the tool doesn't add weeks into a year, and it adds a year-to-date column across places only at
+one week, refusing otherwise. `query_sql` follows the same rules today: it refuses a sum of weekly counts or of
+year-to-date counts across weeks, and a sum across places leaves CDC's summary rows out (the US totals, US
+territories combined and the nine census divisions); Non-U.S. Residents stays in, as its own bucket. These
+`query_sql` rules apply to sums only.
 
-An empty NNDSS count flagged `-` is CDC's "no reported cases" (dataset notes). It comes back as sent: empty, with
-the flag and its meaning beside it, **never as 0**. Every other flag (`U` unavailable, `N` not reportable, `NN`,
-`NP`, `NC`) also leaves the cell empty, never zero. **Today** the tool still reads `-` as 0;
-[#186](https://github.com/jtouley/health-data-registry/pull/186) changes that.
+An empty NNDSS count flagged `-` is CDC's "no reported cases": the jurisdiction did not submit any cases (dataset
+notes). It is read as **not reported**, the maintainer's declaration of 25 Nov 2026, which reverses the earlier
+reading as a reported zero. It comes back empty, with the flag and its meaning beside it, and is **never counted
+as 0**: no total, rate or trend point is worked out from it. In `get_series` and `query_sql` the flag and its
+meaning come back beside the empty value; `get_rate` and `get_trend` name the flag when they leave the year out.
+Every other flag (`U` unavailable, `N` not reportable, `NN`, `NP`, `NC`) leaves the cell empty too.
 
 Other sources:
 
@@ -109,21 +116,19 @@ Other sources:
 ## Empty cells: suppression and missing codes
 
 An empty value means the publisher marked it missing, not reported, not reportable or suppressed. **It is never a
-zero**, and the tool never fills it in or back-calculates it. It comes back as a row, with its flag and what the
-flag means, so you can count the gaps or study them. **Today** NNDSS `-` ("no reported cases") is the one
-exception, still read as 0 with its flag beside it, until
-[#186](https://github.com/jtouley/health-data-registry/pull/186) lands.
+zero**, and the tool never fills it in or back-calculates it. That includes a code the publisher's codebook
+defines as "no reported cases" (NNDSS `-`): the cell stays empty, with its flag and that meaning beside it. It
+comes back as a row, so you can count the gaps or study them.
 
 | Source | What an empty cell can mean |
 |---|---|
-| NNDSS weekly | A flag explains it: `U` the jurisdiction could not send data; `N` not reportable there; `NN` not nationally notifiable; `NP` notifiable but not published; `NC` not calculated. A flag of `-` with an empty count means no reported cases (dataset notes); it stays empty, never 0. |
+| NNDSS weekly | A flag explains it: `U` the jurisdiction could not send data; `N` not reportable there; `NN` not nationally notifiable; `NP` notifiable but not published; `NC` not calculated. A flag of `-` with an empty count is CDC's "no reported cases", read as not reported; it stays empty with the flag, never 0. |
 | NHSN resistance | Resistant count and percent resistant are shown only when at least 20 isolates were tested; smaller cells are empty. |
 | RESP-NET | Some estimated cumulative rates for the current season are published empty. |
 | WHO tuberculosis | No value published for that country and year. |
 
-NNDSS's `-` is stored as published (empty, with the flag). Today only reading it turns it into 0, labelled "no
-reported cases"; under the [rule above](#show-everything-qualify-dont-decide) it comes back empty. A maintainer
-confirms the code's meaning on review of the contract (its `noCasesCode`).
+NNDSS's `-` is stored and returned as published (empty, with the flag). The maintainer declared on 25 Nov 2026
+that it means not reported, never a zero; the declaration is in the contract.
 
 ## Uncertainty
 
@@ -207,9 +212,11 @@ like it rose or fell.
 - **NNDSS** counts follow the national surveillance case definitions (CSTE position statements, listed at
   [ndc.services.cdc.gov](https://ndc.services.cdc.gov/)). NNDSS does not publish confirmed and probable cases
   separately here, so each count may combine them as the condition's definition allows, and they cannot be split.
-- **C. auris:** clinical cases and screening (colonisation) cases are separate series. If you ask for the two
-  added together, the answer says "screening detections, not incidence" beside the clinical count alone.
-  **Today** the tools keep them apart and ask you to name one.
+- **C. auris:** clinical cases and screening (colonisation) cases are separate series. Screening counts people
+  found to carry *C. auris*, not new cases of disease (the NNDSS contract's `notIncidence`); its counts are always
+  returned. Under the [rule above](#show-everything-qualify-dont-decide), a sum of the two, or a rate from
+  screening counts, comes back with the note "screening detections, not incidence" and the clinical figure beside
+  it. **Today** the tools keep the two apart and give no rate per 100,000 people for screening.
 - **RESP-NET** counts only laboratory-confirmed COVID-19, influenza and RSV hospitalisations.
 - **NHSN** covers pathogens from healthcare-associated infections reported to NHSN (CLABSI, CAUTI and SSI). It is
   not all clinical isolates in a state. Some phenotypes count non-susceptible rather than strictly resistant

@@ -237,8 +237,9 @@ These come from the spec and [docs/adr/](docs/adr/README.md). A PR that breaks o
    - One thing still blocks: a quality check that never ran
      ([#222](https://github.com/jtouley/health-data-registry/issues/222)). Telling physicians data was checked
      when it wasn't breaks their trust; that is about our own honesty, not deciding for them.
-   - The code still refuses or leaves rows out in places; [#186](https://github.com/jtouley/health-data-registry/pull/186)
-     and its follow-ups bring it in line. New code follows this rule.
+   - The code still refuses some sums and rates, and leaves total rows out of sums, where this rule qualifies
+     instead; follow-ups to [#186](https://github.com/jtouley/health-data-registry/pull/186) bring it in line. New
+     code follows this rule.
 3. **Review.** Contracts and semantic models may be drafted by inference or a model, but merge only after a
    maintainer reviews them. Until then `list_caveats` reports the contract as a draft.
 4. **No patient data.** No upload or local-file tool, ever. Tools read only catalogued public sources. Never join
