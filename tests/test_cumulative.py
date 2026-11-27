@@ -363,8 +363,7 @@ def test_a_summed_running_total_needs_one_week(tmp_path: Path) -> None:
     reg = _registry(tmp_path, YTD_SEMANTIC)
     ds = reg.get("toy_cases")
     # Across weeks: worked out, with the note and the running total at the last week beside it (was refused).
-    for kw in ({}, {"filters": {"week": [1, 2]}}):
-        cm = compile_metric(ds, "ytd_sum", **kw)  # type: ignore[arg-type]
+    for cm in (compile_metric(ds, "ytd_sum"), compile_metric(ds, "ytd_sum", filters={"week": [1, 2]})):
         assert "counted again in every later week" in cm.method and "year_to_date_at_last_week" in cm.columns
     # One row per week adds nothing across weeks.
     one = compile_metric(ds, "ytd_sum", filters={"week": 1}, group_by=["week"])
