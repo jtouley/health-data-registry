@@ -315,9 +315,10 @@ sources:
         US TERRITORIES, NON-US RESIDENTS or a census division); empty on single-jurisdiction rows.)
     - name: m1
       data_type: varchar
-      description: Publisher field m1, as text; read into m1 (Cases reported for this condition and area in this
-        MMWR week (publisher column 'Current week'). Empty when the flag column m1_flag holds a code; '-' means
-        no reported cases.)
+      description: 'Publisher field m1, as text; read into m1 (Cases reported for this condition and area in this
+        MMWR week (publisher column ''Current week''). Empty only where the flag column m1_flag holds a code; a
+        count flagged ''-'' (no reported cases) means not reported (maintainer''s declaration, see noCasesCode):
+        it has no number and is never counted as 0.)'
     - name: m1_flag
       data_type: varchar
       description: 'Publisher field m1_flag, as text; read into m1_flag (Why the current-week count is empty. Codes
@@ -338,17 +339,21 @@ sources:
       data_type: varchar
       description: 'Publisher field m3, as text; read into m3 (Cumulative cases so far in this MMWR year up to and
         including this week (year to date). Cumulative: take the latest week, never sum across weeks. Can be incomplete
-        if the condition was reportable for only part of the year (publisher footnote).)'
+        if the condition was reportable for only part of the year (publisher footnote). Empty only where the flag
+        column m3_flag holds a code; a count flagged ''-'' (no reported cases) means not reported (maintainer''s
+        declaration, see noCasesCode): it has no number and is never counted as 0.)'
     - name: m3_flag
       data_type: varchar
       description: 'Publisher field m3_flag, as text; read into m3_flag (Why the current-year year-to-date count
         (m3) is empty: the publisher''s flag code.)'
     - name: m4
       data_type: varchar
-      description: Publisher field m4, as text; read into m4 (Cumulative cases in the previous MMWR year up to the
-        same week, as published in this week's table. The codebook doesn't say whether it counts the same thing
-        as that year's own year-to-date (m3); for some conditions the two differ widely (see openQuestions), so
-        it is shown beside m3, never in its place.)
+      description: 'Publisher field m4, as text; read into m4 (Cumulative cases in the previous MMWR year up to
+        the same week, as published in this week''s table. The codebook doesn''t say whether it counts the same
+        thing as that year''s own year-to-date (m3); for some conditions the two differ widely (see openQuestions),
+        so it is shown beside m3, never in its place. Empty only where the flag column m4_flag holds a code; a count
+        flagged ''-'' (no reported cases) means not reported (maintainer''s declaration, see noCasesCode): it has
+        no number and is never counted as 0.)'
     - name: m4_flag
       data_type: varchar
       description: 'Publisher field m4_flag, as text; read into m4_flag (Why the previous-year year-to-date count
@@ -370,6 +375,46 @@ sources:
     - name: year
       data_type: varchar
       description: Publisher field year, as text; read into year (MMWR (epidemiological) year of the report.)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
+  - name: cdc_nrevss_positivity
+    description: 'Raw records of Percent of Tests Positive for Viral Respiratory Pathogens (NREVSS) as the adapter
+      hands them on, every value as text: the publisher''s own fields, or for a wide table the adapter''s structural
+      reshaping of them (see the staging model). Only the full load the dataset''s LATEST pointer names is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_nrevss_positivity.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - pathogen
+      - percent_test_positivity
+      - week_end
+    columns:
+    - name: pathogen
+      data_type: varchar
+      description: 'Publisher field pathogen, as text; read into pathogen (The virus tested for: COVID-19 (SARS-CoV-2,
+        the virus that causes COVID-19), Influenza, or RSV (respiratory syncytial virus).)'
+    - name: percent_test_positivity
+      data_type: varchar
+      description: 'Publisher field percent_test_positivity, as text; read into percent_test_positivity (Percent
+        of laboratory tests for the virus that were positive in the week, nationally: positive tests divided by
+        all tests, times 100 (dataset description). Counts tests, not people (dataset description). An empty value
+        is kept empty, never read as zero; what CDC means by an empty value is not stated (see openQuestions).)'
+    - name: week_end
+      data_type: varchar
+      description: 'Publisher field week_end, as text; read into week_end (The Saturday that ends the MMWR week
+        (column description: ''Date of Saturday of the MMWR week''). For COVID-19 and RSV, the week the tests were
+        performed (dataset description: laboratories report ''the total number of SARS-CoV-2 and RSV tests performed
+        that week''); which date puts an influenza test in a week is not stated (see openQuestions).)'
     - name: _snapshot_id
       data_type: varchar
       description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
