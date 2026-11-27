@@ -46,6 +46,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- New source, draft (contract not yet reviewed): `who_gho_hiv_incidence`, WHO's estimated new HIV infections per
+  1000 uninfected population with its uncertainty bounds, by country, WHO region and the globe and by sex (GHO
+  indicator SDGHIV), on the existing WHO GHO adapter. Read live per question, never stored or published, with
+  WHO's dataset terms on every answer (hard rule 10). Both sexes is WHO's own estimate and is never built by
+  adding females and males.
 - SchoolVaxView kindergarten coverage and exemptions (`cdc_schoolvaxview_kindergarten`, CDC data.cdc.gov
   ijqb-a7ye): the percent of kindergartners vaccinated, or with an exemption, by vaccine and dose or exemption
   type, state and school year, as each state reported it, read as published and never added up. Draft contract.

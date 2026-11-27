@@ -1,0 +1,51 @@
+id: who_gho_hiv_incidence
+title: New HIV infections (per 1000 uninfected population)
+agency: WHO
+publisher: World Health Organization, Global Health Observatory
+level: international
+country: null
+research_areas: [infectious_disease]
+id_areas: [hiv]
+years: {start: 1990, end: null}
+geography: [country, who_region, nation]
+shape: estimate_table
+grain: "One row is one country, WHO region or the globe, one year and one sex (both sexes, female or male), with WHO's estimated number of new HIV infections per 1000 uninfected people and its lower and upper uncertainty bounds."
+refresh: annual
+licence:
+  # Read from terms_url on 2026-11-25: WHO's own "Terms and Conditions" for datasets, not a Creative Commons
+  # licence. Use, copy and distribute for public health purposes; no commercial promotion; only minimal
+  # style changes without WHO's written authorization; WHO may end the licence. Never mirrored here.
+  id: WHO-dataset-terms
+  redistribution: false
+  terms_url: https://www.who.int/about/policies/publishing/data-policy/terms-and-conditions
+citation: "World Health Organization. Global Health Observatory: New HIV infections (per 1000 uninfected population), indicator SDGHIV. https://ghoapi.azureedge.net/api/SDGHIV (accessed <retrieved_at>)."
+source:
+  portal: who_gho
+  host: ghoapi.azureedge.net
+  dataset: SDGHIV
+  landing_url: https://www.who.int/data/gho/data/indicators/indicator-details/GHO/new-hiv-infections-(per-1000-uninfected-population)
+  api_url: https://ghoapi.azureedge.net/api/SDGHIV
+codebook_url: https://www.who.int/data/gho/indicator-metadata-registry/imr-details/4752
+caveats:
+  - "These are WHO model estimates with uncertainty bounds, not reported HIV diagnoses; WHO's indicator page says most countries rely on modelling (such as Spectrum) and that newly reported cases should not be used to estimate new infections. Quote the bounds with the estimate."
+  - "The rate is per 1000 uninfected people, not per 100,000 population, so it can't be set beside a rate per 100,000 without saying so."
+  - "Each row is for both sexes, females or males. Both sexes is its own estimate, not the sum of the two; never add rates."
+  - "WHO re-estimates the whole series each year, so earlier years can change between releases."
+  - "WHO's Terms and Conditions for datasets (https://www.who.int/about/policies/publishing/data-policy/terms-and-conditions, read 2026-11-25) allow use for public health purposes with attribution, forbid use in promoting a commercial enterprise, and allow only minimal changes without WHO's written authorization; the data are fetched from WHO at run time, never mirrored, and the terms are shown with every result."
+  - "Rows for WHO regions and the globe are aggregates, not countries. On 2026-11-25 WHO published no row for the United States of America in this indicator."
+  - "Country is given as an ISO 3166-1 alpha-3 code; GHO WHO regions differ from GBD regions."
+gbd:
+  location_column: spatial_dim
+  causes:
+    - {condition: "SDGHIV", cause: "HIV/AIDS", pathogen: null}
+conditions:
+  dimension: null
+  # Provenance: WHO GHO indicator list (https://ghoapi.azureedge.net/api/Indicator), IndicatorCode SDGHIV,
+  # IndicatorName as published (read 2026-11-25).
+  source: "WHO's own name for its one measure here, estimated new HIV infections per 1000 uninfected population, exactly as published in the Global Health Observatory (checked 25 Nov 2026)."
+  labels:
+    - "New HIV infections (per 1000 uninfected population)"
+  aliases: []
+contract: contracts/who_gho_hiv_incidence.odcs.yaml
+semantic_model: semantic/who_gho_hiv_incidence.yaml
+status: draft

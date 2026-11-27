@@ -1,0 +1,229 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: who_gho_hiv_incidence
+name: New HIV infections (per 1000 uninfected population)
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "WHO estimates of new HIV infections per 1000 uninfected population per year, with uncertainty bounds, by country, WHO region and globally, for both sexes, females and males (GHO indicator SDGHIV)."
+  usage: "Read one estimate and its bounds for a place, year and sex; compare places or years only with the bounds shown; never add rates, and never add the female and male rows to make both sexes. Fetched from WHO at run time; never mirrored."
+  limitations: "Modelled estimates, revised in full each year; per 1000 uninfected people, not per 100,000 population; WHO's Terms and Conditions for datasets: public health purposes only, no commercial promotion, only minimal changes without WHO's written authorization."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://ghoapi.azureedge.net/api/SDGHIV", description: "GHO OData endpoint for the indicator (fetched 2026-11-25; 15,654 rows, one page)"}
+    - {type: businessDefinition, url: "https://ghoapi.azureedge.net/api/Indicator", description: "GHO indicator list giving the code and name"}
+    - {type: businessDefinition, url: "https://ghoapi.azureedge.net/api/DIMENSION/SEX/DimensionValues", description: "GHO codes of the SEX dimension (SEX_BTSX Both sexes, SEX_FMLE Female, SEX_MLE Male, SEX_NOA Not applicable), read 2026-11-25"}
+    - {type: businessDefinition, url: "https://www.who.int/data/gho/indicator-metadata-registry/imr-details/4752", description: "WHO indicator metadata (IMRID 4752, linked from the indicator page, read 2026-11-25): definition, method of estimation (modelling, Spectrum), unit 'Cases per 1000 population'"}
+servers:
+  - id: who_gho
+    server: ghoapi.azureedge.net
+    type: api
+    location: https://ghoapi.azureedge.net/api/SDGHIV
+    description: "OData v4 JSON; rows are under the 'value' array. The adapter keeps only the columns listed in the schema."
+schema:
+  - name: who_gho_hiv_incidence
+    physicalName: who_gho_hiv_incidence
+    physicalType: table
+    logicalType: object
+    description: "One row per place, year and sex."
+    dataGranularityDescription: "place (country, WHO region or global) x year x sex"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://ghoapi.azureedge.net/api/SDGHIV"}
+    customProperties:
+      - property: totalRows
+        value: "spatial_dim_type IN ('REGION', 'WORLDBANKINCOMEGROUP', 'GLOBAL') OR dim1 = 'SEX_BTSX'"
+        description: "Aggregates: WHO regions and the globe (SpatialDimType values on 2026-11-25: COUNTRY 14,898 rows, REGION 648, GLOBAL 108), and the Both sexes rows (SEX_BTSX in WHO's SEX dimension), which cover the female and male rows beside them. Rates are never added, so this marks them only."
+      - {property: tableShape, value: estimate_table}
+      - property: idDimensions
+        value:
+          condition: indicator_code
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: null
+          period: time_dim
+          provisionalFlag: null
+        description: "Measure kind (estimate with bounds) is declared in the semantic model. WHO's definition (IMRID 4752): the estimated number of new HIV infections per 1000 persons among the uninfected population. No case status, organism or provisional flag."
+    properties:
+      - name: id
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "WHO's row identifier in the GHO database; used only for provenance."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: Id}
+      - name: indicator_code
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "GHO indicator code; always SDGHIV (new HIV infections per 1000 uninfected population)."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: IndicatorCode}
+        quality:
+          - id: indicator_is_sdghiv
+            dimension: conformity
+            severity: error
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["SDGHIV"]}
+            mustBe: 0
+            description: "The endpoint is the SDGHIV indicator (GHO indicator list); a row for another indicator would be a different measure."
+      - name: spatial_dim_type
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Kind of place: COUNTRY, REGION (WHO region), WORLDBANKINCOMEGROUP or GLOBAL."
+        enum: [{value: COUNTRY}, {value: REGION}, {value: WORLDBANKINCOMEGROUP}, {value: GLOBAL}]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: SpatialDimType}
+      - name: spatial_dim
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Place code: ISO 3166-1 alpha-3 for countries (for example ZAF), WHO region code (for example AFR for the African Region), or GLOBAL."
+        examples: ["ZAF", "AFR", "GLOBAL"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: SpatialDim}
+      - name: parent_location_code
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "WHO region code of the country (for example AFR); empty for aggregate rows."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: ParentLocationCode}
+      - name: parent_location
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "WHO region name of the country (for example Africa); empty for aggregate rows."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: ParentLocation}
+      - name: time_dim
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "Calendar year of the estimate (TimeDimType YEAR; 1990 to 2025 on 2026-11-25)."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: TimeDim}
+      - name: dim1
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "Sex, as a code of WHO's SEX dimension: SEX_BTSX both sexes, SEX_FMLE female, SEX_MLE male. Both sexes is its own estimate, not the sum of the other two."
+        examples: ["SEX_BTSX", "SEX_FMLE", "SEX_MLE"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: Dim1}
+        quality:
+          - id: sex_is_a_who_sex_code
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["SEX_BTSX", "SEX_FMLE", "SEX_MLE", "SEX_NOA"]}
+            mustBe: 0
+            description: "WHO's SEX dimension lists these four codes (DIMENSION/SEX/DimensionValues). Another code is a warning to review, never a reason to refuse the source."
+      - name: value_text
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "WHO's display string: estimate followed by the bounds in brackets, as in '0.46 [0.33 - 0.64]'. Kept for display only; numbers come from the numeric columns."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: Value}
+      - name: numeric_value
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Estimated new HIV infections per 1000 uninfected people in the year: a modelled estimate (IMRID 4752: most countries rely on modelling such as Spectrum), not a count of diagnoses."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: NumericValue}
+          - {property: unit, value: "/1000/a"}
+        quality:
+          - id: rate_not_negative
+            dimension: conformity
+            severity: error
+            type: sql
+            description: "WHO's unit is cases per 1000 population, so an estimate is never negative."
+            query: "SELECT COUNT(*) FROM {object} WHERE numeric_value < 0"
+            mustBe: 0
+          - id: some_estimates_present
+            dimension: completeness
+            severity: error
+            type: sql
+            description: "Fill rate at error level: an all-empty estimate column passes every check on it (all 15,654 rows had one on 2026-11-25). The generated fill-rate check says the same at warn level."
+            query: "SELECT COUNT(*) FROM {object} WHERE numeric_value IS NOT NULL"
+            mustBeGreaterThan: 0
+          - id: bounds_hold_the_estimate
+            dimension: consistency
+            severity: warn
+            type: sql
+            description: "WHO publishes the low and high bounds as the estimate's uncertainty range (its display string reads estimate [low - high]), so the estimate lies between them where all three are given."
+            query: "SELECT COUNT(*) FROM {object} WHERE low > numeric_value OR high < numeric_value"
+            mustBe: 0
+      - name: low
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Lower bound of WHO's uncertainty range for the estimate, per 1000 uninfected people."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: Low}
+          - {property: unit, value: "/1000/a"}
+      - name: high
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Upper bound of WHO's uncertainty range for the estimate, per 1000 uninfected people."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: High}
+          - {property: unit, value: "/1000/a"}
+      - name: comments
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "WHO's free-text note on the row, when given (none on 2026-11-25)."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: Comments}
+          - {property: mayBeEmpty, value: true}
+      - name: date
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "Timestamp WHO gives for the row in the GHO database (ISO 8601 with offset), read as the date the value was last loaded."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: Date}
+    quality:
+      - id: one_row_per_place_year_and_sex
+        dimension: uniqueness
+        severity: error
+        type: sql
+        description: "Grain: one estimate per place, year and sex (an exact structural fact of the full indicator, 15,654 rows, on 2026-11-25). A repeat would mean two estimates for one cell."
+        query: "SELECT COUNT(*) FROM (SELECT spatial_dim, time_dim, dim1 FROM {object} GROUP BY spatial_dim, time_dim, dim1 HAVING COUNT(*) > 1)"
+        mustBe: 0
+customProperties:
+  - {property: licence, value: WHO-dataset-terms}
+  - {property: redistribution, value: false}
+  - {property: citation, value: "World Health Organization. Global Health Observatory, indicator SDGHIV: New HIV infections (per 1000 uninfected population). https://ghoapi.azureedge.net/api/SDGHIV"}
+  - {property: refresh, value: annual}
+  - {property: rateDenominator, value: "WHO's estimate of the uninfected population of the country or group, per 1000 per year (IMRID 4752: new HIV infections per 1000 persons among the uninfected population); the value is a WHO model estimate, kept with its low and high bounds"}
+  - {property: unreliableRule, value: {kind: none, description: "None: WHO publishes a modelled estimate with low and high bounds for every value; none is marked unreliable."}}
+  - property: openQuestions
+    value:
+      - "Licence: read from the terms URL on 2026-11-25, the same WHO Terms and Conditions for datasets as who_gho_tb_incidence: use for public health purposes, no commercial promotion, only minimal changes without WHO's written authorization. Maintainer to confirm, as for tuberculosis."
+      - "Is the Low-High range a 95% uncertainty interval? Not stated in the GHO API response or the indicator metadata read."
+      - "Age: the indicator metadata lists age groups (0-14, 15-49, 50+), but the API rows carry only sex. Are these rows for all ages? Not stated; until confirmed, answers say only 'per 1000 uninfected population'."
+      - "The United States of America has no row in this indicator (2026-11-25). Is that a WHO publication choice or a gap? Not stated; answers for the United States are declined, never filled."
+      - "STI and hepatitis indicators (also from WHO's Global HIV, Hepatitis and STIs Programmes) are separate GHO indicator codes; each would be its own catalog entry on this adapter, one indicator per entry."
+      - "WHO has announced a successor to the GHO OData API; when ghoapi.azureedge.net is retired the adapter and api_url must move. Current status not checked."
+      - "GBD location crosswalk: spatial_dim holds ISO3 codes for countries; WHO region codes have no GBD equivalent and must not be mapped."
