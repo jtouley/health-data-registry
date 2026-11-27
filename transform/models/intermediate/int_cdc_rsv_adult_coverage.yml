@@ -89,6 +89,36 @@ models:
           contract: contracts/cdc_rsv_adult_coverage.odcs.yaml
           checks: The column is labelled 'Estimate (%)', so no value lies outside 0 to 100.
   - odcs_check:
+      name: cdc_rsv_adult_coverage_estimate_on_published_proportion_scale
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE estimate > 1
+        condition: measured = 0
+      config:
+        severity: warn
+        meta:
+          dimension: consistency
+          rule: estimate_on_published_proportion_scale
+          contract: contracts/cdc_rsv_adult_coverage.odcs.yaml
+          checks: 'Checks the unit this contract declares, not a new fact: every estimate published on 2026-11-25
+            lay between 0 and 0.72 (a proportion; open question ''Scale''), and the series labels say so. A value
+            above 1 means CDC moved some or all rows to percent, so the labels would be wrong; a maintainer reviews
+            the scale and the labels together before the copy is read.'
+  - odcs_check:
+      name: cdc_rsv_adult_coverage_coverage_rows_have_estimates
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE indicator_label = 'Up-to-date' AND indicator_category_label
+          = 'Yes' AND estimate IS NOT NULL
+        condition: measured > 0
+      config:
+        severity: warn
+        meta:
+          dimension: completeness
+          rule: coverage_rows_have_estimates
+          contract: contracts/cdc_rsv_adult_coverage.odcs.yaml
+          checks: 'Fill rate of the rows the series read: at least one Up-to-date ''Yes'' row has an estimate. The
+            column-wide fill check passes while intent rows are filled, so this catches the coverage rows being
+            renamed, dropped or all suppressed.'
+  - odcs_check:
       name: cdc_rsv_adult_coverage_half_width_not_negative
       arguments:
         measure_sql: SELECT COUNT(*) FROM {object} WHERE ci_half_width_95pct < 0
@@ -99,8 +129,9 @@ models:
           dimension: conformity
           rule: half_width_not_negative
           contract: contracts/cdc_rsv_adult_coverage.odcs.yaml
-          checks: The column is a 95% confidence interval half width (column description), a distance, so it is
-            never negative.
+          checks: 'The column is a 95% confidence interval half width (column description), a distance, so it is
+            never negative. A warning, not an error like the estimate''s range: no series returns the half width,
+            so a bad one misleads no answer and is left for review.'
   - odcs_check:
       name: cdc_rsv_adult_coverage_interval_with_every_estimate
       arguments:
@@ -156,6 +187,20 @@ models:
           contract: contracts/cdc_rsv_adult_coverage.odcs.yaml
           checks: No row has a value for half the width of the estimate's 95% confidence interval (column '95% Confidence
             Interval Half Width').
+  - odcs_check:
+      name: cdc_rsv_adult_coverage_fill_rate_unweighted_sample_size
+      arguments:
+        measure_sql: SELECT CASE WHEN count(*) = 0 THEN 0.0 ELSE count(*) FILTER (WHERE ("unweighted_sample_size"
+          IS NULL OR trim(CAST("unweighted_sample_size" AS VARCHAR)) = '')) / count(*) END FROM {object}
+        condition: measured < 1.0
+      config:
+        severity: warn
+        meta:
+          dimension: completeness
+          rule: fill_rate_unweighted_sample_size
+          contract: contracts/cdc_rsv_adult_coverage.odcs.yaml
+          checks: No row has a value for number of survey respondents behind the estimate, before weighting (column
+            'Unweighted Sample Size').
   columns:
   - name: vaccine
     data_type: varchar
@@ -295,6 +340,8 @@ models:
   - name: unweighted_sample_size
     data_type: bigint
     description: Number of survey respondents behind the estimate, before weighting (column 'Unweighted Sample Size').
+      Filled on every row on 2026-11-25, but the metadata doesn't say it always is, so an empty one is a fill-rate
+      warning, not a failed load.
     meta:
       logical_type: integer
       physical_type: BIGINT
@@ -306,7 +353,8 @@ models:
     data_type: varchar
     description: 'CDC''s suppression flag, exactly as published: ''1'' on rows whose estimate is empty, ''0'' otherwise
       (on 2026-11-25). The column has no description; the footnotes give the suppression rule (open question ''Suppression
-      flag'').'
+      flag''). Not required: a column with no documented meaning never fails the load when empty; the fill-rate
+      check warns instead.'
     meta:
       logical_type: string
       physical_type: VARCHAR

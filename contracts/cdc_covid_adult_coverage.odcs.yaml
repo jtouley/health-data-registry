@@ -54,7 +54,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "The kind of place, as published: National, Region (HHS region), State, or Substate (a city or county reported apart from the rest of its state). The column description lists National, Region and State; Substate is published too."
+        description: "The kind of place, as published: National, Region (HHS region), State, or Substate (a city or county reported apart from the rest of its state: on 2026-11-25 the cities of Chicago, Houston, Los Angeles, New York and Phoenix, Bexar County (Texas) and Philadelphia County, each beside its 'Rest of State'). The column description lists National, Region and State; Substate is published too."
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: geographic_level}
@@ -166,6 +166,13 @@ schema:
             query: "SELECT COUNT(*) FROM {object} WHERE estimate < 0 OR estimate > 100"
             mustBe: 0
             description: "The column is labelled 'Estimate (%)', so no value lies outside 0 to 100."
+          - id: coverage_rows_have_estimates
+            dimension: completeness
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE indicator_label = 'Up-to-date' AND indicator_category_label = 'Yes' AND estimate IS NOT NULL"
+            mustBeGreaterThan: 0
+            description: "Fill rate of the rows the series read: at least one Up-to-date 'Yes' row has an estimate. The column-wide fill check passes while intent rows are filled, so this catches the coverage rows being renamed, dropped or all suppressed."
       - name: ci_half_width_95pct
         physicalType: DOUBLE
         logicalType: number
@@ -182,7 +189,7 @@ schema:
             type: sql
             query: "SELECT COUNT(*) FROM {object} WHERE ci_half_width_95pct < 0"
             mustBe: 0
-            description: "The column is a 95% confidence interval half width (column description), a distance, so it is never negative."
+            description: "The column is a 95% confidence interval half width (column description), a distance, so it is never negative. A warning, not an error like the estimate's range: no series returns the half width, so a bad one misleads no answer and is left for review."
           - id: interval_with_every_estimate
             dimension: completeness
             severity: warn
@@ -193,8 +200,8 @@ schema:
       - name: unweighted_sample_size
         physicalType: BIGINT
         logicalType: integer
-        required: true
-        description: "Number of survey respondents behind the estimate, before weighting (column 'Unweighted Sample Size')."
+        required: false
+        description: "Number of survey respondents behind the estimate, before weighting (column 'Unweighted Sample Size'). Filled on every row on 2026-11-25, but the metadata doesn't say it always is, so an empty one is a fill-rate warning, not a failed load."
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: unweighted_sample_size}
@@ -202,8 +209,8 @@ schema:
       - name: current_season_week_ending
         physicalType: DATE
         logicalType: date
-        required: true
-        description: "The matching week ending date in the current season's calendar, so the same point in different seasons can be set side by side (column 'Current Season Week Ending Date')."
+        required: false
+        description: "The matching week ending date in the current season's calendar, so the same point in different seasons can be set side by side (column 'Current Season Week Ending Date'). Not required: the metadata doesn't say it is always filled, so an empty one is a fill-rate warning."
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: current_season_week_ending}
@@ -219,8 +226,8 @@ schema:
       - name: suppression_flag
         physicalType: VARCHAR
         logicalType: string
-        required: true
-        description: "CDC's suppression flag, exactly as published: '1' on rows whose estimate is empty, '0' otherwise (on 2026-11-25). The column has no description; the footnotes give the suppression rule (open question 'Suppression flag')."
+        required: false
+        description: "CDC's suppression flag, exactly as published: '1' on rows whose estimate is empty, '0' otherwise (on 2026-11-25). The column has no description; the footnotes give the suppression rule (open question 'Suppression flag'). Not required: a column with no documented meaning never fails the load when empty; the fill-rate check warns instead."
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: suppression_flag}

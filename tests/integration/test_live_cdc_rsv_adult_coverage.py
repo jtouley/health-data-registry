@@ -74,7 +74,8 @@ def test_codebook_facts_hold_on_the_latest_rows(live):
     for r in rows:
         est, hw = _number(r, "estimate"), _number(r, "ci_half_width_95pct")
         if est is not None:
-            assert 0 <= est <= 100, r
+            # The declared scale: a proportion (open question 'Scale'), never a percent.
+            assert 0 <= est <= 1, r
             assert hw is not None and hw >= 0, r
         if r.get("suppression_flag") == "1":
             assert est is None, r

@@ -33,7 +33,7 @@ metrics:
     uncertainty_reason: "CDC publishes the 95% confidence interval as a half width (ci_half_width_95pct, percentage points) beside each estimate; read it with query_sql, since it can't be shown here as lower and upper bounds yet (#172)."
 series:
   - condition: "COVID-19 vaccination"
-    label: "COVID-19 vaccination coverage, adults 18 and older (up to date this season, NIS-FRVM survey, weekly cumulative)"
+    label: "COVID-19 vaccination coverage, adults 18 and older (up to date this season, NIS-FRVM survey, weekly cumulative; starts again from zero each autumn when a new season begins)"
     metric: weekly_vaccination_coverage
     measure: percent
     filters: {group_kind: "Overall", group: "18+ years", measure_kind: "Up-to-date", category: "Yes"}
@@ -41,7 +41,7 @@ series:
     time_dimension: week_ending
     asked_with: ["vaccination", "vaccinated", "vaccine", "coverage", "up to date", "immunization", "uptake"]
   - condition: "COVID-19 vaccination"
-    label: "COVID-19 vaccination coverage, adults 65 and older (up to date this season, NIS-FRVM survey, weekly cumulative)"
+    label: "COVID-19 vaccination coverage, adults 65 and older (up to date this season, NIS-FRVM survey, weekly cumulative; starts again from zero each autumn when a new season begins)"
     metric: weekly_vaccination_coverage
     measure: percent
     filters: {group_kind: "Age (3 Level)", group: "65+ years", measure_kind: "Up-to-date", category: "Yes"}

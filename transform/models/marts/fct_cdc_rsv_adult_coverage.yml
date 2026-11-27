@@ -2,8 +2,8 @@
 version: 2
 models:
 - name: fct_cdc_rsv_adult_coverage
-  description: 'One row per published estimate: every row of int_cdc_rsv_adult_coverage, none removed, each with
-    value_status.'
+  description: 'One row per age group, place, demographic group, measure, category and survey week: every row of
+    int_cdc_rsv_adult_coverage, suppressed ones included, none removed, each with value_status.'
   config:
     materialized: table
     contract:
@@ -43,7 +43,8 @@ models:
     - type: not_null
   - name: place
     data_type: varchar
-    description: National, or an HHS region ('Region 1' to 'Region 10').
+    description: 'The place, as CDC names it: ''National'' or ''Region 1'' to ''Region 10'' on 2026-11-25 (the metadata
+      also lists a State level, not yet published).'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -53,9 +54,24 @@ models:
       missing_codes: []
     constraints:
     - type: not_null
+  - name: place_kind
+    data_type: varchar
+    description: 'The kind of place, as published: National or Region (HHS region); State if CDC publishes state
+      rows.'
+    meta:
+      logical_type: string
+      physical_type: VARCHAR
+      source_field: place_kind
+      unit: null
+      codes: []
+      missing_codes: []
+    constraints:
+    - type: not_null
   - name: group_kind
     data_type: varchar
-    description: The kind of demographic group, as published.
+    description: 'The kind of group the estimate is for, as published: Overall, an age breakdown, race and ethnicity,
+      sex, poverty status, health insurance, urbanicity, disability status, sexual orientation or chronic conditions.
+      Overall sits beside the groups and each kind covers all adults again, so groups are never added.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -67,7 +83,7 @@ models:
     - type: not_null
   - name: demographic_group
     data_type: varchar
-    description: The demographic group, as published.
+    description: The group within that kind, as CDC labels it ('18+ years', 'Female', 'Hispanic').
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -103,7 +119,8 @@ models:
     - type: not_null
   - name: week_end
     data_type: date
-    description: The date the survey week ends.
+    description: The date the survey week ends; the estimate is cumulative through that week, so weeks are never
+      added.
     meta:
       logical_type: date
       physical_type: DATE
@@ -115,12 +132,15 @@ models:
     - type: not_null
   - name: estimate
     data_type: double
-    description: The survey estimate, exactly as CDC publishes it; empty where CDC suppressed it, never zero.
+    description: 'Share of adults in the age group ever vaccinated against RSV (Up-to-date rows), or in the vaccination
+      and intent category, exactly as CDC publishes it: a proportion from 0 to 1 (0.41 is about 41%) although CDC''s
+      column is labelled %, never rescaled (open question ''Scale'' in the source contract). Empty where CDC suppressed
+      it, never zero.'
     meta:
       logical_type: number
       physical_type: DOUBLE
       source_field: estimate
-      unit: null
+      unit: proportion of adults (0 to 1) as published; the column is labelled %
       codes: []
       missing_codes: []
     data_tests:
@@ -130,12 +150,14 @@ models:
           severity: warn
   - name: ci_half_width_95pct
     data_type: double
-    description: CDC's 95% confidence interval half width, as published (percentage points).
+    description: Half the width of the estimate's 95% confidence interval, as published. Its values read as percentage
+      points while the estimate reads as a proportion, so the two are on different scales (open question 'Scale');
+      never add it to or subtract it from the estimate as they stand.
     meta:
       logical_type: number
       physical_type: DOUBLE
       source_field: ci_half_width_95pct
-      unit: null
+      unit: reads as percentage points (open question 'Scale')
       codes: []
       missing_codes: []
     data_tests:
@@ -145,7 +167,7 @@ models:
           severity: warn
   - name: unweighted_sample_size
     data_type: bigint
-    description: Survey respondents behind the estimate, before weighting.
+    description: Number of survey respondents behind the estimate, before weighting.
     meta:
       logical_type: integer
       physical_type: BIGINT
@@ -153,11 +175,15 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
+    data_tests:
+    - not_all_empty:
+        name: fct_cdc_rsv_adult_coverage_unweighted_sample_size_filled
+        config:
+          severity: warn
   - name: suppression_flag
     data_type: varchar
-    description: CDC's suppression flag, exactly as published ('1' or '0').
+    description: CDC's suppression flag, exactly as published. The column has no description; on 2026-11-25 it was
+      '1' exactly where the estimate was empty and '0' elsewhere (open question in the source contract).
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -165,13 +191,16 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
+    data_tests:
+    - not_all_empty:
+        name: fct_cdc_rsv_adult_coverage_suppression_flag_filled
+        config:
+          severity: warn
   - name: value_status
     data_type: varchar
-    description: 'Why the estimate is or isn''t there: ''published'', or ''suppressed by CDC (small sample)'' where
-      the estimate is empty and CDC''s flag is 1, or ''not published'' where it is empty without the flag. It qualifies
-      the row and removes nothing.'
+    description: 'Whether the estimate is there, and CDC''s flag beside it, without giving the flag a meaning: ''published'',
+      ''published; CDC flag 1'', ''empty; CDC flag 1'', ''empty; CDC flag 0'' or ''empty; no CDC flag 0 or 1''.
+      Reading flag 1 as suppression waits for a maintainer (open question). It qualifies the row and removes nothing.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -183,8 +212,8 @@ models:
     - type: not_null
   - name: _snapshot_id
     data_type: varchar
-    description: The lake snapshot the row was read from (the dataset's LATEST load); its manifest gives the source
-      address, retrieval time and dataset version.
+    description: The lake snapshot the row was read from (the dataset's LATEST load). Its manifest gives the source
+      address, retrieval time and dataset version that go with every answer built on this row.
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -196,8 +225,8 @@ models:
     - type: not_null
   - name: _raw_sha256
     data_type: varchar
-    description: 'The sha256 fingerprint of each raw file the row was parsed from: the exact bytes the publisher
-      sent.'
+    description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+      the exact bytes the publisher sent.'
     meta:
       logical_type: string
       physical_type: VARCHAR

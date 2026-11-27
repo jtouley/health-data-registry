@@ -1,8 +1,9 @@
 # Hand-written dbt unit tests of cdc_rsv_adult_coverage: the generated staging typing (staging.typed_select) and the hand-written
 # fact (fct_cdc_rsv_adult_coverage). One file per source, beside staging_typing.yml, so new-source pull requests don't edit the same
 # file. Column types are held by the enforced model contracts; these tests check values: the estimate and its half
-# width are read exactly as published (never rescaled), a suppressed estimate (the field left out, so NULL) stays
-# empty rather than zero and keeps CDC's flag, and the fact keeps every row and says why an estimate is empty.
+# width are read exactly as published (never rescaled), a suppressed estimate (the field left out, so NULL, or sent
+# empty or blank) stays empty rather than zero and keeps CDC's flag, a real zero stays zero, and the fact keeps every
+# row, its provenance and half width, and names CDC's flag beside each estimate without giving it a meaning.
 version: 2
 unit_tests:
 - name: stg_cdc_rsv_adult_coverage_estimates_stay_as_published_and_suppressed_ones_stay_empty
@@ -16,6 +17,10 @@ unit_tests:
 
       union all select ''RSV'', ''75+ years'', ''Region'', ''Region 8'', ''Overall'', ''75+ years'', ''Up-to-date'', ''Yes'', ''November Week 1'', ''2025-11-01T00:00:00.000'', cast(null as varchar), cast(null
       as varchar), ''23'', ''1'', ''s1'', ''h1''
+
+      union all select ''RSV'', ''75+ years'', ''Region'', ''Region 9'', ''Overall'', ''75+ years'', ''Up-to-date'', ''Yes'', ''November Week 1'', ''2025-11-01T00:00:00.000'', ''0.0'', '' 0.5 '', ''900'', ''0'', ''s1'', ''h1''
+
+      union all select ''RSV'', ''75+ years'', ''Region'', ''Region 10'', ''Overall'', ''75+ years'', ''Up-to-date'', ''Yes'', ''November Week 1'', ''2025-11-01T00:00:00.000'', '''', '' '', ''19'', ''1'', ''s1'', ''h1''
 
       '
   expect:
@@ -32,34 +37,32 @@ unit_tests:
       ci_half_width_95pct: null
       unweighted_sample_size: 23
       suppression_flag: '1'
-- name: fct_cdc_rsv_adult_coverage_keeps_every_row_and_says_why_an_estimate_is_empty
+    - geography_name: Region 9
+      week_ending: '2025-11-01'
+      estimate: 0.0
+      ci_half_width_95pct: 0.5
+      unweighted_sample_size: 900
+      suppression_flag: '0'
+    - geography_name: Region 10
+      week_ending: '2025-11-01'
+      estimate: null
+      ci_half_width_95pct: null
+      unweighted_sample_size: 19
+      suppression_flag: '1'
+- name: fct_cdc_rsv_adult_coverage_keeps_every_row_and_names_the_flag_beside_each_estimate
   model: fct_cdc_rsv_adult_coverage
   given:
   - input: ref('int_cdc_rsv_adult_coverage')
     rows:
-    - age_group: 75+ years
-      geography_name: Region 5
-      demographic_level: Overall
-      demographic_name: 75+ years
-      indicator_label: Up-to-date
-      indicator_category_label: 'Yes'
-      week_ending: '2025-11-01'
-      estimate: 0.408344
-      suppression_flag: '0'
-    - age_group: 75+ years
-      geography_name: Region 8
-      demographic_level: Overall
-      demographic_name: 75+ years
-      indicator_label: Up-to-date
-      indicator_category_label: 'Yes'
-      week_ending: '2025-11-01'
-      estimate: null
-      suppression_flag: '1'
+    - {age_group: 75+ years, geography_level: Region, geography_name: Region 5, demographic_level: Overall, demographic_name: 75+ years, indicator_label: Up-to-date, indicator_category_label: 'Yes', week_ending: '2025-11-01', estimate: 0.408344, ci_half_width_95pct: 1.9044, suppression_flag: '0', _snapshot_id: s1, _raw_sha256: h1 h2}
+    - {age_group: 75+ years, geography_level: Region, geography_name: Region 8, demographic_level: Overall, demographic_name: 75+ years, indicator_label: Up-to-date, indicator_category_label: 'Yes', week_ending: '2025-11-01', estimate: null, ci_half_width_95pct: null, suppression_flag: '1', _snapshot_id: s1, _raw_sha256: h1 h2}
+    - {age_group: 75+ years, geography_level: Region, geography_name: Region 9, demographic_level: Overall, demographic_name: 75+ years, indicator_label: Up-to-date, indicator_category_label: 'Yes', week_ending: '2025-11-01', estimate: null, ci_half_width_95pct: null, suppression_flag: '0', _snapshot_id: s1, _raw_sha256: h1 h2}
+    # An estimate beside flag 1 (the warn rule flagged_rows_carry_no_estimate lets it through) stays published
+    # and keeps the flag in its label: the CASE order is pinned here, so reordering it is a reviewed change.
+    - {age_group: 75+ years, geography_level: National, geography_name: National, demographic_level: Overall, demographic_name: 75+ years, indicator_label: Up-to-date, indicator_category_label: 'Yes', week_ending: '2025-11-01', estimate: 0.3, ci_half_width_95pct: 2.0, suppression_flag: '1', _snapshot_id: s1, _raw_sha256: h1 h2}
   expect:
     rows:
-    - place: Region 5
-      estimate: 0.408344
-      value_status: published
-    - place: Region 8
-      estimate: null
-      value_status: suppressed by CDC (small sample)
+    - {place: Region 5, place_kind: Region, week_end: '2025-11-01', estimate: 0.408344, ci_half_width_95pct: 1.9044, value_status: published, _snapshot_id: s1, _raw_sha256: h1 h2}
+    - {place: Region 8, place_kind: Region, week_end: '2025-11-01', estimate: null, ci_half_width_95pct: null, value_status: empty; CDC flag 1, _snapshot_id: s1, _raw_sha256: h1 h2}
+    - {place: Region 9, place_kind: Region, week_end: '2025-11-01', estimate: null, ci_half_width_95pct: null, value_status: empty; CDC flag 0, _snapshot_id: s1, _raw_sha256: h1 h2}
+    - {place: National, place_kind: National, week_end: '2025-11-01', estimate: 0.3, ci_half_width_95pct: 2.0, value_status: published; CDC flag 1, _snapshot_id: s1, _raw_sha256: h1 h2}

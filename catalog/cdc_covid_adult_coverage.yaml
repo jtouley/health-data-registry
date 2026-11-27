@@ -8,7 +8,9 @@ research_areas: [infectious_disease]
 id_areas: [respiratory, vaccine_preventable]
 years: {start: 2023, end: null}
 # National, the 10 HHS regions, states and parts of some states (geographic_level National, Region, State,
-# Substate; https://data.cdc.gov/resource/ksfb-ug5d.json, read 2026-11-25). No county row.
+# Substate; https://data.cdc.gov/resource/ksfb-ug5d.json, read 2026-11-25). Substate is five cities, Bexar County
+# (Texas) and Philadelphia County, each beside its "Rest of State": parts of five states, not a county breakdown,
+# so a county question is still told no (no county of any other state, and none in Michigan).
 geography: [nation, region, state, city]
 shape: estimate_table
 grain: "One row is one place (the nation, an HHS region, a state, or a part of a state), one demographic group, one measure (up-to-date COVID-19 vaccination, or a level of vaccination and intent) and one survey week, holding a weighted survey estimate (%) cumulative through that week, its 95% confidence interval half width, and the unweighted sample size."
@@ -27,11 +29,11 @@ source:
 codebook_url: https://www.cdc.gov/covidvaxview/weekly-dashboard/adult-vaccination-coverage.html
 caveats:
   - "Vaccination coverage, not COVID-19 disease: the percent of adults who say they received this season's COVID-19 vaccine, from a weighted cellular telephone survey (NIS-FRVM). It answers vaccination questions only."
-  - "Cumulative within a season and recalculated every week from all interviews so far, so an earlier week's figure can change in a later load. Seasons start when that season's vaccine became available and are never added together."
+  - "Cumulative within a season and recalculated every week from all interviews so far, so an earlier week's figure can change in a later load. Seasons start when that season's vaccine became available and are never added together: a series over a year runs into the next season, where the figure starts again from near zero (the covid_season column in query_sql says which season a week is in)."
   - "CDC publishes a 95% confidence interval as a half width (ci_half_width_95pct) beside each estimate; read it with query_sql or describe_dataset, since get_series can't show it as lower and upper bounds yet."
   - "Self-reported vaccination; CDC notes possible bias from households without cell phones and from who answers the survey."
   - "CDC suppresses an estimate when the cumulative sample is under 30 or the week's sample under 5 (intent: the week's sample under 30); a suppressed estimate is empty, never zero, and keeps CDC's flag."
-  - "Parts of some states (for example 'Illinois-City of Chicago' and 'Illinois-Rest of State') sit beside the state itself; places and groups are never added."
+  - "Parts of five states sit beside the state itself: the cities of Chicago, Houston, Los Angeles, New York and Phoenix, Bexar County (Texas) and Philadelphia County, each with its 'Rest of State' (2026-11-25). They are not a county breakdown; places and groups are never added."
 gbd:
   # No GBD keys: a vaccination coverage percent is not a GBD measure (contract openQuestions, hard rule 1).
   location_column: geographic_name

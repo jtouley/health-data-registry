@@ -65,12 +65,14 @@ All notable changes to this project are documented here. The format follows
   intent among adults, by season, place and group; data.cdc.gov ksfb-ug5d) and `cdc_rsv_adult_coverage` (RSV
   vaccination coverage and intent among adults 75 and older and 50 to 74 at high risk, national and by HHS region;
   qeq7-f3ir). Estimates are read as published and never added; the RSV estimate is published as a proportion
-  from 0 to 1 and is never rescaled (an open question). A suppressed estimate is no value, never zero, and keeps
+  from 0 to 1 and is never rescaled (an open question), so its series' measure is `estimate`, not `percent`, and
+  a warning flags any value above 1. A suppressed estimate is no value, never zero, and keeps
   CDC's flag. Both answer only vaccination questions: a plain "COVID-19" or "RSV" question doesn't get them.
 - Semantic series can list `asked_with` words: a series that names a disease but isn't a measure of it
   (vaccination coverage, a percent of deaths) answers only a question that uses one of them.
 - Marts `fct_cdc_covid_adult_coverage` and `fct_cdc_rsv_adult_coverage`: every row kept, CDC's suppression flag as
-  published, and a `value_status` that says why an estimate is empty.
+  published, and a `value_status` that says whether the estimate is there and names CDC's flag beside it, without
+  giving the flag a meaning until a maintainer confirms it.
 - The crawler factory's core (ADR 0016, step 1 and the types step 2 names). Every source is read by one generic
   adapter type chosen in its catalog entry (`type:`; the older `portal:` is read for one more release and `validate`
   warns about it), configured by that type's strict block, plus named extensions it opts in to. New types:

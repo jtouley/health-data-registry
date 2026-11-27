@@ -26,7 +26,7 @@ source:
   api_url: https://data.cdc.gov/resource/qeq7-f3ir.json
 codebook_url: https://www.cdc.gov/rsvvaxview/dashboard/adults-50-coverage-intent.html
 caveats:
-  - "The estimate is published as a proportion from 0 to 1 (0.41 means about 41%), although CDC's column is labelled %. It is shown exactly as published, never rescaled; the half width beside it is in percentage points."
+  - "The estimate is published as a proportion from 0 to 1 (0.41 means about 41%), although CDC's column is labelled %. It is shown exactly as published, never rescaled; the half width beside it reads as percentage points (an open question), so the two are on different scales and are never added or subtracted as they stand."
   - "Vaccination coverage, not RSV disease: the share of adults 75 and older, or 50 to 74 with a high-risk condition, who say they ever received an RSV vaccine, from a weighted cellular telephone survey (NIS-FRVM). It answers vaccination questions only."
   - "National and HHS region figures only: no state figure is published."
   - "Cumulative and recalculated every week from all interviews so far, so an earlier week's figure can change in a later load."

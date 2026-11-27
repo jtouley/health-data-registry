@@ -157,23 +157,28 @@ def test_every_rule_passes_on_publisher_shaped_rows(real: tuple[Registry, Engine
     assert m.quality["rule_errors"] == []
 
 
-def test_each_rule_fires_on_the_case_it_is_written_for(tmp_path: Path) -> None:
-    bad = [
-        *RECORDS,
-        rec("Ohio", "County", "2025-11-08", est="11.0", hw="-1.0"),
-        rec("Iowa", "State", "2025-11-08", indicator=("Received", "Yes"), est="11.0", n="20", flag="1"),
-        {**rec("Utah", "State", "2025-11-08", est="11.0"), "ci_half_width_95pct": ""},
-    ]
-    _, _, _, m = _build(tmp_path, bad)
+# One bad row per rule, so each rule is shown firing on its own case and no other rule fires with it.
+FIRES_ALONE = {
+    "geography_levels": [*RECORDS, rec("Ohio", "County", "2025-11-08", est="11.0")],
+    "half_width_not_negative": [*RECORDS, rec("Ohio", "State", "2025-11-08", est="11.0", hw="-1.0")],
+    "indicator_labels": [*RECORDS, rec("Iowa", "State", "2025-11-08", indicator=("Received", "Yes"), est="11.0")],
+    "flagged_rows_carry_no_estimate": [*RECORDS, rec("Iowa", "State", "2025-11-08", est="11.0", flag="1")],
+    "interval_with_every_estimate": [*RECORDS, {**rec("Utah", "State", "2025-11-08", est="11.0"), "ci_half_width_95pct": ""}],
+    # Every Up-to-date 'Yes' row suppressed: the column-wide fill check still passes on the intent row.
+    "coverage_rows_have_estimates": [
+        r if r["indicator_label"] != "Up-to-date" else {k: v for k, v in r.items() if k not in ("estimate", "ci_half_width_95pct")}
+        for r in RECORDS
+    ],
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("rule", sorted(FIRES_ALONE))
+def test_each_rule_fires_on_the_case_it_is_written_for(tmp_path: Path, rule: str) -> None:
+    _, _, _, m = _build(tmp_path, FIRES_ALONE[rule])
     status = {r["test"]: r["status"] for r in m.quality["results"]}
-    for rule in (
-        "geography_levels",
-        "half_width_not_negative",
-        "indicator_labels",
-        "flagged_rows_carry_no_estimate",
-        "interval_with_every_estimate",
-    ):
-        assert status[rule] == "warn", rule
+    assert status[rule] == "warn", status
+    assert {t: v for t, v in status.items() if t != rule and v != "pass"} == {}
+    assert m.quality["rule_errors"] == []
 
 
 def test_an_estimate_over_100_blocks_the_copy(tmp_path: Path) -> None:

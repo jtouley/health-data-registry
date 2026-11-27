@@ -7,7 +7,7 @@ status: draft
 domain: infectious_disease
 description:
   purpose: "Every row of the NIS-FRVM adult COVID-19 coverage table (cdc_covid_adult_coverage) as one fact per place, group, measure, category and week, with CDC's suppression flag as published and a status that says why an estimate is empty."
-  usage: "Read one place, group, measure and week as published. Every row is kept, suppressed ones included; nothing is added across places, groups, categories or weeks."
+  usage: "Read one place, group, measure and week as published. Every row is kept, suppressed ones included; nothing is added across places, groups, categories, weeks or seasons; compare seasons at the same season_week_end. Left out on purpose: vaccine (always COVID) and month_week (the week's name; week_end is the week)."
   limitations: "A telephone survey estimate, self-reported; cumulative within a season and recalculated each week."
   authoritativeDefinitions:
     - {type: businessDefinition, url: "contracts/cdc_covid_adult_coverage.odcs.yaml", description: "The source dataset's contract, whose descriptions and rules this fact carries"}
@@ -16,7 +16,7 @@ schema:
     physicalName: fct_cdc_covid_adult_coverage
     physicalType: table
     logicalType: object
-    description: "One row per published estimate: every row of int_cdc_covid_adult_coverage, none removed, each with value_status."
+    description: "One row per place, demographic group, measure, category and survey week: every row of int_cdc_covid_adult_coverage, suppressed ones included, none removed, each with value_status."
     customProperties:
       - {property: layer, value: marts}
       - {property: totalRows, value: none}
@@ -42,7 +42,7 @@ schema:
         required: true
         primaryKey: true
         primaryKeyPosition: 2
-        description: "The kind of demographic group, as published."
+        description: "The kind of group the estimate is for, as published: Overall, an age breakdown, race and ethnicity, sex, poverty status, health insurance, urbanicity, disability status, sexual orientation or chronic conditions. Overall sits beside the groups and each kind covers all adults again, so groups are never added."
         customProperties: [{property: role, value: dimension}]
       - name: demographic_group
         physicalType: VARCHAR
@@ -50,7 +50,7 @@ schema:
         required: true
         primaryKey: true
         primaryKeyPosition: 3
-        description: "The demographic group, as published."
+        description: "The group within that kind, as CDC labels it ('18+ years', 'Female', 'Hispanic')."
         customProperties: [{property: role, value: dimension}]
       - name: measure_kind
         physicalType: VARCHAR
@@ -74,58 +74,68 @@ schema:
         required: true
         primaryKey: true
         primaryKeyPosition: 6
-        description: "The date the survey week ends."
+        description: "The date the survey week ends; the estimate is cumulative through that week, so weeks are never added."
         customProperties: [{property: role, value: dimension}]
       - name: season
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "The vaccination season, as CDC writes it."
+        description: "The vaccination season the week belongs to, as CDC writes it ('2025-2026'); coverage counts vaccination since that season's vaccine became available, so it starts again each season."
+        customProperties: [{property: role, value: attribute}]
+      - name: season_week_end
+        physicalType: DATE
+        logicalType: date
+        required: false
+        description: "The matching week ending date in the current season's calendar, so the same point in different seasons can be set side by side: compare seasons only at the same season_week_end, never by adding them."
         customProperties: [{property: role, value: attribute}]
       - name: estimate
         physicalType: DOUBLE
         logicalType: number
         required: false
-        description: "The survey estimate, exactly as CDC publishes it; empty where CDC suppressed it, never zero."
-        customProperties: [{property: role, value: measure}]
+        description: "Percent of adults vaccinated (Up-to-date rows: received the season's COVID-19 vaccine), or in the vaccination and intent category, exactly as CDC publishes it; cumulative through the week. Empty where CDC suppressed it, never zero."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: unit, value: "%"}
       - name: ci_half_width_95pct
         physicalType: DOUBLE
         logicalType: number
         required: false
-        description: "CDC's 95% confidence interval half width, as published (percentage points)."
-        customProperties: [{property: role, value: attribute}]
+        description: "Half the width of the estimate's 95% confidence interval, in percentage points, as published: the interval is the estimate minus and plus this value. Empty where the estimate is."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: unit, value: "percentage points"}
       - name: unweighted_sample_size
         physicalType: BIGINT
         logicalType: integer
-        required: true
-        description: "Survey respondents behind the estimate, before weighting."
+        required: false
+        description: "Number of survey respondents behind the estimate, before weighting."
         customProperties: [{property: role, value: attribute}]
       - name: suppression_flag
         physicalType: VARCHAR
         logicalType: string
-        required: true
-        description: "CDC's suppression flag, exactly as published ('1' or '0')."
+        required: false
+        description: "CDC's suppression flag, exactly as published. The column has no description; on 2026-11-25 it was '1' exactly where the estimate was empty and '0' elsewhere (open question in the source contract)."
         customProperties: [{property: role, value: attribute}]
       - name: value_status
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "Why the estimate is or isn't there: 'published', or 'suppressed by CDC (small sample)' where the estimate is empty and CDC's flag is 1, or 'not published' where it is empty without the flag. It qualifies the row and removes nothing."
+        description: "Whether the estimate is there, and CDC's flag beside it, without giving the flag a meaning: 'published', 'published; CDC flag 1', 'empty; CDC flag 1', 'empty; CDC flag 0' or 'empty; no CDC flag 0 or 1'. Reading flag 1 as suppression waits for a maintainer (open question). It qualifies the row and removes nothing."
         customProperties: [{property: role, value: attribute}]
       - name: _snapshot_id
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "The lake snapshot the row was read from (the dataset's LATEST load); its manifest gives the source address, retrieval time and dataset version."
+        description: "The lake snapshot the row was read from (the dataset's LATEST load). Its manifest gives the source address, retrieval time and dataset version that go with every answer built on this row."
         customProperties: [{property: role, value: attribute}]
       - name: _raw_sha256
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "The sha256 fingerprint of each raw file the row was parsed from: the exact bytes the publisher sent."
+        description: "The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order: the exact bytes the publisher sent."
         customProperties: [{property: role, value: attribute}]
 customProperties:
   - {property: unreliableRule, value: {kind: none, description: "None of its own: CDC's suppression rule in the source contract applies, and value_status says on each row why an estimate is empty."}}
   - property: openQuestions
     value:
-      - "value_status reads CDC's suppression_flag 1 as suppressed; the flag column has no description in the metadata, so a maintainer confirms that reading when the source contract is reviewed."
+      - "value_status names CDC's suppression_flag code and gives it no meaning: the flag column has no description in the metadata, so whether flag 1 means suppressed (as the footnotes' suppression rule suggests) is the source contract's open question 'Suppression flag', which a maintainer settles when the contract is reviewed; the label changes then."

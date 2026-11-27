@@ -62,6 +62,15 @@ def test_labels_are_the_ones_the_contract_lists(live):
     assert _distinct(cat, "indicator_label") <= {"Up-to-date", "4-level vaccination and intent"}
 
 
+def test_every_series_filter_names_a_published_group(live):
+    cat, _con, sem, _rows, _ = live
+    pairs = {(r.get("demographic_level"), r.get("demographic_name")) for r in _live.get_json(
+        cat, _live.with_query(cat["source"]["api_url"], {"$query": "SELECT demographic_level, demographic_name GROUP BY demographic_level, demographic_name LIMIT 500"})
+    )}  # fmt: skip
+    for s in sem["series"]:
+        assert (s["filters"]["group_kind"], s["filters"]["group"]) in pairs, s["label"]
+
+
 def test_the_grain_is_unique(live):
     cat, _con, _sem, _rows, _ = live
     key = "demographic_level, demographic_name, indicator_label, indicator_category_label, week_ending, geographic_name"

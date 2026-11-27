@@ -42,8 +42,9 @@ models:
   - name: geographic_level
     data_type: varchar
     description: 'The kind of place, as published: National, Region (HHS region), State, or Substate (a city or
-      county reported apart from the rest of its state). The column description lists National, Region and State;
-      Substate is published too.'
+      county reported apart from the rest of its state: on 2026-11-25 the cities of Chicago, Houston, Los Angeles,
+      New York and Phoenix, Bexar County (Texas) and Philadelphia County, each beside its ''Rest of State''). The
+      column description lists National, Region and State; Substate is published too.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -181,6 +182,8 @@ models:
   - name: unweighted_sample_size
     data_type: bigint
     description: Number of survey respondents behind the estimate, before weighting (column 'Unweighted Sample Size').
+      Filled on every row on 2026-11-25, but the metadata doesn't say it always is, so an empty one is a fill-rate
+      warning, not a failed load.
     meta:
       logical_type: integer
       physical_type: BIGINT
@@ -188,12 +191,16 @@ models:
       unit: respondents
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
+    data_tests:
+    - not_all_empty:
+        name: stg_cdc_covid_adult_coverage_unweighted_sample_size_filled
+        config:
+          severity: warn
   - name: current_season_week_ending
     data_type: date
-    description: The matching week ending date in the current season's calendar, so the same point in different
-      seasons can be set side by side (column 'Current Season Week Ending Date').
+    description: 'The matching week ending date in the current season''s calendar, so the same point in different
+      seasons can be set side by side (column ''Current Season Week Ending Date''). Not required: the metadata doesn''t
+      say it is always filled, so an empty one is a fill-rate warning.'
     meta:
       logical_type: date
       physical_type: DATE
@@ -201,8 +208,11 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
+    data_tests:
+    - not_all_empty:
+        name: stg_cdc_covid_adult_coverage_current_season_week_ending_filled
+        config:
+          severity: warn
   - name: covid_season
     data_type: varchar
     description: The vaccination season the week belongs to, as CDC writes it ('2025-2026'); coverage counts vaccination
@@ -220,7 +230,8 @@ models:
     data_type: varchar
     description: 'CDC''s suppression flag, exactly as published: ''1'' on rows whose estimate is empty, ''0'' otherwise
       (on 2026-11-25). The column has no description; the footnotes give the suppression rule (open question ''Suppression
-      flag'').'
+      flag''). Not required: a column with no documented meaning never fails the load when empty; the fill-rate
+      check warns instead.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -228,8 +239,11 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
+    data_tests:
+    - not_all_empty:
+        name: stg_cdc_covid_adult_coverage_suppression_flag_filled
+        config:
+          severity: warn
   - name: _snapshot_id
     data_type: varchar
     description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the source

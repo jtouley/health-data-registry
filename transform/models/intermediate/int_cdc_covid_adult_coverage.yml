@@ -74,6 +74,21 @@ models:
           contract: contracts/cdc_covid_adult_coverage.odcs.yaml
           checks: The column is labelled 'Estimate (%)', so no value lies outside 0 to 100.
   - odcs_check:
+      name: cdc_covid_adult_coverage_coverage_rows_have_estimates
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE indicator_label = 'Up-to-date' AND indicator_category_label
+          = 'Yes' AND estimate IS NOT NULL
+        condition: measured > 0
+      config:
+        severity: warn
+        meta:
+          dimension: completeness
+          rule: coverage_rows_have_estimates
+          contract: contracts/cdc_covid_adult_coverage.odcs.yaml
+          checks: 'Fill rate of the rows the series read: at least one Up-to-date ''Yes'' row has an estimate. The
+            column-wide fill check passes while intent rows are filled, so this catches the coverage rows being
+            renamed, dropped or all suppressed.'
+  - odcs_check:
       name: cdc_covid_adult_coverage_half_width_not_negative
       arguments:
         measure_sql: SELECT COUNT(*) FROM {object} WHERE ci_half_width_95pct < 0
@@ -84,8 +99,9 @@ models:
           dimension: conformity
           rule: half_width_not_negative
           contract: contracts/cdc_covid_adult_coverage.odcs.yaml
-          checks: The column is a 95% confidence interval half width (column description), a distance, so it is
-            never negative.
+          checks: 'The column is a 95% confidence interval half width (column description), a distance, so it is
+            never negative. A warning, not an error like the estimate''s range: no series returns the half width,
+            so a bad one misleads no answer and is left for review.'
   - odcs_check:
       name: cdc_covid_adult_coverage_interval_with_every_estimate
       arguments:
@@ -142,6 +158,34 @@ models:
           checks: 'No row has a value for half the width of the estimate''s 95% confidence interval, in percentage
             points (column ''95% Confidence Interval Half Width''): the interval is the estimate minus and plus
             this value.'
+  - odcs_check:
+      name: cdc_covid_adult_coverage_fill_rate_unweighted_sample_size
+      arguments:
+        measure_sql: SELECT CASE WHEN count(*) = 0 THEN 0.0 ELSE count(*) FILTER (WHERE ("unweighted_sample_size"
+          IS NULL OR trim(CAST("unweighted_sample_size" AS VARCHAR)) = '')) / count(*) END FROM {object}
+        condition: measured < 1.0
+      config:
+        severity: warn
+        meta:
+          dimension: completeness
+          rule: fill_rate_unweighted_sample_size
+          contract: contracts/cdc_covid_adult_coverage.odcs.yaml
+          checks: No row has a value for number of survey respondents behind the estimate, before weighting (column
+            'Unweighted Sample Size').
+  - odcs_check:
+      name: cdc_covid_adult_coverage_fill_rate_current_season_week_ending
+      arguments:
+        measure_sql: SELECT CASE WHEN count(*) = 0 THEN 0.0 ELSE count(*) FILTER (WHERE ("current_season_week_ending"
+          IS NULL OR trim(CAST("current_season_week_ending" AS VARCHAR)) = '')) / count(*) END FROM {object}
+        condition: measured < 1.0
+      config:
+        severity: warn
+        meta:
+          dimension: completeness
+          rule: fill_rate_current_season_week_ending
+          contract: contracts/cdc_covid_adult_coverage.odcs.yaml
+          checks: No row has a value for the matching week ending date in the current season's calendar, so the
+            same point in different seasons can be set side by side (column 'Current Season Week Ending Date').
   columns:
   - name: vaccine
     data_type: varchar
@@ -156,8 +200,9 @@ models:
   - name: geographic_level
     data_type: varchar
     description: 'The kind of place, as published: National, Region (HHS region), State, or Substate (a city or
-      county reported apart from the rest of its state). The column description lists National, Region and State;
-      Substate is published too.'
+      county reported apart from the rest of its state: on 2026-11-25 the cities of Chicago, Houston, Los Angeles,
+      New York and Phoenix, Bexar County (Texas) and Philadelphia County, each beside its ''Rest of State''). The
+      column description lists National, Region and State; Substate is published too.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -269,6 +314,8 @@ models:
   - name: unweighted_sample_size
     data_type: bigint
     description: Number of survey respondents behind the estimate, before weighting (column 'Unweighted Sample Size').
+      Filled on every row on 2026-11-25, but the metadata doesn't say it always is, so an empty one is a fill-rate
+      warning, not a failed load.
     meta:
       logical_type: integer
       physical_type: BIGINT
@@ -278,8 +325,9 @@ models:
       missing_codes: []
   - name: current_season_week_ending
     data_type: date
-    description: The matching week ending date in the current season's calendar, so the same point in different
-      seasons can be set side by side (column 'Current Season Week Ending Date').
+    description: 'The matching week ending date in the current season''s calendar, so the same point in different
+      seasons can be set side by side (column ''Current Season Week Ending Date''). Not required: the metadata doesn''t
+      say it is always filled, so an empty one is a fill-rate warning.'
     meta:
       logical_type: date
       physical_type: DATE
@@ -302,7 +350,8 @@ models:
     data_type: varchar
     description: 'CDC''s suppression flag, exactly as published: ''1'' on rows whose estimate is empty, ''0'' otherwise
       (on 2026-11-25). The column has no description; the footnotes give the suppression rule (open question ''Suppression
-      flag'').'
+      flag''). Not required: a column with no documented meaning never fails the load when empty; the fill-rate
+      check warns instead.'
     meta:
       logical_type: string
       physical_type: VARCHAR

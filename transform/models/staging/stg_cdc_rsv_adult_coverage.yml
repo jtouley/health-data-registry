@@ -196,6 +196,8 @@ models:
   - name: unweighted_sample_size
     data_type: bigint
     description: Number of survey respondents behind the estimate, before weighting (column 'Unweighted Sample Size').
+      Filled on every row on 2026-11-25, but the metadata doesn't say it always is, so an empty one is a fill-rate
+      warning, not a failed load.
     meta:
       logical_type: integer
       physical_type: BIGINT
@@ -203,13 +205,17 @@ models:
       unit: respondents
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
+    data_tests:
+    - not_all_empty:
+        name: stg_cdc_rsv_adult_coverage_unweighted_sample_size_filled
+        config:
+          severity: warn
   - name: suppression_flag
     data_type: varchar
     description: 'CDC''s suppression flag, exactly as published: ''1'' on rows whose estimate is empty, ''0'' otherwise
       (on 2026-11-25). The column has no description; the footnotes give the suppression rule (open question ''Suppression
-      flag'').'
+      flag''). Not required: a column with no documented meaning never fails the load when empty; the fill-rate
+      check warns instead.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -217,8 +223,11 @@ models:
       unit: null
       codes: []
       missing_codes: []
-    constraints:
-    - type: not_null
+    data_tests:
+    - not_all_empty:
+        name: stg_cdc_rsv_adult_coverage_suppression_flag_filled
+        config:
+          severity: warn
   - name: _snapshot_id
     data_type: varchar
     description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the source

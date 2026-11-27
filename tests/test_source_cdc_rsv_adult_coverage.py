@@ -137,6 +137,8 @@ def test_get_series_reads_the_estimate_as_published_never_rescaled(
     ]
     risk = [r[at["value"]] for r in out["rows"] if "high-risk" in r[at["condition"]]]
     assert risk == [0.243274]  # the intent row (0.057686) is a different measure and never shows here
+    # A proportion is never labelled percent: 0.41 beside "percent" would read as 0.41%.
+    assert {r[at["measure"]] for r in out["rows"]} == {"estimate"}
 
 
 def test_raw_layer_keeps_the_publisher_values_as_sent(real: tuple[Registry, Engine, Path, Any]) -> None:
@@ -153,24 +155,31 @@ def test_every_rule_passes_on_publisher_shaped_rows(real: tuple[Registry, Engine
     assert m.quality["rule_errors"] == []
 
 
-def test_each_rule_fires_on_the_case_it_is_written_for(tmp_path: Path) -> None:
-    bad = [
-        *RECORDS,
-        rec("60+ years", "Region 1", "2025-11-08", est="0.3", hw="-1.0", level="County"),
-        rec(OLD, "Region 2", "2025-11-08", indicator=("Received", "Yes"), est="0.3", n="20", flag="1"),
-        {**rec(OLD, "Region 3", "2025-11-08", est="0.3"), "ci_half_width_95pct": ""},
-    ]
-    _, _, _, m = _build(tmp_path, bad)
+# One bad row per rule, so each rule is shown firing on its own case and no other rule fires with it.
+FIRES_ALONE = {
+    "age_groups": [*RECORDS, rec("60+ years", "Region 1", "2025-11-08", est="0.3")],
+    "geography_levels": [*RECORDS, rec(OLD, "Region 1", "2025-11-08", est="0.3", level="County")],
+    "half_width_not_negative": [*RECORDS, rec(OLD, "Region 1", "2025-11-08", est="0.3", hw="-1.0")],
+    "indicator_labels": [*RECORDS, rec(OLD, "Region 2", "2025-11-08", indicator=("Received", "Yes"), est="0.3")],
+    "flagged_rows_carry_no_estimate": [*RECORDS, rec(OLD, "Region 2", "2025-11-08", est="0.3", flag="1")],
+    "interval_with_every_estimate": [*RECORDS, {**rec(OLD, "Region 3", "2025-11-08", est="0.3"), "ci_half_width_95pct": ""}],
+    # CDC moving the estimate to percent (40.8 for 0.408) passes the 0-to-100 range but not the declared scale.
+    "estimate_on_published_proportion_scale": [*RECORDS, rec(OLD, "Region 4", "2025-11-08", est="40.8")],
+    # Every Up-to-date 'Yes' row suppressed: the column-wide fill check still passes on the intent row.
+    "coverage_rows_have_estimates": [
+        r if r["indicator_label"] != "Up-to-date" else {k: v for k, v in r.items() if k not in ("estimate", "ci_half_width_95pct")}
+        for r in RECORDS
+    ],
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("rule", sorted(FIRES_ALONE))
+def test_each_rule_fires_on_the_case_it_is_written_for(tmp_path: Path, rule: str) -> None:
+    _, _, _, m = _build(tmp_path, FIRES_ALONE[rule])
     status = {r["test"]: r["status"] for r in m.quality["results"]}
-    for rule in (
-        "age_groups",
-        "geography_levels",
-        "half_width_not_negative",
-        "indicator_labels",
-        "flagged_rows_carry_no_estimate",
-        "interval_with_every_estimate",
-    ):
-        assert status[rule] == "warn", rule
+    assert status[rule] == "warn", status
+    assert {t: v for t, v in status.items() if t != rule and v != "pass"} == {}
+    assert m.quality["rule_errors"] == []
 
 
 def test_an_estimate_over_100_blocks_the_copy(tmp_path: Path) -> None:
