@@ -4,13 +4,13 @@ version: 0.1.0
 # separate periods (non_additive: false); each other dimension says why it can't be added.
 dimensions:
   - {name: vaccine, column: vaccine, type: categorical, non_additive: true, non_additive_reason: "each is a different vaccine, or exemptions, and percentages are never added", description: "The vaccine, or Exemption for exemption rows."}
-  - {name: dose, column: dose, type: categorical, non_additive: true, non_additive_reason: "dose levels overlap, and any exemption includes medical and non-medical exemptions", description: "Varicella dose, or exemption type (Any, Medical, Non-Medical); empty for the other vaccines."}
+  - {name: dose, column: dose, type: categorical, non_additive: true, non_additive_reason: "dose levels overlap, and any exemption includes medical and non-medical exemptions", description: "Varicella dose, exemption type (Any, Medical, Non-Medical), or MMR (PAC) on MMR (PAC) rows; empty for MMR, DTaP, polio and hepatitis B."}
   - {name: place_type, column: geography_type, type: categorical, non_additive: true, non_additive_reason: "the national rows sit beside the states", description: "National or States."}
-  - {name: place, column: geography, type: categorical, non_additive: true, non_additive_reason: "United States and the U.S. median sit beside the states, and a median is never added", description: "State, DC, territory, United States, or U.S. Median."}
+  - {name: place, column: geography, type: categorical, non_additive: true, non_additive_reason: "United States and the U.S. median sit beside the states, a median is never added, and cities that report separately (NY-City of New York, NY-Rest of state, TX-City of Houston) sit beside their states", description: "State, DC, a city or part of a state that reports separately, United States, or U.S. Median."}
   - {name: school_year, column: year_season, type: time, non_additive: false, description: "School year, e.g. 2024-25."}
 measures:
   - {name: percent_of_kindergartners, column: coverage_estimate, kind: percent, unit: "%", description: "Percent of enrolled kindergartners with the vaccine, or with the exemption."}
-  - {name: exemptions, column: number_of_exemptions, kind: count, unit: "exemptions", description: "Number of exemptions reported (exemption rows only)."}
+  - {name: exemptions, column: number_of_exemptions, kind: count, unit: "exemptions", description: "Number of vaccine exemptions among kindergartners, as CDC labels it (exemption rows only)."}
 metrics:
   - name: kindergarten_coverage
     description: "Percent of kindergartners vaccinated, for one vaccine and dose, place and school year, as the state reported it to CDC."

@@ -2,7 +2,8 @@
 version: 2
 models:
 - name: stg_cdc_schoolvaxview_kindergarten
-  description: One row per vaccine and dose (or exemption type), place and school year.
+  description: One row per vaccine and dose (or exemption type), place and school year (unique over the whole table
+    on 2026-11-25; not yet declared as a key, open question 'Grain').
   config:
     materialized: table
     contract:
@@ -19,7 +20,7 @@ models:
   - name: vaccine
     data_type: varchar
     description: The vaccine the row is for, as CDC names it, or 'Exemption' for exemption rows (column 'Vaccine/Exemption').
-      'MMR (PAC)' is a separate MMR measure whose meaning is an open question (mmr_pac).
+      'MMR (PAC)' is a separate MMR measure whose meaning is an open question ('MMR (PAC)').
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -31,10 +32,12 @@ models:
     - type: not_null
   - name: dose
     data_type: varchar
-    description: For varicella, the doses counted ('1 Dose (or disease history)', '2 Doses (or disease history)',
-      'UTD (or disease history)'); for exemption rows, the exemption type ('Any Exemption', 'Medical Exemption',
-      'Non-Medical Exemption'). Empty for MMR, DTaP, polio and hepatitis B, whose doses follow each state's school-entry
-      requirement (open question 'Empty dose').
+    description: The varicella dose counted ('1 Dose (or disease history)', '2 Doses (or disease history)', 'UTD
+      (or disease history)'), the exemption type on exemption rows ('Any Exemption', 'Medical Exemption', 'Non-Medical
+      Exemption'), or 'MMR (PAC)' on MMR (PAC) rows. Empty for MMR, DTaP, polio and hepatitis B, whose doses follow
+      each state's school-entry requirement (open question 'Empty dose'). CDC's column description says this column
+      holds the dose (≥1 to ≥4) and applies only to coverage rows; what is published differs (no ≥n values, exemption
+      types here), so the description follows what is published.
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -49,8 +52,9 @@ models:
           severity: warn
   - name: geography_type
     data_type: varchar
-    description: 'The kind of place: ''National'' (the United States row and the U.S. median) or ''States'' (states,
-      DC and territories).'
+    description: 'The kind of place: ''National'' (the United States row and the U.S. Median row) or ''States''
+      (each state, DC, and the cities or parts of a state that report separately). CDC''s column description names
+      the two classes as ''National, State''; the published value is ''States''.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -62,8 +66,11 @@ models:
     - type: not_null
   - name: geography
     data_type: varchar
-    description: 'The place: a state, DC or territory; ''United States''; or ''U.S. Median'', the median of the
-      states'' values (a median, never a national estimate).'
+    description: 'The place: a state or DC; a city or part of a state that reports separately (''NY-City of New
+      York'', ''NY-Rest of state'', ''TX-City of Houston''), published beside its state''s own row and never added
+      to it (how they overlap is open question ''Places''); ''United States''; or ''U.S. Median'', a median as CDC
+      labels it, never a national estimate (what it is a median over is open question ''National row''). No territory
+      was published on 2026-11-25.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -110,7 +117,10 @@ models:
     data_type: varchar
     description: 'The estimate exactly as CDC published it, number or code: NA (not applicable) and NReq (not required
       by the state for school entry) per CDC''s column description; Nreq and NR are published but not defined. Kept
-      so a code is never lost when coverage_estimate is empty.'
+      so a code is never lost when coverage_estimate is empty. Required because every one of the 8,753 rows had
+      an estimate on 2026-11-25 (SoQL count of rows where coverage_estimate is null or empty: 0); this also makes
+      a vanished or renamed estimate field fail the load rather than pass the percent range check over an empty
+      column.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -122,8 +132,9 @@ models:
     - type: not_null
   - name: population_sample_size
     data_type: bigint
-    description: Number of children enrolled in kindergarten in the state for that school year (column 'Population
-      Size'); the denominator CDC's description names, not the number surveyed or vaccinated.
+    description: Number of children enrolled in kindergarten in the place (state, city or part of a state that reports
+      separately, or the nation) for that school year (column 'Population Size'). This is the enrolment the coverage_estimate
+      description calls 'all children enrolled in Kindergarten', not the number surveyed or vaccinated.
     meta:
       logical_type: integer
       physical_type: BIGINT
@@ -154,9 +165,9 @@ models:
           severity: warn
   - name: foot_notes
     data_type: varchar
-    description: CDC's footnote symbols for the row, exactly as published (e.g. '†', '‡. §', '>=. *'). Their meanings
-      are in CDC's footnote key (the contract's footnoteKey), which differs between coverage and exemption rows;
-      they are not interpreted here.
+    description: CDC's footnote symbols for the row, exactly as published, such as '†' or '<'. Several symbols in
+      one row are kept as CDC joined them, such as '‡. §' or '>=. *'. Their meanings are in CDC's footnote key (the
+      contract's footnoteKey), which differs between coverage and exemption rows; they are not interpreted here.
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -171,8 +182,8 @@ models:
           severity: warn
   - name: number_of_exemptions
     data_type: bigint
-    description: Number of kindergartners with the exemption type (column 'Number of Exemptions'); published only
-      on exemption rows. Whether it counts children or vaccine exemptions is an open question (exemption_count);
+    description: Number of vaccine exemptions among kindergartners, as CDC labels it (column 'Number of Exemptions');
+      published only on exemption rows. Whether it counts children or exemptions is open question 'Exemption count';
       footnote § says some states reported exemptions per vaccine.
     meta:
       logical_type: integer
@@ -188,9 +199,9 @@ models:
           severity: warn
   - name: survey_type
     data_type: varchar
-    description: How the state collected the data that year, as published (e.g. 'Census', 'Stratified 2-stage cluster
-      sample', 'Voluntary response', 'Census (public); Voluntary response (private)'). CDC spells the same method
-      several ways; it is kept as published.
+    description: How the state or local area collected the data that year, as published, such as 'Census', 'Stratified
+      2-stage cluster sample', 'Voluntary response' or 'Census (public); Voluntary response (private)'. CDC spells
+      the same method several ways; it is kept as published.
     meta:
       logical_type: string
       physical_type: VARCHAR

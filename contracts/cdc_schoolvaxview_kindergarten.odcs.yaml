@@ -6,7 +6,7 @@ version: 0.1.0
 status: draft
 domain: infectious_disease
 description:
-  purpose: "Vaccination coverage and exemptions among US kindergartners as reported by state and territory school vaccination assessments to CDC (SchoolVaxView), by vaccine and dose or exemption type, state and school year (2009-10 onward), with a US figure and the US median."
+  purpose: "Vaccination coverage and exemptions among US kindergartners as reported by state and local school vaccination assessments to CDC (SchoolVaxView), by vaccine and dose or exemption type, state or local area and school year (2009-10 onward), with a United States row and a U.S. Median row."
   usage: "Read one state's percent for one vaccine or exemption type and school year, with its survey type and footnotes. Never add percentages across vaccines, exemption types, states or years; the U.S. Median row is a median, not a national estimate."
   limitations: "State-reported assessments with different methods (census, sample, voluntary response); no confidence intervals; some states don't require some vaccines; exemption definitions vary by state."
   authoritativeDefinitions:
@@ -25,14 +25,14 @@ schema:
     physicalName: cdc_schoolvaxview_kindergarten
     physicalType: table
     logicalType: object
-    description: "One row per vaccine and dose (or exemption type), place and school year."
+    description: "One row per vaccine and dose (or exemption type), place and school year (unique over the whole table on 2026-11-25; not yet declared as a key, open question 'Grain')."
     dataGranularityDescription: "vaccine x dose x geography x school year"
     authoritativeDefinitions:
       - {type: businessDefinition, url: "https://data.cdc.gov/api/views/ijqb-a7ye.json"}
     customProperties:
       - property: totalRows
         value: none
-        description: "Nothing in this table is ever added up: every metric reads one published percent or count (aggregation none), so no row is excluded as a total. The two national rows ('United States', 'U.S. Median') sit beside the states; what the United States row is (pooled or something else) is an open question (national_row)."
+        description: "Nothing in this table is ever added up: every metric reads one published percent or count (aggregation none), so no row is excluded as a total. The two national rows ('United States', 'U.S. Median') sit beside the states; what the United States row is (pooled or something else) is an open question ('National row')."
       - {property: tableShape, value: estimate_table}
       - property: idDimensions
         value:
@@ -51,7 +51,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "The vaccine the row is for, as CDC names it, or 'Exemption' for exemption rows (column 'Vaccine/Exemption'). 'MMR (PAC)' is a separate MMR measure whose meaning is an open question (mmr_pac)."
+        description: "The vaccine the row is for, as CDC names it, or 'Exemption' for exemption rows (column 'Vaccine/Exemption'). 'MMR (PAC)' is a separate MMR measure whose meaning is an open question ('MMR (PAC)')."
         examples: ["MMR", "DTP, DTaP, or DT", "Varicella", "Polio", "Hepatitis B", "Exemption", "MMR (PAC)"]
         customProperties:
           - {property: role, value: dimension}
@@ -69,7 +69,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: false
-        description: "For varicella, the doses counted ('1 Dose (or disease history)', '2 Doses (or disease history)', 'UTD (or disease history)'); for exemption rows, the exemption type ('Any Exemption', 'Medical Exemption', 'Non-Medical Exemption'). Empty for MMR, DTaP, polio and hepatitis B, whose doses follow each state's school-entry requirement (open question 'Empty dose')."
+        description: "The varicella dose counted ('1 Dose (or disease history)', '2 Doses (or disease history)', 'UTD (or disease history)'), the exemption type on exemption rows ('Any Exemption', 'Medical Exemption', 'Non-Medical Exemption'), or 'MMR (PAC)' on MMR (PAC) rows. Empty for MMR, DTaP, polio and hepatitis B, whose doses follow each state's school-entry requirement (open question 'Empty dose'). CDC's column description says this column holds the dose (≥1 to ≥4) and applies only to coverage rows; what is published differs (no ≥n values, exemption types here), so the description follows what is published."
         examples: ["", "2 Doses (or disease history)", "Any Exemption", "Non-Medical Exemption", "MMR (PAC)"]
         customProperties:
           - {property: role, value: dimension}
@@ -78,17 +78,26 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "The kind of place: 'National' (the United States row and the U.S. median) or 'States' (states, DC and territories)."
+        description: "The kind of place: 'National' (the United States row and the U.S. Median row) or 'States' (each state, DC, and the cities or parts of a state that report separately). CDC's column description names the two classes as 'National, State'; the published value is 'States'."
         enum: [{value: "National"}, {value: "States"}]
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: geography_type}
+        quality:
+          - id: geography_type_values
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["National", "States"]}
+            mustBe: 0
+            description: "The two classes CDC's column description names (National, State), spelled as published. A new class is a layout change to review, not an error in the data."
       - name: geography
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "The place: a state, DC or territory; 'United States'; or 'U.S. Median', the median of the states' values (a median, never a national estimate)."
-        examples: ["Michigan", "United States", "U.S. Median"]
+        description: "The place: a state or DC; a city or part of a state that reports separately ('NY-City of New York', 'NY-Rest of state', 'TX-City of Houston'), published beside its state's own row and never added to it (how they overlap is open question 'Places'); 'United States'; or 'U.S. Median', a median as CDC labels it, never a national estimate (what it is a median over is open question 'National row'). No territory was published on 2026-11-25."
+        examples: ["Michigan", "NY-City of New York", "TX-City of Houston", "United States", "U.S. Median"]
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: geography}
@@ -110,7 +119,7 @@ schema:
           - {property: role, value: measure}
           - {property: sourceField, value: coverage_estimate}
           - {property: unit, value: "%"}
-          - {property: missingCodes, value: ["NA", "NReq", "Nreq", "NR"], description: "Column description, https://data.cdc.gov/api/views/ijqb-a7ye.json: 'Non-numeric data are present in this column, such as \"NA\" and \"NReq.\" These data indicate whether an estimate is not applicable or a vaccine is not required by a state for school entry (respectively).' Nreq (1 row) and NR (25 rows) are also published but not defined (open question 'Estimate codes'); none of the four is a number, so each is stored as no value, never as zero, and the published text is kept in estimate_as_published."}
+          - {property: missingCodes, value: ["NA", "NReq", "Nreq", "NR"], description: "Column description, https://data.cdc.gov/api/views/ijqb-a7ye.json: 'Non-numeric data are present in this column, such as \"NA\" and \"NReq.\" These data indicate whether an estimate is not applicable or a vaccine is not required by a state for school entry (respectively).' Nreq (1 row) and NR (25 rows) are also published but not defined (open question 'Estimate codes'); none of the four is a number, so each is stored as no value, never as zero, and the published text is kept in estimate_as_published. Any other non-numeric estimate refuses the whole load (the typed projection can't read it as a number), so a new code is never guessed at: a maintainer adds it here with its meaning before the source refreshes again. The live check test_every_estimate_code_is_declared is the early warning."}
         quality:
           - id: coverage_is_a_percent
             dimension: conformity
@@ -123,24 +132,16 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "The estimate exactly as CDC published it, number or code: NA (not applicable) and NReq (not required by the state for school entry) per CDC's column description; Nreq and NR are published but not defined. Kept so a code is never lost when coverage_estimate is empty."
+        description: "The estimate exactly as CDC published it, number or code: NA (not applicable) and NReq (not required by the state for school entry) per CDC's column description; Nreq and NR are published but not defined. Kept so a code is never lost when coverage_estimate is empty. Required because every one of the 8,753 rows had an estimate on 2026-11-25 (SoQL count of rows where coverage_estimate is null or empty: 0); this also makes a vanished or renamed estimate field fail the load rather than pass the percent range check over an empty column."
         examples: ["92.2", "NA", "NReq", "NR"]
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: coverage_estimate}
-        quality:
-          - id: estimate_codes_known
-            dimension: conformity
-            severity: warn
-            type: sql
-            query: "SELECT COUNT(*) FROM {object} WHERE coverage_estimate IS NULL AND estimate_as_published NOT IN ('NA', 'NReq', 'Nreq', 'NR')"
-            mustBe: 0
-            description: "Every non-numeric estimate published on 2026-11-25 is one of NA, NReq, Nreq or NR (missingCodes). A new code needs a reviewed meaning before it is read."
       - name: population_sample_size
         physicalType: BIGINT
         logicalType: integer
         required: false
-        description: "Number of children enrolled in kindergarten in the state for that school year (column 'Population Size'); the denominator CDC's description names, not the number surveyed or vaccinated."
+        description: "Number of children enrolled in kindergarten in the place (state, city or part of a state that reports separately, or the nation) for that school year (column 'Population Size'). This is the enrolment the coverage_estimate description calls 'all children enrolled in Kindergarten', not the number surveyed or vaccinated."
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: population_sample_size}
@@ -166,7 +167,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: false
-        description: "CDC's footnote symbols for the row, exactly as published (e.g. '†', '‡. §', '>=. *'). Their meanings are in CDC's footnote key (the contract's footnoteKey), which differs between coverage and exemption rows; they are not interpreted here."
+        description: "CDC's footnote symbols for the row, exactly as published, such as '†' or '<'. Several symbols in one row are kept as CDC joined them, such as '‡. §' or '>=. *'. Their meanings are in CDC's footnote key (the contract's footnoteKey), which differs between coverage and exemption rows; they are not interpreted here."
         examples: ["*", "†", "‡. §", "≥.*", "<"]
         customProperties:
           - {property: role, value: attribute}
@@ -175,7 +176,7 @@ schema:
         physicalType: BIGINT
         logicalType: integer
         required: false
-        description: "Number of kindergartners with the exemption type (column 'Number of Exemptions'); published only on exemption rows. Whether it counts children or vaccine exemptions is an open question (exemption_count); footnote § says some states reported exemptions per vaccine."
+        description: "Number of vaccine exemptions among kindergartners, as CDC labels it (column 'Number of Exemptions'); published only on exemption rows. Whether it counts children or exemptions is open question 'Exemption count'; footnote § says some states reported exemptions per vaccine."
         customProperties:
           - {property: role, value: measure}
           - {property: sourceField, value: number_of_exemptions}
@@ -192,7 +193,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: false
-        description: "How the state collected the data that year, as published (e.g. 'Census', 'Stratified 2-stage cluster sample', 'Voluntary response', 'Census (public); Voluntary response (private)'). CDC spells the same method several ways; it is kept as published."
+        description: "How the state or local area collected the data that year, as published, such as 'Census', 'Stratified 2-stage cluster sample', 'Voluntary response' or 'Census (public); Voluntary response (private)'. CDC spells the same method several ways; it is kept as published."
         examples: ["Census", "Stratified 2-stage cluster sample", "Voluntary response", "Not conducted", "NA"]
         customProperties:
           - {property: role, value: attribute}
@@ -222,7 +223,8 @@ customProperties:
       - "Survey type: survey_type differs by state and year (census, sample, voluntary response, mixed public/private). Can a sample-based state's estimate be set beside a census state's? CDC's methods must say so; until then answers show each row's survey type through query_sql and describe_dataset, and states are never ranked here."
       - "Footnote symbols: the footnote key (footnoteKey) gives the symbols' meanings, separately for coverage and exemption rows. Published symbols outside the key (≥, >=, and the replacement character where a symbol was garbled) have no stated meaning. A maintainer reads CDC's key and decides how each symbol is shown; nothing reads them into a number."
       - "Exemption count: is number_of_exemptions a count of children with an exemption, or of exemptions by type (medical, non-medical)? Footnote § says some states counted per vaccine, so a child can be counted more than once there."
-      - "National row: what is the 'United States' row: a pooled estimate over reporting states, weighted by enrolment, or something else? The 'U.S. Median' row is labelled a median. Neither is ever computed here."
+      - "National row: what is the 'United States' row: a pooled estimate over reporting states, weighted by enrolment, or something else? The 'U.S. Median' row is labelled a median: is it the median over states only, or over every reporting area including the cities that report separately? CDC's metadata doesn't say. Neither is ever computed here."
+      - "Places: 'NY-City of New York', 'NY-Rest of state' and 'TX-City of Houston' are published under geography_type 'States' beside New York and Texas. Which years does each state row include the city's children, and is 'NY-Rest of state' plus the city the whole state? Until answered they are shown as published and never added to or set against their state."
       - "Empty dose: MMR, DTaP, polio and hepatitis B rows have an empty dose; varicella has '1 Dose', '2 Doses' and 'UTD' (each 'or disease history'). Does an empty dose mean the state's school-entry requirement (e.g. 2 doses of MMR), and did that change by state or year? Codebook only."
       - "MMR (PAC): what is 'MMR (PAC)' (vaccine and dose both 'MMR (PAC)', 480 rows on 2026-11-25) and how does it differ from MMR? Not defined in the dataset metadata; shown exactly as CDC labels it until a maintainer declares it."
       - "No intervals: CDC publishes no confidence interval for these percents; the metrics say so. Does CDC publish standard errors for sample-based states elsewhere (SchoolVaxView methods)? None is computed here."

@@ -3,7 +3,7 @@ semantic model on hand-written rows.
 
 Synthetic rows only, laid out like data.cdc.gov ijqb-a7ye. They pin hard rule 2 (percentages read as published,
 never added up across vaccines, exemption types, states or years; the U.S. median never treated as a total) and
-that a published code (NA, NReq, NR) is no value, never zero, with the code kept beside it.
+that a published code (NA, NReq, Nreq, NR) is no value, never zero, with the code kept beside it.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import pytest
 
 from health_data_registry import tools
@@ -38,6 +39,9 @@ ROWS = [
     row("U.S. Median", "2024-25", "MMR", "92.5"),
     row("Michigan", "2024-25", "Hepatitis B", "NReq", foot_notes="†"),
     row("Michigan", "2022-23", "MMR", "NR"),
+    row("Ohio", "2023-24", "Polio", "NA"),
+    row("Ohio", "2023-24", "Hepatitis B", "Nreq"),
+    row("Ohio", "2022-23", "Hepatitis B", " NReq "),
     row("Michigan", "2024-25", "Exemption", "6.8", dose="Any Exemption", number_of_exemptions="7500"),
     row("Michigan", "2024-25", "Exemption", "6.5", dose="Non-Medical Exemption", number_of_exemptions="7200"),
     row("Michigan", "2024-25", "Exemption", "0.1", dose="Medical Exemption", foot_notes="<"),
@@ -66,7 +70,7 @@ def test_no_metric_sums_a_percent() -> None:
     for name in ("kindergarten_coverage", "exemption_percent", "exemptions_reported"):
         assert ds.semantic.metric(name).aggregation == "none"
         cm = compile_metric(ds, name, group_by=["place", "school_year"])
-        assert "sum(" not in cm.sql and "not summed" in cm.method
+        assert "sum(" not in cm.sql.lower() and "not summed" in cm.method
 
 
 def test_codes_are_no_value_and_kept_as_published(built: tuple[Registry, Engine]) -> None:
@@ -74,14 +78,37 @@ def test_codes_are_no_value_and_kept_as_published(built: tuple[Registry, Engine]
     out = tools.query_sql(
         eng,
         f"SELECT year_season, vaccine, coverage_estimate, estimate_as_published FROM {DS} "
-        "WHERE geography = 'Michigan' AND coverage_estimate IS NULL ORDER BY year_season",
+        "WHERE coverage_estimate IS NULL ORDER BY geography, year_season, vaccine",
         fmt="json",
     )
     got = [
         (r["year_season"], r["vaccine"], r["coverage_estimate"], r["estimate_as_published"])
         for r in _rows(out)
     ]
-    assert got == [("2022-23", "MMR", None, "NR"), ("2024-25", "Hepatitis B", None, "NReq")]
+    # Every declared code, the one that differs only in case (Nreq) and a padded one: no value, code kept as sent.
+    assert got == [
+        ("2022-23", "MMR", None, "NR"),
+        ("2024-25", "Hepatitis B", None, "NReq"),
+        ("2022-23", "Hepatitis B", None, " NReq "),
+        ("2023-24", "Hepatitis B", None, "Nreq"),
+        ("2023-24", "Polio", None, "NA"),
+    ]
+
+
+@pytest.mark.parametrize("code", ["N/A", "nr", "95.0*"])
+def test_an_undeclared_code_refuses_the_load(tmp_path: Path, code: str) -> None:
+    """A code the contract doesn't declare is never guessed at: the whole load is refused and nothing is stored."""
+    reg = load_registry(ROOT)
+    lake = tmp_path / "lake"
+    lake.mkdir()
+    rows = [*ROWS, row("Ohio", "2024-25", "Polio", code)]
+    f = tmp_path / "rows.ndjson"
+    write_ndjson(f, rows)
+    with pytest.raises(duckdb.ConversionException, match="DOUBLE"):
+        build_snapshot(
+            lake, reg.get(DS), [raw_fetch("https://data.cdc.gov/resource/ijqb-a7ye.json", rows)], [f]
+        )
+    assert not (lake / "datasets" / DS / "LATEST").exists()
 
 
 def test_get_series_reads_coverage_and_exemptions_apart(built: tuple[Registry, Engine]) -> None:

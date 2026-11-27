@@ -32,33 +32,50 @@ def test_every_vaccine_label_is_catalogued(live):
     assert {r["vaccine"] for r in served} <= set(cat["conditions"]["labels"])
 
 
-def test_every_estimate_code_is_declared(live):
-    """Every non-numeric estimate the publisher serves is a declared missing code (the whole table, not a slice)."""
-    cat, con, _sem, _rows, _ = live
+def _codes(con) -> set[str]:
+    """The estimate's declared missing codes, read from the contract."""
     (estimate,) = [p for p in _live.properties(con) if p["name"] == "coverage_estimate"]
-    codes = set(_live.custom(estimate)["missingCodes"])
-    query = {"$query": "SELECT coverage_estimate GROUP BY coverage_estimate LIMIT 5000"}
-    served = {
-        r.get("coverage_estimate")
-        for r in _live.get_json(cat, _live.with_query(cat["source"]["api_url"], query))
-    }
-    odd = []
+    return set(_live.custom(estimate)["missingCodes"])
+
+
+def _non_numeric(cat, field: str) -> set[str]:
+    """Every distinct value of one field over the whole table that doesn't read as a number."""
+    query = {"$query": f"SELECT {field} GROUP BY {field} LIMIT 10000"}
+    served = {r.get(field) for r in _live.get_json(cat, _live.with_query(cat["source"]["api_url"], query))}
+    odd = set()
     for v in served - {None, ""}:
         try:
             float(v)
         except ValueError:
-            odd.append(v)
-    assert set(odd) <= codes, sorted(set(odd) - codes)
+            odd.add(v)
+    return odd
+
+
+def test_every_estimate_code_is_declared(live):
+    """Every non-numeric estimate the publisher serves is a declared missing code (the whole table, not a slice).
+
+    An undeclared code refuses the whole load, so this is the early warning."""
+    cat, con, _sem, _rows, _ = live
+    odd = _non_numeric(cat, "coverage_estimate")
+    assert odd <= _codes(con), sorted(odd - _codes(con))
+
+
+def test_attribute_counts_and_percents_are_numbers(live):
+    """percent_surveyed and population_sample_size declare no codes, so a non-number there would refuse the load."""
+    cat, _con, _sem, _rows, _ = live
+    for field in ("percent_surveyed", "population_sample_size", "number_of_exemptions"):
+        assert _non_numeric(cat, field) == set(), field
 
 
 def test_michigan_mmr_two_ways(live):
     _cat, con, sem, rows, _ = live
+    codes = _codes(con)
     want = [
         r
         for r in rows
-        if r["geography"] == "Michigan"
-        and r["vaccine"] == "MMR"
-        and r["coverage_estimate"] not in ("NA", "NReq")
+        if r.get("geography") == "Michigan"
+        and r.get("vaccine") == "MMR"
+        and r.get("coverage_estimate") not in codes | {None, ""}
     ]
     latest = max(want, key=lambda r: r["year_season"])
     value = _live.duckdb_metric(
@@ -73,7 +90,14 @@ def test_michigan_mmr_two_ways(live):
 
 def test_michigan_any_exemption_two_ways(live):
     _cat, con, sem, rows, _ = live
-    want = [r for r in rows if r["geography"] == "Michigan" and r["dose"] == "Any Exemption"]
+    codes = _codes(con)
+    want = [
+        r
+        for r in rows
+        if r.get("geography") == "Michigan"
+        and r.get("dose") == "Any Exemption"
+        and r.get("coverage_estimate") not in codes | {None, ""}
+    ]
     latest = max(want, key=lambda r: r["year_season"])
     value = _live.duckdb_metric(
         con,
