@@ -252,7 +252,7 @@ schema:
     physicalType: VARCHAR
     logicalType: string
     required: true
-    description: 'Where the abstract''s text may go: public (CC BY or CC0, with every attribution field), private (another Creative Commons licence,
+    description: 'Where the abstract''s text may go: public (CC BY), private (another Creative Commons licence,
       e.g. BY-NC-ND) or link_only (a publisher''s own licence, no licence, or no text from any API).'
     customProperties:
     - property: role
@@ -353,17 +353,13 @@ customProperties:
     read: agents are blocked there).'
   - abstract_number is read from the start of each title ("568. ...", "P-1589. ..."), the form every OFID 2025 supplement
     title takes; confirm this is IDWeek's own abstract or poster number.
-  - 'Earlier years, 2014 to 2024, are catalogued one OFID supplement a year (volumes 1 to 10 and 12), each read from
-    Crossref and OpenAlex and checked with a three-record sample harvest; which IDWeek each holds is inferred from
-    its timing and titles, as for 2025. Confirm each on OUP''s issue pages. The licence changes between years: none
-    given in 2014 (link only), CC BY-NC-ND 4.0 from 2015 to 2020 (text private), CC BY 4.0 from 2021.'
-  - 'IDWeek 2014 titles run the abstract number into the title with no full stop (1477Factors ...), so
-    abstract_number is empty that year; confirm whether to read it.'
-  - 'Redistribution: CC BY (any version) and CC0 text may now be shared publicly with full attribution on every
-    record and result (authors, title, journal, DOI link, licence; owner decision, 24 Nov 2026), and both are on
-    registry.REDISTRIBUTABLE_LICENCES with registry.require_attribution. A public export of the CC BY and CC0
-    rows of this mixed-licence source is not built yet, so it stays hosting: private; abstract_tier public
-    marks the rows that carry full attribution and could be shared.'
+  - 'Earlier years (e.g. IDWeek 2024 in OFID volume 12 Supplement_1, DOIs 10.1093/ofid/ofae631.*) are not catalogued
+    yet: each year''s supplement needs the same check before it is added.'
+  - 'Redistribution: Crossref says its metadata is free to use for any purpose and OpenAlex is CC0, so titles, authors
+    and links could be public, and CC BY abstracts could be too. Neither CC0 nor CC BY is on the reviewed licence
+    list (registry.REDISTRIBUTABLE_LICENCES), so until the maintainer adds them in a reviewed change this source
+    is hosting: private and nothing reaches the public release. abstract_tier already marks which rows could be
+    public.'
   - Abstract text from OpenAlex is rebuilt from its inverted index and from Crossref by removing JATS markup; confirm
     that this plain-text form is acceptable as published text.
   - Matching to full papers (pubmed_pmid) comes only from Europe PMC when it indexes the abstract itself; matching

@@ -163,11 +163,6 @@ def test_abstract_number(title: str | None, want: str | None) -> None:
         ("https://creativecommons.org/licenses/by-nc-nd/4.0/", "cc-other"),
         ("cc-by", "cc-by"),
         ("CC BY", "cc-by"),
-        ("https://creativecommons.org/publicdomain/zero/1.0/", "cc0"),
-        ("CC0", "cc0"),
-        ("cc-0", "cc0"),
-        ("CC0 1.0", "cc0"),
-        ("https://openalex.org/licenses/public-domain", "other"),
         ("cc by-nc", "cc-other"),
         ("cc-by-nc-nd", "cc-other"),
         ("https://www.elsevier.com/tdm/userlicense/1.0/", "other"),
@@ -187,115 +182,6 @@ def test_abstract_tier_follows_the_licence_and_needs_text() -> None:
     assert doi.abstract_tier("https://www.elsevier.com/tdm/userlicense/1.0/", has_text=True) == "link_only"
     assert doi.abstract_tier(None, has_text=True) == "link_only"
     assert doi.abstract_tier(CC_BY, has_text=False) == "link_only"
-    assert doi.abstract_tier("https://creativecommons.org/publicdomain/zero/1.0/", has_text=True) == "public"
-
-
-# ------------------------------------------------------------------------------------------------ licence policy
-
-CC0 = "https://creativecommons.org/publicdomain/zero/1.0/"
-ROW_COLS = doi_harvest.ROW_ATTRIBUTION
-
-
-def attributed(**over: Any) -> dict[str, Any]:
-    rec = {
-        "authors": "Ana Ruiz; Lee",
-        "title": "1. Candida auris in a cohort",
-        "journal": "Open Forum Infectious Diseases",
-        "doi_url": "https://doi.org/10.1093/ofid/ofaf695.001",
-        "abstract_licence": CC_BY,
-    }
-    rec.update(over)
-    return rec
-
-
-def test_cc_by_and_cc0_are_redistributable_only_with_attribution() -> None:
-    from pydantic import ValidationError
-
-    from health_data_registry.registry import (
-        ATTRIBUTION_FIELDS,
-        REDISTRIBUTABLE_LICENCES,
-        Attribution,
-        Licence,
-    )
-
-    assert {"cc-by", "cc0", "public-domain-us-federal"} <= REDISTRIBUTABLE_LICENCES
-    assert ATTRIBUTION_FIELDS == ("authors", "title", "journal", "doi_url", "licence")
-    cols = Attribution(authors="a", title="t", journal="j", doi_url="d", licence="l")
-    for lic in ("cc-by", "cc0"):
-        assert Licence(id=lic, redistribution=True, terms_url="x", attribution=cols).redistribution
-        with pytest.raises(ValidationError, match="only with attribution"):
-            Licence(id=lic, redistribution=True, terms_url="x")
-        assert not Licence(id=lic, redistribution=False, terms_url="x").redistribution
-    # Not attribution licences: NC/ND and publisher terms stay off the reviewed list, attribution columns or not.
-    for lic in ("cc-by-nc", "cc-by-nd", "cc-by-nc-nd", "elsevier-tdm"):
-        with pytest.raises(ValidationError, match="reviewed list"):
-            Licence(id=lic, redistribution=True, terms_url="x", attribution=cols)
-    assert Licence(id="public-domain-us-federal", redistribution=True, terms_url="x").attribution is None
-
-
-def test_a_cc_by_record_without_attribution_is_refused() -> None:
-    from health_data_registry.registry import AttributionMissing, require_attribution
-
-    require_attribution(attributed(), ROW_COLS)
-    require_attribution(attributed(abstract_licence=CC0), ROW_COLS)
-    for name, col in (
-        ("authors", "authors"),
-        ("title", "title"),
-        ("journal", "journal"),
-        ("doi url", "doi_url"),
-        ("licence", "abstract_licence"),
-    ):
-        for blank in (None, "", "  "):
-            with pytest.raises(AttributionMissing, match=f"has no {name}$"):
-                require_attribution(attributed(**{col: blank}), ROW_COLS)
-    rec = attributed()
-    del rec["journal"], rec["authors"]
-    with pytest.raises(AttributionMissing, match="has no authors, journal$"):
-        require_attribution(rec, ROW_COLS)
-
-
-def _abstract(licence: str | None, **over: Any) -> doi.Abstract:
-    base: dict[str, Any] = {
-        "doi": "10.1093/ofid/ofaf695.001",
-        "title": "1. Candida auris in a cohort",
-        "authors": "Ana Ruiz",
-        "journal": "Open Forum Infectious Diseases",
-        "volume": "13",
-        "issue": "Supplement_1",
-        "pages": "S1",
-        "published": "2026-01-09",
-        "abstract": "We studied MRSA.",
-        "licence": licence,
-        "pmid": None,
-        "pmcid": None,
-        "apis": ("crossref",),
-    }
-    base.update(over)
-    return doi.Abstract(**base)
-
-
-def test_rows_are_public_only_for_attributed_cc_by_and_cc0() -> None:
-    prov = doi_harvest.Provenance(
-        url="https://api.crossref.org/x", sha256="0" * 64, retrieved_at="2026-11-24"
-    )
-
-    def tier(a: doi.Abstract) -> tuple[str, str | None]:
-        r = doi_harvest.row(a, sup=SUP, prov=prov, conference_name="IDWeek")
-        return r["abstract_tier"], r["abstract_text"]
-
-    text = "We studied MRSA."
-    assert tier(_abstract(CC_BY)) == ("public", text)
-    assert tier(_abstract(CC0)) == ("public", text)
-    # CC BY or CC0 without attribution: refused the public tier; the text stays in the private store only.
-    assert tier(_abstract(CC_BY, authors=None)) == ("private", text)
-    assert tier(_abstract(CC0, journal=None)) == ("private", text)
-    # CC BY-NC/ND stays private; Elsevier's text-mining licence stays link-only.
-    assert tier(_abstract("https://creativecommons.org/licenses/by-nc-nd/4.0/")) == ("private", text)
-    assert tier(_abstract("https://creativecommons.org/licenses/by-nc/4.0/", authors=None)) == (
-        "private",
-        text,
-    )
-    assert tier(_abstract("https://www.elsevier.com/tdm/userlicense/1.0/")) == ("link_only", None)
 
 
 # ------------------------------------------------------------------------------------------------ Crossref
@@ -332,16 +218,6 @@ def test_in_supplement_applies_every_structural_filter() -> None:
     assert not doi.in_supplement(cr_item(1, page="e12"), paged)
     assert not doi.in_supplement(cr_item(1, page=None), paged)
     assert doi.in_supplement(cr_item(1, DOI="10.1093/OFID/OFAF695.002"), SUP)  # DOIs compare in lower case
-    patterned = SUP.model_copy(update={"doi_prefix": None, "doi_pattern": r"10\.1093/ofid/ofu05[12]\.\d+"})
-    assert doi.in_supplement(cr_item(1, DOI="10.1093/ofid/ofu051.12"), patterned)
-    assert doi.in_supplement(cr_item(1, DOI="10.1093/OFID/OFU052.1"), patterned)
-    assert not doi.in_supplement(
-        cr_item(1, DOI="10.1093/ofid/ofu051"), patterned
-    )  # a section, not an abstract
-    assert not doi.in_supplement(
-        cr_item(1, DOI="10.1093/ofid/ofu051.12x"), patterned
-    )  # the whole DOI matches
-    assert not doi.in_supplement(cr_item(1, DOI="10.1093/ofid/ofu083.01"), patterned)
 
 
 def test_crossref_authors_and_licence() -> None:
@@ -806,15 +682,15 @@ def test_harvest_default_getter_reads_robots_logs_and_paces(
 
 def test_harvest_link_only_unverified_and_congress_supplements(registry: Any, tmp_path: Path) -> None:
     ds = registry.get("idweek_abstracts")
-    sup = ds.entry.source.supplements[-1]
-    ds.entry.source.supplements[-1] = sup.model_copy(
+    sup = ds.entry.source.supplements[0]
+    ds.entry.source.supplements[0] = sup.model_copy(
         update={"text_policy": "link_only", "verified": False, "granularity": "congress"}
     )
     try:
         get = FakeApis(two_pages())
         s = doi_harvest.harvest(registry, tmp_path, "idweek", max_records=50, get=get)
     finally:
-        ds.entry.source.supplements[-1] = sup
+        ds.entry.source.supplements[0] = sup
     assert s.listed == 1  # unverified: one record, whatever was asked
     (r,) = private.read_rows(tmp_path, ds).rows  # type: ignore[union-attr]
     assert r["abstract_text"] is None and r["abstract_tier"] == "link_only" and r["abstract_licence"] == CC_BY
@@ -825,8 +701,7 @@ def test_harvest_refusals(registry: Any, tmp_path: Path) -> None:
     with pytest.raises(doi_harvest.HarvestRefused, match="choose one of apic, icid, idweek, shea"):
         doi_harvest.harvest(registry, tmp_path, "croi", get=FakeApis([]))
     with pytest.raises(
-        doi_harvest.HarvestRefused,
-        match="no supplement catalogued for 1999; catalogued years: 2014, 2015, .*, 2024, 2025$",
+        doi_harvest.HarvestRefused, match="no supplement catalogued for 1999; catalogued years: 2025"
     ):
         doi_harvest.harvest(registry, tmp_path, "idweek", year=1999, get=FakeApis([]))
     with pytest.raises(doi_harvest.HarvestRefused, match="at least 1"):
@@ -900,9 +775,6 @@ def test_the_catalog_checks_doi_sources(tmp_path: Path) -> None:
     broken(lambda c: c["source"]["supplements"][0].update(from_pub_date="2025-10"))
     broken(lambda c: c["source"]["supplements"][0].update(exclude_dois=["10.1093/OFID/X"]))
     broken(lambda c: c["source"]["supplements"][0].update(granularity="session"))
-    broken(lambda c: c["source"]["supplements"][0].update(doi_pattern="10.1093/(ofid"))
-    broken(lambda c: c["source"]["supplements"][0].update(doi_pattern="10.1093/OFID/.*"))
-    broken(lambda c: c["licence"].update(redistribution=True, id="cc-by"))
     broken(lambda c: c.update(hosting="public"))
     broken(lambda c: c["source"].update(portal="socrata"))
 
