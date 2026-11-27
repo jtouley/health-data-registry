@@ -209,20 +209,21 @@ sources:
       data_type: varchar
       description: 'Publisher field _95_ci, as text; read into ci_95 (CDC''s 95% confidence interval for the coverage
         estimate, in percent, exactly as CDC writes it: the lower and upper ends in one text field, ''lower to upper''
-        (column ''95% CI (%)'', e.g. ''92.2 to 96.1''). Kept as sent: splitting it into two numbers changes the
-        value, so it waits for a staging extension (#172). Empty when CDC gives no interval.)'
+        (column ''95% CI (%)''). An example is ''92.2 to 96.1''. Kept as sent: splitting it into two numbers changes
+        the value, so it waits for a staging extension (#172). No value when CDC gives no interval.)'
     - name: coverage_estimate
       data_type: varchar
       description: Publisher field coverage_estimate, as text; read into coverage_estimate (Estimated percent of
         children in the group vaccinated with the vaccine and dose by the given age (a weighted survey estimate;
         column 'Estimate (%)', description 'The estimated percent of children vaccinated'). NA is stored as no value,
-        never as zero.)
+        never as zero; CDC doesn't define NA for this table (an open question in the contract).)
     - name: dimension
       data_type: varchar
       description: 'Publisher field dimension, as text; read into dimension (The age by which the dose was given
-        (e.g. ''24 Months'', ''35 Months'', ''0-3 Days''), or the population group within dimension_type for the
-        four-year cohorts (e.g. ''Any Medicaid'', ''Hispanic'', ''<133% FPL''). CDC''s column description: the ages
-        vary by vaccine and dose. Ages and groups overlap, so estimates are never added or averaged across them.)'
+        (e.g. ''24 Months'', ''35 Months'', ''8 Months'' for rotavirus, ''0-3 Days'' for the hepatitis B birth dose),
+        or the population group within dimension_type for the four-year cohorts (e.g. ''Any Medicaid'', ''Hispanic'',
+        ''<133% FPL''). CDC''s column description: the ages vary by vaccine and dose. Ages and groups overlap, so
+        estimates are never added or averaged across them.)'
     - name: dimension_type
       data_type: varchar
       description: 'Publisher field dimension_type, as text; read into dimension_type (What the age or population
@@ -231,10 +232,10 @@ sources:
     - name: dose
       data_type: varchar
       description: 'Publisher field dose, as text; read into dose (The dose or series the coverage counts (column
-        description: the dose of vaccine, ≥1 to ≥4), e.g. ''≥3 Doses'', ''≥4 Doses'', ''Full Series'' or ''Primary
-        Series'' for Hib, ''≥1 Dose, 3 Day (Birth Dose)'' for hepatitis B. Empty when the vaccine name carries it
-        (MMR, varicella) or for the Combined 7 Series, influenza and rotavirus. What each series counts is an open
-        question until the codebook is read.)'
+        description: the dose of vaccine, ≥1 to ≥4). Examples are ''≥3 Doses'', ''≥4 Doses'', ''Full Series'' or
+        ''Primary Series'' for Hib, and ''≥1 Dose, 3 Day (Birth Dose)'' for hepatitis B. No value when the vaccine
+        name carries it (MMR, varicella) or for the Combined 7 Series, influenza and rotavirus. What each series
+        counts is an open question until the codebook is read.)'
     - name: geography
       data_type: varchar
       description: 'Publisher field geography, as text; read into geography (The place the estimate is for: United
@@ -255,8 +256,8 @@ sources:
       data_type: varchar
       description: 'Publisher field vaccine, as text; read into vaccine (The vaccine the coverage is for, as CDC
         names it (column description: ''The name of the vaccine for which estimates are calculated''); for MMR and
-        varicella the dose is part of the name (''≥1 Dose MMR''), and the Combined 7 Series is the combined childhood
-        series as CDC defines it.)'
+        varicella the dose is part of the name (''≥1 Dose MMR''). What the Combined 7 Series counts is not yet read
+        from CDC''s codebook (an open question in the contract).)'
     - name: year_season
       data_type: varchar
       description: 'Publisher field year_season, as text; read into year_season (The birth year, two-year birth

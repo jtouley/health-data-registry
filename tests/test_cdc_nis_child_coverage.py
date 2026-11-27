@@ -10,9 +10,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import pytest
 
-from health_data_registry import tools
+from health_data_registry import quality, tools
 from health_data_registry.query import Engine, QueryRefused, compile_metric
 from health_data_registry.registry import Registry, load_registry
 from health_data_registry.store import build_snapshot, write_ndjson
@@ -87,8 +88,9 @@ def test_get_series_reads_one_dose_by_24_months(built: tuple[Registry, Engine]) 
     reg, eng = built
     out = tools.get_series(reg, eng, condition=MMR, locations=["Michigan"], fmt="json")
     got = {str(r["year"]): r["value"] for r in _rows(out)}
-    # By 35 months (95.0) is never read for the 24-month series; the cohort keeps its own label; NA is no value.
-    assert got == {"2020": None, "2021": 91.2, "2021-2022": 92.4, "2022": 93.4}
+    # By 35 months (95.0) is never read for the 24-month series; the 2021-2022 cohort overlaps its single years,
+    # so the series reads single birth years only; NA is no value.
+    assert got == {"2020": None, "2021": 91.2, "2022": 93.4}
     dtap = tools.get_series(reg, eng, condition="DTaP", locations=["Michigan"], fmt="json")
     assert [(r["year"], r["value"]) for r in _rows(dtap)] == [("2022", 80.5)]  # four doses, never three added
 
@@ -110,10 +112,108 @@ def test_the_interval_comes_back_as_sent(built: tuple[Registry, Engine]) -> None
     ]
 
 
+def test_a_year_range_never_returns_a_cohort_that_reaches_outside_it(built: tuple[Registry, Engine]) -> None:
+    reg, eng = built
+    # As text, '2021-2022' sorts inside a 2021-to-2021 period; the series must not return it (2022 births).
+    out = tools.get_series(
+        reg, eng, condition=MMR, locations=["Michigan"], year_start=2021, year_end=2021, fmt="json"
+    )
+    assert [(str(r["year"]), r["value"]) for r in _rows(out)] == [("2021", 91.2)]
+
+
 def test_places_are_never_added(built: tuple[Registry, Engine]) -> None:
     _reg, eng = built
-    with pytest.raises(QueryRefused):
-        eng.query_metric(DS, "vaccination_coverage", filters={"birth_year": "2022", "vaccine": MMR})
+    # Every other dimension pinned to one value, so only the place varies (Michigan and Ohio, 2022).
+    pinned = {"birth_year": "2022", "vaccine": MMR, "dose": "", "place_type": "States/Local Areas",
+              "group_type": "Age", "group": "24 Months"}  # fmt: skip
+    with pytest.raises(QueryRefused) as refused:
+        eng.query_metric(DS, "vaccination_coverage", filters=pinned)
+    assert refused.value.code == "would_combine_rates"
+    one = eng.query_metric(DS, "vaccination_coverage", filters={**pinned, "place": "Michigan"})
+    assert [r[0] for r in one["rows"]] == [93.4]
+
+
+def test_the_generic_series_declines_a_vaccine_at_several_doses(built: tuple[Registry, Engine]) -> None:
+    reg, eng = built
+    ds = reg.get(DS)
+    (generic,) = ds.condition_series("DTaP")  # doses not pinned: DTaP has three and four doses by 24 months
+    with pytest.raises(QueryRefused) as refused:
+        tools.series_rows(eng, ds, generic, ["Michigan"], 2022, 2022)
+    assert refused.value.code == "would_combine_rates"
+
+
+def test_a_disease_question_also_returns_coverage_labelled_as_coverage(
+    built: tuple[Registry, Engine],
+) -> None:
+    # Today's routing (follow-up #192): a disease's name also finds the vaccine's coverage series. Each row
+    # says it is vaccine coverage, in percent, and measure="cases" leaves it out.
+    reg, _eng = built
+    found = [(ds.id, s) for ds, s in tools.series_for(reg, "influenza") if ds.id == DS]
+    assert [(s.measure, s.label) for _id, s in found] == [
+        ("percent", "Influenza vaccine coverage (dose as CDC defines it) by 24 months")
+    ]
+    assert not [ds for ds, _s in tools.series_for(reg, "influenza", measure="cases") if ds.id == DS]
+
+
+def test_vaccine_label_rule_lists_the_catalog_labels() -> None:
+    # The warning rule and the catalog (which builds flag_unmapped_labels) must name the same vaccines.
+    ds = load_registry(ROOT).get(DS)
+    (rule,) = [r for r in ds.contract.quality if r.id == "vaccine_labels"]
+    assert sorted(rule.valid_values) == sorted(ds.entry.conditions.labels)
+
+
+def _report(rows: list[dict[str, Any]]) -> dict[str, str]:
+    ds = load_registry(ROOT).get(DS)
+    con = duckdb.connect()
+    cols = {c.name: c.physical_type for c in ds.contract.columns}
+    con.execute(f"CREATE TABLE t ({', '.join(f'{n} {t}' for n, t in cols.items())})")
+    for r in rows:
+        full = {n: r.get(n) for n in cols}
+        con.execute(f"INSERT INTO t VALUES ({', '.join('?' for _ in cols)})", list(full.values()))
+    return {x["test"]: x["status"] for x in quality.run_rules(con, "t", ds.contract.quality).results}
+
+
+GOOD = {"vaccine": MMR, "dose": None, "geography_type": "States/Local Areas", "geography": "Michigan",
+        "year_season": "2022", "dimension_type": "Age", "dimension": "24 Months", "coverage_estimate": 93.4,
+        "ci_95": "87.9 to 97.0", "population_sample_size": 300}  # fmt: skip
+
+
+def test_quality_rules_pass_on_a_well_formed_row() -> None:
+    assert set(_report([GOOD]).values()) == {"pass"}
+
+
+@pytest.mark.parametrize(
+    ("rule", "bad"),
+    [
+        ("coverage_is_a_percent", {"coverage_estimate": 101.0}),
+        ("vaccine_labels", {"vaccine": "≥2 Dose MMR"}),
+        ("geography_type_labels", {"geography_type": "Counties"}),
+        ("dimension_type_labels", {"dimension_type": "Sex"}),
+        ("interval_text_form", {"ci_95": "92.2-96.1"}),
+        ("interval_text_form", {"ci_95": "92.2 – 96.1"}),
+        # regexp_full_match doesn't trim: a padded interval is a change in form to review too.
+        ("interval_text_form", {"ci_95": " 92.2 to 96.1"}),
+    ],
+)
+def test_a_quality_rule_fires_on_a_bad_row(rule: str, bad: dict[str, Any]) -> None:
+    status = _report([GOOD, {**GOOD, "geography": "Ohio", **bad}])
+    assert status[rule] in ("fail", "warn")
+    assert {k for k, v in status.items() if v != "pass"} == {rule}
+
+
+def test_a_repeated_cell_fires_the_grain_check_with_no_dose_and_an_empty_dose_alike() -> None:
+    status = _report([GOOD, {**GOOD, "dose": "", "coverage_estimate": 90.0}])
+    assert status["grain_is_unique"] == "warn"
+
+
+def test_an_estimate_without_an_interval_is_counted_beyond_the_known_25() -> None:
+    gaps = [{**GOOD, "geography": f"Place {i}", "ci_95": "" if i % 2 else None} for i in range(26)]
+    assert _report(gaps)["interval_filled_where_estimate"] == "warn"
+    assert _report(gaps[:25])["interval_filled_where_estimate"] == "pass"
+    assert (
+        _report([{**GOOD, "coverage_estimate": None, "ci_95": None}])["interval_filled_where_estimate"]
+        == "pass"
+    )
 
 
 def test_a_coverage_question_is_routed_here(built: tuple[Registry, Engine]) -> None:

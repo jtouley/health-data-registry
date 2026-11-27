@@ -23,97 +23,112 @@ metrics:
     # it waits for a staging extension (#172); then this names lower and upper bounds.
     uncertainty: none
     uncertainty_reason: "CDC publishes the 95% confidence interval as one text field (for example '92.2 to 96.1'), kept exactly as sent in the ci_95 column. It is not split into lower and upper numbers yet, so it isn't shown here: ask query_sql for ci_95 beside the estimate, or see describe_dataset."
-# Each series reads one dose by one age (open question 'Ages'): by 24 months, rotavirus by 8 months and the
-# hepatitis B birth dose by 3 days. Rows keep their period as CDC writes it, single birth years and cohorts alike.
+  # The series' metric: single birth years only. A two- or four-year cohort ('2020-2021') overlaps the single years
+  # beside it, and a text period filter would place it under its first year only (a period of 2021 would return
+  # 2021-2022 and miss 2020-2021), so the series leave cohorts out. Structural: a single birth year is four
+  # characters. Cohorts stay readable with query_sql (open question 'Birth years and cohorts').
+  - name: vaccination_coverage_by_birth_year
+    description: "Estimated percent of children vaccinated, for one vaccine and dose, place, single birth year, and age or population group; two- and four-year birth cohorts are left out. CDC's 95% confidence interval is in ci_95, as published. Pin the age or group; percentages are never added."
+    measure: coverage
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["length(year_season) = 4"]
+    uncertainty: none
+    uncertainty_reason: "CDC publishes the 95% confidence interval as one text field (for example '92.2 to 96.1'), kept exactly as sent in the ci_95 column. It is not split into lower and upper numbers yet, so it isn't shown here: ask query_sql for ci_95 beside the estimate, or see describe_dataset."
+# Each series reads one dose by one age (open question 'Ages and doses', draft choices pending a maintainer's
+# review): by 24 months, rotavirus by 8 months and the hepatitis B birth dose by 3 days. Single birth years only
+# (metric vaccination_coverage_by_birth_year). Each label says it is vaccine coverage, so a row read beside a
+# disease's case counts names what it is.
 series:
   - condition: "≥1 Dose MMR"
-    label: "MMR, at least one dose by 24 months"
-    metric: vaccination_coverage
+    label: "MMR vaccine coverage, at least one dose by 24 months"
+    metric: vaccination_coverage_by_birth_year
     measure: percent
     filters: {vaccine: "≥1 Dose MMR", group_type: "Age", group: "24 Months"}
     location_dimension: place
     time_dimension: birth_year
   - condition: "DTaP"
-    label: "DTaP, at least four doses by 24 months"
-    metric: vaccination_coverage
+    label: "DTaP vaccine coverage, at least four doses by 24 months"
+    metric: vaccination_coverage_by_birth_year
     measure: percent
     filters: {vaccine: "DTaP", dose: "≥4 Doses", group_type: "Age", group: "24 Months"}
     location_dimension: place
     time_dimension: birth_year
   - condition: "Combined 7 Series"
-    label: "Combined 7-vaccine series by 24 months"
-    metric: vaccination_coverage
+    label: "Combined 7-vaccine series coverage by 24 months"
+    metric: vaccination_coverage_by_birth_year
     measure: percent
     filters: {vaccine: "Combined 7 Series", group_type: "Age", group: "24 Months"}
     location_dimension: place
     time_dimension: birth_year
   - condition: "Polio"
-    label: "Polio, at least three doses by 24 months"
-    metric: vaccination_coverage
+    label: "Polio vaccine coverage, at least three doses by 24 months"
+    metric: vaccination_coverage_by_birth_year
     measure: percent
     filters: {vaccine: "Polio", dose: "≥3 Doses", group_type: "Age", group: "24 Months"}
     location_dimension: place
     time_dimension: birth_year
   - condition: "Hep B"
-    label: "Hepatitis B, at least three doses by 24 months"
-    metric: vaccination_coverage
+    label: "Hep B vaccine coverage, at least three doses by 24 months"
+    metric: vaccination_coverage_by_birth_year
     measure: percent
     filters: {vaccine: "Hep B", dose: "≥3 Doses", group_type: "Age", group: "24 Months"}
     location_dimension: place
     time_dimension: birth_year
   - condition: "Hep B"
-    label: "Hepatitis B birth dose, by 3 days"
-    metric: vaccination_coverage
+    label: "Hep B vaccine coverage, birth dose by 3 days"
+    metric: vaccination_coverage_by_birth_year
     measure: percent
     filters: {vaccine: "Hep B", dose: "≥1 Dose, 3 Day (Birth Dose)", group_type: "Age", group: "0-3 Days"}
     location_dimension: place
     time_dimension: birth_year
   - condition: "Hep A"
-    label: "Hepatitis A, at least one dose by 24 months"
-    metric: vaccination_coverage
+    label: "Hep A vaccine coverage, at least one dose by 24 months"
+    metric: vaccination_coverage_by_birth_year
     measure: percent
     filters: {vaccine: "Hep A", dose: "≥1 Dose", group_type: "Age", group: "24 Months"}
     location_dimension: place
     time_dimension: birth_year
   - condition: "Hib"
-    label: "Hib, full series by 24 months"
-    metric: vaccination_coverage
+    label: "Hib vaccine coverage, full series by 24 months"
+    metric: vaccination_coverage_by_birth_year
     measure: percent
     filters: {vaccine: "Hib", dose: "Full Series", group_type: "Age", group: "24 Months"}
     location_dimension: place
     time_dimension: birth_year
   - condition: "PCV"
-    label: "Pneumococcal conjugate (PCV), at least four doses by 24 months"
-    metric: vaccination_coverage
+    label: "Pneumococcal conjugate vaccine (PCV) coverage, at least four doses by 24 months"
+    metric: vaccination_coverage_by_birth_year
     measure: percent
     filters: {vaccine: "PCV", dose: "≥4 Doses", group_type: "Age", group: "24 Months"}
     location_dimension: place
     time_dimension: birth_year
   - condition: "≥1 Dose Varicella"
-    label: "Varicella, at least one dose by 24 months"
-    metric: vaccination_coverage
+    label: "Varicella vaccine coverage, at least one dose by 24 months"
+    metric: vaccination_coverage_by_birth_year
     measure: percent
     filters: {vaccine: "≥1 Dose Varicella", group_type: "Age", group: "24 Months"}
     location_dimension: place
     time_dimension: birth_year
   - condition: "Rotavirus"
-    label: "Rotavirus, by 8 months"
-    metric: vaccination_coverage
+    label: "Rotavirus vaccine coverage by 8 months"
+    metric: vaccination_coverage_by_birth_year
     measure: percent
     filters: {vaccine: "Rotavirus", group_type: "Age", group: "8 Months"}
     location_dimension: place
     time_dimension: birth_year
   - condition: "Influenza"
-    label: "Influenza vaccination (dose as CDC defines it) by 24 months"
-    metric: vaccination_coverage
+    label: "Influenza vaccine coverage (dose as CDC defines it) by 24 months"
+    metric: vaccination_coverage_by_birth_year
     measure: percent
     filters: {vaccine: "Influenza", group_type: "Age", group: "24 Months"}
     location_dimension: place
     time_dimension: birth_year
-# Any vaccine label: coverage by 24 months, the vaccine pinned to the asked label. Doses are not pinned, so a
-# vaccine published at several doses by 24 months is declined rather than one picked; the named series pin one.
+# Any vaccine label: coverage by 24 months in single birth years, the vaccine pinned to the asked label. Doses are
+# not pinned, so a vaccine published at several doses by 24 months is declined rather than one picked; the named
+# series pin one (tests/test_cdc_nis_child_coverage.py pins the decline).
 generic_series:
-  - metric: vaccination_coverage
+  - metric: vaccination_coverage_by_birth_year
     measure: percent
     filters: {group_type: "Age", group: "24 Months"}
     location_dimension: place

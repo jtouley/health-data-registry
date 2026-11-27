@@ -32,7 +32,7 @@ models:
       arguments:
         measure_sql: SELECT COUNT(*) FROM {object} WHERE coverage_estimate IS NOT NULL AND (ci_95 IS NULL OR trim(ci_95)
           = '')
-        condition: measured < 50
+        condition: measured <= 25
       config:
         severity: warn
         meta:
@@ -41,8 +41,25 @@ models:
           contract: contracts/cdc_nis_child_coverage.odcs.yaml
           checks: 'Fill rate. Every published estimate should come with its 95% interval (column description: ''The
             95% confidence interval of the estimate of vaccination coverage''). Live data on 2026-11-25 had 25 rows
-            with an estimate and no interval (2,114 NA estimates, 2,139 empty intervals); many more means the interval
-            column has changed. Why those rows have none is an open question.'
+            with an estimate and no interval (2,114 NA estimates, 2,139 empty intervals), so the bound is those
+            25 rows and any new gap is a warning to review. Provisional until a maintainer sets it (open question
+            ''Empty interval''); why those rows have none is an open question too.'
+  - odcs_check:
+      name: cdc_nis_child_coverage_grain_is_unique
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM (SELECT vaccine FROM {object} GROUP BY vaccine, coalesce(dose, ''), geography,
+          year_season, dimension_type, dimension HAVING COUNT(*) > 1)
+        condition: measured = 0
+      config:
+        severity: warn
+        meta:
+          dimension: uniqueness
+          rule: grain_is_unique
+          contract: contracts/cdc_nis_child_coverage.odcs.yaml
+          checks: 'Structural: one row per vaccine, dose, place, birth year or cohort, and age or group held over
+            the whole table on 2026-11-25 (141,052 rows). A repeat would put two estimates in one cell, and every
+            series would then decline to answer. A warning, not a declared key: the maintainer confirms the key
+            (open question ''Grain''). No dose and an empty dose count as the same.'
   - odcs_check:
       name: cdc_nis_child_coverage_vaccine_labels
       arguments:
@@ -60,6 +77,23 @@ models:
           contract: contracts/cdc_nis_child_coverage.odcs.yaml
           checks: Every vaccine label published on 2026-11-25. A new label is a new series to review (catalog conditions),
             not an error in the data.
+  - odcs_check:
+      name: cdc_nis_child_coverage_geography_type_labels
+      arguments:
+        measure_sql: SELECT CASE WHEN count(*) FILTER (WHERE NOT ("geography_type" IS NULL OR trim(CAST("geography_type"
+          AS VARCHAR)) = '')) = 0 THEN NULL ELSE count(*) FILTER (WHERE NOT ("geography_type" IS NULL OR trim(CAST("geography_type"
+          AS VARCHAR)) = '') AND "geography_type" NOT IN ('HHS Regions/National', 'States/Local Areas')) END FROM
+          {object}
+        condition: measured = 0
+        nothing_to_judge: true
+      config:
+        severity: warn
+        meta:
+          dimension: conformity
+          rule: geography_type_labels
+          contract: contracts/cdc_nis_child_coverage.odcs.yaml
+          checks: The two kinds of place listed in the column's enum, as published on 2026-11-25. A new kind is
+            a new set of places to review.
   - odcs_check:
       name: cdc_nis_child_coverage_dimension_type_labels
       arguments:
@@ -118,7 +152,7 @@ models:
           rule: fill_rate_dose
           contract: contracts/cdc_nis_child_coverage.odcs.yaml
           checks: 'No row has a value for the dose or series the coverage counts (column description: the dose of
-            vaccine, ≥1 to ≥4), e.g.'
+            vaccine, ≥1 to ≥4).'
   - odcs_check:
       name: cdc_nis_child_coverage_fill_rate_coverage_estimate
       arguments:
@@ -148,7 +182,7 @@ models:
           contract: contracts/cdc_nis_child_coverage.odcs.yaml
           checks: 'No row has a value for CDC''s 95% confidence interval for the coverage estimate, in percent,
             exactly as CDC writes it: the lower and upper ends in one text field, ''lower to upper'' (column ''95%
-            CI (%)'', e.g.'
+            CI (%)'').'
   - odcs_check:
       name: cdc_nis_child_coverage_fill_rate_population_sample_size
       arguments:
@@ -167,8 +201,8 @@ models:
   - name: vaccine
     data_type: varchar
     description: 'The vaccine the coverage is for, as CDC names it (column description: ''The name of the vaccine
-      for which estimates are calculated''); for MMR and varicella the dose is part of the name (''≥1 Dose MMR''),
-      and the Combined 7 Series is the combined childhood series as CDC defines it.'
+      for which estimates are calculated''); for MMR and varicella the dose is part of the name (''≥1 Dose MMR'').
+      What the Combined 7 Series counts is not yet read from CDC''s codebook (an open question in the contract).'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -178,10 +212,10 @@ models:
       missing_codes: []
   - name: dose
     data_type: varchar
-    description: 'The dose or series the coverage counts (column description: the dose of vaccine, ≥1 to ≥4), e.g.
-      ''≥3 Doses'', ''≥4 Doses'', ''Full Series'' or ''Primary Series'' for Hib, ''≥1 Dose, 3 Day (Birth Dose)''
-      for hepatitis B. Empty when the vaccine name carries it (MMR, varicella) or for the Combined 7 Series, influenza
-      and rotavirus. What each series counts is an open question until the codebook is read.'
+    description: 'The dose or series the coverage counts (column description: the dose of vaccine, ≥1 to ≥4). Examples
+      are ''≥3 Doses'', ''≥4 Doses'', ''Full Series'' or ''Primary Series'' for Hib, and ''≥1 Dose, 3 Day (Birth
+      Dose)'' for hepatitis B. No value when the vaccine name carries it (MMR, varicella) or for the Combined 7
+      Series, influenza and rotavirus. What each series counts is an open question until the codebook is read.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -238,10 +272,10 @@ models:
       missing_codes: []
   - name: dimension
     data_type: varchar
-    description: 'The age by which the dose was given (e.g. ''24 Months'', ''35 Months'', ''0-3 Days''), or the
-      population group within dimension_type for the four-year cohorts (e.g. ''Any Medicaid'', ''Hispanic'', ''<133%
-      FPL''). CDC''s column description: the ages vary by vaccine and dose. Ages and groups overlap, so estimates
-      are never added or averaged across them.'
+    description: 'The age by which the dose was given (e.g. ''24 Months'', ''35 Months'', ''8 Months'' for rotavirus,
+      ''0-3 Days'' for the hepatitis B birth dose), or the population group within dimension_type for the four-year
+      cohorts (e.g. ''Any Medicaid'', ''Hispanic'', ''<133% FPL''). CDC''s column description: the ages vary by
+      vaccine and dose. Ages and groups overlap, so estimates are never added or averaged across them.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -253,7 +287,7 @@ models:
     data_type: double
     description: Estimated percent of children in the group vaccinated with the vaccine and dose by the given age
       (a weighted survey estimate; column 'Estimate (%)', description 'The estimated percent of children vaccinated').
-      NA is stored as no value, never as zero.
+      NA is stored as no value, never as zero; CDC doesn't define NA for this table (an open question in the contract).
     meta:
       logical_type: number
       physical_type: DOUBLE
@@ -265,9 +299,9 @@ models:
   - name: ci_95
     data_type: varchar
     description: 'CDC''s 95% confidence interval for the coverage estimate, in percent, exactly as CDC writes it:
-      the lower and upper ends in one text field, ''lower to upper'' (column ''95% CI (%)'', e.g. ''92.2 to 96.1'').
-      Kept as sent: splitting it into two numbers changes the value, so it waits for a staging extension (#172).
-      Empty when CDC gives no interval.'
+      the lower and upper ends in one text field, ''lower to upper'' (column ''95% CI (%)''). An example is ''92.2
+      to 96.1''. Kept as sent: splitting it into two numbers changes the value, so it waits for a staging extension
+      (#172). No value when CDC gives no interval.'
     meta:
       logical_type: string
       physical_type: VARCHAR

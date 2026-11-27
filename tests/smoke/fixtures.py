@@ -14,6 +14,7 @@ The lake is built in a temporary directory at test time and deleted with it; not
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -151,7 +152,11 @@ def pinned_to_label_catalog(journey: Journey, catalog_ref: str) -> Journey:
     true for that catalog, not for sources catalogued later. A source added since then is the label re-audit's
     concern, so a check scored against the label runs on the catalog the label names.
     """
-    ids = [x.strip() for x in catalog_ref.rsplit("catalog/:", 1)[1].rstrip(")").split(",")]
+    found = re.search(r"catalog/:\s*([^)]*)\)", catalog_ref)
+    assert found, f"the DEV label's catalog_ref names no catalog list ('catalog/: a, b)'): {catalog_ref!r}"
+    ids = [x.strip() for x in found.group(1).split(",") if x.strip()]
+    missing = [i for i in ids if i not in {ds.id for ds in journey.registry}]
+    assert not missing, f"the DEV label's catalog_ref names sources this journey doesn't load: {missing}"
     reg = Registry(journey.registry.root, {i: journey.registry.get(i) for i in ids})
     return Journey(
         reg, Engine(registry=reg, lake=journey.engine.lake, hub=None, fetch_at_run_time=False), journey.raw
