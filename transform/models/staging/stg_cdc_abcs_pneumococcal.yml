@@ -2,7 +2,8 @@
 version: 2
 models:
 - name: stg_cdc_abcs_pneumococcal
-  description: 'Long table: one published figure per year x topic x view x stratum, with its unit.'
+  description: 'Long table: one published figure for the ABCs surveillance areas (a catchment of selected counties,
+    not the United States; the table has no place column) per year x topic x view x stratum, with its unit.'
   config:
     materialized: table
     contract:
@@ -43,8 +44,9 @@ models:
   - name: topic
     data_type: varchar
     description: 'What the figure measures: Case Rates, Death Rates or Serotypes (rates per 100,000), Number of
-      Cases and Deaths (counts), Syndromes (percent of cases), or Antibiotic resistance (percent of isolates resistant,
-      or the number of isolates).'
+      Cases and Deaths (counts), Syndromes (percent of cases), or Antibiotic resistance (percent of isolates not
+      susceptible to an antibiotic as CDC reports it, resistant or nonsusceptible not yet confirmed; or the number
+      of isolates).'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -101,7 +103,8 @@ models:
   - name: value
     data_type: double
     description: 'The published figure, in the row''s unit: a rate per 100,000 population, a percent, or a count.
-      Empty in a few antibiotic resistance rows (5 of 216 on 2026-11-25), which are never read as zero.'
+      Empty in 5 of the 216 antibiotic resistance percents on 2026-11-25 (Tetracycline3, 1998 to 2002), which are
+      never read as zero.'
     meta:
       logical_type: number
       physical_type: DOUBLE

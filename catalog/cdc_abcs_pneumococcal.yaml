@@ -11,7 +11,7 @@ years: {start: 1997, end: null}
 # location.
 geography: [surveillance_areas]
 shape: rate_table
-grain: "One row is one year and one published figure for invasive Streptococcus pneumoniae disease in the ABCs surveillance areas: a case or death rate per 100,000 (overall, by age group or by race), a rate for a group of vaccine serotypes in an age group, a count of cases, deaths or survivals, the percent of cases with a syndrome, or the percent of isolates resistant to an antibiotic (or the number of isolates tested)."
+grain: "One row is one year and one published figure for invasive Streptococcus pneumoniae disease in the ABCs surveillance areas: a case or death rate per 100,000 (overall, by age group or by race), a rate for a group of vaccine serotypes in an age group, a count of cases, deaths or survivals, the percent of cases with a syndrome, or the percent of isolates not susceptible to an antibiotic as CDC reports it (or the number of isolates tested)."
 refresh: annual
 licence:
   # No licence field in the dataset's Socrata metadata (checked 2026-11-25). A CDC dataset on data.cdc.gov is a
@@ -30,19 +30,20 @@ codebook_url: https://www.cdc.gov/abcs/methodology/index.html
 caveats:
   - "Figures are for the ABCs surveillance areas, a catchment of selected counties in some states. They are not figures for the United States and are not keyed to any GBD location."
   - "The surveillance areas, the laboratory isolate collection areas and the methods have changed over time, and the handling of missing data changed in 2010 (to multiple imputation), so CDC says trends should be read with caution."
-  - "Each topic is its own measure: case rates, death rates and serotype rates per 100,000, counts of cases and deaths, percents of cases by syndrome, and percents of isolates resistant. They are never added to each other."
-  - "Rates are never added. Age groups sit beside Overall, and the serotype groups overlap (PCV13 serotypes are inside PCV15, PCV20 and PCV21, and All Serotypes covers them all), so they are never added either."
+  - "Each topic is its own measure: case rates, death rates and serotype rates per 100,000, counts of cases and deaths, percents of cases by syndrome, and percents of isolates not susceptible to an antibiotic. They are never added to each other."
+  - "Rates are never added. Age groups sit beside Overall, and the serotype groups share serotypes (All Serotypes covers them all), so they are never added either."
   - "Small numbers for some topics can make year-to-year changes hard to read (dataset footnote)."
   - "Figures here may differ from other ABCs publications, which can use different datasets or methods (dataset footnote)."
   - "Whether these rates are for the surveillance areas only or projected to the whole country is not yet confirmed (see the contract's open questions)."
+  - "Whether the antibiotic resistance percents count resistant isolates only or all nonsusceptible isolates (resistant plus intermediate) is not yet confirmed; for penicillin the two differ, so read them as not susceptible as CDC reports it."
 gbd:
-  # Proposed GBD keys, not reviewed (hard rules 1 and 3). Pathogen Streptococcus pneumoniae; invasive pneumococcal
-  # disease spans GBD causes (lower respiratory infections, meningitis) and bacteremia, and sepsis is not a GBD
-  # cause. No GBD location: location_column is null and every series names the ABCs surveillance areas.
+  # No GBD cause yet (hard rules 1 and 3). Invasive pneumococcal disease spans GBD causes (lower respiratory
+  # infections, meningitis) and bacteremia without focus, which is not a GBD cause, so no one cause covers a
+  # figure here, and get_aligned_with_gbd reads only one cause per condition. get_aligned_with_gbd says the
+  # mapping is missing until a maintainer reviews it (see the contract's open questions). No GBD location:
+  # location_column is null and every series names the ABCs surveillance areas.
   location_column: null
-  causes:
-    - {condition: "Streptococcus pneumoniae", cause: "Lower respiratory infections", pathogen: "Streptococcus pneumoniae"}
-    - {condition: "Streptococcus pneumoniae", cause: "Meningitis", pathogen: "Streptococcus pneumoniae"}
+  causes: []
 conditions:
   dimension: bacterium
   # Provenance: every distinct value of the bacteria column at https://data.cdc.gov/resource/en3s-hzsr.json, read

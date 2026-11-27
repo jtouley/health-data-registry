@@ -16,6 +16,10 @@ def live():
     meta = _live.get_json(cat, f"https://{cat['source']['host']}/api/views/{cat['source']['dataset']}.json")
     # The whole table is small (under 2,000 rows), so the live check reads all of it.
     rows = _live.get_json(cat, _live.with_query(cat["source"]["api_url"], {"$limit": "5000"}))
+    # A full page means the table outgrew one read: fail loudly rather than check an arbitrary partial page.
+    assert len(rows) < 5000, (
+        "the live table reached the 5,000-row page; page through it with $order and $offset"
+    )
     return cat, con, sem, rows, meta
 
 

@@ -3,7 +3,7 @@ dataset: cdc_abcs_pneumococcal
 # added (rates never; counts only as published).
 version: 0.1.0
 dimensions:
-  - {name: year, column: year, type: time, non_additive: false, description: "Surveillance year."}
+  - {name: year, column: year, type: time, non_additive: false, description: "Surveillance year (1997 onward; the serotype and antibiotic resistance rows start in 1998, so a 1997 answer for them is empty)."}
   - {name: bacterium, column: bacteria, type: categorical, non_additive: false, description: "The bacterium: Streptococcus pneumoniae."}
   - name: topic
     column: topic
@@ -31,47 +31,48 @@ dimensions:
     description: "Per 100,000 population, Percent, or Counts."
 measures:
   - {name: ipd_rate, column: value, kind: rate, unit: "per 100,000 population", description: "Invasive pneumococcal disease cases or deaths per 100,000 population in the ABCs surveillance areas."}
-  - {name: ipd_count, column: value, kind: count, unit: "cases or deaths", description: "Number of invasive pneumococcal disease cases, deaths or survivals in the ABCs surveillance areas, as published."}
-  - {name: ipd_percent, column: value, kind: percent, unit: "%", description: "Percent of cases with a syndrome, or percent of isolates resistant to an antibiotic."}
+  - {name: ipd_count, column: value, kind: count, unit: "cases, deaths or survivals", description: "Number of invasive pneumococcal disease cases, deaths or survivals in the ABCs surveillance areas, as published."}
+  - {name: ipd_percent, column: value, kind: percent, unit: "%", description: "Percent of cases with a syndrome, or percent of isolates not susceptible to an antibiotic as CDC reports it (resistant or nonsusceptible not yet confirmed)."}
 metrics:
   - name: ipd_case_rate
     description: "Invasive pneumococcal disease cases per 100,000 population in the ABCs surveillance areas, all ages and races, from the published Overall row; never added."
     measure: ipd_rate
     aggregation: none
     exclude_total_rows: false
-    filters: ["topic = 'Case Rates'", "viewby = 'Overall'"]
+    # Every grain column pinned, so the metric reads exactly one published cell per year.
+    filters: ["topic = 'Case Rates'", "viewby = 'Overall'", "viewby2 IS NULL", "units = 'Per 100,000 population'"]
     uncertainty: none
     # Structural: the contract has no interval column.
     uncertainty_reason: "CDC's ABCs table gives no confidence interval for these rates."
   - name: ipd_case_rate_by_age
-    description: "Invasive pneumococcal disease cases per 100,000 population for one age group (or Overall) in the ABCs surveillance areas; one row per age group, never added."
+    description: "Invasive pneumococcal disease cases per 100,000 population for one age group in the ABCs surveillance areas; one row per age group, never added. The publisher's Overall row is left out (ipd_case_rate has it)."
     measure: ipd_rate
     aggregation: none
-    exclude_total_rows: false
+    exclude_total_rows: true
     filters: ["topic = 'Case Rates'", "viewby = 'Age'"]
     uncertainty: none
     uncertainty_reason: "CDC's ABCs table gives no confidence interval for these rates."
   - name: ipd_case_rate_by_race
-    description: "Invasive pneumococcal disease cases per 100,000 population for one race group (or Overall) in the ABCs surveillance areas; never added."
+    description: "Invasive pneumococcal disease cases per 100,000 population for one race group in the ABCs surveillance areas; never added. The publisher's Overall row is left out (ipd_case_rate has it)."
     measure: ipd_rate
     aggregation: none
-    exclude_total_rows: false
+    exclude_total_rows: true
     filters: ["topic = 'Case Rates'", "viewby = 'Race'"]
     uncertainty: none
     uncertainty_reason: "CDC's ABCs table gives no confidence interval for these rates."
   - name: ipd_death_rate
-    description: "Deaths from invasive pneumococcal disease per 100,000 population in the ABCs surveillance areas, all ages, from the published Overall row; never added."
+    description: "Deaths from invasive pneumococcal disease per 100,000 population in the ABCs surveillance areas, all ages and races, from the published Overall row; never added."
     measure: ipd_rate
     aggregation: none
     exclude_total_rows: false
-    filters: ["topic = 'Death Rates'", "viewby = 'Overall'"]
+    filters: ["topic = 'Death Rates'", "viewby = 'Overall'", "viewby2 IS NULL", "units = 'Per 100,000 population'"]
     uncertainty: none
     uncertainty_reason: "CDC's ABCs table gives no confidence interval for these rates."
   - name: ipd_death_rate_by_age
-    description: "Deaths from invasive pneumococcal disease per 100,000 population for one age group (or Overall) in the ABCs surveillance areas; never added."
+    description: "Deaths from invasive pneumococcal disease per 100,000 population for one age group in the ABCs surveillance areas; never added. The publisher's Overall row is left out (ipd_death_rate has it)."
     measure: ipd_rate
     aggregation: none
-    exclude_total_rows: false
+    exclude_total_rows: true
     filters: ["topic = 'Death Rates'", "viewby = 'Age'"]
     uncertainty: none
     uncertainty_reason: "CDC's ABCs table gives no confidence interval for these rates."
@@ -88,13 +89,13 @@ metrics:
     measure: ipd_count
     aggregation: none
     exclude_total_rows: false
-    filters: ["topic = 'Number of Cases and Deaths'", "viewby2 = 'Total cases'"]
+    filters: ["topic = 'Number of Cases and Deaths'", "viewby = 'ALL'", "viewby2 = 'Total cases'", "units = 'Counts'"]
   - name: ipd_deaths
     description: "Number of deaths among invasive pneumococcal disease cases in the ABCs surveillance areas in a year, from the published cell."
     measure: ipd_count
     aggregation: none
     exclude_total_rows: false
-    filters: ["topic = 'Number of Cases and Deaths'", "viewby2 = 'Number of deaths'"]
+    filters: ["topic = 'Number of Cases and Deaths'", "viewby = 'ALL'", "viewby2 = 'Number of deaths'", "units = 'Counts'"]
   - name: ipd_syndrome_percent
     description: "Percent of invasive pneumococcal disease cases with one syndrome (e.g. meningitis, bacteremia with pneumonia); one row per syndrome, never added."
     measure: ipd_percent
@@ -104,7 +105,7 @@ metrics:
     uncertainty: none
     uncertainty_reason: "CDC's ABCs table gives no confidence interval for these percents."
   - name: antibiotic_resistance_percent
-    description: "Percent of Streptococcus pneumoniae isolates resistant to one antibiotic, as CDC labels it (footnote meanings not yet confirmed); one row per antibiotic, never added."
+    description: "Percent of Streptococcus pneumoniae isolates not susceptible to one antibiotic, as CDC reports it and labels it (whether resistant or nonsusceptible, and the footnote meanings, are not yet confirmed); one row per antibiotic, never added."
     measure: ipd_percent
     aggregation: none
     exclude_total_rows: false

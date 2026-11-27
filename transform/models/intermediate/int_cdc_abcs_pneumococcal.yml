@@ -2,7 +2,8 @@
 version: 2
 models:
 - name: int_cdc_abcs_pneumococcal
-  description: 'Long table: one published figure per year x topic x view x stratum, with its unit.'
+  description: 'Long table: one published figure for the ABCs surveillance areas (a catchment of selected counties,
+    not the United States; the table has no place column) per year x topic x view x stratum, with its unit.'
   config:
     materialized: view
     contract:
@@ -30,8 +31,8 @@ models:
   - odcs_check:
       name: cdc_abcs_pneumococcal_one_row_per_year_and_stratum
       arguments:
-        measure_sql: SELECT COUNT(*) FROM (SELECT year, topic, viewby, viewby2, units FROM {object} GROUP BY year,
-          topic, viewby, viewby2, units HAVING COUNT(*) > 1)
+        measure_sql: SELECT COUNT(*) FROM (SELECT year, topic, viewby, viewby2 FROM {object} GROUP BY year, topic,
+          viewby, viewby2 HAVING COUNT(*) > 1)
         condition: measured = 0
       config:
         severity: error
@@ -39,8 +40,9 @@ models:
           dimension: uniqueness
           rule: one_row_per_year_and_stratum
           contract: contracts/cdc_abcs_pneumococcal.odcs.yaml
-          checks: 'Grain: one published figure per year, topic, view, stratum and unit (an exact structural fact
-            of the full table, 1,677 rows, on 2026-11-25). A repeat would mean two figures for one cell.'
+          checks: 'Grain: one published figure per year, topic, view and stratum (an exact structural fact of the
+            full table, 1,677 rows, on 2026-11-25). The unit is left out of the key, so two figures for one cell
+            in different units are caught too. A repeat would mean two figures for one cell.'
   - odcs_check:
       name: cdc_abcs_pneumococcal_bacteria_is_pneumococcus
       arguments:
@@ -58,6 +60,41 @@ models:
           checks: The dataset's title names one bacterium, Streptococcus pneumoniae; a row for another would belong
             to a different ABCs table.
   - odcs_check:
+      name: cdc_abcs_pneumococcal_topic_is_a_known_topic
+      arguments:
+        measure_sql: SELECT CASE WHEN count(*) FILTER (WHERE NOT ("topic" IS NULL OR trim(CAST("topic" AS VARCHAR))
+          = '')) = 0 THEN NULL ELSE count(*) FILTER (WHERE NOT ("topic" IS NULL OR trim(CAST("topic" AS VARCHAR))
+          = '') AND "topic" NOT IN ('Case Rates', 'Death Rates', 'Serotypes', 'Number of Cases and Deaths', 'Syndromes',
+          'Antibiotic resistance')) END FROM {object}
+        condition: measured = 0
+        nothing_to_judge: true
+      config:
+        severity: error
+        meta:
+          dimension: conformity
+          rule: topic_is_a_known_topic
+          contract: contracts/cdc_abcs_pneumococcal.odcs.yaml
+          checks: Topic is one of the six labels on the full table (every distinct value, 1,677 rows, 2026-11-25;
+            observed, not a published list). Every metric filters on these exact labels, so a new or relabelled
+            topic would make a metric return nothing without this check.
+  - odcs_check:
+      name: cdc_abcs_pneumococcal_units_is_a_known_unit
+      arguments:
+        measure_sql: SELECT CASE WHEN count(*) FILTER (WHERE NOT ("units" IS NULL OR trim(CAST("units" AS VARCHAR))
+          = '')) = 0 THEN NULL ELSE count(*) FILTER (WHERE NOT ("units" IS NULL OR trim(CAST("units" AS VARCHAR))
+          = '') AND "units" NOT IN ('Per 100,000 population', 'Percent', 'Counts')) END FROM {object}
+        condition: measured = 0
+        nothing_to_judge: true
+      config:
+        severity: error
+        meta:
+          dimension: conformity
+          rule: units_is_a_known_unit
+          contract: contracts/cdc_abcs_pneumococcal.odcs.yaml
+          checks: Units is one of the three labels on the full table (every distinct value, 1,677 rows, 2026-11-25;
+            observed, not a published list). The range and whole-number checks on value select rows by these exact
+            labels, so a relabelled unit would let them pass on no rows without this check.
+  - odcs_check:
       name: cdc_abcs_pneumococcal_percents_between_0_and_100
       arguments:
         measure_sql: SELECT COUNT(*) FROM {object} WHERE units = 'Percent' AND (value < 0 OR value > 100)
@@ -69,7 +106,7 @@ models:
           rule: percents_between_0_and_100
           contract: contracts/cdc_abcs_pneumococcal.odcs.yaml
           checks: A value the publisher's units column gives as Percent (of cases with a syndrome, or of isolates
-            resistant) lies between 0 and 100.
+            not susceptible to an antibiotic) lies between 0 and 100.
   - odcs_check:
       name: cdc_abcs_pneumococcal_rates_and_counts_not_negative
       arguments:
@@ -96,20 +133,48 @@ models:
           rule: counts_are_whole_numbers
           contract: contracts/cdc_abcs_pneumococcal.odcs.yaml
           checks: A value the publisher's units column gives as Counts (cases, deaths, survivals, isolates) is a
-            whole number.
+            whole number. This assumes the counts are observed in the surveillance areas, not projected to the United
+            States (a projected count need not be whole); it is reviewed with the open question on crude or projected
+            figures.
   - odcs_check:
-      name: cdc_abcs_pneumococcal_some_values_present
+      name: cdc_abcs_pneumococcal_percent_values_present
       arguments:
-        measure_sql: SELECT COUNT(*) FROM {object} WHERE value IS NOT NULL
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE units = 'Percent' AND value IS NOT NULL
         condition: measured > 0
       config:
         severity: error
         meta:
           dimension: completeness
-          rule: some_values_present
+          rule: percent_values_present
           contract: contracts/cdc_abcs_pneumococcal.odcs.yaml
-          checks: 'Fill rate: an all-empty value column passes every check above, so at least one row must carry
-            a value (1,672 of 1,677 did on 2026-11-25).'
+          checks: 'Fill rate for the Percent rows: percents_between_0_and_100 passes when every Percent value is
+            empty, so at least one must carry a value (295 of 300 did on 2026-11-25).'
+  - odcs_check:
+      name: cdc_abcs_pneumococcal_count_values_present
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE units = 'Counts' AND value IS NOT NULL
+        condition: measured > 0
+      config:
+        severity: error
+        meta:
+          dimension: completeness
+          rule: count_values_present
+          contract: contracts/cdc_abcs_pneumococcal.odcs.yaml
+          checks: 'Fill rate for the Counts rows: rates_and_counts_not_negative and counts_are_whole_numbers pass
+            when every Counts value is empty, so at least one must carry a value (all 111 did on 2026-11-25).'
+  - odcs_check:
+      name: cdc_abcs_pneumococcal_rate_values_present
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE units = 'Per 100,000 population' AND value IS NOT NULL
+        condition: measured > 0
+      config:
+        severity: error
+        meta:
+          dimension: completeness
+          rule: rate_values_present
+          contract: contracts/cdc_abcs_pneumococcal.odcs.yaml
+          checks: 'Fill rate for the Per 100,000 population rows: rates_and_counts_not_negative passes when every
+            rate is empty, so at least one must carry a value (all 1,266 did on 2026-11-25).'
   - odcs_check:
       name: cdc_abcs_pneumococcal_overall_case_rate_present
       arguments:
@@ -177,8 +242,9 @@ models:
   - name: topic
     data_type: varchar
     description: 'What the figure measures: Case Rates, Death Rates or Serotypes (rates per 100,000), Number of
-      Cases and Deaths (counts), Syndromes (percent of cases), or Antibiotic resistance (percent of isolates resistant,
-      or the number of isolates).'
+      Cases and Deaths (counts), Syndromes (percent of cases), or Antibiotic resistance (percent of isolates not
+      susceptible to an antibiotic as CDC reports it, resistant or nonsusceptible not yet confirmed; or the number
+      of isolates).'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -224,7 +290,8 @@ models:
   - name: value
     data_type: double
     description: 'The published figure, in the row''s unit: a rate per 100,000 population, a percent, or a count.
-      Empty in a few antibiotic resistance rows (5 of 216 on 2026-11-25), which are never read as zero.'
+      Empty in 5 of the 216 antibiotic resistance percents on 2026-11-25 (Tetracycline3, 1998 to 2002), which are
+      never read as zero.'
     meta:
       logical_type: number
       physical_type: DOUBLE

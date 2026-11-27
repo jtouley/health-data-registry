@@ -1,6 +1,8 @@
 # Hand-written dbt unit test of the generated stg_cdc_abcs_pneumococcal typing (staging.typed_select): year becomes a
-# whole number, value a number as sent (a rate, percent or count, never rescaled), and an empty value stays empty
-# rather than reading as zero. Inputs are SQL so the raw source needn't be loaded first.
+# whole number, value a number as sent (a rate, percent or count, never rescaled), an empty value stays empty
+# (whether blank or absent, as the publisher's empty resistance rows are) rather than reading as zero, a published
+# zero stays zero, and the provenance columns pass through (hard rule 8). Inputs are SQL so the raw source needn't
+# be loaded first.
 version: 2
 unit_tests:
 - name: stg_cdc_abcs_pneumococcal_types_year_and_value_and_keeps_an_empty_value_empty
@@ -13,18 +15,15 @@ unit_tests:
       union all
       select 'Streptococcus pneumoniae' as "bacteria", 'Antibiotic resistance' as "topic", 'Percent' as "units", ' ' as "value", 'Penicillin1' as "viewby", cast(null as varchar) as "viewby2", '2024' as "year", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
       union all
+      select 'Streptococcus pneumoniae' as "bacteria", 'Antibiotic resistance' as "topic", 'Percent' as "units", cast(null as varchar) as "value", 'Tetracycline3' as "viewby", cast(null as varchar) as "viewby2", '1998' as "year", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select 'Streptococcus pneumoniae' as "bacteria", 'Antibiotic resistance' as "topic", 'Percent' as "units", '0' as "value", 'Vancomycin' as "viewby", cast(null as varchar) as "viewby2", '2024' as "year", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
       select 'Streptococcus pneumoniae' as "bacteria", 'Number of Cases and Deaths' as "topic", 'Counts' as "units", '1500' as "value", 'ALL' as "viewby", 'Total cases' as "viewby2", '1997' as "year", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
   expect:
     rows:
-    - year: 2024
-      topic: Case Rates
-      viewby2: ≥65 years old
-      value: 9.3
-    - year: 2024
-      topic: Antibiotic resistance
-      viewby2: null
-      value: null
-    - year: 1997
-      topic: Number of Cases and Deaths
-      viewby2: Total cases
-      value: 1500.0
+    - {year: 2024, topic: Case Rates, viewby: Age, viewby2: ≥65 years old, value: 9.3, _snapshot_id: s1, _raw_sha256: h1}
+    - {year: 2024, topic: Antibiotic resistance, viewby: Penicillin1, viewby2: null, value: null, _snapshot_id: s1, _raw_sha256: h1}
+    - {year: 1998, topic: Antibiotic resistance, viewby: Tetracycline3, viewby2: null, value: null, _snapshot_id: s1, _raw_sha256: h1}
+    - {year: 2024, topic: Antibiotic resistance, viewby: Vancomycin, viewby2: null, value: 0.0, _snapshot_id: s1, _raw_sha256: h1}
+    - {year: 1997, topic: Number of Cases and Deaths, viewby: ALL, viewby2: Total cases, value: 1500.0, _snapshot_id: s1, _raw_sha256: h1}

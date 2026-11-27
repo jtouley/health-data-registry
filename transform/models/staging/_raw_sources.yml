@@ -34,7 +34,8 @@ sources:
       data_type: varchar
       description: 'Publisher field topic, as text; read into topic (What the figure measures: Case Rates, Death
         Rates or Serotypes (rates per 100,000), Number of Cases and Deaths (counts), Syndromes (percent of cases),
-        or Antibiotic resistance (percent of isolates resistant, or the number of isolates).)'
+        or Antibiotic resistance (percent of isolates not susceptible to an antibiotic as CDC reports it, resistant
+        or nonsusceptible not yet confirmed; or the number of isolates).)'
     - name: units
       data_type: varchar
       description: 'Publisher field units, as text; read into units (The unit of the figure: Per 100,000 population,
@@ -42,8 +43,8 @@ sources:
     - name: value
       data_type: varchar
       description: 'Publisher field value, as text; read into value (The published figure, in the row''s unit: a
-        rate per 100,000 population, a percent, or a count. Empty in a few antibiotic resistance rows (5 of 216
-        on 2026-11-25), which are never read as zero.)'
+        rate per 100,000 population, a percent, or a count. Empty in 5 of the 216 antibiotic resistance percents
+        on 2026-11-25 (Tetracycline3, 1998 to 2002), which are never read as zero.)'
     - name: viewby
       data_type: varchar
       description: 'Publisher field viewby, as text; read into viewby (The first breakdown, which depends on the

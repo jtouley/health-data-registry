@@ -25,8 +25,8 @@ schema:
     physicalName: cdc_abcs_pneumococcal
     physicalType: table
     logicalType: object
-    description: "Long table: one published figure per year x topic x view x stratum, with its unit."
-    dataGranularityDescription: "year x topic x viewby x viewby2 (x units, which differ within the Antibiotic resistance topic)"
+    description: "Long table: one published figure for the ABCs surveillance areas (a catchment of selected counties, not the United States; the table has no place column) per year x topic x view x stratum, with its unit."
+    dataGranularityDescription: "year x topic x viewby x viewby2. The unit follows from topic and viewby (inside Antibiotic resistance, Number of isolates is Counts and every antibiotic is Percent), so it is not part of the key."
     authoritativeDefinitions:
       - {type: businessDefinition, url: "https://data.cdc.gov/api/views/en3s-hzsr.json"}
     customProperties:
@@ -39,10 +39,10 @@ schema:
           condition: bacteria
           caseDefinition: null
           caseStatus: null
-          organismResistance: viewby
+          organismResistance: null
           period: year
           provisionalFlag: null
-        description: "One bacterium (Streptococcus pneumoniae) in the bacteria column. Serotype groups (PCV13, PCV15, PCV20, PCV21, PPSV23) sit in viewby2 under topic Serotypes, and the antibiotic under topic Antibiotic resistance sits in viewby. The ABCs case definition is in the ABCs reports, not the data. No case status or provisional column."
+        description: "One bacterium (Streptococcus pneumoniae) in the bacteria column. Serotype groups (PCV13, PCV15, PCV20, PCV21, PPSV23) sit in viewby2 under topic Serotypes. No column holds only a resistance phenotype: the antibiotic sits in viewby, but only under topic Antibiotic resistance; elsewhere viewby holds Overall, Age, Race, an age group, ALL or a syndrome. The ABCs case definition is in the ABCs reports, not the data. No case status or provisional column."
     properties:
       - name: year
         physicalType: BIGINT
@@ -74,11 +74,20 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "What the figure measures: Case Rates, Death Rates or Serotypes (rates per 100,000), Number of Cases and Deaths (counts), Syndromes (percent of cases), or Antibiotic resistance (percent of isolates resistant, or the number of isolates)."
+        description: "What the figure measures: Case Rates, Death Rates or Serotypes (rates per 100,000), Number of Cases and Deaths (counts), Syndromes (percent of cases), or Antibiotic resistance (percent of isolates not susceptible to an antibiotic as CDC reports it, resistant or nonsusceptible not yet confirmed; or the number of isolates)."
         enum: [{value: Case Rates}, {value: Death Rates}, {value: Serotypes}, {value: Number of Cases and Deaths}, {value: Syndromes}, {value: Antibiotic resistance}]
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: topic}
+        quality:
+          - id: topic_is_a_known_topic
+            dimension: conformity
+            severity: error
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["Case Rates", "Death Rates", "Serotypes", "Number of Cases and Deaths", "Syndromes", "Antibiotic resistance"]}
+            mustBe: 0
+            description: "Topic is one of the six labels on the full table (every distinct value, 1,677 rows, 2026-11-25; observed, not a published list). Every metric filters on these exact labels, so a new or relabelled topic would make a metric return nothing without this check."
       - name: viewby
         physicalType: VARCHAR
         logicalType: string
@@ -106,11 +115,20 @@ schema:
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: units}
+        quality:
+          - id: units_is_a_known_unit
+            dimension: conformity
+            severity: error
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["Per 100,000 population", "Percent", "Counts"]}
+            mustBe: 0
+            description: "Units is one of the three labels on the full table (every distinct value, 1,677 rows, 2026-11-25; observed, not a published list). The range and whole-number checks on value select rows by these exact labels, so a relabelled unit would let them pass on no rows without this check."
       - name: value
         physicalType: DOUBLE
         logicalType: number
         required: false
-        description: "The published figure, in the row's unit: a rate per 100,000 population, a percent, or a count. Empty in a few antibiotic resistance rows (5 of 216 on 2026-11-25), which are never read as zero."
+        description: "The published figure, in the row's unit: a rate per 100,000 population, a percent, or a count. Empty in 5 of the 216 antibiotic resistance percents on 2026-11-25 (Tetracycline3, 1998 to 2002), which are never read as zero."
         customProperties:
           - {property: role, value: measure}
           - {property: sourceField, value: value}
@@ -120,7 +138,7 @@ schema:
             dimension: conformity
             severity: error
             type: sql
-            description: "A value the publisher's units column gives as Percent (of cases with a syndrome, or of isolates resistant) lies between 0 and 100."
+            description: "A value the publisher's units column gives as Percent (of cases with a syndrome, or of isolates not susceptible to an antibiotic) lies between 0 and 100."
             query: "SELECT COUNT(*) FROM {object} WHERE units = 'Percent' AND (value < 0 OR value > 100)"
             mustBe: 0
           - id: rates_and_counts_not_negative
@@ -134,15 +152,29 @@ schema:
             dimension: conformity
             severity: error
             type: sql
-            description: "A value the publisher's units column gives as Counts (cases, deaths, survivals, isolates) is a whole number."
+            description: "A value the publisher's units column gives as Counts (cases, deaths, survivals, isolates) is a whole number. This assumes the counts are observed in the surveillance areas, not projected to the United States (a projected count need not be whole); it is reviewed with the open question on crude or projected figures."
             query: "SELECT COUNT(*) FROM {object} WHERE units = 'Counts' AND value <> floor(value)"
             mustBe: 0
-          - id: some_values_present
+          - id: percent_values_present
             dimension: completeness
             severity: error
             type: sql
-            description: "Fill rate: an all-empty value column passes every check above, so at least one row must carry a value (1,672 of 1,677 did on 2026-11-25)."
-            query: "SELECT COUNT(*) FROM {object} WHERE value IS NOT NULL"
+            description: "Fill rate for the Percent rows: percents_between_0_and_100 passes when every Percent value is empty, so at least one must carry a value (295 of 300 did on 2026-11-25)."
+            query: "SELECT COUNT(*) FROM {object} WHERE units = 'Percent' AND value IS NOT NULL"
+            mustBeGreaterThan: 0
+          - id: count_values_present
+            dimension: completeness
+            severity: error
+            type: sql
+            description: "Fill rate for the Counts rows: rates_and_counts_not_negative and counts_are_whole_numbers pass when every Counts value is empty, so at least one must carry a value (all 111 did on 2026-11-25)."
+            query: "SELECT COUNT(*) FROM {object} WHERE units = 'Counts' AND value IS NOT NULL"
+            mustBeGreaterThan: 0
+          - id: rate_values_present
+            dimension: completeness
+            severity: error
+            type: sql
+            description: "Fill rate for the Per 100,000 population rows: rates_and_counts_not_negative passes when every rate is empty, so at least one must carry a value (all 1,266 did on 2026-11-25)."
+            query: "SELECT COUNT(*) FROM {object} WHERE units = 'Per 100,000 population' AND value IS NOT NULL"
             mustBeGreaterThan: 0
           - id: overall_case_rate_present
             dimension: completeness
@@ -156,8 +188,8 @@ schema:
         dimension: uniqueness
         severity: error
         type: sql
-        description: "Grain: one published figure per year, topic, view, stratum and unit (an exact structural fact of the full table, 1,677 rows, on 2026-11-25). A repeat would mean two figures for one cell."
-        query: "SELECT COUNT(*) FROM (SELECT year, topic, viewby, viewby2, units FROM {object} GROUP BY year, topic, viewby, viewby2, units HAVING COUNT(*) > 1)"
+        description: "Grain: one published figure per year, topic, view and stratum (an exact structural fact of the full table, 1,677 rows, on 2026-11-25). The unit is left out of the key, so two figures for one cell in different units are caught too. A repeat would mean two figures for one cell."
+        query: "SELECT COUNT(*) FROM (SELECT year, topic, viewby, viewby2 FROM {object} GROUP BY year, topic, viewby, viewby2 HAVING COUNT(*) > 1)"
         mustBe: 0
 customProperties:
   - {property: licence, value: public-domain-us-federal}
@@ -172,14 +204,15 @@ customProperties:
   - {property: unreliableRule, value: {kind: none, description: "None with a threshold: the dataset footnote says small numbers for some topics or filters may make year-to-year changes difficult to interpret, but states no cut-off and marks no value."}}
   - property: openQuestions
     value:
-      - "One table mixes rates, counts and percents (topic and units). Each topic is its own measure and is never added. Is every value in a topic the same kind of figure, and does 'Antibiotic resistance' Percent mean resistant or nonsusceptible?"
+      - "One table mixes rates, counts and percents (topic and units). Each topic is its own measure and is never added. Is every value in a topic the same kind of figure, and does 'Antibiotic resistance' Percent mean resistant or nonsusceptible (for penicillin these differ, since nonsusceptible includes intermediate isolates)? Until confirmed, every description says 'not susceptible as CDC reports it'."
       - "The viewby/viewby2 strata and their total rows: do the age groups and race groups add up to Overall, and do Number of deaths and Number of survivals add up to Total cases? Not stated; totalRows marks the labelled totals and nothing is added."
       - "Which ABCs sites and counties make up the surveillance areas each year, and when did they change? Must come from the ABCs methods (surveillance areas and populations page), not inferred."
       - "Are the rates crude rates for the surveillance areas, or projected to the United States? ABCs reports publish both kinds. Which one is this table? Until confirmed, nothing here is called a national rate."
       - "Is the denominator the bridged-race or a Vintage Census population, and which vintage for each year?"
       - "The revision policy for recent years: are the latest years revised in later releases (rowsUpdatedAt 2026-04-22)?"
       - "The antibiotic labels carry footnote numbers (Penicillin1, Penicillin2, Tetracycline3, Cefotaxime4) whose meaning (breakpoints, meningitis vs non-meningitis criteria) is not in the data. Needed before any resistance figure is explained."
-      - "5 antibiotic resistance rows have no value (2026-11-25). Not tested that year, suppressed, or not yet available? No missing code is published; the empty value is kept, never read as zero."
+      - "5 antibiotic resistance percents have no value (2026-11-25): all Tetracycline3, 1998 to 2002, a run at the start of the series, which suggests the drug was not yet tested rather than suppressed, but that is not stated. Not tested that year, suppressed, or not yet available? No missing code is published; the empty value is kept, never read as zero."
+      - "The topic and units value lists (quality rules topic_is_a_known_topic and units_is_a_known_unit) are every distinct value on the full table on 2026-11-25, not a list the publisher publishes. A maintainer confirms they are the intended sets."
       - "Case definition: invasive pneumococcal disease as ABCs defines it (isolation from a normally sterile site in a surveillance-area resident) and its effective years are in the ABCs reports, not the data; add as caseDefinitions after a maintainer reads them."
       - "Licence: the Socrata metadata has no licence field (2026-11-25). public-domain-us-federal is assumed from its being a CDC work; a maintainer confirms the wording."
-      - "Proposed GBD keys (catalog gbd.causes): pathogen Streptococcus pneumoniae with causes Lower respiratory infections and Meningitis; bacteremia without focus and sepsis are not GBD causes. No GBD location: the ABCs surveillance areas are a catchment, never 'United States of America'. A maintainer reviews the mapping."
+      - "GBD keys: none yet (catalog gbd.causes is empty). Invasive pneumococcal disease spans GBD causes (Lower respiratory infections, Meningitis) and bacteremia without focus, which is not a GBD cause, so no one GBD cause covers a figure here; get_aligned_with_gbd reads only one cause per condition and would label meningitis and bacteremia as LRI. Proposed for review: pathogen Streptococcus pneumoniae, keyed per syndrome (Syndromes topic) if at all. No GBD location: the ABCs surveillance areas are a catchment, never 'United States of America'. A maintainer reviews the mapping."
