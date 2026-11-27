@@ -747,7 +747,9 @@ def suggest_datasets(
             why_not.append("doesn't cover this condition")
         missing = sorted(lvl for lvl in levels if lvl not in e.geography)
         if missing:
-            why_not.append(f"goes down to {', '.join(e.geography)} only, not {', '.join(missing)}")
+            # Plain words, never a catalog token (hard rule 12): surveillance_areas reads "surveillance areas".
+            levels_said = ", ".join(g.replace("_", " ") for g in e.geography)
+            why_not.append(f"goes down to {levels_said} only, not {', '.join(missing)}")
         if years and not _years_overlap(ds, y0, y1):
             why_not.append(f"covers {_years(ds)} only")
         named = [f"{s.label} ({s.measure})" for s in ds.semantic.series[:4]]

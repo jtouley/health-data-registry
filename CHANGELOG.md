@@ -61,6 +61,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- New source, draft (contract not yet reviewed): `cdc_abcs_pneumococcal`, CDC's Active Bacterial Core surveillance figures
+  for invasive Streptococcus pneumoniae disease since 1997 (case and death rates, vaccine serotype-group rates,
+  counts, syndromes and antibiotic resistance; data.cdc.gov en3s-hzsr), on the existing Socrata adapter. Every
+  figure is for the ABCs surveillance areas, never called a national or state figure, and nothing is added. It has no
+  GBD cause yet: `get_aligned_with_gbd` says so rather than labelling every figure as lower respiratory infection.
 - New source, draft (contract not yet reviewed): `cdc_nrevss_positivity`, CDC's weekly national percent of laboratory tests
   positive for COVID-19, influenza and RSV (NREVSS, data.cdc.gov seuz-s2cv), on the existing Socrata adapter. One
   figure for the whole country each week; a question about a state or region is told so.

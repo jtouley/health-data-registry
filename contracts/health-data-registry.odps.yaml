@@ -87,6 +87,13 @@ inputPorts:
         url: https://mdhhstableau-public.michigan.gov/
         description: MDHHS public dashboards.
 outputPorts:
+  - name: cdc_abcs_pneumococcal
+    description: ABCs invasive Streptococcus pneumoniae disease in the ABCs surveillance areas, 1997 onward (rates, counts, serotypes, syndromes, resistance).
+    type: tables
+    version: 0.1.0
+    contractId: cdc_abcs_pneumococcal
+    customProperties:
+      - {property: hosted, value: true}
   - name: cdc_haicviz_cdi
     description: HAICViz - CDI (Clostridioides difficile infection, Emerging Infections Program).
     type: tables

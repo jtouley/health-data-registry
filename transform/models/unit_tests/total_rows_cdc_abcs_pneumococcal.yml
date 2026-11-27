@@ -1,0 +1,49 @@
+# Hand-written dbt unit test of the generated int_cdc_abcs_pneumococcal total-row flag (the contract's totalRows,
+# hard rule 2: totals are never added). It pins the labels CDC marks as totals against their neighbours, and the
+# NULL path: a row with no viewby2 (Syndromes, Antibiotic resistance) must read false, never NULL. Inputs are SQL
+# so the staging model needn't be built first.
+version: 2
+unit_tests:
+- name: int_cdc_abcs_pneumococcal_flags_only_cdcs_labelled_totals
+  model: int_cdc_abcs_pneumococcal
+  given:
+  - input: ref('stg_cdc_abcs_pneumococcal')
+    format: sql
+    rows: |
+      select cast(2024 as bigint) as "year", 'Streptococcus pneumoniae' as "bacteria", 'Case Rates' as "topic", 'Overall' as "viewby", cast(null as varchar) as "viewby2", 'Per 100,000 population' as "units", cast(8.5 as double) as "value", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select cast(2024 as bigint), 'Streptococcus pneumoniae', 'Case Rates', 'Age', 'Overall', 'Per 100,000 population', cast(8.5 as double), 's1', 'h1'
+      union all
+      select cast(2024 as bigint), 'Streptococcus pneumoniae', 'Case Rates', 'Age', '≥65 years old', 'Per 100,000 population', cast(21.0 as double), 's1', 'h1'
+      union all
+      select cast(2024 as bigint), 'Streptococcus pneumoniae', 'Death Rates', 'Race', 'Overall', 'Per 100,000 population', cast(0.9 as double), 's1', 'h1'
+      union all
+      select cast(2024 as bigint), 'Streptococcus pneumoniae', 'Death Rates', 'Race', 'Black', 'Per 100,000 population', cast(1.2 as double), 's1', 'h1'
+      union all
+      select cast(2024 as bigint), 'Streptococcus pneumoniae', 'Number of Cases and Deaths', 'ALL', 'Total cases', 'Counts', cast(1500 as double), 's1', 'h1'
+      union all
+      select cast(2024 as bigint), 'Streptococcus pneumoniae', 'Number of Cases and Deaths', 'ALL', 'Number of deaths', 'Counts', cast(150 as double), 's1', 'h1'
+      union all
+      select cast(2024 as bigint), 'Streptococcus pneumoniae', 'Number of Cases and Deaths', 'ALL', 'Number of survivals', 'Counts', cast(1350 as double), 's1', 'h1'
+      union all
+      select cast(2024 as bigint), 'Streptococcus pneumoniae', 'Serotypes', '≥65 years old', 'All Serotypes', 'Per 100,000 population', cast(21.0 as double), 's1', 'h1'
+      union all
+      select cast(2024 as bigint), 'Streptococcus pneumoniae', 'Serotypes', '≥65 years old', 'PCV20 Serotypes', 'Per 100,000 population', cast(9.0 as double), 's1', 'h1'
+      union all
+      select cast(2024 as bigint), 'Streptococcus pneumoniae', 'Syndromes', 'Meningitis', cast(null as varchar), 'Percent', cast(6.0 as double), 's1', 'h1'
+      union all
+      select cast(2024 as bigint), 'Streptococcus pneumoniae', 'Antibiotic resistance', 'Number of isolates', cast(null as varchar), 'Counts', cast(1200 as double), 's1', 'h1'
+  expect:
+    rows:
+    - {topic: Case Rates, viewby: Overall, viewby2: null, is_total_row: true}
+    - {topic: Case Rates, viewby: Age, viewby2: Overall, is_total_row: true}
+    - {topic: Case Rates, viewby: Age, viewby2: ≥65 years old, is_total_row: false}
+    - {topic: Death Rates, viewby: Race, viewby2: Overall, is_total_row: true}
+    - {topic: Death Rates, viewby: Race, viewby2: Black, is_total_row: false}
+    - {topic: Number of Cases and Deaths, viewby: ALL, viewby2: Total cases, is_total_row: true}
+    - {topic: Number of Cases and Deaths, viewby: ALL, viewby2: Number of deaths, is_total_row: false}
+    - {topic: Number of Cases and Deaths, viewby: ALL, viewby2: Number of survivals, is_total_row: false}
+    - {topic: Serotypes, viewby: ≥65 years old, viewby2: All Serotypes, is_total_row: true}
+    - {topic: Serotypes, viewby: ≥65 years old, viewby2: PCV20 Serotypes, is_total_row: false}
+    - {topic: Syndromes, viewby: Meningitis, viewby2: null, is_total_row: false}
+    - {topic: Antibiotic resistance, viewby: Number of isolates, viewby2: null, is_total_row: false}
