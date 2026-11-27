@@ -129,6 +129,13 @@ outputPorts:
     contractId: cdc_respnet
     customProperties:
       - {property: hosted, value: true}
+  - name: cdc_nrevss_positivity
+    description: NREVSS weekly national percent of laboratory tests positive for COVID-19, influenza and RSV.
+    type: tables
+    version: 0.1.0
+    contractId: cdc_nrevss_positivity
+    customProperties:
+      - {property: hosted, value: true}
   - name: cdc_schoolvaxview_kindergarten
     description: SchoolVaxView vaccination coverage and exemptions among kindergartners, by state and school year.
     type: tables

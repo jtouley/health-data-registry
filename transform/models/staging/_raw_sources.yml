@@ -445,6 +445,46 @@ sources:
       data_type: varchar
       description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
         the exact bytes the publisher sent.'
+  - name: cdc_nrevss_positivity
+    description: 'Raw records of Percent of Tests Positive for Viral Respiratory Pathogens (NREVSS) as the adapter
+      hands them on, every value as text: the publisher''s own fields, or for a wide table the adapter''s structural
+      reshaping of them (see the staging model). Only the full load the dataset''s LATEST pointer names is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_nrevss_positivity.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - pathogen
+      - percent_test_positivity
+      - week_end
+    columns:
+    - name: pathogen
+      data_type: varchar
+      description: 'Publisher field pathogen, as text; read into pathogen (The virus tested for: COVID-19 (SARS-CoV-2,
+        the virus that causes COVID-19), Influenza, or RSV (respiratory syncytial virus).)'
+    - name: percent_test_positivity
+      data_type: varchar
+      description: 'Publisher field percent_test_positivity, as text; read into percent_test_positivity (Percent
+        of laboratory tests for the virus that were positive in the week, nationally: positive tests divided by
+        all tests, times 100 (dataset description). Counts tests, not people (dataset description). An empty value
+        is kept empty, never read as zero; what CDC means by an empty value is not stated (see openQuestions).)'
+    - name: week_end
+      data_type: varchar
+      description: 'Publisher field week_end, as text; read into week_end (The Saturday that ends the MMWR week
+        (column description: ''Date of Saturday of the MMWR week''). For COVID-19 and RSV, the week the tests were
+        performed (dataset description: laboratories report ''the total number of SARS-CoV-2 and RSV tests performed
+        that week''); which date puts an influenza test in a week is not stated (see openQuestions).)'
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
   - name: cdc_respnet
     description: 'Raw records of RESP-NET Rates and Clinical Data as the adapter hands them on, every value as text:
       the publisher''s own fields, or for a wide table the adapter''s structural reshaping of them (see the staging
