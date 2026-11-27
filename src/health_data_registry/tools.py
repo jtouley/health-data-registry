@@ -1281,6 +1281,16 @@ def list_caveats(
         rows += [[ds.id, "caveat", c] for c in ds.entry.caveats]
         rows += [[ds.id, "not yet confirmed", q] for q in ds.contract.open_questions]
         rows.append([ds.id, "unreliable values", ds.contract.unreliable_rule])
+        if not ds.contract.quality:
+            rows.append(
+                [
+                    ds.id,
+                    "data checks",
+                    "This source's contract sets no checks of its own on these numbers. Only the general checks "
+                    "run: that the table has rows, and a warning when an optional column is empty in every row. "
+                    "Compare with the publisher's page before relying on them.",
+                ]
+            )
         if ds.entry.status != "reviewed":
             rows.append([ds.id, "review", "Contract is a draft; no maintainer has reviewed it yet."])
     rows += [["all", "geography", t] for t in GEOGRAPHY_TRAPS]
