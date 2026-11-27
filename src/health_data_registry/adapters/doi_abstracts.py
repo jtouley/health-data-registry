@@ -35,6 +35,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 from urllib.parse import quote, urlencode
 
+from health_data_registry.adapters import LayoutError
 from health_data_registry.registry import Supplement
 
 CROSSREF_HOST = "api.crossref.org"
@@ -72,7 +73,7 @@ _SPACE = re.compile(r"\s+")
 _NUMBER = re.compile(r"^\s*((?:[A-Z]{1,3}-)?\d{1,5})\.\s+\S")
 
 
-class ApiLayoutError(ValueError):
+class ApiLayoutError(LayoutError):
     """An API answered in a shape this adapter doesn't read; nothing from that answer is kept."""
 
     def __init__(self, api: str, what: str) -> None:
