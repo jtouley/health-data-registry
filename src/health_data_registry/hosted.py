@@ -29,6 +29,9 @@ The same tools as the stdio server (server.build_server), with these rules on to
 - Rate limits per MCP session and overall (HDR_RATE_PER_SESSION, HDR_RATE_GLOBAL, tool calls per minute),
   never per IP address: every claude.ai user arrives from the same Anthropic address range. Over the limit,
   HTTP 429 with a plain-words JSON-RPC error and Retry-After.
+- Fails closed under an egress proxy: with HDR_HTTPS_PROXY set, fetch.py's private-address check is advisory
+  (the proxy does its own DNS lookup), so the server refuses to start unless HDR_PROXY_ENFORCES_ALLOWLIST=1
+  declares that the proxy enforces the same egress allowlist (check_egress). Local CLI use is unchanged.
 - Privacy: no request body, tool argument, query string, prompt, session id or IP address is ever logged.
   uvicorn's access log is off; every other library's log record is reduced to its logger name, level and
   exception type. The only log lines with content are aggregate counters (tool name, status, latency bucket).
@@ -49,7 +52,7 @@ import sys
 import threading
 import time
 from collections import Counter, OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextvars import copy_context
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -62,6 +65,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from health_data_registry import __version__, tools
 from health_data_registry.deadline import DeadlineExceeded, call_deadline, stragglers
+from health_data_registry.fetch import PROXY_ENV
 from health_data_registry.isolation import POISONED
 from health_data_registry.paging import MIN_PAGE_CHARS, page_budget, sign, wire_size
 from health_data_registry.server import Fmt, Out
@@ -122,6 +126,53 @@ def check_limits(cfg: HostedConfig) -> None:
             f"HDR_PAGE_CHARS ({budget:,}) is above HDR_MAX_RESULT_CHARS ({cfg.max_result_chars:,}), so long "
             "answers would be refused instead of paged. Set HDR_PAGE_CHARS below the cap, or unset both."
         )
+
+
+PROXY_OPT_IN_ENV = "HDR_PROXY_ENFORCES_ALLOWLIST"
+PROXY_OPT_IN_VALUE = "1"
+
+
+class StartRefused(ValueError):
+    """The hosted server will not start as configured; the message says why and what to do, in plain words."""
+
+
+def check_egress(environ: Mapping[str, str] | None = None) -> None:
+    """Refuse to start when fetches would go through an egress proxy nobody has vouched for.
+
+    Under HDR_HTTPS_PROXY the proxy resolves the publisher's host itself, so fetch.py's refusal of private and
+    loopback addresses is advisory: the TCP target is no longer the address that was checked. A hosted server
+    fetches live on behalf of anyone, so it fails closed unless the operator declares, with
+    HDR_PROXY_ENFORCES_ALLOWLIST=1 and nothing else, that the proxy enforces the same egress allowlist (the
+    catalogued publisher hosts, public addresses only). Any other value of the opt-in is refused too, so a
+    "0", "false" or "no" never reads as yes. The local CLI never calls this; its behaviour is unchanged.
+    """
+    env = os.environ if environ is None else environ
+    proxy = env.get(PROXY_ENV, "").strip()
+    opt_in = env.get(PROXY_OPT_IN_ENV, "")
+    if not proxy:
+        return
+    if opt_in == PROXY_OPT_IN_VALUE:
+        log.warning(
+            "%s is set and %s=1 declares that the proxy enforces the egress allowlist; the server's own "
+            "private-address check is advisory behind it",
+            PROXY_ENV,
+            PROXY_OPT_IN_ENV,
+        )
+        return
+    if opt_in:
+        raise StartRefused(
+            f"The hosted server did not start: {PROXY_OPT_IN_ENV} is set to {opt_in!r}, and the only value it "
+            f"accepts is {PROXY_OPT_IN_VALUE!r}. Next step: set it to {PROXY_OPT_IN_VALUE} only if the proxy in "
+            f"{PROXY_ENV} allows nothing but the catalogued publisher hosts on public addresses; otherwise "
+            f"unset {PROXY_ENV} (see docs/dev/hosting.md)."
+        )
+    raise StartRefused(
+        f"The hosted server did not start: {PROXY_ENV} is set, so live fetches would go through that proxy, "
+        "which looks up addresses itself, and the server could no longer stop a fetch from reaching a private "
+        f"or internal address. Next step: unset {PROXY_ENV}, or, only if that proxy allows nothing but the "
+        f"catalogued publisher hosts on public addresses, set {PROXY_OPT_IN_ENV}={PROXY_OPT_IN_VALUE} "
+        "(see docs/dev/hosting.md)."
+    )
 
 
 def default_cache_dir() -> Path:
@@ -728,6 +779,7 @@ def main(host: str = "127.0.0.1", port: int = 7860) -> None:
     import uvicorn
 
     configure_logging()
+    check_egress()
     cfg = HostedConfig()
     check_limits(cfg)
     app, state = build_hosted(cfg, host=host)

@@ -134,6 +134,15 @@ answer would then be dropped instead of paged.
 - **Host checks.** `serve --http` binds to 127.0.0.1 unless `--host` says otherwise, and the Host and Origin
   headers are checked (the SDK's DNS-rebinding protection) whenever the address isn't the explicitly public
   `0.0.0.0` or `::`. The Space passes `--host 0.0.0.0` behind Hugging Face's proxy.
+- **No egress proxy unless it enforces the allowlist.** `HDR_HTTPS_PROXY` sends every fetch through an HTTP
+  CONNECT proxy, which looks up the publisher's address itself, so the fetcher's refusal of private and loopback
+  addresses becomes advisory (`fetch.py`). `serve --http` therefore refuses to start while `HDR_HTTPS_PROXY` is
+  set, with a plain message that names the next step. The opt-in is `HDR_PROXY_ENFORCES_ALLOWLIST=1`: set it
+  only when the proxy itself allows nothing but the catalogued publisher hosts on public addresses. Its only
+  accepted value is `1`; any other value (`0`, `false`, `yes`) also stops the server, so a typo never turns the
+  check off. With the opt-in the server starts and logs one warning that the proxy enforces the allowlist.
+  Local use (`serve` on stdio, `refresh`, `fetch`) is unchanged: it still fetches through the proxy and warns.
+  The Space sets no proxy.
 
 ## Privacy
 

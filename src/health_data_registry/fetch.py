@@ -36,7 +36,9 @@ that one) is added to the default trust store. The generic ``HTTPS_PROXY`` and `
 variables are deliberately ignored, so a stray environment variable set by another tool can neither route
 production traffic nor widen the CAs trusted for a publisher (``SSL_CERT_FILE`` is read by OpenSSL itself
 for every TLS context, in or out of proxy mode). Proxy mode logs one
-warning per process saying that the address checks are advisory.
+warning per process saying that the address checks are advisory. Because of that, the hosted server
+(``serve --http``) refuses to start with ``HDR_HTTPS_PROXY`` set unless ``HDR_PROXY_ENFORCES_ALLOWLIST=1``
+declares that the proxy enforces the same egress allowlist (``hosted.check_egress``); the local CLI is unchanged.
 
 Failures raise :class:`FetchRefused` with a short machine ``code`` and a plain sentence.
 """

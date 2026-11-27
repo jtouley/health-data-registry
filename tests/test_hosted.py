@@ -21,7 +21,7 @@ from mcp.client.streamable_http import streamable_http_client
 
 from health_data_registry import cli, crawl, deadline, hosted, tools
 from health_data_registry.deadline import DeadlineExceeded, call_deadline
-from health_data_registry.fetch import FetchRefused
+from health_data_registry.fetch import PROXY_ENV, FetchRefused
 from health_data_registry.hosted import (
     CallGuard,
     HostedConfig,
@@ -406,3 +406,85 @@ def test_deadline_words_and_edges(monkeypatch: pytest.MonkeyPatch) -> None:
         with pytest.raises(DeadlineExceeded):
             deadline.cap(30.0)
     assert deadline.cap(30.0) == 30.0
+
+
+# --- #270: fail closed under an egress proxy -------------------------------------------------------------------
+
+
+def test_no_proxy_starts_without_the_opt_in() -> None:
+    hosted.check_egress({})
+    hosted.check_egress({PROXY_ENV: "   "})  # blank reads as unset, as fetch.py reads it
+    hosted.check_egress({hosted.PROXY_OPT_IN_ENV: "1"})  # the opt-in alone changes nothing
+
+
+def test_proxy_without_the_opt_in_refuses_to_start_in_plain_words() -> None:
+    """sharp-edges: under a proxy the private-address check is advisory, so the hosted server fails closed."""
+    with pytest.raises(hosted.StartRefused) as e:
+        hosted.check_egress({PROXY_ENV: "http://proxy.internal:3128"})
+    message = str(e.value)
+    assert message.startswith("The hosted server did not start: HDR_HTTPS_PROXY is set")
+    assert "private or internal address" in message
+    assert "Next step: unset HDR_HTTPS_PROXY" in message
+    assert "HDR_PROXY_ENFORCES_ALLOWLIST=1" in message
+    assert "proxy.internal" not in message  # the refusal never echoes the proxy's address
+
+
+@pytest.mark.parametrize("opt_in", ["0", "false", "no", "true", "yes", " 1", "1 ", "01"])
+def test_an_opt_in_other_than_exactly_1_never_reads_as_yes(opt_in: str) -> None:
+    """sharp-edges: "0", "false" or a near miss must not switch the check off."""
+    with pytest.raises(hosted.StartRefused, match=r"the only value it accepts is '1'\. Next step:"):
+        hosted.check_egress({PROXY_ENV: "http://proxy.internal:3128", hosted.PROXY_OPT_IN_ENV: opt_in})
+
+
+def test_proxy_with_the_opt_in_starts_and_says_so(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger=hosted.METRICS_LOGGER):
+        hosted.check_egress({PROXY_ENV: "http://proxy.internal:3128", hosted.PROXY_OPT_IN_ENV: "1"})
+    assert any("HDR_PROXY_ENFORCES_ALLOWLIST=1 declares" in r.getMessage() for r in caplog.records)
+
+
+def test_main_refuses_a_proxy_before_building_anything(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(PROXY_ENV, "http://proxy.internal:3128")
+    monkeypatch.delenv(hosted.PROXY_OPT_IN_ENV, raising=False)
+    monkeypatch.setattr(hosted, "configure_logging", lambda: None)  # leave other tests' logging alone
+    monkeypatch.setattr(hosted, "build_hosted", lambda *a, **k: pytest.fail("built a server behind a proxy"))
+    with pytest.raises(hosted.StartRefused):
+        hosted.main()
+
+
+def test_main_starts_behind_a_proxy_with_the_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(PROXY_ENV, "http://proxy.internal:3128")
+    monkeypatch.setenv(hosted.PROXY_OPT_IN_ENV, "1")
+    monkeypatch.setattr(hosted, "configure_logging", lambda: None)
+
+    class Built(Exception):
+        pass
+
+    def build(*a: Any, **k: Any) -> Any:
+        raise Built  # got past the egress check to building the server; stop before serving
+
+    monkeypatch.setattr(hosted, "build_hosted", build)
+    with pytest.raises(Built):
+        hosted.main()
+
+
+def test_cli_serve_http_prints_the_refusal_and_exits_2(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv(PROXY_ENV, "http://proxy.internal:3128")
+    monkeypatch.delenv(hosted.PROXY_OPT_IN_ENV, raising=False)
+    monkeypatch.setattr(hosted, "configure_logging", lambda: None)
+    monkeypatch.setattr(hosted, "build_hosted", lambda *a, **k: pytest.fail("built a server behind a proxy"))
+    assert cli.main(["serve", "--http"]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("The hosted server did not start:") and "Traceback" not in err
+
+
+def test_local_serve_is_unchanged_behind_a_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The stdio server and the CLI fetches keep fetch.py's proxy mode (with its warning); only --http refuses."""
+    from health_data_registry import server
+
+    monkeypatch.setenv(PROXY_ENV, "http://proxy.internal:3128")
+    monkeypatch.delenv(hosted.PROXY_OPT_IN_ENV, raising=False)
+    called: list[bool] = []
+    monkeypatch.setattr(server, "main", lambda: called.append(True))
+    assert cli.main(["serve"]) == 0 and called == [True]
