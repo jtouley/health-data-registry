@@ -6,3 +6,4 @@
 {"yearname": "2020", "organism": "CRE", "topic": "Case Rates", "viewby": "Organism", "series": "Klebsiella pneumoniae", "value": "2.0"}
 {"yearname": "2020", "organism": "CRAB", "topic": "Case Rates", "viewby": "All cases", "series": "All cases", "value": "0.5"}
 {"yearname": "2020", "organism": "CRAB", "topic": "Case Rates", "viewby": "Sex", "series": "Male"}
+{"yearname": "2020", "organism": "CRAB", "topic": "Death Rates", "viewby": "All cases", "series": "All cases", "value": "0.15"}

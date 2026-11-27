@@ -79,10 +79,19 @@ schema:
         primaryKey: true
         primaryKeyPosition: 3
         description: "Which breakdown the row belongs to: All cases, Age, Sex, Race, Epi class, Dialysis, Syndromes, or the PFGE topic again. Each view covers the same cases again."
-        examples: ["All cases", "Age", "Sex", "Race", "Epi class", "Dialysis", "Syndromes", "PFGE type: All cases"]
+        enum: [{value: All cases}, {value: Age}, {value: Sex}, {value: Race}, {value: Epi class}, {value: Dialysis}, {value: Syndromes}, {value: "PFGE type: All cases"}, {value: "PFGE type: Community-associated"}, {value: "PFGE type: Healthcare-associated community-onset"}, {value: "PFGE type: Hospital-onset"}]
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: viewby}
+        quality:
+          - id: viewby_labels_known
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["All cases", "Age", "Sex", "Race", "Epi class", "Dialysis", "Syndromes", "PFGE type: All cases", "PFGE type: Community-associated", "PFGE type: Healthcare-associated community-onset", "PFGE type: Hospital-onset"]}
+            mustBe: 0
+            description: "Every distinct viewby on the full table (710 rows, 2026-11-25) is one of these eleven. The headline metrics filter on viewby 'All cases' and the by-group metrics on Age, Sex, Race and Epi class, so a relabel is reported here instead of making a metric return nothing."
       - name: series
         physicalType: VARCHAR
         logicalType: string
@@ -98,7 +107,7 @@ schema:
         physicalType: DOUBLE
         logicalType: number
         required: false
-        description: "The published figure for the row's topic and group: a rate for Case rates and Death rates, or a share of cases (a fraction, unit not stated) for Syndromes and the PFGE topics. Empty in 27 rows on 2026-11-25 (the 1-year age group in 2018, 2020 and 2021, and every PFGE row in 2020 and 2021), and an empty one is never read as zero."
+        description: "The published figure for the row's topic and group: a rate for Case rates and Death rates, or a share of cases (values between 0 and 1 on 2026-11-25; unit not stated) for Syndromes and the PFGE topics. Empty in 27 rows on 2026-11-25 (the 1-year age group in 2018, 2020 and 2021, and every PFGE row in 2020 and 2021), and an empty one is never read as zero."
         customProperties:
           - {property: role, value: measure}
           - {property: sourceField, value: value}
@@ -115,15 +124,22 @@ schema:
             dimension: completeness
             severity: error
             type: sql
-            description: "Fill rate for the Case rates rows the headline series reads: an all-empty subset passes values_not_negative, so at least one case rate must carry a value (367 of 370 did on 2026-11-25)."
+            description: "Fill rate for the Case rates rows that values_not_negative reads: an all-empty subset passes it, so at least one case rate must carry a value (367 of 370 did on 2026-11-25). The headline cell itself is checked by headline_case_rate_present."
             query: "SELECT COUNT(*) FROM {object} WHERE topic = 'Case rates' AND value IS NOT NULL"
             mustBeGreaterThan: 0
           - id: death_rates_present
             dimension: completeness
+            severity: error
+            type: sql
+            description: "Fill rate for the Death rates rows that values_not_negative reads: at least one death rate carries a value (all 85 did on 2026-11-25). An error, like case_rates_present, because the death rate is a served series."
+            query: "SELECT COUNT(*) FROM {object} WHERE topic = 'Death rates' AND value IS NOT NULL"
+            mustBeGreaterThan: 0
+          - id: shares_present
+            dimension: completeness
             severity: warn
             type: sql
-            description: "Fill rate for the Death rates rows: at least one death rate carries a value (all 85 did on 2026-11-25)."
-            query: "SELECT COUNT(*) FROM {object} WHERE topic = 'Death rates' AND value IS NOT NULL"
+            description: "Fill rate for the syndrome and strain-type share rows that values_not_negative also reads: at least one share carries a value (231 did on 2026-11-25). A warning only, because no metric reads the shares yet."
+            query: "SELECT COUNT(*) FROM {object} WHERE topic NOT IN ('Case rates', 'Death rates') AND value IS NOT NULL"
             mustBeGreaterThan: 0
     quality:
       - id: one_row_per_year_and_stratum
@@ -132,6 +148,27 @@ schema:
         type: sql
         description: "Grain: one published figure per year, topic, view and stratum (an exact structural fact of the full table, 710 rows, on 2026-11-25). A repeat would mean two figures for one cell."
         query: "SELECT COUNT(*) FROM (SELECT yearname, topic, viewby, series FROM {object} GROUP BY yearname, topic, viewby, series HAVING COUNT(*) > 1)"
+        mustBe: 0
+      - id: headline_case_rate_present
+        dimension: completeness
+        severity: error
+        type: sql
+        description: "The cell the headline case-rate series reads (topic Case rates, viewby and series both 'All cases') carries a value in at least one year (all 17 years did on 2026-11-25). A relabelled total row would empty the series and turn every total into a group, and the topic-wide fill-rate checks would not see it."
+        query: "SELECT COUNT(*) FROM {object} WHERE topic = 'Case rates' AND viewby = 'All cases' AND series = 'All cases' AND value IS NOT NULL"
+        mustBeGreaterThan: 0
+      - id: headline_death_rate_present
+        dimension: completeness
+        severity: error
+        type: sql
+        description: "The cell the headline death-rate series reads (topic Death rates, viewby and series both 'All cases') carries a value in at least one year (all 17 years did on 2026-11-25), for the same reason as headline_case_rate_present."
+        query: "SELECT COUNT(*) FROM {object} WHERE topic = 'Death rates' AND viewby = 'All cases' AND series = 'All cases' AND value IS NOT NULL"
+        mustBeGreaterThan: 0
+      - id: one_group_per_label_in_by_group_rates
+        dimension: uniqueness
+        severity: warn
+        type: sql
+        description: "In the Age, Sex, Race and Epi class views that the by-group metrics read together, no group label appears twice in one year and topic (none did on 2026-11-25). A label shared by two views would make those metrics refuse the question, so it is reported here first."
+        query: "SELECT COUNT(*) FROM (SELECT yearname, topic, series FROM {object} WHERE viewby IN ('Age', 'Sex', 'Race', 'Epi class') AND series <> 'All cases' GROUP BY yearname, topic, series HAVING COUNT(*) > 1)"
         mustBe: 0
 customProperties:
   - {property: licence, value: public-domain-us-federal}

@@ -29,7 +29,7 @@ dimensions:
     non_additive_reason: "'All cases' sits beside its groups, and CDC doesn't say the groups add up to it"
     description: "The group the rate is for: all cases, an age group, a sex, a culture source or a species inside CRE."
 measures:
-  - {name: mugsi_rate, column: value, kind: rate, unit: "per 100,000 population", description: "Cases or deaths per 100,000 population in the EIP sites that run MuGSI (unit from CDC's MuGSI page; the table states none)."}
+  - {name: mugsi_rate, column: value, kind: rate, unit: "per 100,000 population (CDC's MuGSI page; not stated in the table)", description: "Cases or deaths per 100,000 population in the EIP sites that run MuGSI (unit from CDC's MuGSI page; the table states none)."}
 metrics:
   - name: mugsi_case_rate
     description: "New cases of one organism (CRE or CRAB) per 100,000 population in the EIP sites, all cases, from the published 'All cases' row; never added."

@@ -11,9 +11,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import pytest
 
-from health_data_registry import tools
+from health_data_registry import quality, tools
 from health_data_registry.query import Engine, QueryRefused
 from health_data_registry.registry import Registry, load_registry
 from health_data_registry.store import build_snapshot, write_ndjson
@@ -37,6 +38,7 @@ RECORDS = [
     _row("2022", "CRE", "Case Rates", "Culture source", "Urine", "4.1"),
     _row("2022", "CRE", "Case Rates", "Age", "80+ years", "30.2"),
     _row("2022", "CRAB", "Case Rates", "All cases", "All cases", "2.3"),
+    _row("2022", "CRAB", "Death Rates", "All cases", "All cases", "0.3"),
     _row("2022", "CRAB", "Case Rates", "Sex", "Male", None),
 ]
 
@@ -115,7 +117,7 @@ def test_get_series_names_the_eip_sites_and_never_a_state(real: tuple[Registry, 
     assert isinstance(out, dict), out
     at = {c: i for i, c in enumerate(out["columns"])}
     assert {r[at["location"]] for r in out["rows"]} == {PLACE}
-    assert sorted((r[at["year"]], r[at["value"]]) for r in out["rows"]) == [(2022, 2.3)]
+    assert sorted((r[at["year"]], r[at["value"]]) for r in out["rows"]) == [(2022, 0.3), (2022, 2.3)]
     declined = tools.get_series(reg, eng, condition="CRAB", locations=["Michigan"], source_id=DS, fmt="json")
     assert isinstance(declined, dict)
     assert declined["rows"] == []
@@ -141,3 +143,66 @@ def test_raw_layer_keeps_the_publisher_values_as_sent(real: tuple[Registry, Engi
     for sent, row in zip(RECORDS, kept, strict=True):
         assert {k: row[k] for k in sent} == sent
     assert kept[-1].get("value") in (None, "")
+
+
+Cell = tuple[int, str, str, str, str, float | None]
+GOOD: list[Cell] = [
+    (2022, "CRE", "Case Rates", "All cases", "All cases", 6.4),
+    (2022, "CRE", "Death Rates", "All cases", "All cases", 0.4),
+    (2022, "CRAB", "Case Rates", "All cases", "All cases", 2.3),
+    (2022, "CRAB", "Death Rates", "All cases", "All cases", 0.3),
+    (2022, "CRE", "Case Rates", "Culture source", "Urine", 4.1),
+    (2022, "CRE", "Case Rates", "Age", "80+ years", 30.2),
+]
+
+
+def _swap(cell: Cell, **kw: Any) -> Cell:
+    at = {"yearname": 0, "organism": 1, "topic": 2, "viewby": 3, "series": 4, "value": 5}
+    out = list(cell)
+    for k, v in kw.items():
+        out[at[k]] = v
+    return (out[0], out[1], out[2], out[3], out[4], out[5])
+
+
+@pytest.mark.parametrize(
+    ("rows", "rule", "status"),
+    [
+        ([*GOOD, (2022, "CRE", "Case Rates", "Sex", "Male", -0.5)], "rates_not_negative", "fail"),
+        (
+            [*GOOD, (2022, "ESBL", "Case Rates", "All cases", "All cases", 50.0)],
+            "organism_is_cre_or_crab",
+            "warn",
+        ),
+        ([*GOOD[:4], _swap(GOOD[4], topic="Incidence"), GOOD[5]], "topic_is_case_or_death_rates", "warn"),
+        ([*GOOD[:4], _swap(GOOD[4], viewby="Specimen source"), GOOD[5]], "viewby_labels_known", "warn"),
+        ([*GOOD[:2], _swap(GOOD[2], series="All Cases"), *GOOD[3:]], "headline_case_rates_present", "fail"),
+        ([GOOD[0], _swap(GOOD[1], value=None), *GOOD[2:]], "headline_death_rates_present", "fail"),
+        (
+            [GOOD[0], _swap(GOOD[1], value=None), GOOD[2], _swap(GOOD[3], value=None), *GOOD[4:]],
+            "death_rates_present",
+            "fail",
+        ),
+        (
+            [*GOOD, (2022, "CRE", "Case Rates", "Organism", "Urine", 1.0)],
+            "one_group_per_label_in_by_group_rates",
+            "warn",
+        ),
+        ([*GOOD, GOOD[4]], "one_row_per_year_and_stratum", "fail"),
+    ],
+)
+def test_each_contract_rule_catches_the_case_it_names(rows: list[Cell], rule: str, status: str) -> None:
+    """Each rule passes on good rows and is shown failing, as a data failure, on its own bad case."""
+    con = duckdb.connect()
+    con.execute(
+        "CREATE TABLE t (yearname BIGINT, organism VARCHAR, topic VARCHAR, viewby VARCHAR, series VARCHAR, "
+        "value DOUBLE)"
+    )
+    rules = quality.rules_for(load_registry(ROOT).get(DS).contract)
+    con.executemany("INSERT INTO t VALUES (?, ?, ?, ?, ?, ?)", GOOD)
+    good = quality.run_rules(con, "t", rules)
+    assert not good.rule_errors and {r["status"] for r in good.results} == {"pass"}, good.results
+    con.execute("DELETE FROM t")
+    con.executemany("INSERT INTO t VALUES (?, ?, ?, ?, ?, ?)", rows)
+    report = quality.run_rules(con, "t", rules)
+    assert not report.rule_errors
+    assert {r["test"]: r["status"] for r in report.results}[rule] == status

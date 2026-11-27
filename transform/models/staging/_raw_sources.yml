@@ -91,9 +91,9 @@ sources:
     - name: value
       data_type: varchar
       description: 'Publisher field value, as text; read into value (The published figure for the row''s topic and
-        group: a rate for Case rates and Death rates, or a share of cases (a fraction, unit not stated) for Syndromes
-        and the PFGE topics. Empty in 27 rows on 2026-11-25 (the 1-year age group in 2018, 2020 and 2021, and every
-        PFGE row in 2020 and 2021), and an empty one is never read as zero.)'
+        group: a rate for Case rates and Death rates, or a share of cases (values between 0 and 1 on 2026-11-25;
+        unit not stated) for Syndromes and the PFGE topics. Empty in 27 rows on 2026-11-25 (the 1-year age group
+        in 2018, 2020 and 2021, and every PFGE row in 2020 and 2021), and an empty one is never read as zero.)'
     - name: viewby
       data_type: varchar
       description: 'Publisher field viewby, as text; read into viewby (Which breakdown the row belongs to: All cases,

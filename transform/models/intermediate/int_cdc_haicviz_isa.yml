@@ -43,6 +43,53 @@ models:
           checks: 'Grain: one published figure per year, topic, view and stratum (an exact structural fact of the
             full table, 710 rows, on 2026-11-25). A repeat would mean two figures for one cell.'
   - odcs_check:
+      name: cdc_haicviz_isa_headline_case_rate_present
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE topic = 'Case rates' AND viewby = 'All cases' AND series
+          = 'All cases' AND value IS NOT NULL
+        condition: measured > 0
+      config:
+        severity: error
+        meta:
+          dimension: completeness
+          rule: headline_case_rate_present
+          contract: contracts/cdc_haicviz_isa.odcs.yaml
+          checks: The cell the headline case-rate series reads (topic Case rates, viewby and series both 'All cases')
+            carries a value in at least one year (all 17 years did on 2026-11-25). A relabelled total row would
+            empty the series and turn every total into a group, and the topic-wide fill-rate checks would not see
+            it.
+  - odcs_check:
+      name: cdc_haicviz_isa_headline_death_rate_present
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE topic = 'Death rates' AND viewby = 'All cases' AND series
+          = 'All cases' AND value IS NOT NULL
+        condition: measured > 0
+      config:
+        severity: error
+        meta:
+          dimension: completeness
+          rule: headline_death_rate_present
+          contract: contracts/cdc_haicviz_isa.odcs.yaml
+          checks: The cell the headline death-rate series reads (topic Death rates, viewby and series both 'All
+            cases') carries a value in at least one year (all 17 years did on 2026-11-25), for the same reason as
+            headline_case_rate_present.
+  - odcs_check:
+      name: cdc_haicviz_isa_one_group_per_label_in_by_group_rates
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM (SELECT yearname, topic, series FROM {object} WHERE viewby IN ('Age',
+          'Sex', 'Race', 'Epi class') AND series <> 'All cases' GROUP BY yearname, topic, series HAVING COUNT(*)
+          > 1)
+        condition: measured = 0
+      config:
+        severity: warn
+        meta:
+          dimension: uniqueness
+          rule: one_group_per_label_in_by_group_rates
+          contract: contracts/cdc_haicviz_isa.odcs.yaml
+          checks: In the Age, Sex, Race and Epi class views that the by-group metrics read together, no group label
+            appears twice in one year and topic (none did on 2026-11-25). A label shared by two views would make
+            those metrics refuse the question, so it is reported here first.
+  - odcs_check:
       name: cdc_haicviz_isa_topic_labels_known
       arguments:
         measure_sql: 'SELECT CASE WHEN count(*) FILTER (WHERE NOT ("topic" IS NULL OR trim(CAST("topic" AS VARCHAR))
@@ -61,6 +108,25 @@ models:
           checks: Every distinct topic on the full table (710 rows, 2026-11-25) is one of these seven. Every metric
             and the rate rules filter on these exact labels, so a relabel is reported here instead of making a metric
             return nothing.
+  - odcs_check:
+      name: cdc_haicviz_isa_viewby_labels_known
+      arguments:
+        measure_sql: 'SELECT CASE WHEN count(*) FILTER (WHERE NOT ("viewby" IS NULL OR trim(CAST("viewby" AS VARCHAR))
+          = '''')) = 0 THEN NULL ELSE count(*) FILTER (WHERE NOT ("viewby" IS NULL OR trim(CAST("viewby" AS VARCHAR))
+          = '''') AND "viewby" NOT IN (''All cases'', ''Age'', ''Sex'', ''Race'', ''Epi class'', ''Dialysis'', ''Syndromes'',
+          ''PFGE type: All cases'', ''PFGE type: Community-associated'', ''PFGE type: Healthcare-associated community-onset'',
+          ''PFGE type: Hospital-onset'')) END FROM {object}'
+        condition: measured = 0
+        nothing_to_judge: true
+      config:
+        severity: warn
+        meta:
+          dimension: conformity
+          rule: viewby_labels_known
+          contract: contracts/cdc_haicviz_isa.odcs.yaml
+          checks: Every distinct viewby on the full table (710 rows, 2026-11-25) is one of these eleven. The headline
+            metrics filter on viewby 'All cases' and the by-group metrics on Age, Sex, Race and Epi class, so a
+            relabel is reported here instead of making a metric return nothing.
   - odcs_check:
       name: cdc_haicviz_isa_values_not_negative
       arguments:
@@ -84,20 +150,38 @@ models:
           dimension: completeness
           rule: case_rates_present
           contract: contracts/cdc_haicviz_isa.odcs.yaml
-          checks: 'Fill rate for the Case rates rows the headline series reads: an all-empty subset passes values_not_negative,
-            so at least one case rate must carry a value (367 of 370 did on 2026-11-25).'
+          checks: 'Fill rate for the Case rates rows that values_not_negative reads: an all-empty subset passes
+            it, so at least one case rate must carry a value (367 of 370 did on 2026-11-25). The headline cell itself
+            is checked by headline_case_rate_present.'
   - odcs_check:
       name: cdc_haicviz_isa_death_rates_present
       arguments:
         measure_sql: SELECT COUNT(*) FROM {object} WHERE topic = 'Death rates' AND value IS NOT NULL
         condition: measured > 0
       config:
-        severity: warn
+        severity: error
         meta:
           dimension: completeness
           rule: death_rates_present
           contract: contracts/cdc_haicviz_isa.odcs.yaml
-          checks: 'Fill rate for the Death rates rows: at least one death rate carries a value (all 85 did on 2026-11-25).'
+          checks: 'Fill rate for the Death rates rows that values_not_negative reads: at least one death rate carries
+            a value (all 85 did on 2026-11-25). An error, like case_rates_present, because the death rate is a served
+            series.'
+  - odcs_check:
+      name: cdc_haicviz_isa_shares_present
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM {object} WHERE topic NOT IN ('Case rates', 'Death rates') AND value IS
+          NOT NULL
+        condition: measured > 0
+      config:
+        severity: warn
+        meta:
+          dimension: completeness
+          rule: shares_present
+          contract: contracts/cdc_haicviz_isa.odcs.yaml
+          checks: 'Fill rate for the syndrome and strain-type share rows that values_not_negative also reads: at
+            least one share carries a value (231 did on 2026-11-25). A warning only, because no metric reads the
+            shares yet.'
   - odcs_check:
       name: cdc_haicviz_isa_fill_rate_value
       arguments:
@@ -111,7 +195,8 @@ models:
           rule: fill_rate_value
           contract: contracts/cdc_haicviz_isa.odcs.yaml
           checks: 'No row has a value for the published figure for the row''s topic and group: a rate for Case rates
-            and Death rates, or a share of cases (a fraction, unit not stated) for Syndromes and the PFGE topics.'
+            and Death rates, or a share of cases (values between 0 and 1 on 2026-11-25; unit not stated) for Syndromes
+            and the PFGE topics.'
   columns:
   - name: yearname
     data_type: bigint
@@ -160,9 +245,9 @@ models:
   - name: value
     data_type: double
     description: 'The published figure for the row''s topic and group: a rate for Case rates and Death rates, or
-      a share of cases (a fraction, unit not stated) for Syndromes and the PFGE topics. Empty in 27 rows on 2026-11-25
-      (the 1-year age group in 2018, 2020 and 2021, and every PFGE row in 2020 and 2021), and an empty one is never
-      read as zero.'
+      a share of cases (values between 0 and 1 on 2026-11-25; unit not stated) for Syndromes and the PFGE topics.
+      Empty in 27 rows on 2026-11-25 (the 1-year age group in 2018, 2020 and 2021, and every PFGE row in 2020 and
+      2021), and an empty one is never read as zero.'
     meta:
       logical_type: number
       physical_type: DOUBLE

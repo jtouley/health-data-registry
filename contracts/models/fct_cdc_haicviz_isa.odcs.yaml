@@ -7,14 +7,14 @@ status: draft
 domain: infectious_disease
 description:
   purpose: "One row per published cell of cdc_haicviz_isa (invasive Staphylococcus aureus rates and shares of cases), with every row kept and qualified: the figure as CDC published it, whether the cell was published, and whether it is one of CDC's 'All cases' total rows."
-  usage: "Read one cell, or follow one topic, view and stratum over the years. Never add rates, and never add a total row to the groups beside it. Built by transform/models/marts/fct_cdc_haicviz_isa.sql from int_cdc_haicviz_isa; the source contract (contracts/cdc_haicviz_isa.odcs.yaml) holds every fact about the numbers."
+  usage: "Read one cell, or follow one topic, view and stratum over the years. Never add rates, and never add a total row to the groups beside it. Built by transform/models/marts/fct_cdc_haicviz_isa.sql from int_cdc_haicviz_isa; the source contract (contracts/cdc_haicviz_isa.odcs.yaml) holds every fact about the numbers. The semantic model and the MCP tools do not read this fact yet: they still read the source's own column names (yearname, viewby, series), and moving them onto the facts is tracked in issue 131."
   limitations: "The same limits as the source contract: EIP sites combined, no state values, and the unit, denominator and case definition are open questions there."
 schema:
   - name: fct_cdc_haicviz_isa
     physicalName: fct_cdc_haicviz_isa
     physicalType: table
     logicalType: object
-    description: "One row per published cell of cdc_haicviz_isa: every row of the latest load, none removed, none added, each with its published status and total-row flag. Grain: year x topic x view x stratum, unique on the full table (710 rows, 2026-11-25)."
+    description: "One row per published cell of cdc_haicviz_isa: every row of the latest load, none removed, none added, each with its published status and total-row flag. Grain: year x topic x view x stratum, unique on the full table (see the source contract for the row count it was checked on)."
     customProperties:
       - {property: layer, value: marts}
       - {property: totalRows, value: "is_total_row"}
@@ -26,15 +26,15 @@ schema:
         required: true
         primaryKey: true
         primaryKeyPosition: 1
-        description: "Surveillance year."
-        customProperties: [{property: role, value: dimension}]
+        description: "Surveillance year (yearname in the source)."
+        customProperties: [{property: role, value: dimension}, {property: sourceField, value: yearname}]
       - name: topic
         physicalType: VARCHAR
         logicalType: string
         required: true
         primaryKey: true
         primaryKeyPosition: 2
-        description: "What the figure measures, exactly as CDC labels it."
+        description: "What the figure measures, exactly as CDC labels it: Case rates or Death rates, Syndromes (share of cases by syndrome), or a PFGE type topic (share of cases by strain type, for all cases or one epidemiologic class). It says how to read value."
         customProperties: [{property: role, value: dimension}]
       - name: view
         physicalType: VARCHAR
@@ -42,22 +42,22 @@ schema:
         required: true
         primaryKey: true
         primaryKeyPosition: 3
-        description: "Which breakdown the row belongs to, exactly as CDC labels it (viewby)."
-        customProperties: [{property: role, value: dimension}]
+        description: "Which breakdown the row belongs to, exactly as CDC labels it (viewby in the source)."
+        customProperties: [{property: role, value: dimension}, {property: sourceField, value: viewby}]
       - name: stratum
         physicalType: VARCHAR
         logicalType: string
         required: true
         primaryKey: true
         primaryKeyPosition: 4
-        description: "The group the figure is for, exactly as CDC labels it (series); 'All cases' is CDC's total row."
-        customProperties: [{property: role, value: dimension}]
+        description: "The group the figure is for, exactly as CDC labels it (series in the source); 'All cases' is CDC's total row."
+        customProperties: [{property: role, value: dimension}, {property: sourceField, value: series}]
       - name: value
         physicalType: DOUBLE
         logicalType: number
         required: false
-        description: "The published figure, as CDC sent it, never rescaled; empty where CDC's cell is empty, never a zero."
-        customProperties: [{property: role, value: measure}]
+        description: "The published figure for the row's topic and group, as CDC sent it, never rescaled: a rate for Case rates and Death rates (the Dialysis row per an unstated population of dialysis patients), or a share of cases (values between 0 and 1 on 2026-11-25; unit not stated) for Syndromes and the PFGE topics. Empty where CDC's cell is empty, never a zero."
+        customProperties: [{property: role, value: measure}, {property: unit, value: "see topic: a rate (per 100,000 assumed, not stated) or a share of cases"}]
       - name: value_status
         physicalType: VARCHAR
         logicalType: string
@@ -68,22 +68,22 @@ schema:
         physicalType: BOOLEAN
         logicalType: boolean
         required: true
-        description: "True for CDC's own 'All cases' rows (the contract's totalRows), which sit beside the groups they cover; never added to them."
+        description: "True for CDC's own 'All cases' rows in any view, which sit beside the groups they cover; never added to them."
         customProperties: [{property: role, value: attribute}]
       - name: snapshot_id
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "The lake load (snapshot id) every value in the row came from (hard rule 8)."
-        customProperties: [{property: role, value: attribute}]
+        description: "The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the source address, retrieval time and dataset version that go with every answer built on this row."
+        customProperties: [{property: role, value: attribute}, {property: sourceField, value: _snapshot_id}]
       - name: raw_sha256
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "The sha256 of the raw publisher file the row came from (hard rule 8)."
-        customProperties: [{property: role, value: attribute}]
+        description: "The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order: the exact bytes the publisher sent. A load fetched in several pages carries several."
+        customProperties: [{property: role, value: attribute}, {property: sourceField, value: _raw_sha256}]
 customProperties:
-  - {property: unreliableRule, value: {kind: none, description: "None stated by the publisher (see contracts/cdc_haicviz_isa.odcs.yaml)."}}
+  - {property: unreliableRule, value: {kind: none, description: "None with a threshold: the publisher warns that small numbers for some topics or filters may make year-to-year changes hard to interpret, but states no cut-off and marks no value (see contracts/cdc_haicviz_isa.odcs.yaml)."}}
   - property: openQuestions
     value:
       - "Every open question of contracts/cdc_haicviz_isa.odcs.yaml applies here: this fact only re-keys and qualifies the published cells."

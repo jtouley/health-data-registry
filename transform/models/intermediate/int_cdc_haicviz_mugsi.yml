@@ -43,6 +43,52 @@ models:
           checks: 'Grain: one published rate per year, organism, topic, view and stratum (an exact structural fact
             of the full table, 341 rows, on 2026-11-25). A repeat would mean two figures for one cell.'
   - odcs_check:
+      name: cdc_haicviz_mugsi_headline_case_rates_present
+      arguments:
+        measure_sql: SELECT COUNT(DISTINCT organism) FROM {object} WHERE organism IN ('CRE', 'CRAB') AND topic =
+          'Case Rates' AND viewby = 'All cases' AND series = 'All cases' AND value IS NOT NULL
+        condition: measured = 2
+      config:
+        severity: error
+        meta:
+          dimension: completeness
+          rule: headline_case_rates_present
+          contract: contracts/cdc_haicviz_mugsi.odcs.yaml
+          checks: Both organisms, CRE and CRAB, have a value in the cell the headline case-rate series reads (topic
+            Case Rates, viewby and series both 'All cases') in at least one year (both did in all 11 years on 2026-11-25).
+            A relabelled total row would empty the series and turn every total into a group, and the topic-wide
+            fill-rate checks would not see it.
+  - odcs_check:
+      name: cdc_haicviz_mugsi_headline_death_rates_present
+      arguments:
+        measure_sql: SELECT COUNT(DISTINCT organism) FROM {object} WHERE organism IN ('CRE', 'CRAB') AND topic =
+          'Death Rates' AND viewby = 'All cases' AND series = 'All cases' AND value IS NOT NULL
+        condition: measured = 2
+      config:
+        severity: error
+        meta:
+          dimension: completeness
+          rule: headline_death_rates_present
+          contract: contracts/cdc_haicviz_mugsi.odcs.yaml
+          checks: Both organisms, CRE and CRAB, have a value in the cell the headline death-rate series reads (topic
+            Death Rates, viewby and series both 'All cases') in at least one year (both did in all 11 years on 2026-11-25),
+            for the same reason as headline_case_rates_present.
+  - odcs_check:
+      name: cdc_haicviz_mugsi_one_group_per_label_in_by_group_rates
+      arguments:
+        measure_sql: SELECT COUNT(*) FROM (SELECT yearname, organism, topic, series FROM {object} WHERE series <>
+          'All cases' GROUP BY yearname, organism, topic, series HAVING COUNT(*) > 1)
+        condition: measured = 0
+      config:
+        severity: warn
+        meta:
+          dimension: uniqueness
+          rule: one_group_per_label_in_by_group_rates
+          contract: contracts/cdc_haicviz_mugsi.odcs.yaml
+          checks: Across the views that the by-group metrics read together, no group label other than 'All cases'
+            appears twice in one year, organism and topic (none did on 2026-11-25). A label shared by two views
+            would make those metrics refuse the question, so it is reported here first.
+  - odcs_check:
       name: cdc_haicviz_mugsi_organism_is_cre_or_crab
       arguments:
         measure_sql: SELECT CASE WHEN count(*) FILTER (WHERE NOT ("organism" IS NULL OR trim(CAST("organism" AS
@@ -115,21 +161,22 @@ models:
           dimension: completeness
           rule: case_rates_present
           contract: contracts/cdc_haicviz_mugsi.odcs.yaml
-          checks: 'Fill rate for the Case Rates rows that rates_not_negative reads: an all-empty subset passes it,
-            so at least one case rate must carry a value (all 319 did on 2026-11-25).'
+          checks: 'Fill rate for the Case Rates rows: an all-empty subset passes rates_not_negative, so at least
+            one case rate must carry a value (all 319 did on 2026-11-25).'
   - odcs_check:
       name: cdc_haicviz_mugsi_death_rates_present
       arguments:
         measure_sql: SELECT COUNT(*) FROM {object} WHERE topic = 'Death Rates' AND value IS NOT NULL
         condition: measured > 0
       config:
-        severity: warn
+        severity: error
         meta:
           dimension: completeness
           rule: death_rates_present
           contract: contracts/cdc_haicviz_mugsi.odcs.yaml
-          checks: 'Fill rate for the Death Rates rows that rates_not_negative reads: at least one death rate carries
-            a value (all 22 did on 2026-11-25).'
+          checks: 'Fill rate for the Death Rates rows: an all-empty subset passes rates_not_negative, so at least
+            one death rate must carry a value (all 22 did on 2026-11-25). An error, like case_rates_present, because
+            the death rate is a served series.'
   - odcs_check:
       name: cdc_haicviz_mugsi_fill_rate_value
       arguments:

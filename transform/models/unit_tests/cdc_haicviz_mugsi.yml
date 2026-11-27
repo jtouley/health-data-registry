@@ -3,8 +3,10 @@
 #    rescaled), a published zero stays zero, and an empty or absent rate stays empty rather than reading as zero.
 #    Inputs are SQL so the raw source needn't be loaded first.
 # 2. The total-row rule (contract totalRows, generated into the intermediate model): only CDC's 'All cases' rows are
-#    totals, in every view that has one, and a group beside them never is.
-# 3. The fact (marts): every row is kept, and an empty cell says "not published", never a zero.
+#    totals, in every view that has one, and a group beside them never is; the match is exact, so a near miss
+#    ('All Cases') or an empty series is not a total (the headline_*_present contract rules catch a relabel).
+# 3. The fact (marts): every row is kept with every renamed column, its provenance included (each input row has its
+#    own snapshot and hash, so a swapped rename fails), and an empty cell says "not published", never a zero.
 version: 2
 unit_tests:
 - name: stg_cdc_haicviz_mugsi_types_year_and_rate_and_keeps_an_empty_rate_empty
@@ -38,6 +40,8 @@ unit_tests:
     - {yearname: 2022, organism: CRE, topic: Case Rates, viewby: Organism, series: Klebsiella pneumoniae, value: 3.0}
     - {yearname: 2022, organism: CRAB, topic: Case Rates, viewby: Age, series: 80+ years, value: 9.0}
     - {yearname: 2022, organism: CRAB, topic: Death Rates, viewby: All cases, series: All cases, value: null}
+    - {yearname: 2022, organism: CRAB, topic: Case Rates, viewby: Sex, series: All Cases, value: 2.3}
+    - {yearname: 2022, organism: CRAB, topic: Case Rates, viewby: Sex, series: null, value: 2.3}
   expect:
     rows:
     - {viewby: All cases, series: All cases, is_total_row: true}
@@ -47,16 +51,18 @@ unit_tests:
     - {viewby: Organism, series: Klebsiella pneumoniae, is_total_row: false}
     - {viewby: Age, series: 80+ years, is_total_row: false}
     - {viewby: All cases, series: All cases, is_total_row: true}
+    - {viewby: Sex, series: All Cases, is_total_row: false}
+    - {viewby: Sex, series: null, is_total_row: false}
 - name: fct_cdc_haicviz_mugsi_keeps_every_row_and_says_when_a_cell_is_empty
   model: fct_cdc_haicviz_mugsi
   given:
   - input: ref('int_cdc_haicviz_mugsi')
     rows:
     - {yearname: 2022, organism: CRE, topic: Case Rates, viewby: All cases, series: All cases, value: 6.4, is_total_row: true, _snapshot_id: s1, _raw_sha256: h1}
-    - {yearname: 2022, organism: CRAB, topic: Death Rates, viewby: All cases, series: All cases, value: 0.0, is_total_row: true, _snapshot_id: s1, _raw_sha256: h1}
-    - {yearname: 2022, organism: CRAB, topic: Case Rates, viewby: Sex, series: Male, value: null, is_total_row: false, _snapshot_id: s1, _raw_sha256: h1}
+    - {yearname: 2022, organism: CRAB, topic: Death Rates, viewby: All cases, series: All cases, value: 0.0, is_total_row: true, _snapshot_id: s2, _raw_sha256: h2}
+    - {yearname: 2021, organism: CRAB, topic: Case Rates, viewby: Sex, series: Male, value: null, is_total_row: false, _snapshot_id: s3, _raw_sha256: h3a h3b}
   expect:
     rows:
-    - {year: 2022, organism: CRE, stratum: All cases, value: 6.4, value_status: published, is_total_row: true, snapshot_id: s1}
-    - {year: 2022, organism: CRAB, stratum: All cases, value: 0.0, value_status: published, is_total_row: true, snapshot_id: s1}
-    - {year: 2022, organism: CRAB, stratum: Male, value: null, value_status: "not published: the publisher's cell is empty", is_total_row: false, snapshot_id: s1}
+    - {year: 2022, organism: CRE, topic: Case Rates, view: All cases, stratum: All cases, value: 6.4, value_status: published, is_total_row: true, snapshot_id: s1, raw_sha256: h1}
+    - {year: 2022, organism: CRAB, topic: Death Rates, view: All cases, stratum: All cases, value: 0.0, value_status: published, is_total_row: true, snapshot_id: s2, raw_sha256: h2}
+    - {year: 2021, organism: CRAB, topic: Case Rates, view: Sex, stratum: Male, value: null, value_status: "not published: the publisher's cell is empty", is_total_row: false, snapshot_id: s3, raw_sha256: h3a h3b}

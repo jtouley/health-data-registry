@@ -1,10 +1,15 @@
 # Hand-written dbt unit tests for cdc_haicviz_isa, one file per source like its siblings' staging tests.
 # 1. Staging typing (staging.typed_select): yearname becomes a whole number, a rate or a share stays the number CDC
-#    sent (never rescaled), and an empty or absent value stays empty rather than reading as zero. Inputs are SQL so
+#    sent (never rescaled), a published zero stays zero, and an empty or absent value stays empty rather than
+#    reading as zero. Inputs are SQL so
 #    the raw source needn't be loaded first.
 # 2. The total-row rule (contract totalRows, generated into the intermediate model): only CDC's 'All cases' rows are
 #    totals, in every view that has one; a group, the dialysis row and the syndrome and strain-type rows never are.
-# 3. The fact (marts): every row is kept, and an empty cell says "not published", never a zero.
+#    The match is exact, so a near miss ('All Cases') or an empty series is not a total (the headline_*_present
+#    contract rules catch a relabel).
+# 3. The fact (marts): every row is kept with every renamed column, its provenance included (each input row has its
+#    own snapshot and hash, so a swapped rename fails), a published zero says "published", and an empty cell says
+#    "not published", never a zero.
 version: 2
 unit_tests:
 - name: stg_cdc_haicviz_isa_types_year_and_value_and_keeps_an_empty_value_empty
@@ -20,12 +25,15 @@ unit_tests:
       select '2020' as "yearname", 'Case rates' as "topic", 'Age' as "viewby", '1 year' as "series", cast(null as varchar) as "value", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
       union all
       select '2020' as "yearname", 'PFGE type: All cases' as "topic", 'PFGE type: All cases' as "viewby", 'USA 300' as "series", ' ' as "value", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select '2019' as "yearname", 'PFGE type: Hospital-onset' as "topic", 'PFGE type: Hospital-onset' as "viewby", 'USA 100' as "series", '0' as "value", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
   expect:
     rows:
     - {yearname: 2019, topic: Case rates, series: All cases, value: 21.3, _snapshot_id: s1, _raw_sha256: h1}
     - {yearname: 2019, topic: Syndromes, series: Non-bloodstream infection, value: 0.131, _snapshot_id: s1, _raw_sha256: h1}
     - {yearname: 2020, topic: Case rates, series: 1 year, value: null, _snapshot_id: s1, _raw_sha256: h1}
     - {yearname: 2020, topic: "PFGE type: All cases", series: USA 300, value: null, _snapshot_id: s1, _raw_sha256: h1}
+    - {yearname: 2019, topic: "PFGE type: Hospital-onset", series: USA 100, value: 0.0, _snapshot_id: s1, _raw_sha256: h1}
 - name: int_cdc_haicviz_isa_flags_only_cdcs_all_cases_rows_as_totals
   model: int_cdc_haicviz_isa
   given:
@@ -38,6 +46,8 @@ unit_tests:
     - {yearname: 2019, topic: Case rates, viewby: Dialysis, series: Dialysis, value: 2064.7}
     - {yearname: 2019, topic: Death rates, viewby: Epi class, series: All cases, value: null}
     - {yearname: 2019, topic: "PFGE type: Hospital-onset", viewby: "PFGE type: Hospital-onset", series: Other, value: 0.297}
+    - {yearname: 2019, topic: Case rates, viewby: Sex, series: All Cases, value: 21.3}
+    - {yearname: 2019, topic: Case rates, viewby: Sex, series: null, value: 21.3}
   expect:
     rows:
     - {viewby: All cases, series: All cases, is_total_row: true}
@@ -47,14 +57,18 @@ unit_tests:
     - {viewby: Dialysis, series: Dialysis, is_total_row: false}
     - {viewby: Epi class, series: All cases, is_total_row: true}
     - {viewby: "PFGE type: Hospital-onset", series: Other, is_total_row: false}
+    - {viewby: Sex, series: All Cases, is_total_row: false}
+    - {viewby: Sex, series: null, is_total_row: false}
 - name: fct_cdc_haicviz_isa_keeps_every_row_and_says_when_a_cell_is_empty
   model: fct_cdc_haicviz_isa
   given:
   - input: ref('int_cdc_haicviz_isa')
     rows:
     - {yearname: 2021, topic: Case rates, viewby: All cases, series: All cases, value: 19.0, is_total_row: true, _snapshot_id: s1, _raw_sha256: h1}
-    - {yearname: 2021, topic: Case rates, viewby: Age, series: 1 year, value: null, is_total_row: false, _snapshot_id: s1, _raw_sha256: h1}
+    - {yearname: 2021, topic: Case rates, viewby: Age, series: 1 year, value: null, is_total_row: false, _snapshot_id: s2, _raw_sha256: h2}
+    - {yearname: 2019, topic: "PFGE type: Hospital-onset", viewby: "PFGE type: Hospital-onset", series: USA 100, value: 0.0, is_total_row: false, _snapshot_id: s3, _raw_sha256: h3a h3b}
   expect:
     rows:
-    - {year: 2021, view: All cases, stratum: All cases, value: 19.0, value_status: published, is_total_row: true}
-    - {year: 2021, view: Age, stratum: 1 year, value: null, value_status: "not published: the publisher's cell is empty", is_total_row: false}
+    - {year: 2021, topic: Case rates, view: All cases, stratum: All cases, value: 19.0, value_status: published, is_total_row: true, snapshot_id: s1, raw_sha256: h1}
+    - {year: 2021, topic: Case rates, view: Age, stratum: 1 year, value: null, value_status: "not published: the publisher's cell is empty", is_total_row: false, snapshot_id: s2, raw_sha256: h2}
+    - {year: 2019, topic: "PFGE type: Hospital-onset", view: "PFGE type: Hospital-onset", stratum: USA 100, value: 0.0, value_status: published, is_total_row: false, snapshot_id: s3, raw_sha256: h3a h3b}

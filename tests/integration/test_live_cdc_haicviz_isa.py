@@ -38,6 +38,11 @@ def test_topics_are_the_ones_the_contract_lists(live):
     assert {r.get("topic") for r in rows} <= _enum(con, "topic")
 
 
+def test_views_are_the_ones_the_contract_lists(live):
+    _cat, con, _sem, rows, _ = live
+    assert {r.get("viewby") for r in rows} <= _enum(con, "viewby")
+
+
 def test_values_are_never_negative(live):
     _cat, _con, _sem, rows, _ = live
     assert all(float(r["value"]) >= 0 for r in rows if r.get("value") not in (None, ""))
