@@ -328,9 +328,10 @@ sources:
         US TERRITORIES, NON-US RESIDENTS or a census division); empty on single-jurisdiction rows.)
     - name: m1
       data_type: varchar
-      description: Publisher field m1, as text; read into m1 (Cases reported for this condition and area in this
-        MMWR week (publisher column 'Current week'). Empty when the flag column m1_flag holds a code; '-' means
-        no reported cases.)
+      description: 'Publisher field m1, as text; read into m1 (Cases reported for this condition and area in this
+        MMWR week (publisher column ''Current week''). Empty only where the flag column m1_flag holds a code; a
+        count flagged ''-'' (no reported cases) means not reported (maintainer''s declaration, see noCasesCode):
+        it has no number and is never counted as 0.)'
     - name: m1_flag
       data_type: varchar
       description: 'Publisher field m1_flag, as text; read into m1_flag (Why the current-week count is empty. Codes
@@ -351,17 +352,21 @@ sources:
       data_type: varchar
       description: 'Publisher field m3, as text; read into m3 (Cumulative cases so far in this MMWR year up to and
         including this week (year to date). Cumulative: take the latest week, never sum across weeks. Can be incomplete
-        if the condition was reportable for only part of the year (publisher footnote).)'
+        if the condition was reportable for only part of the year (publisher footnote). Empty only where the flag
+        column m3_flag holds a code; a count flagged ''-'' (no reported cases) means not reported (maintainer''s
+        declaration, see noCasesCode): it has no number and is never counted as 0.)'
     - name: m3_flag
       data_type: varchar
       description: 'Publisher field m3_flag, as text; read into m3_flag (Why the current-year year-to-date count
         (m3) is empty: the publisher''s flag code.)'
     - name: m4
       data_type: varchar
-      description: Publisher field m4, as text; read into m4 (Cumulative cases in the previous MMWR year up to the
-        same week, as published in this week's table. The codebook doesn't say whether it counts the same thing
-        as that year's own year-to-date (m3); for some conditions the two differ widely (see openQuestions), so
-        it is shown beside m3, never in its place.)
+      description: 'Publisher field m4, as text; read into m4 (Cumulative cases in the previous MMWR year up to
+        the same week, as published in this week''s table. The codebook doesn''t say whether it counts the same
+        thing as that year''s own year-to-date (m3); for some conditions the two differ widely (see openQuestions),
+        so it is shown beside m3, never in its place. Empty only where the flag column m4_flag holds a code; a count
+        flagged ''-'' (no reported cases) means not reported (maintainer''s declaration, see noCasesCode): it has
+        no number and is never counted as 0.)'
     - name: m4_flag
       data_type: varchar
       description: 'Publisher field m4_flag, as text; read into m4_flag (Why the previous-year year-to-date count
