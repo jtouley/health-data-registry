@@ -1,0 +1,48 @@
+dataset: cdc_svi_county
+version: 0.1.0
+# A covariate (hard rule 11, ADR 0019): no series, so get_series, get_rate and the other analysis tools never
+# answer from it. Its ranks are read as published, by county, beside an infectious-disease rate. Ranks are
+# positions, never added (hard rule 2); the population column is never a denominator.
+dimensions:
+  - {name: state, column: state_name, type: categorical, description: "State (or DC) the county is in."}
+  - {name: state_fips, column: state_fips, type: categorical, description: "Two-digit state FIPS code."}
+  - {name: state_abbr, column: state_abbr, type: categorical, description: "Two-letter state postal abbreviation."}
+  - {name: county, column: county_name, type: categorical, description: "County name; repeats across states, so pair it with the state or use the FIPS code."}
+  - {name: county_fips, column: county_fips, type: categorical, description: "Five-digit county FIPS code: the key to join a county's infectious-disease rate."}
+measures:
+  - {name: rank_overall, column: rank_overall, kind: estimate, unit: "percentile rank (0-1)", description: "Overall SVI percentile rank among US counties; higher is more vulnerable."}
+  - {name: rank_socioeconomic, column: rank_socioeconomic, kind: estimate, unit: "percentile rank (0-1)", description: "Socioeconomic status theme rank."}
+  - {name: rank_household_characteristics, column: rank_household_characteristics, kind: estimate, unit: "percentile rank (0-1)", description: "Household characteristics theme rank."}
+  - {name: rank_racial_ethnic_minority, column: rank_racial_ethnic_minority, kind: estimate, unit: "percentile rank (0-1)", description: "Racial and ethnic minority status theme rank."}
+  - {name: rank_housing_transportation, column: rank_housing_transportation, kind: estimate, unit: "percentile rank (0-1)", description: "Housing type and transportation theme rank."}
+metrics:
+  - name: county_svi_overall
+    description: "A county's overall SVI 2022 percentile rank among all US counties, read as published (never added or averaged as an amount)."
+    measure: rank_overall
+    aggregation: none
+    uncertainty: none
+    uncertainty_reason: "CDC/ATSDR publishes no interval for a rank; the margins of error in the file are for the ACS estimates behind it."
+  - name: county_svi_socioeconomic
+    description: "A county's socioeconomic status theme rank, read as published."
+    measure: rank_socioeconomic
+    aggregation: none
+    uncertainty: none
+    uncertainty_reason: "CDC/ATSDR publishes no interval for a rank; the margins of error in the file are for the ACS estimates behind it."
+  - name: county_svi_household_characteristics
+    description: "A county's household characteristics theme rank, read as published."
+    measure: rank_household_characteristics
+    aggregation: none
+    uncertainty: none
+    uncertainty_reason: "CDC/ATSDR publishes no interval for a rank; the margins of error in the file are for the ACS estimates behind it."
+  - name: county_svi_racial_ethnic_minority
+    description: "A county's racial and ethnic minority status theme rank, read as published."
+    measure: rank_racial_ethnic_minority
+    aggregation: none
+    uncertainty: none
+    uncertainty_reason: "CDC/ATSDR publishes no interval for a rank; the margins of error in the file are for the ACS estimates behind it."
+  - name: county_svi_housing_transportation
+    description: "A county's housing type and transportation theme rank, read as published."
+    measure: rank_housing_transportation
+    aggregation: none
+    uncertainty: none
+    uncertainty_reason: "CDC/ATSDR publishes no interval for a rank; the margins of error in the file are for the ACS estimates behind it."

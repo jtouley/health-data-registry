@@ -1605,6 +1605,7 @@ def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticMode
             )
     _check_additive_needs_totals_excluded(entry.id, contract, semantic)
     _check_load_metadata(entry, contract)
+    _check_covariate(entry, semantic)
     for c in contract.columns:
         if c.flag_for is not None and c.flag_for not in cols:
             raise RegistryError(f"{entry.id}: {c.name} flags unknown column {c.flag_for}")
@@ -1622,6 +1623,30 @@ def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticMode
                 raise RegistryError(
                     f"{entry.id}: notIncidence names {unknown[0]!r}, which is not in the catalog's conditions.labels"
                 )
+
+
+# The research area of a covariate that explains infectious-disease rates (hard rule 11, ADR 0019).
+COVARIATE = "covariate"
+
+
+def _check_covariate(entry: CatalogEntry, semantic: SemanticModel) -> None:
+    """A covariate (ADR 0019) is set beside an infectious-disease answer, never answers on its own: no research
+    area but covariate, no conditions, no GBD cause and no series, so get_series, get_rate and the other analysis
+    tools never read it, and its population column is never a denominator."""
+    if COVARIATE not in entry.research_areas:
+        return
+    why = (
+        "a covariate is read beside an infectious-disease answer, never as a topic of its own (hard rule 11, "
+        "ADR 0019)"
+    )
+    if entry.research_areas != [COVARIATE] or entry.id_areas:
+        raise RegistryError(
+            f"{entry.id}: a covariate's only research area is covariate, with no id_areas: {why}"
+        )
+    if entry.conditions.labels or entry.gbd.causes:
+        raise RegistryError(f"{entry.id}: a covariate lists no conditions and no GBD causes: {why}")
+    if semantic.series or semantic.generic_series:
+        raise RegistryError(f"{entry.id}: a covariate's semantic model has no series: {why}")
 
 
 def _check_load_metadata(entry: CatalogEntry, contract: Contract) -> None:

@@ -61,6 +61,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- New source, draft (contract not yet reviewed): `cdc_svi_county`, the CDC/ATSDR Social Vulnerability Index 2022
+  for every US county, the first covariate under the widened hard rule 11 (ADR 0019). Read from svi.cdc.gov as
+  config on the `https_file` type, with no new adapter code. It has no conditions and no series, so it never
+  answers a question on its own and its ACS population is never a denominator; `suggest_datasets` offers it only
+  beside an infectious-disease source that fits, and the registry refuses a covariate with a series, conditions or
+  a disease area. Ranks are read as published, -999 becomes no value, and the `dim_cdc_svi_county` mart keys
+  them by county FIPS with the edition and ranking scope on every row.
 - The crawler factory's core (ADR 0016, step 1 and the types step 2 names). Every source is read by one generic
   adapter type chosen in its catalog entry (`type:`; the older `portal:` is read for one more release and `validate`
   warns about it), configured by that type's strict block, plus named extensions it opts in to. New types:

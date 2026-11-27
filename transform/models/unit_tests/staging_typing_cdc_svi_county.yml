@@ -1,0 +1,50 @@
+# Hand-written dbt unit tests of the generated stg_cdc_svi_county typing (staging.typed_select) and of the
+# hand-written dim_cdc_svi_county mart. Staging: FIPS codes keep their leading zero, a rank reads as the number
+# sent (0 and 1 included, never rescaled), and the documentation's -999 ("unavailable or not computable") or an
+# empty value becomes no value, never zero or -999. Mart: every rank passes through unchanged, the edition and
+# ranking scope travel with each row, and Connecticut rows are qualified, not dropped. One file per source, as
+# staging_typing.yml's header says.
+version: 2
+unit_tests:
+- name: stg_cdc_svi_county_ranks_read_as_sent_and_minus_999_stays_empty
+  model: stg_cdc_svi_county
+  given:
+  - input: source('raw', 'cdc_svi_county')
+    format: sql
+    rows: |
+      select 'Autauga County' as "COUNTY", '58761' as "E_TOTPOP", '01001' as "FIPS", '0' as "F_TOTAL", 'Autauga County, Alabama' as "LOCATION", '0' as "M_TOTPOP", '0.2367' as "RPL_THEME1", '0.3675' as "RPL_THEME2", '0.6354' as "RPL_THEME3", '0.2358' as "RPL_THEME4", '0.2663' as "RPL_THEMES", '01' as "ST", 'Alabama' as "STATE", '01001' as "STCNTY", 'AL' as "ST_ABBR", '2026-01-08T00:00:00+00:00' as "document_retrieved_at", 'd1' as "document_sha256", 'https://example.invalid/svi.csv' as "document_url", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select 'Example County' as "COUNTY", '-999' as "E_TOTPOP", '26999' as "FIPS", '-999' as "F_TOTAL", 'Example County, Michigan' as "LOCATION", '-999' as "M_TOTPOP", '-999' as "RPL_THEME1", '0' as "RPL_THEME2", '1' as "RPL_THEME3", ' -999 ' as "RPL_THEME4", '' as "RPL_THEMES", '26' as "ST", 'Michigan' as "STATE", '26999' as "STCNTY", 'MI' as "ST_ABBR", '2026-01-08T00:00:00+00:00' as "document_retrieved_at", 'd1' as "document_sha256", 'https://example.invalid/svi.csv' as "document_url", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+  expect:
+    rows:
+    - county_fips: "01001"
+      state_fips: "01"
+      acs_population: 58761
+      acs_population_moe: 0
+      rank_socioeconomic: 0.2367
+      rank_household_characteristics: 0.3675
+      rank_racial_ethnic_minority: 0.6354
+      rank_housing_transportation: 0.2358
+      rank_overall: 0.2663
+      flags_total: 0
+    - county_fips: "26999"
+      state_fips: "26"
+      acs_population: null
+      acs_population_moe: null
+      rank_socioeconomic: null
+      rank_household_characteristics: 0.0
+      rank_racial_ethnic_minority: 1.0
+      rank_housing_transportation: null
+      rank_overall: null
+      flags_total: null
+- name: dim_cdc_svi_county_keeps_every_rank_and_qualifies_connecticut
+  model: dim_cdc_svi_county
+  given:
+  - input: ref('int_cdc_svi_county')
+    rows:
+    - {county_fips: "01001", state_fips: "01", state_abbr: AL, state_name: Alabama, county_name: Autauga County, rank_overall: 0.2663, rank_socioeconomic: 0.2367, rank_household_characteristics: 0.3675, rank_racial_ethnic_minority: 0.6354, rank_housing_transportation: 0.2358, flags_total: 0, acs_population: 58761, acs_population_moe: 0, _snapshot_id: s1, _raw_sha256: h1}
+    - {county_fips: "09110", state_fips: "09", state_abbr: CT, state_name: Connecticut, county_name: Capitol Planning Region, rank_overall: null, rank_socioeconomic: 0.5, rank_household_characteristics: 0.5, rank_racial_ethnic_minority: 0.5, rank_housing_transportation: 0.5, flags_total: 2, acs_population: 976248, acs_population_moe: 0, _snapshot_id: s1, _raw_sha256: h1}
+  expect:
+    rows:
+    - {county_fips: "01001", svi_edition: "2022", ranking_scope: "US counties (50 states and DC)", acs_period: "2018-2022", rank_overall: 0.2663, rank_socioeconomic: 0.2367, is_connecticut_planning_region: false}
+    - {county_fips: "09110", svi_edition: "2022", ranking_scope: "US counties (50 states and DC)", acs_period: "2018-2022", rank_overall: null, rank_socioeconomic: 0.5, is_connecticut_planning_region: true}

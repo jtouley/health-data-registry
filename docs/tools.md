@@ -140,7 +140,7 @@ last fetched, its licence, and whether its contract has been reviewed.
 | Parameter | Required | What it does |
 |---|---|---|
 | `topic` | no | Words such as "legionella" or "syphilis in states" |
-| `id_area` | no | Research area: `infectious_disease`, or `denominator` for population |
+| `id_area` | no | Research area: `infectious_disease`, `denominator` for population, or `covariate` for place measures such as social vulnerability, read beside a disease rate |
 | `geography` | no | Geography level, as for `list_sources` |
 | `year_start`, `year_end` | no | Only datasets that overlap these years |
 

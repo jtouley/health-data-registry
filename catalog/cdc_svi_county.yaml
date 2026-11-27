@@ -1,0 +1,59 @@
+id: cdc_svi_county
+title: "CDC/ATSDR Social Vulnerability Index 2022, US counties (SVI 2022 U.S. county database)"
+agency: CDC
+publisher: "Centers for Disease Control and Prevention / Agency for Toxic Substances and Disease Registry, Geospatial Research, Analysis, and Services Program (GRASP)"
+level: federal
+country: US
+# A covariate that explains infectious-disease rates (hard rule 11, ADR 0019): never a topic of its own, never a
+# denominator, no conditions and no series. It is read by county beside an infectious-disease rate.
+research_areas: [covariate]
+# SVI 2022 is built from the American Community Survey 2018-2022 five-year estimates (documentation, page 2).
+years: {start: 2022, end: 2022}
+# The 50 states and DC; Puerto Rico is a separate database, not in the U.S. ranking (documentation, page 1).
+geography: [county]
+shape: estimate_table
+grain: "One row is one US county (or county equivalent; Connecticut's nine planning regions), with its social vulnerability percentile ranks (0 to 1, higher is more vulnerable) among all US counties, overall and for four themes, and its ACS 2018-2022 population estimate. A covariate to set beside an infectious-disease rate, never a rate or a denominator itself."
+refresh: irregular
+licence:
+  # Neither the file nor the documentation states a licence (checked 2026-11-27). CDC's "Use of Agency
+  # Materials" page says most information on CDC and ATSDR websites is in the public domain and asks for
+  # attribution to the agency; SVI is an ATSDR work (17 USC 105). A maintainer confirms (contract openQuestions).
+  id: public-domain-us-federal
+  redistribution: true
+  terms_url: https://www.cdc.gov/other/agencymaterials.html
+citation: "Centers for Disease Control and Prevention/Agency for Toxic Substances and Disease Registry/Geospatial Research, Analysis, and Services Program. CDC/ATSDR Social Vulnerability Index 2022 Database U.S. https://www.atsdr.cdc.gov/place-health/php/svi/svi-data-documentation-download.html (accessed <retrieved_at>)."
+source:
+  type: https_file
+  host: svi.cdc.gov
+  dataset: SVI_2022_US_county
+  # The publisher's own download tool on svi.cdc.gov builds this address (Documents/Data/<year>/csv/
+  # states_counties/<territory>_county.csv; checked 2026-11-27).
+  landing_url: https://svi.cdc.gov/dataDownloads/data-download.html
+  api_url: https://svi.cdc.gov/Documents/Data/2022/csv/states_counties/SVI_2022_US_county.csv
+  https_file:
+    format: csv
+    # The file starts with a UTF-8 byte-order mark (EF BB BF); utf-8-sig reads it without one in the first label.
+    encoding: utf-8-sig
+codebook_url: https://www.atsdr.cdc.gov/place-health/media/pdfs/2024/10/SVI2022Documentation.pdf
+caveats:
+  - "A covariate, not a disease measure: it describes the county, never a person, and is meant to be set beside an infectious-disease rate (for example, county Lyme rates by SVI), never read as an answer of its own."
+  - "Percentile ranks run from 0 to 1, higher meaning more socially vulnerable, ranked among all US counties in 2022 (documentation). They are relative positions, not amounts: never add or average them as if they were counts, and a rank is not a percent of people."
+  - "Ranks from different SVI years are not comparable: each year's counties are ranked against each other, and variables and boundaries change between editions (publisher's data documentation page)."
+  - "These are U.S.-wide ranks. A county's rank within its own state comes from CDC's separate state databases and can order counties differently (documentation, 'Note on Comparative Rankings')."
+  - "The population column is the ACS 2018-2022 five-year estimate. Rates here are never computed from it; they use the Census Bureau's July 1 estimates (census_county_pop)."
+  - "Puerto Rico and the other territories are not in this file or its ranking."
+  - "Connecticut is shown by its nine planning regions, not its eight former counties."
+  - "Every estimate comes from the American Community Survey and carries sampling error; the file gives margins of error (90% confidence) for its estimates, not for the ranks."
+gbd:
+  # A covariate has no GBD cause. Counties have no GBD location below the state.
+  location_column: null
+  causes: []
+conditions:
+  dimension: null
+  source: "A covariate: this source has no conditions and answers no disease question on its own (ADR 0019)."
+  labels: []
+  aliases: []
+contract: contracts/cdc_svi_county.odcs.yaml
+semantic_model: semantic/cdc_svi_county.yaml
+status: draft
+hosting: public

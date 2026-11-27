@@ -22,7 +22,15 @@ from health_data_registry import geo
 from health_data_registry.deadline import DeadlineExceeded
 from health_data_registry.paging import paged, respond
 from health_data_registry.query import Engine, QueryRefused, next_step_for
-from health_data_registry.registry import Dataset, Registry, Series, UnknownDataset, norm_label, spelling_key
+from health_data_registry.registry import (
+    COVARIATE,
+    Dataset,
+    Registry,
+    Series,
+    UnknownDataset,
+    norm_label,
+    spelling_key,
+)
 
 Fmt = Literal["csv", "json"]
 Out = str | dict[str, Any]
@@ -613,7 +621,13 @@ def describe_dataset(
             + (f"; case status: {x.case_status}" if x.case_status else "")
             + (f"; case definition: {x.case_definition}" if x.case_definition else "")
         )
-    if not s.series:
+    if COVARIATE in e.research_areas:
+        lines.append(
+            "- none: this is a covariate (hard rule 11). It describes places, not a disease: set it beside an "
+            "infectious-disease rate for the same places (query_sql can join them), never read it as an answer "
+            "on its own or use its population as a denominator."
+        )
+    elif not s.series:
         lines.append("- none mapped yet (query_sql can still read the table)")
     if ds.condition_labels and s.generic_series:
         lines += [
@@ -716,6 +730,34 @@ def dimension_values(ds: Dataset, engine: Engine | None) -> dict[str, dict[str, 
     return out
 
 
+def _covariates_beside_disease(registry: Registry, rows: list[list[Any]]) -> None:
+    """A covariate (hard rule 11, ADR 0019) fits only beside an infectious-disease source that fits too: on its
+    own it answers nothing, and its row says so (rows are [source_id, can_answer, why, ...], changed in place)."""
+    covariate = {ds.id for ds in registry if COVARIATE in ds.entry.research_areas}
+    disease = [
+        r[0]
+        for r in rows
+        if r[1] == "yes" and "infectious_disease" in registry.get(r[0]).entry.research_areas
+    ]
+    for r in rows:
+        if r[0] not in covariate:
+            continue
+        if r[1] == "yes" and disease:
+            r[2] = (
+                f"fits beside {', '.join(disease[:3])}: a covariate, set next to an infectious-disease rate for "
+                "the same places, never an answer on its own"
+            )
+        else:
+            r[1] = "no"
+            r[2] = "; ".join(
+                [
+                    "a covariate: it describes places, not a disease, so it is set beside an infectious-disease "
+                    "rate and never answers on its own; ask about an infectious disease in the same places",
+                    *([] if r[2] == "fits" else [r[2]]),
+                ]
+            )
+
+
 def suggest_datasets(
     registry: Registry, question: str, *, engine: Engine | None = None, fmt: Fmt = "csv"
 ) -> Out:
@@ -755,6 +797,7 @@ def suggest_datasets(
         supports = "; ".join(dict.fromkeys(labels + named))
         rows.append([e.id, "yes" if not why_not else "no", "; ".join(why_not) or "fits", supports, len(hits),
                      *provenance_fields(ds, engine).values()])  # fmt: skip
+    _covariates_beside_disease(registry, rows)
     rows.sort(key=lambda r: (r[1] != "yes", -int(r[4]), r[0]))
     notes = [
         f"Read as: condition words {sorted(topic_words)}, places {states or 'none'}, years {years or 'any'}.",
