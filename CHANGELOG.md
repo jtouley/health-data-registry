@@ -51,6 +51,9 @@ All notable changes to this project are documented here. The format follows
   counts, syndromes and antibiotic resistance; data.cdc.gov en3s-hzsr), on the existing Socrata adapter. Every
   figure is for the ABCs surveillance areas, never called a national or state figure, and nothing is added. It has no
   GBD cause yet: `get_aligned_with_gbd` says so rather than labelling every figure as lower respiratory infection.
+- New source, draft (contract not yet reviewed): `cdc_nrevss_positivity`, CDC's weekly national percent of laboratory tests
+  positive for COVID-19, influenza and RSV (NREVSS, data.cdc.gov seuz-s2cv), on the existing Socrata adapter. One
+  figure for the whole country each week; a question about a state or region is told so.
 - SchoolVaxView kindergarten coverage and exemptions (`cdc_schoolvaxview_kindergarten`, CDC data.cdc.gov
   ijqb-a7ye): the percent of kindergartners vaccinated, or with an exemption, by vaccine and dose or exemption
   type, state and school year, as each state reported it, read as published and never added up. Draft contract.

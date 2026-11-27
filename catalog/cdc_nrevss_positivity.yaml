@@ -1,0 +1,58 @@
+id: cdc_nrevss_positivity
+title: Percent of Tests Positive for Viral Respiratory Pathogens (NREVSS)
+agency: CDC
+publisher: "Centers for Disease Control and Prevention, National Respiratory and Enteric Virus Surveillance System (NREVSS), with influenza collaborating laboratories for influenza"
+level: federal
+country: US
+research_areas: [infectious_disease]
+id_areas: [respiratory]
+years: {start: 2022, end: null}
+# National only: the table has no state, region or laboratory column (three columns: week_end, pathogen,
+# percent_test_positivity; https://data.cdc.gov/api/views/seuz-s2cv.json, read 2026-11-25).
+geography: [nation]
+shape: surveillance_series
+grain: "One row is one week (the Saturday that ends the MMWR week) and one virus (COVID-19, influenza or RSV), holding the national test positivity: the percent of laboratory tests positive for that virus. There is no state or regional breakdown."
+refresh: weekly
+licence:
+  # No licence field in the dataset's Socrata metadata (checked 2026-11-25). A CDC dataset on data.cdc.gov is a
+  # US federal work (17 USC 105); a maintainer confirms the wording on review (see the contract's open questions).
+  id: public-domain-us-federal
+  redistribution: true
+  terms_url: https://www.usa.gov/government-works
+citation: "Centers for Disease Control and Prevention, National Respiratory and Enteric Virus Surveillance System. Percent of Tests Positive for Viral Respiratory Pathogens. https://data.cdc.gov/d/seuz-s2cv (accessed <retrieved_at>)."
+source:
+  portal: socrata
+  host: data.cdc.gov
+  dataset: seuz-s2cv
+  landing_url: https://data.cdc.gov/d/seuz-s2cv
+  api_url: https://data.cdc.gov/resource/seuz-s2cv.json
+codebook_url: https://www.cdc.gov/surveillance/nrevss/index.html
+caveats:
+  - "One figure for the whole United States each week: this table has no state, HHS region or laboratory breakdown."
+  - "A percent of laboratory tests, not of people: one person tested twice counts twice (dataset description)."
+  - "Each virus comes from its own set of tests. RSV and COVID-19 are nucleic acid amplification (PCR) tests reported by NREVSS laboratories; influenza results are clinical laboratory results from NREVSS and influenza collaborating laboratories (dataset description). The three percents are never added or pooled."
+  - "The number of tests behind each percent is not in this table, so weeks or viruses can't be weighted or combined."
+  - "CDC says all data are provisional and subject to change; a later load can revise earlier weeks."
+  - "Percents are never added, across viruses or across weeks."
+gbd:
+  # Proposed GBD keys, not reviewed (hard rules 1 and 3): a test positivity percent is not a GBD measure, so these
+  # key a row to a cause only. No location column: every row is national. A maintainer confirms them on review.
+  location_column: null
+  causes:
+    - {condition: "COVID-19", cause: "COVID-19", pathogen: null}
+    - {condition: "Influenza", cause: "Lower respiratory infections", pathogen: "Influenza"}
+    - {condition: "RSV", cause: "Lower respiratory infections", pathogen: "Respiratory syncytial virus"}
+conditions:
+  dimension: virus
+  # Provenance: the publisher's column description of pathogen, "[Influenza, COVID-19, RSV]", at
+  # https://data.cdc.gov/api/views/seuz-s2cv.json, confirmed as every distinct value on 2026-11-25.
+  source: "CDC's column description of pathogen on data.cdc.gov (checked 25 Nov 2026) lists the three values Influenza, COVID-19 and RSV; RSV is respiratory syncytial virus and COVID-19 is SARS-CoV-2 (dataset description)."
+  labels:
+    - "COVID-19"
+    - "Influenza"
+    - "RSV"
+  aliases: []
+contract: contracts/cdc_nrevss_positivity.odcs.yaml
+semantic_model: semantic/cdc_nrevss_positivity.yaml
+status: draft
+hosting: public
