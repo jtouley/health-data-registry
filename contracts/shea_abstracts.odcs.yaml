@@ -312,8 +312,7 @@ schema:
     physicalType: VARCHAR
     logicalType: string
     required: true
-    description: SHA-256 of that Crossref response as received; the bytes are kept in the source's private area at
-      lake/private/<source>/raw/<sha256>.
+    description: SHA-256 of that Crossref response as received; the bytes are kept in the lake at raw/<sha256>.
     customProperties:
     - property: role
       value: attribute
@@ -325,54 +324,6 @@ schema:
     customProperties:
     - property: role
       value: attribute
-  - name: openalex_source_url
-    physicalType: VARCHAR
-    logicalType: string
-    required: false
-    description: The OpenAlex request whose answer gave this DOI's OpenAlex record; empty when OpenAlex gave none.
-    customProperties:
-    - property: role
-      value: attribute
-  - name: openalex_raw_sha256
-    physicalType: VARCHAR
-    logicalType: string
-    required: false
-    description: SHA-256 of that OpenAlex response as received; the bytes are kept in the source's private area at lake/private/<source>/raw/<sha256>.
-    customProperties:
-    - property: role
-      value: attribute
-  - name: openalex_retrieved_at
-    physicalType: VARCHAR
-    logicalType: timestamp
-    required: false
-    description: When that OpenAlex response was received (ISO 8601, UTC).
-    customProperties:
-    - property: role
-      value: attribute
-  - name: europepmc_source_url
-    physicalType: VARCHAR
-    logicalType: string
-    required: false
-    description: The Europe PMC request whose answer gave this DOI's Europe PMC record; empty when Europe PMC gave none.
-    customProperties:
-    - property: role
-      value: attribute
-  - name: europepmc_raw_sha256
-    physicalType: VARCHAR
-    logicalType: string
-    required: false
-    description: SHA-256 of that Europe PMC response as received; the bytes are kept in the source's private area at lake/private/<source>/raw/<sha256>.
-    customProperties:
-    - property: role
-      value: attribute
-  - name: europepmc_retrieved_at
-    physicalType: VARCHAR
-    logicalType: timestamp
-    required: false
-    description: When that Europe PMC response was received (ISO 8601, UTC).
-    customProperties:
-    - property: role
-      value: attribute
 customProperties:
 - property: licence
   value: doi-abstracts-mixed
@@ -381,7 +332,7 @@ customProperties:
     per row
 - property: redistribution
   value: false
-- property: tier
+- property: hosting
   value: private
 - property: attribution
   value: Abstracts published in Antimicrobial Stewardship & Healthcare Epidemiology; metadata from Crossref, OpenAlex

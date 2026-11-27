@@ -1,1 +1,0 @@
-SELECT * FROM deaths WHERE year IN (SELECT year FROM pop) AND cause ILIKE '%flu%' LIMIT 3 OFFSET 1

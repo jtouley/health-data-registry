@@ -1,7 +1,7 @@
 dataset: cdc_respnet
 version: 0.1.0
 dimensions:
-  - {name: virus_network, column: surveillance_network, type: categorical, description: "Which virus the hospitalizations are for, by surveillance network (from CDC's dataset description): COVID-NET is COVID-19, FluSurv-NET is influenza, RSV-NET is RSV, and Combined is the three together."}
+  - {name: virus_network, column: surveillance_network, type: categorical, description: "COVID-NET, FluSurv-NET, RSV-NET or Combined."}
   - {name: season, column: season, type: categorical, description: "Respiratory season, e.g. 2025-26."}
   - {name: week_ending, column: date, type: time, description: "Week-ending date (YYYY-MM-DD) for weekly rows; the season for season rows."}
   - {name: site, column: state, type: categorical, description: "RESP-NET surveillance site, named by state: the site's catchment area, not necessarily the whole state. Overall or a network name means all sites combined."}
@@ -66,14 +66,6 @@ series:
     metric: weekly_hospitalization_rate
     measure: rate
     filters: {virus_network: "COVID-NET", age_group: "Overall", sex: "All", race_ethnicity: "All"}
-    location_dimension: site
-    time_dimension: week_ending
-    case_status: "laboratory-confirmed"
-# Any virus network in the catalog (conditions.labels): the weekly observed rate, as published, never added.
-generic_series:
-  - metric: weekly_hospitalization_rate
-    measure: rate
-    filters: {age_group: "Overall", sex: "All", race_ethnicity: "All"}
     location_dimension: site
     time_dimension: week_ending
     case_status: "laboratory-confirmed"

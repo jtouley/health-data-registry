@@ -25,7 +25,7 @@ CONDITION_RULES: dict[str, tuple[str, ...]] = {
     "cryptococcal": (r"cryptococ",),
     "hpv": (r"\bhpv\b", r"papillomavirus", r"anal cancer", r"cervical cancer"),
     "cmv": (r"\bcmv\b", r"cytomegalovirus"),
-    "influenza": (r"\binfluenza",),  # not parainfluenza
+    "influenza": (r"influenza",),
     "rsv": (r"\brsv\b", r"respiratory syncytial"),
     "measles": (r"measles",),
     "c_difficile": (r"difficile", r"\bcdi\b"),
@@ -36,8 +36,7 @@ CONDITION_RULES: dict[str, tuple[str, ...]] = {
     "cauti": (r"\bcauti\b", r"catheter-associated urinary"),
     "ssi": (r"\bssi\b", r"surgical site infection"),
     "pneumonia": (r"pneumonia", r"\bvap\b", r"\bnv-hap\b"),
-    # Word boundaries: "antiseptic", "aseptic" and "antisepsis" are not sepsis.
-    "sepsis": (r"\bsepsis\b", r"\bseptic\b", r"bacteremia", r"bloodstream infection"),
+    "sepsis": (r"sepsis", r"septic", r"bacteremia", r"bloodstream infection"),
 }
 DESIGN_RULES: dict[str, tuple[str, ...]] = {
     "randomized_trial": (r"randomi[sz]ed", r"\brct\b", r"placebo"),

@@ -7,8 +7,7 @@ Harvests the conference's year (default: the latest catalogued) into $HDR_LAKE/p
 workflow's upload step reads:
 
     source=<source id>                    the catalog source, e.g. idweek_abstracts
-    folder=<lake>/private/<source id>     what to upload: the year partitions and their manifests (*.jsonl,
-                                          *.manifest.json); raw/ beside them holds the API responses
+    folder=<lake>/private/<source id>     what to upload (the year partitions, *.jsonl)
     private_repo=<owner>/<name>           the source's private Hugging Face dataset (naming.private_dataset)
     complete=true|false                   whether the whole supplement was read
 

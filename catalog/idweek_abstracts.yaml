@@ -31,7 +31,6 @@ licence:
   redistribution: false
   terms_url: https://www.crossref.org/documentation/retrieve-metadata/rest-api/
 hosting: private
-private_store: true
 citation: <authors>. <title>. Open Forum Infectious Diseases <volume>(<issue>):<pages>. https://doi.org/<doi> (abstract,
   IDWeek <year>; metadata via Crossref, accessed <retrieved_at>).
 source:

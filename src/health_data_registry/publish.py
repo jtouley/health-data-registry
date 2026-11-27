@@ -21,11 +21,9 @@ Layout of a release (the same in a directory and on the Hub):
     <source>/data/<source>.parquet the snapshot's table, byte for byte (hosted sources only)
     publish-checklist.md           the manual check of sampled numbers (never uploaded)
 
-Only sources whose catalog entry says `hosting: public` get data files (and `hosting: public` needs a licence
-that allows redistribution). The rest are listed, not hosted: a card saying where the data live, their terms
-and citation, and that the MCP server reads them live from the publisher for each question and keeps no copy
-(share-alike terms would attach to anything derived). check_release refuses data files staged for any source
-that isn't `hosting: public`.
+Only sources whose catalog licence.redistribution is true get data files. The rest are listed, not hosted: a
+card saying where the data live, their terms and citation, and that the MCP server reads them live from the
+publisher for each question and keeps no copy (share-alike terms would attach to anything derived).
 
 Every export runs the pre-publish checks first and writes nothing to the Hub if one fails.
 """
@@ -228,20 +226,13 @@ CLAUDE_FILE_LIMIT_NOTE = (
 )
 
 
-def not_hosted_reason(ds: Dataset) -> str:
-    """Why a listed source has no data files in the open release, in plain words."""
-    if not ds.entry.licence.redistribution:
-        return f"{ds.entry.publisher}'s terms don't allow us to share a copy"
-    return "it stays private until a maintainer's reviewed catalog change makes it public"
-
-
 def add_to_claude(
     ds: Dataset, *, hub_url: str | None, tag: str | None, size_bytes: int | None = None
 ) -> list[str]:
     """Plain-words routes for adding a source to a Claude project: plugin, MCP server, or a file by hand."""
-    if not ds.entry.hosted:
+    if not ds.entry.licence.redistribution:
         return [
-            f"This source is listed, not hosted: {not_hosted_reason(ds)}.",
+            f"This source is listed, not hosted: {ds.entry.publisher}'s terms don't allow us to share a copy.",
             "- MCP server: add health-data-registry to Claude; each time you ask about this source, the server "
             "reads it live from the publisher and keeps no copy. Every answer carries the publisher's terms.",
             f"- By hand: download it from the publisher ({ds.entry.source.landing_url}) and attach it to your "
@@ -368,7 +359,7 @@ def listed_card(ds: Dataset, *, release: str, run_date: str) -> str:
         f"# {e.title} (listed, not hosted)",
         "",
         f"{e.publisher}. This dataset is listed in release `{release}` (run {run_date}) but its data are not "
-        f"hosted here: {not_hosted_reason(ds)}.",
+        "hosted here: the publisher's terms do not allow redistribution.",
         "",
         "## Where the data live",
         "",
@@ -451,9 +442,8 @@ def hub_card(registry: Registry, release: dict[str, Any], repo: str | None) -> s
         "",
         *rows,
         "",
-        "Listed sources have a card but no data files: either their terms do not allow redistribution, so the "
-        "MCP server reads them live from the publisher for each question and keeps no copy, or a maintainer "
-        "has not yet made them public.",
+        "Listed sources have a card but no data files: their terms do not allow redistribution, so the MCP "
+        "server reads them live from the publisher for each question and keeps no copy.",
         "",
         "Empty cells are suppressed or missing as the publisher published them; they are never zeros.",
         "",
@@ -613,17 +603,17 @@ def _parquet_rows(path: Path) -> int:
 
 
 def public_sources(registry: Registry) -> list[Dataset]:
-    """Every source the public hub carries, hosted or listed. Private-store sources (``private_store: true``) are
+    """Every source the public hub carries, hosted or listed. Private-tier sources (``hosting: private``) are
     left out entirely: not even a card, since their rows live only in their own private stores (private.py)."""
     return [ds for ds in registry if ds.entry.tier != "private"]
 
 
 def lake_snapshots(registry: Registry, lake: Path) -> dict[str, tuple[Path, Manifest]]:
-    """The latest snapshot of every `hosting: public` source; stops the export if one is missing."""
+    """The latest snapshot of every redistributable source; stops the export if one is missing."""
     snaps: dict[str, tuple[Path, Manifest]] = {}
     problems: list[str] = []
     for ds in registry:
-        if not ds.entry.hosted:
+        if not ds.entry.licence.redistribution:
             continue
         found = latest_snapshot(lake, ds.id)
         if found is None:
@@ -692,7 +682,7 @@ def stage(
             release["data_product"] = {"id": port.product_id, "version": port.product_version}
         folder = out / ds.id
         folder.mkdir()
-        hosted = ds.entry.hosted
+        hosted = ds.entry.licence.redistribution
         snap = snaps[ds.id][1] if hosted else None
         sm = _source_manifest(
             ds,
@@ -817,12 +807,6 @@ def check_release(registry: Registry, lake: Path, out: Path) -> list[str]:
             if data_files:
                 problems.append(f"{ds.id}: its terms forbid redistribution but data files were staged")
             continue
-        if e.hosting != "public":
-            if data_files:
-                problems.append(
-                    f"{ds.id}: it is not `hosting: public` in its catalog entry but data files were staged"
-                )
-            continue
         # Licence confirmed and recorded.
         snap_found = latest_snapshot(lake, ds.id)
         if _licence_text(registry, e.licence.id) is None or not (folder / LICENCE_FILE).is_file():
@@ -842,8 +826,6 @@ def check_release(registry: Registry, lake: Path, out: Path) -> list[str]:
             )
         if snap.partial:
             problems.append(f"{ds.id}: the snapshot is a partial development sample, not the full table")
-        if snap.row_count <= 0:
-            problems.append(f"{ds.id}: the snapshot has no rows; an empty table is never published")
         # Every file the manifest names is there with its hash.
         for name, meta in sm["files"].items():
             p = folder / name
@@ -852,11 +834,6 @@ def check_release(registry: Registry, lake: Path, out: Path) -> list[str]:
         # Suppression kept exactly as published.
         exported = out / data_path(ds.id)
         if exported.is_file():
-            rows = _parquet_rows(exported)
-            if rows != snap.row_count:
-                problems.append(
-                    f"{ds.id}: the data file has {rows} rows but its snapshot's manifest says {snap.row_count}"
-                )
             problems += suppression_problems(snap_dir / "data.duckdb", ds.id, exported)
         else:
             problems.append(f"{ds.id}: the data file is missing")

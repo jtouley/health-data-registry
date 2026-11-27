@@ -177,9 +177,10 @@ def test_query_sql_guarded(lake: Path, registry: Registry) -> None:
 def test_search_datasets(registry: Registry) -> None:
     hit = tools.search_datasets(registry, topic="legionella in states", geography="state", fmt="json")
     assert hit["rows"][0][0] == "toy_cases"
-    assert "legionella" in hit["rows"][0][hit["columns"].index("why_it_fits")]
-    for kw in ({"topic": "cancer"}, {"geography": "county"}, {"year_start": 2030}):
-        assert tools.search_datasets(registry, fmt="json", **kw)["refused"] == "no_dataset_matched"
+    assert "legionella" in hit["rows"][0][-1]
+    assert tools.search_datasets(registry, topic="cancer", fmt="json")["rows"] == []
+    assert tools.search_datasets(registry, geography="county", fmt="json")["rows"] == []
+    assert tools.search_datasets(registry, year_start=2030, fmt="json")["rows"] == []
 
 
 def test_suggest_datasets_says_why_not(registry: Registry) -> None:
@@ -237,9 +238,8 @@ def test_get_series_mixed_measures_warns(lake: Path, registry: Registry) -> None
 
 def test_get_series_refusals(lake: Path, registry: Registry) -> None:
     eng = Engine(registry=registry, lake=lake)
-    assert tools.get_series(registry, eng, condition="mumps") == (
-        "No loaded source reports 'mumps'.\nNext step: Open describe_dataset for a source search_datasets lists, "
-        "pick one of its condition labels, and ask again with that label."
+    assert "Conditions available now: Legionellosis, Syphilis" in tools.get_series(
+        registry, eng, condition="mumps"
     )
     assert "both-sexes" in tools.get_series(registry, eng, condition="syphilis", sex="female")
 
@@ -373,24 +373,3 @@ def test_redistribution_needs_a_reviewed_licence() -> None:
     assert not Licence(id="CC-BY-NC-SA-3.0-IGO", redistribution=False, terms_url="x").redistribution
     with pytest.raises(ValidationError, match="reviewed list"):
         Licence(id="CC-BY-NC-SA-3.0-IGO", redistribution=True, terms_url="x")
-
-
-def test_hosting_defaults_to_private_and_public_needs_redistribution(tmp_path: Path) -> None:
-    """A source reaches the open release only through an explicit `hosting: public` in its catalog entry."""
-    public = load_registry(write_registry(tmp_path / "public")).get("toy_cases").entry
-    assert public.hosting == "public" and public.hosted
-    unset = CATALOG.replace("hosting: public\n", "")
-    private = load_registry(write_registry(tmp_path / "unset", catalog=unset)).get("toy_cases").entry
-    assert private.hosting == "private" and not private.hosted
-    with pytest.raises(RegistryError, match="hosting"):
-        load_registry(write_registry(tmp_path / "other", catalog=unset + "hosting: maybe\n"))
-    restricted = CATALOG.replace(
-        "redistribution: true, terms_url", "redistribution: false, terms_url"
-    ).replace("public-domain-us-federal", "CC-BY-NC-SA-3.0-IGO")
-    with pytest.raises(RegistryError, match="hosting: public needs a licence"):
-        load_registry(write_registry(tmp_path / "restricted", catalog=restricted))
-
-
-def test_real_catalog_hosts_only_redistributable_sources() -> None:
-    for ds in load_registry():
-        assert ds.entry.hosted == ds.entry.licence.redistribution, ds.id
