@@ -1,0 +1,53 @@
+id: cdc_haicviz_isa
+title: HAICViz - iSA
+agency: CDC
+publisher: "Centers for Disease Control and Prevention, Emerging Infections Program, Healthcare-Associated Infections Community Interface (HAIC), Invasive Staphylococcus aureus Infection Surveillance"
+level: federal
+country: US
+research_areas: [infectious_disease]
+id_areas: [hais_amr]
+years: {start: 2005, end: null}
+# EIP catchment areas pooled, like cdc_haicviz_cdi: the one figure per year is never a state's, and every series
+# names the EIP sites in place_coverage.
+geography: [nation]
+shape: rate_table
+grain: "One row is one year and one published figure for invasive Staphylococcus aureus infection in the Emerging Infections Program sites combined: a case or death rate for all cases, or a case rate for one age group, sex, race, epidemiologic class (hospital-onset, healthcare-associated community-onset or community-associated) or for dialysis patients, or a share of cases by syndrome or by PFGE strain type."
+refresh: annual
+licence:
+  # No licence field in the dataset's Socrata metadata (checked 2026-11-25). A CDC dataset on data.cdc.gov is a
+  # US federal work (17 USC 105); a maintainer confirms the wording on review (see the contract's open questions).
+  id: public-domain-us-federal
+  redistribution: true
+  terms_url: https://www.usa.gov/government-works
+citation: "Centers for Disease Control and Prevention, Emerging Infections Program Healthcare-Associated Infections Community Interface. HAICViz - iSA. https://data.cdc.gov/d/ssz5-s49e (accessed <retrieved_at>)."
+source:
+  portal: socrata
+  host: data.cdc.gov
+  dataset: ssz5-s49e
+  landing_url: https://data.cdc.gov/d/ssz5-s49e
+  api_url: https://data.cdc.gov/resource/ssz5-s49e.json
+codebook_url: https://www.cdc.gov/healthcare-associated-infections/php/haic-eip/invasive-staphylococcus.html
+caveats:
+  - "Population-based surveillance in the Emerging Infections Program sites, not all US states; the figures are pooled across sites and give no state values."
+  - "Whether these figures are for methicillin-resistant S. aureus (MRSA) only, or for all invasive S. aureus, is not stated in the table: CDC's reports before 2016 were MRSA only. Read them as CDC's HAICViz iSA figures until a maintainer confirms which."
+  - "Rates are never added. The age, sex, race and epidemiologic-class groups each cover the same cases again, beside their 'All cases' row."
+  - "The table states no unit; the rates are read as published (per 100,000 population is assumed, not confirmed), and the dialysis rate uses a different, unstated population."
+  - "Syndrome and PFGE strain-type rows are shares of cases with no stated unit; they are kept as published and no tool reads them yet."
+  - "Data cover 2005 to 2021 (checked 2026-11-25); 2021 has no race rows. Later years may not be published here yet."
+  - "Small numbers for some topics or filters may make year-to-year changes difficult to interpret, and HAICViz figures may differ from other HAIC publications (dataset description)."
+gbd:
+  # No GBD keys proposed: invasive S. aureus spans several GBD causes (see the contract's open questions).
+  # location_column is null: the EIP sites are a catchment, never 'United States of America'.
+  location_column: null
+  causes: []
+conditions:
+  dimension: null
+  # Provenance: the dataset title and description (one organism throughout, no condition column).
+  source: "This source covers one condition only: invasive Staphylococcus aureus infection, as the dataset title and CDC's iSA page name it."
+  labels:
+    - "Invasive Staphylococcus aureus"
+  aliases: []
+contract: contracts/cdc_haicviz_isa.odcs.yaml
+semantic_model: semantic/cdc_haicviz_isa.yaml
+status: draft
+hosting: public

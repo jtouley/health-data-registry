@@ -2,7 +2,8 @@ dataset: cdc_svi_county
 version: 0.1.0
 # A covariate (hard rule 11, ADR 0019): no series, so get_series, get_rate and the other analysis tools never
 # answer from it. Its ranks are read as published, by county, beside an infectious-disease rate. Ranks are
-# positions, never added (hard rule 2); the population column is never a denominator.
+# positions, never added; an average of them is qualified, not refused (hard rule 2, ADR 0018). The population
+# column is never a denominator.
 dimensions:
   - {name: state, column: state_name, type: categorical, description: "State (or DC) the county is in."}
   - {name: state_fips, column: state_fips, type: categorical, description: "Two-digit state FIPS code."}
