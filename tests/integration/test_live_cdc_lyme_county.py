@@ -7,6 +7,7 @@ out of a row (it drops empty values) is read as empty, never as an error.
 from __future__ import annotations
 
 import re
+from typing import Any
 
 import pytest
 
@@ -24,7 +25,7 @@ KEY = ("year", "state", "fips", "case_status", "sex", "age_cat_yrs")
 
 
 @pytest.fixture(scope="module", params=SOURCES)
-def live(request):  # type: ignore[no-untyped-def]
+def live(request: pytest.FixtureRequest) -> Any:
     ds = request.param
     cat, con, sem = _live.load(ds)
     meta = _live.get_json(cat, f"https://{cat['source']['host']}/api/views/{cat['source']['dataset']}.json")
@@ -37,18 +38,18 @@ def live(request):  # type: ignore[no-untyped-def]
     return ds, cat, con, sem, rows, meta
 
 
-def test_contract_structure(live) -> None:  # type: ignore[no-untyped-def]
+def test_contract_structure(live: Any) -> None:
     _ds, _cat, con, _sem, rows, meta = live
     _live.check_structure(con, rows, [c["fieldName"] for c in meta["columns"]])
 
 
-def test_the_licence_is_still_the_one_the_catalog_names(live) -> None:  # type: ignore[no-untyped-def]
+def test_the_licence_is_still_the_one_the_catalog_names(live: Any) -> None:
     _ds, cat, _con, _sem, _rows, meta = live
     assert (meta.get("license") or {}).get("name") == "Public Domain U.S. Government"
     assert cat["licence"]["id"] == "public-domain-us-federal"
 
 
-def test_one_row_per_group_and_years_in_the_tables_era(live) -> None:  # type: ignore[no-untyped-def]
+def test_one_row_per_group_and_years_in_the_tables_era(live: Any) -> None:
     ds, _cat, _con, _sem, rows, _ = live
     keys = [tuple(r.get(k) for k in KEY) for r in rows]
     assert len(set(keys)) == len(keys), f"{ds}: a group of cases appears twice"
@@ -56,7 +57,7 @@ def test_one_row_per_group_and_years_in_the_tables_era(live) -> None:  # type: i
     assert all(lo <= int(r["year"]) <= hi for r in rows), ds
 
 
-def test_labels_are_the_codebooks_or_its_markers(live) -> None:  # type: ignore[no-untyped-def]
+def test_labels_are_the_codebooks_or_its_markers(live: Any) -> None:
     ds, _cat, _con, _sem, rows, _ = live
     statuses = {r.get("case_status") for r in rows}
     assert statuses <= {"Confirmed", "Probable"}, statuses
@@ -71,7 +72,7 @@ def test_labels_are_the_codebooks_or_its_markers(live) -> None:  # type: ignore[
     assert len(odd) <= (3 if ds == "cdc_lyme_county_1992_2007" else 0), odd[:5]
 
 
-def test_a_states_cases_two_ways(live) -> None:  # type: ignore[no-untyped-def]
+def test_a_states_cases_two_ways(live: Any) -> None:
     _ds, _cat, con, sem, rows, _ = live
     counted = [r for r in rows if r.get("frequency") not in (None, "")]
     latest = max(int(r["year"]) for r in counted)
@@ -82,7 +83,7 @@ def test_a_states_cases_two_ways(live) -> None:  # type: ignore[no-untyped-def]
     assert sql == loop
 
 
-def test_the_nation_adds_every_row_suppressed_places_included(live) -> None:  # type: ignore[no-untyped-def]
+def test_the_nation_adds_every_row_suppressed_places_included(live: Any) -> None:
     _ds, _cat, con, sem, rows, _ = live
     latest = max(int(r["year"]) for r in rows)
     year_rows = [r for r in rows if int(r["year"]) == latest]
