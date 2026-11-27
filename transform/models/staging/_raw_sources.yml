@@ -624,6 +624,137 @@ sources:
       data_type: varchar
       description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
         the exact bytes the publisher sent.'
+  - name: cdc_svi_county
+    description: 'Raw records of CDC/ATSDR Social Vulnerability Index 2022, US counties (SVI 2022 U.S. county database)
+      as the adapter hands them on, every value as text: the publisher''s own fields, or for a wide table the adapter''s
+      structural reshaping of them (see the staging model). Only the full load the dataset''s LATEST pointer names
+      is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_svi_county.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - COUNTY
+      - E_TOTPOP
+      - FIPS
+      - F_TOTAL
+      - LOCATION
+      - M_TOTPOP
+      - RPL_THEME1
+      - RPL_THEME2
+      - RPL_THEME3
+      - RPL_THEME4
+      - RPL_THEMES
+      - ST
+      - STATE
+      - STCNTY
+      - ST_ABBR
+      - document_retrieved_at
+      - document_sha256
+      - document_url
+    columns:
+    - name: COUNTY
+      data_type: varchar
+      description: 'Publisher field COUNTY, as text; read into county_name (County name with its type as published
+        (for example Wayne County, Orleans Parish, Capitol Planning Region). Names repeat across states: use the
+        FIPS code, or the name with its state.)'
+    - name: E_TOTPOP
+      data_type: varchar
+      description: 'Publisher field E_TOTPOP, as text; read into acs_population (Total population, American Community
+        Survey 2018-2022 five-year estimate (E_TOTPOP). Shown so a reader can see how many people a county''s ranks
+        describe. Never a denominator here: rates use the Census Bureau''s July 1 estimates (census_county_pop).
+        -999 (not available) is kept as no value, never zero.)'
+    - name: FIPS
+      data_type: varchar
+      description: Publisher field FIPS, as text; read into fips (The file's FIPS column. The data dictionary describes
+        it as the tract-level identifier; in this county file it holds the county's five-digit FIPS, the same as
+        county_fips in every row (checked 2026-11-27).)
+    - name: F_TOTAL
+      data_type: varchar
+      description: 'Publisher field F_TOTAL, as text; read into flags_total (How many of the 16 SVI variables put
+        the county at or above the 90th percentile (F_TOTAL; documentation: ''the overall flag value ... the number
+        of all variable flags''). 0 to 16; a count of flags, not of people.)'
+    - name: LOCATION
+      data_type: varchar
+      description: Publisher field LOCATION, as text; read into location (The county and state in words, as published
+        (for example 'Autauga County, Alabama').)
+    - name: M_TOTPOP
+      data_type: varchar
+      description: 'Publisher field M_TOTPOP, as text; read into acs_population_moe (Margin of error of the ACS
+        population estimate at 90% confidence (M_TOTPOP; documentation: the estimate minus and plus the MOE gives
+        the 90% interval). It reads 0 in 3,019 of the 3,144 counties (2026-11-27); the documentation does not say
+        why (see openQuestions).)'
+    - name: RPL_THEME1
+      data_type: varchar
+      description: 'Publisher field RPL_THEME1, as text; read into rank_socioeconomic (Theme 1, socioeconomic status:
+        the county''s percentile rank among all US counties (RPL_THEME1), 0 to 1, higher is more vulnerable. Built
+        from poverty below 150%, unemployment, housing cost burden, no high school diploma and no health insurance.
+        A position, not an amount: never added.)'
+    - name: RPL_THEME2
+      data_type: varchar
+      description: 'Publisher field RPL_THEME2, as text; read into rank_household_characteristics (Theme 2, household
+        characteristics: percentile rank among all US counties (RPL_THEME2), 0 to 1, higher is more vulnerable.
+        Built from age 65 and older, age 17 and younger, disability, single-parent households and limited English.
+        A position, not an amount: never added.)'
+    - name: RPL_THEME3
+      data_type: varchar
+      description: 'Publisher field RPL_THEME3, as text; read into rank_racial_ethnic_minority (Theme 3, racial
+        and ethnic minority status: percentile rank among all US counties (RPL_THEME3), 0 to 1, higher is more vulnerable.
+        Built from the share of people who are a racial or ethnic minority. A position, not an amount: never added.)'
+    - name: RPL_THEME4
+      data_type: varchar
+      description: 'Publisher field RPL_THEME4, as text; read into rank_housing_transportation (Theme 4, housing
+        type and transportation: percentile rank among all US counties (RPL_THEME4), 0 to 1, higher is more vulnerable.
+        Built from multi-unit structures, mobile homes, crowding, no vehicle and group quarters. A position, not
+        an amount: never added.)'
+    - name: RPL_THEMES
+      data_type: varchar
+      description: 'Publisher field RPL_THEMES, as text; read into rank_overall (Overall SVI: the county''s percentile
+        rank among all US counties on the sum of its four theme sums (RPL_THEMES), 0 to 1, higher is more vulnerable.
+        The summary rank the publisher names. A position, not an amount: never added.)'
+    - name: ST
+      data_type: varchar
+      description: Publisher field ST, as text; read into state_fips (Two-digit state FIPS code, as text (for example
+        26 for Michigan).)
+    - name: STATE
+      data_type: varchar
+      description: Publisher field STATE, as text; read into state_name (State name as published (for example Michigan,
+        District of Columbia).)
+    - name: STCNTY
+      data_type: varchar
+      description: 'Publisher field STCNTY, as text; read into county_fips (Five-digit county FIPS code, as text
+        so the leading zero stays: the two-digit state code followed by the three-digit county code (documentation:
+        ''To identify a unique county, you must include the state FIPS along with the county FIPS''). The key to
+        join a county''s infectious-disease rate.)'
+    - name: ST_ABBR
+      data_type: varchar
+      description: Publisher field ST_ABBR, as text; read into state_abbr (Two-letter state postal abbreviation
+        (for example MI).)
+    - name: document_retrieved_at
+      data_type: varchar
+      description: 'Added by the adapter: when that document was fetched (ISO 8601, UTC).; read into document_retrieved_at
+        (Added by the adapter, not by CDC: when the file was fetched (UTC).)'
+    - name: document_sha256
+      data_type: varchar
+      description: 'Added by the adapter: the sha256 fingerprint of that document''s raw bytes, as kept in the lake''s
+        raw store.; read into document_sha256 (Added by the adapter, not by CDC: the sha256 fingerprint of the file''s
+        raw bytes, as kept in the lake''s raw store.)'
+    - name: document_url
+      data_type: varchar
+      description: 'Added by the adapter: the address of the document this row was read from, with any access key
+        removed.; read into document_url (Added by the adapter, not by CDC: the address of the file this row was
+        read from.)'
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
   - name: census_county_pop
     description: 'Raw records of County and state resident population estimates, July 1, 2020-2025 (Census Vintage
       2025, CO-EST2025-ALLDATA) as the adapter hands them on, every value as text: the publisher''s own fields,

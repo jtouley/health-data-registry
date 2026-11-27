@@ -150,6 +150,13 @@ outputPorts:
     contractId: census_county_pop
     customProperties:
       - {property: hosted, value: true}
+  - name: cdc_svi_county
+    description: CDC/ATSDR Social Vulnerability Index 2022 for US counties, a covariate set beside infectious-disease rates (never a denominator).
+    type: tables
+    version: 0.1.0
+    contractId: cdc_svi_county
+    customProperties:
+      - {property: hosted, value: true}
   - name: who_gho_tb_incidence
     description: WHO estimated tuberculosis incidence. Listed, not hosted (non-commercial terms).
     type: tables

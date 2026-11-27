@@ -1,0 +1,142 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: dim_cdc_svi_county
+name: Social vulnerability of each US county (CDC/ATSDR SVI 2022), to set beside infectious-disease rates
+version: 0.1.0
+status: draft
+domain: covariate
+description:
+  purpose: "One row per US county with its CDC/ATSDR Social Vulnerability Index 2022 percentile ranks, keyed by five-digit county FIPS so an infectious-disease rate for the same county can be set beside it (hard rule 11, ADR 0019). Every county row of cdc_svi_county is kept, with its ranks as published."
+  usage: "Join on county_fips to a county infectious-disease table, then compare the rate across ranks. Never add ranks; an average of ranks is qualified as a position, not an amount. Compare ranks only within one svi_edition and ranking_scope. acs_population is shown for context and is never a denominator: rates use the Census July 1 estimates."
+  limitations: "Inherits every open question of contracts/cdc_svi_county.odcs.yaml. No quartile or category is computed: the publisher names no cut points. Connecticut rows are its nine planning regions, which join only to tables that use them."
+schema:
+  - name: dim_cdc_svi_county
+    physicalName: dim_cdc_svi_county
+    physicalType: table
+    logicalType: object
+    description: "One row per US county or county equivalent (50 states and DC): its SVI 2022 ranks, the edition and ranking scope they belong to, and its ACS population estimate."
+    customProperties:
+      - {property: layer, value: marts}
+      - property: totalRows
+        value: none
+        description: "County rows only, as in cdc_svi_county; no state or national row."
+      - {property: tableShape, value: estimate_table}
+    properties:
+      - name: county_fips
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "Five-digit county FIPS code (state code plus county code), the key to join a county's infectious-disease rate."
+        customProperties: [{property: role, value: dimension}]
+      - name: state_fips
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Two-digit state FIPS code."
+        customProperties: [{property: role, value: dimension}]
+      - name: state_abbr
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Two-letter state postal abbreviation."
+        customProperties: [{property: role, value: dimension}]
+      - name: state_name
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "State name as published."
+        customProperties: [{property: role, value: dimension}]
+      - name: county_name
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "County name with its type as published; repeats across states, so join on county_fips."
+        customProperties: [{property: role, value: dimension}]
+      - name: svi_edition
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The SVI edition the ranks come from (2022). Ranks from different editions are not comparable (publisher's data page)."
+        customProperties: [{property: role, value: attribute}]
+      - name: ranking_scope
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Which counties the ranks are relative to: all US counties in the 50 states and DC (the U.S. database). A state database ranks differently (documentation, 'Note on Comparative Rankings')."
+        customProperties: [{property: role, value: attribute}]
+      - name: acs_period
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The American Community Survey five-year period the ranks and population are built from (2018-2022)."
+        customProperties: [{property: role, value: attribute}]
+      - name: rank_overall
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Overall SVI percentile rank among US counties, 0 to 1, higher is more vulnerable, as published. A position, not an amount."
+        customProperties: [{property: role, value: measure}, {property: unit, value: "percentile rank (0-1)"}]
+      - name: rank_socioeconomic
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Socioeconomic status theme rank, 0 to 1, as published."
+        customProperties: [{property: role, value: measure}, {property: unit, value: "percentile rank (0-1)"}]
+      - name: rank_household_characteristics
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Household characteristics theme rank, 0 to 1, as published."
+        customProperties: [{property: role, value: measure}, {property: unit, value: "percentile rank (0-1)"}]
+      - name: rank_racial_ethnic_minority
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Racial and ethnic minority status theme rank, 0 to 1, as published."
+        customProperties: [{property: role, value: measure}, {property: unit, value: "percentile rank (0-1)"}]
+      - name: rank_housing_transportation
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Housing type and transportation theme rank, 0 to 1, as published."
+        customProperties: [{property: role, value: measure}, {property: unit, value: "percentile rank (0-1)"}]
+      - name: flags_total
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "How many of the 16 SVI variables are at or above the 90th percentile for the county, 0 to 16."
+        customProperties: [{property: role, value: attribute}]
+      - name: acs_population
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "ACS 2018-2022 five-year population estimate, for context only: never a denominator here (rates use census_county_pop)."
+        customProperties: [{property: role, value: attribute}, {property: unit, value: "persons"}]
+      - name: acs_population_moe
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Margin of error of acs_population at 90% confidence, as published."
+        customProperties: [{property: role, value: attribute}, {property: unit, value: "persons"}]
+      - name: is_connecticut_planning_region
+        physicalType: BOOLEAN
+        logicalType: boolean
+        required: true
+        description: "True for Connecticut rows (state FIPS 09): they are the nine planning regions, not the eight former counties, so they join only to tables that use the planning regions. A qualifier; the row is kept."
+        customProperties: [{property: role, value: attribute}]
+      - name: _snapshot_id
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The lake snapshot the row was read from; its manifest gives the source address, retrieval time and version."
+        customProperties: [{property: role, value: attribute}]
+      - name: _raw_sha256
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The sha256 fingerprint of the raw file the row was parsed from."
+        customProperties: [{property: role, value: attribute}]
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None here: the source contract states none; CDC/ATSDR withholds no rank."}}

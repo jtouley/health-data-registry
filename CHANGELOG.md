@@ -61,6 +61,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- New source, draft (contract not yet reviewed): `cdc_svi_county`, the CDC/ATSDR Social Vulnerability Index 2022
+  for every US county, the first covariate under the widened hard rule 11 (ADR 0019). Read from svi.cdc.gov as
+  config on the `https_file` type, with no new adapter code. It has no conditions and no series, so it never
+  answers a question on its own and its ACS population is never a denominator; `suggest_datasets` offers it only
+  beside an infectious-disease source that fits, and the registry refuses a covariate with a series, conditions or
+  a disease area. Ranks are read as published, -999 becomes no value, and the `dim_cdc_svi_county` mart keys
+  them by county FIPS with the edition and ranking scope on every row.
 - New source, draft (contract not yet reviewed): `cdc_haicviz_isa`, CDC's Emerging Infections Program case and
   death rates for invasive Staphylococcus aureus since 2005 (HAICViz iSA, data.cdc.gov ssz5-s49e), on the existing
   Socrata adapter. Every rate is for the EIP sites combined, never called a state figure, and nothing is added;

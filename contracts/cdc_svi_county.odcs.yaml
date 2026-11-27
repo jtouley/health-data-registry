@@ -1,0 +1,318 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: cdc_svi_county
+name: CDC/ATSDR Social Vulnerability Index 2022, US counties
+version: 0.1.0
+status: draft
+domain: covariate
+description:
+  purpose: "CDC/ATSDR's Social Vulnerability Index (SVI) 2022 for every US county: percentile ranks (0 to 1, higher is more vulnerable) among all US counties, overall and for four themes, built from the American Community Survey 2018-2022 five-year estimates. A covariate that explains infectious-disease rates (hard rule 11, ADR 0019): it is set beside an infectious-disease rate by county, never read as an answer of its own and never used as a denominator."
+  usage: "Join by five-digit county FIPS to an infectious-disease rate for the same county, then compare the rate across SVI ranks. Read each rank as published. Ranks are positions, not amounts: never add them, and qualify any average of them. Compare ranks only within this 2022 edition: ranks from different SVI years are not comparable."
+  limitations: "One edition (SVI 2022, ACS 2018-2022); U.S.-wide ranks only (state databases rank differently); no Puerto Rico or other territories; the ranks carry no published uncertainty; the population column is an ACS five-year estimate, not the Census July 1 estimate rates are computed from."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://svi.cdc.gov/Documents/Data/2022/csv/states_counties/SVI_2022_US_county.csv", description: "The file (fetched 2026-11-27: 3,144 data rows, 158 columns, 2,301,480 bytes, Last-Modified 2024-11-25, sha256 bc47d244153e359d5c09f621a4bf344a1e593159c16fbd3c28a15461b70a6c0f)"}
+    - {type: businessDefinition, url: "https://www.atsdr.cdc.gov/place-health/media/pdfs/2024/10/SVI2022Documentation.pdf", description: "CDC/ATSDR SVI 2022 Documentation: data dictionary, the -999 missing code, the ranking method and the flags"}
+    - {type: businessDefinition, url: "https://www.atsdr.cdc.gov/place-health/php/svi/svi-data-documentation-download.html", description: "Publisher's data page: suggested citation, 'Data changes over time' (ranks from different years are not comparable) and data corrections"}
+    - {type: businessDefinition, url: "https://www.atsdr.cdc.gov/place-health/php/svi/svi-frequently-asked-questions-faqs.html", description: "Publisher's FAQ: U.S. versus state databases, update cadence (every two years), categorising SVI values"}
+servers:
+  - id: svi_cdc_gov
+    server: svi.cdc.gov
+    type: https
+    location: https://svi.cdc.gov/Documents/Data/2022/csv/states_counties/SVI_2022_US_county.csv
+    description: "One comma-separated file, UTF-8 with a byte-order mark, one header row, no paging, no key. Read by the https_file adapter type (format csv, encoding utf-8-sig) with no extension: every one of the 158 columns is kept as published text in the raw layer; staging reads only the columns below."
+schema:
+  - name: cdc_svi_county
+    physicalName: cdc_svi_county
+    physicalType: table
+    logicalType: object
+    description: "One row per US county or county equivalent (50 states and DC), with its SVI 2022 percentile ranks and ACS population estimate."
+    dataGranularityDescription: "county (five-digit FIPS), SVI 2022 edition"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://www.atsdr.cdc.gov/place-health/media/pdfs/2024/10/SVI2022Documentation.pdf"}
+    customProperties:
+      - property: totalRows
+        value: none
+        description: "County rows only: no state or national row (3,144 rows, one per county FIPS, on 2026-11-27). Ranks are never added in any case."
+      - {property: tableShape, value: estimate_table}
+      - property: idDimensions
+        value:
+          condition: null
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: null
+          period: null
+          provisionalFlag: null
+        description: "A covariate (ADR 0019): no condition, case definition, case status or organism. The whole file is one edition, SVI 2022 (ACS 2018-2022); there is no period column."
+    properties:
+      - name: county_fips
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "Five-digit county FIPS code, as text so the leading zero stays: the two-digit state code followed by the three-digit county code (documentation: 'To identify a unique county, you must include the state FIPS along with the county FIPS'). The key to join a county's infectious-disease rate."
+        examples: ["01001", "26163"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: STCNTY}
+        quality:
+          - id: county_fips_is_five_digits
+            dimension: conformity
+            severity: error
+            type: sql
+            description: "Documentation: a county is identified by the two-digit state FIPS plus the three-digit county FIPS, five digits in all."
+            query: "SELECT COUNT(*) FROM {object} WHERE county_fips IS NOT NULL AND NOT regexp_full_match(county_fips, '[0-9]{5}')"
+            mustBe: 0
+          - id: county_fips_starts_with_its_state
+            dimension: consistency
+            severity: error
+            type: sql
+            description: "Documentation: the county FIPS is the state FIPS followed by the county code (its example: 13089 is state 13 plus county 089), so the first two digits are the row's state FIPS."
+            query: "SELECT COUNT(*) FROM {object} WHERE county_fips IS NOT NULL AND state_fips IS NOT NULL AND left(county_fips, 2) <> state_fips"
+            mustBe: 0
+      - name: fips
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The file's FIPS column. The data dictionary describes it as the tract-level identifier; in this county file it holds the county's five-digit FIPS, the same as county_fips in every row (checked 2026-11-27)."
+        examples: ["01001"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: FIPS}
+        quality:
+          - id: fips_matches_county_fips
+            dimension: consistency
+            severity: warn
+            type: sql
+            description: "Structural fact of this file (all 3,144 rows on 2026-11-27): FIPS equals STCNTY. A warning: a difference would mean the layout changed, and county_fips stays the key."
+            query: "SELECT COUNT(*) FROM {object} WHERE fips IS DISTINCT FROM county_fips"
+            mustBe: 0
+      - name: state_fips
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Two-digit state FIPS code, as text (for example 26 for Michigan)."
+        examples: ["01", "26"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: ST}
+        quality:
+          - id: fifty_states_and_dc
+            dimension: completeness
+            severity: warn
+            type: sql
+            description: "The U.S. database ranks the 50 states and DC; Puerto Rico is a separate database not in the U.S. ranking (documentation). 51 state codes on 2026-11-27. A warning: a missing state leaves its counties without a rank, and a new one would mean the ranking universe changed."
+            query: "SELECT COUNT(DISTINCT state_fips) FROM {object}"
+            mustBe: 51
+      - name: state_name
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "State name as published (for example Michigan, District of Columbia)."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: STATE}
+      - name: state_abbr
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Two-letter state postal abbreviation (for example MI)."
+        examples: ["MI", "DC"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: ST_ABBR}
+      - name: county_name
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "County name with its type as published (for example Wayne County, Orleans Parish, Capitol Planning Region). Names repeat across states: use the FIPS code, or the name with its state."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: COUNTY}
+      - name: location
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The county and state in words, as published (for example 'Autauga County, Alabama')."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: LOCATION}
+      - name: acs_population
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Total population, American Community Survey 2018-2022 five-year estimate (E_TOTPOP). Shown so a reader can see how many people a county's ranks describe. Never a denominator here: rates use the Census Bureau's July 1 estimates (census_county_pop). -999 (not available) is kept as no value, never zero."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: E_TOTPOP}
+          - {property: unit, value: "persons"}
+          - {property: missingCodes, value: ["-999"], description: "Documentation, page 2: 'A value of -999 in any field either means the value was unavailable from the original census data or we could not calculate a derived value because of unavailable Census data.' None in the 2022 county file on 2026-11-27."}
+      - name: acs_population_moe
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Margin of error of the ACS population estimate at 90% confidence (M_TOTPOP; documentation: the estimate minus and plus the MOE gives the 90% interval). It reads 0 in 3,019 of the 3,144 counties (2026-11-27); the documentation does not say why (see openQuestions)."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: M_TOTPOP}
+          - {property: unit, value: "persons"}
+          - {property: missingCodes, value: ["-999"], description: "Documentation, page 2: -999 in any field means not available or not computable."}
+      - name: rank_socioeconomic
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Theme 1, socioeconomic status: the county's percentile rank among all US counties (RPL_THEME1), 0 to 1, higher is more vulnerable. Built from poverty below 150%, unemployment, housing cost burden, no high school diploma and no health insurance. A position, not an amount: never added."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: RPL_THEME1}
+          - {property: unit, value: "percentile rank (0-1)"}
+          - {property: missingCodes, value: ["-999"], description: "Documentation, page 2: -999 in any field means not available or not computable; such cells are not used in the ranking."}
+        quality:
+          - id: rank_socioeconomic_between_0_and_1
+            dimension: conformity
+            severity: error
+            type: sql
+            description: "Documentation: 'Percentile ranking values range from 0 to 1.'"
+            query: "SELECT COUNT(*) FROM {object} WHERE rank_socioeconomic < 0 OR rank_socioeconomic > 1"
+            mustBe: 0
+      - name: rank_household_characteristics
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Theme 2, household characteristics: percentile rank among all US counties (RPL_THEME2), 0 to 1, higher is more vulnerable. Built from age 65 and older, age 17 and younger, disability, single-parent households and limited English. A position, not an amount: never added."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: RPL_THEME2}
+          - {property: unit, value: "percentile rank (0-1)"}
+          - {property: missingCodes, value: ["-999"], description: "Documentation, page 2: -999 in any field means not available or not computable."}
+        quality:
+          - id: rank_household_characteristics_between_0_and_1
+            dimension: conformity
+            severity: error
+            type: sql
+            description: "Documentation: 'Percentile ranking values range from 0 to 1.'"
+            query: "SELECT COUNT(*) FROM {object} WHERE rank_household_characteristics < 0 OR rank_household_characteristics > 1"
+            mustBe: 0
+      - name: rank_racial_ethnic_minority
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Theme 3, racial and ethnic minority status: percentile rank among all US counties (RPL_THEME3), 0 to 1, higher is more vulnerable. Built from the share of people who are a racial or ethnic minority. A position, not an amount: never added."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: RPL_THEME3}
+          - {property: unit, value: "percentile rank (0-1)"}
+          - {property: missingCodes, value: ["-999"], description: "Documentation, page 2: -999 in any field means not available or not computable."}
+        quality:
+          - id: rank_racial_ethnic_minority_between_0_and_1
+            dimension: conformity
+            severity: error
+            type: sql
+            description: "Documentation: 'Percentile ranking values range from 0 to 1.'"
+            query: "SELECT COUNT(*) FROM {object} WHERE rank_racial_ethnic_minority < 0 OR rank_racial_ethnic_minority > 1"
+            mustBe: 0
+      - name: rank_housing_transportation
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Theme 4, housing type and transportation: percentile rank among all US counties (RPL_THEME4), 0 to 1, higher is more vulnerable. Built from multi-unit structures, mobile homes, crowding, no vehicle and group quarters. A position, not an amount: never added."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: RPL_THEME4}
+          - {property: unit, value: "percentile rank (0-1)"}
+          - {property: missingCodes, value: ["-999"], description: "Documentation, page 2: -999 in any field means not available or not computable."}
+        quality:
+          - id: rank_housing_transportation_between_0_and_1
+            dimension: conformity
+            severity: error
+            type: sql
+            description: "Documentation: 'Percentile ranking values range from 0 to 1.'"
+            query: "SELECT COUNT(*) FROM {object} WHERE rank_housing_transportation < 0 OR rank_housing_transportation > 1"
+            mustBe: 0
+      - name: rank_overall
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Overall SVI: the county's percentile rank among all US counties on the sum of its four theme sums (RPL_THEMES), 0 to 1, higher is more vulnerable. The summary rank the publisher names. A position, not an amount: never added."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: RPL_THEMES}
+          - {property: unit, value: "percentile rank (0-1)"}
+          - {property: missingCodes, value: ["-999"], description: "Documentation, page 2: -999 in any field means not available or not computable."}
+        quality:
+          - id: rank_overall_between_0_and_1
+            dimension: conformity
+            severity: error
+            type: sql
+            description: "Documentation: 'Percentile ranking values range from 0 to 1.'"
+            query: "SELECT COUNT(*) FROM {object} WHERE rank_overall < 0 OR rank_overall > 1"
+            mustBe: 0
+          - id: some_overall_ranks_present
+            dimension: completeness
+            severity: error
+            type: sql
+            description: "Fill rate: an all-empty rank column passes the range check, so at least one county must carry an overall rank (all 3,144 did on 2026-11-27). The error-severity companion of the generated fill-rate warning on this column."
+            query: "SELECT COUNT(*) FROM {object} WHERE rank_overall IS NOT NULL"
+            mustBeGreaterThan: 0
+      - name: flags_total
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "How many of the 16 SVI variables put the county at or above the 90th percentile (F_TOTAL; documentation: 'the overall flag value ... the number of all variable flags'). 0 to 16; a count of flags, not of people."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: F_TOTAL}
+          - {property: missingCodes, value: ["-999"], description: "Documentation, page 2: -999 in any field means not available or not computable; total flags do not include fields with -999."}
+        quality:
+          - id: flags_total_between_0_and_16
+            dimension: conformity
+            severity: error
+            type: sql
+            description: "Documentation: each of the 16 variables gives a flag of 1 or 0, and the overall flag value is their number, so 0 to 16."
+            query: "SELECT COUNT(*) FROM {object} WHERE flags_total < 0 OR flags_total > 16"
+            mustBe: 0
+      - name: document_url
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Added by the adapter, not by CDC: the address of the file this row was read from."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: document_url}
+      - name: document_sha256
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Added by the adapter, not by CDC: the sha256 fingerprint of the file's raw bytes, as kept in the lake's raw store."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: document_sha256}
+      - name: document_retrieved_at
+        physicalType: TIMESTAMP
+        logicalType: timestamp
+        required: true
+        description: "Added by the adapter, not by CDC: when the file was fetched (UTC)."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: document_retrieved_at}
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: licenceSource, value: "No licence statement in the file or the documentation (checked 2026-11-27). CDC's Use of Agency Materials page (https://www.cdc.gov/other/agencymaterials.html): most information on CDC and ATSDR websites is in the public domain and may be freely used, with attribution to the agency. SVI is a CDC/ATSDR work (17 USC 105). A maintainer confirms (see openQuestions)."}
+  - {property: citation, value: "Centers for Disease Control and Prevention/Agency for Toxic Substances and Disease Registry/Geospatial Research, Analysis, and Services Program. CDC/ATSDR Social Vulnerability Index 2022 Database U.S. https://www.atsdr.cdc.gov/place-health/php/svi/svi-data-documentation-download.html. Accessed on <date>."}
+  - {property: refresh, value: irregular}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "Each refresh stores the complete file as a dated, append-only load. CDC corrected a 2022 column after release (MP_CROWD, 11 Dec 2024), so a later load can differ from an earlier one; older loads are never overwritten."
+  - {property: geographyBasis, value: "US counties and county equivalents in the 50 states and DC, ranked against each other (the U.S. database); Connecticut by its nine planning regions"}
+  - {property: unreliableRule, value: {kind: none, description: "None stated: the documentation flags no rank as unreliable. It gives margins of error (90% confidence) for the ACS estimates and percentages, and warns that small populations have large margins of error, but no rule that withholds a rank."}}
+  - property: openQuestions
+    value:
+      - "Licence: no licence statement in the file or the documentation (2026-11-27). public-domain-us-federal is taken from CDC's Use of Agency Materials page and SVI being a CDC/ATSDR work; a maintainer confirms the wording."
+      - "Ties: 62 counties share an overall rank with another county (2026-11-27). The documentation does not say how ties are ranked; ranks are read as published."
+      - "Ranks of 0 and 1: the lowest and highest county read exactly 0 and 1. The documentation does not give the percentile-rank formula (for example (rank - 1) / (n - 1)); it is not needed to read a rank, but it is needed before anyone recomputes one."
+      - "Counties with zero population: the documentation says tracts with an estimated population of zero were left out of the ranking. Whether any county was left out or re-added without ranks is not stated for the county file; every one of the 3,144 rows had ranks on 2026-11-27."
+      - "Connecticut planning regions: SVI 2022 uses the nine planning regions (FIPS 09110-09190), as the Census July 1 estimates do. Older infectious-disease county tables may use the eight former counties (09001-09015), which then don't join; a crosswalk would be a maintainer's declaration."
+      - "Newer editions: no 2023 or 2024 county file was found (issue #227, 2026-11-25); the FAQ says SVI is updated every two years. When a new edition appears it is a new catalog entry or a reviewed change of api_url and contract version, never a silent overwrite, because ranks from different years are not comparable."
+      - "Quartiles: the FAQ says to categorise SVI values 'appropriately based on your question of interest' and names no cut points. No quartile or category column is computed here; a researcher's cut points are theirs to state."
+      - "M_TOTPOP is 0 for 3,019 of the 3,144 counties (2026-11-27). The documentation does not say why a margin of error is zero; it is read as published."
+      - "Which further SVI columns to stage (the 16 variable percentiles EPL_*, the percentages EP_*, the theme flags F_THEME*). Only the summary ranks, the total flag count and the population are read now; every column stays in the raw layer."
