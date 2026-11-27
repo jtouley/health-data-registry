@@ -440,6 +440,109 @@ sources:
       data_type: varchar
       description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
         the exact bytes the publisher sent.'
+  - name: cdc_schoolvaxview_kindergarten
+    description: 'Raw records of Vaccination Coverage and Exemptions among Kindergartners as the adapter hands them
+      on, every value as text: the publisher''s own fields, or for a wide table the adapter''s structural reshaping
+      of them (see the staging model). Only the full load the dataset''s LATEST pointer names is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_schoolvaxview_kindergarten.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - coverage_estimate
+      - dose
+      - foot_notes
+      - geography
+      - geography_type
+      - number_of_exemptions
+      - percent_surveyed
+      - population_sample_size
+      - survey_type
+      - vaccine
+      - year_season
+    columns:
+    - name: coverage_estimate
+      data_type: varchar
+      description: 'Publisher field coverage_estimate, as text; read into coverage_estimate (Percent of kindergartners
+        with the vaccine and dose, or with that exemption, among all children enrolled in kindergarten (column ''Estimate
+        (%)''). Empty where CDC published a code instead of a number; the code is kept in estimate_as_published.);
+        estimate_as_published (The estimate exactly as CDC published it, number or code: NA (not applicable) and
+        NReq (not required by the state for school entry) per CDC''s column description; Nreq and NR are published
+        but not defined. Kept so a code is never lost when coverage_estimate is empty. Required because every one
+        of the 8,753 rows had an estimate on 2026-11-25 (SoQL count of rows where coverage_estimate is null or empty:
+        0); this also makes a vanished or renamed estimate field fail the load rather than pass the percent range
+        check over an empty column.)'
+    - name: dose
+      data_type: varchar
+      description: Publisher field dose, as text; read into dose (The varicella dose counted ('1 Dose (or disease
+        history)', '2 Doses (or disease history)', 'UTD (or disease history)'), the exemption type on exemption
+        rows ('Any Exemption', 'Medical Exemption', 'Non-Medical Exemption'), or 'MMR (PAC)' on MMR (PAC) rows.
+        Empty for MMR, DTaP, polio and hepatitis B, whose doses follow each state's school-entry requirement (open
+        question 'Empty dose'). CDC's column description says this column holds the dose (≥1 to ≥4) and applies
+        only to coverage rows; what is published differs (no ≥n values, exemption types here), so the description
+        follows what is published.)
+    - name: foot_notes
+      data_type: varchar
+      description: Publisher field foot_notes, as text; read into foot_notes (CDC's footnote symbols for the row,
+        exactly as published, such as '†' or '<'. Several symbols in one row are kept as CDC joined them, such as
+        '‡. §' or '>=. *'. Their meanings are in CDC's footnote key (the contract's footnoteKey), which differs
+        between coverage and exemption rows; they are not interpreted here.)
+    - name: geography
+      data_type: varchar
+      description: 'Publisher field geography, as text; read into geography (The place: a state or DC; a city or
+        part of a state that reports separately (''NY-City of New York'', ''NY-Rest of state'', ''TX-City of Houston''),
+        published beside its state''s own row and never added to it (how they overlap is open question ''Places'');
+        ''United States''; or ''U.S. Median'', a median as CDC labels it, never a national estimate (what it is
+        a median over is open question ''National row''). No territory was published on 2026-11-25.)'
+    - name: geography_type
+      data_type: varchar
+      description: 'Publisher field geography_type, as text; read into geography_type (The kind of place: ''National''
+        (the United States row and the U.S. Median row) or ''States'' (each state, DC, and the cities or parts of
+        a state that report separately). CDC''s column description names the two classes as ''National, State'';
+        the published value is ''States''.)'
+    - name: number_of_exemptions
+      data_type: varchar
+      description: Publisher field number_of_exemptions, as text; read into number_of_exemptions (Number of vaccine
+        exemptions among kindergartners, as CDC labels it (column 'Number of Exemptions'); published only on exemption
+        rows. Whether it counts children or exemptions is open question 'Exemption count'; footnote § says some
+        states reported exemptions per vaccine.)
+    - name: percent_surveyed
+      data_type: varchar
+      description: 'Publisher field percent_surveyed, as text; read into percent_surveyed (Percent of enrolled kindergartners
+        the state surveyed that year (column ''Percent Surveyed''). Footnote * on coverage rows: it may be under
+        100% but shown as 100%.)'
+    - name: population_sample_size
+      data_type: varchar
+      description: Publisher field population_sample_size, as text; read into population_sample_size (Number of
+        children enrolled in kindergarten in the place (state, city or part of a state that reports separately,
+        or the nation) for that school year (column 'Population Size'). This is the enrolment the coverage_estimate
+        description calls 'all children enrolled in Kindergarten', not the number surveyed or vaccinated.)
+    - name: survey_type
+      data_type: varchar
+      description: Publisher field survey_type, as text; read into survey_type (How the state or local area collected
+        the data that year, as published, such as 'Census', 'Stratified 2-stage cluster sample', 'Voluntary response'
+        or 'Census (public); Voluntary response (private)'. CDC spells the same method several ways; it is kept
+        as published.)
+    - name: vaccine
+      data_type: varchar
+      description: Publisher field vaccine, as text; read into vaccine (The vaccine the row is for, as CDC names
+        it, or 'Exemption' for exemption rows (column 'Vaccine/Exemption'). 'MMR (PAC)' is a separate MMR measure
+        whose meaning is an open question ('MMR (PAC)').)
+    - name: year_season
+      data_type: varchar
+      description: Publisher field year_season, as text; read into year_season (The school year, as CDC writes it
+        ('2024-25').)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
   - name: census_county_pop
     description: 'Raw records of County and state resident population estimates, July 1, 2020-2025 (Census Vintage
       2025, CO-EST2025-ALLDATA) as the adapter hands them on, every value as text: the publisher''s own fields,
