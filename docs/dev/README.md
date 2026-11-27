@@ -439,8 +439,8 @@ The steps, one test each (`test_stepN_...` in `tests/smoke/test_c_auris_journey.
 3. `get_series` returns clinical and screening as separate series. Each has its year-end running total and
    next year's unverified restatement. They are never added, and total rows are left out.
 4. A flagged place stays empty with its flag, never a zero.
-5. `get_rate` divides by the Census population, returns the 95% interval with each rate, and never adds the
-   two rates.
+5. `get_rate` divides by the Census population, returns the 95% interval with each rate, never adds the two
+   rates, and labels the screening rate "screening detections, not incidence".
 6. `list_caveats` keeps NNDSS, CDC's tracking page and the AR Lab Network apart.
 7. An uncatalogued source shows no number, and only NNDSS is offered for it.
 8. `get_provenance` names the exact fetch.

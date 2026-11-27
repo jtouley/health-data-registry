@@ -242,7 +242,10 @@ def _columns(contract: Contract, model: str, made: Mapping[str, str] | None = No
             description = f"{description} Codes (publisher's codebook): {meanings}."
         if column.not_incidence:
             reasons = "; ".join(f"'{label}' counts {why}" for label, why in column.not_incidence)
-            description = f"{description} Not new cases of disease, so no rate per 100,000 people: {reasons}."
+            description = (
+                f"{description} Not new cases of disease, so a rate per 100,000 people from them is labelled "
+                f"screening detections, not incidence: {reasons}."
+            )
         col: dict[str, Any] = {
             "name": c.name,
             "data_type": DBT_TYPES[c.physical_type],
@@ -391,8 +394,9 @@ def derived_columns(contract: Contract) -> list[tuple[str, str, str, str]]:
             TOTAL_ROW,
             "boolean",
             f"coalesce(({total}), false)" if total else "false",
-            "True on the publisher's total and summary rows (the contract's totalRows), which are never added to "
-            "the rows they sum (hard rule 2)."
+            "True on the publisher's total and summary rows (the contract's totalRows). They are kept as rows; a "
+            "sum that takes one in with the rows it totals counts those cases twice, so the served answer says so "
+            "and gives the sum without it (hard rule 2, ADR 0018)."
             if total
             else "Always false: the contract declares that this table has no total rows.",
         )

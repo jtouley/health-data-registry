@@ -193,7 +193,8 @@ conditions:
     - "Yellow fever"
     - "Zika virus disease, non-congenital"
   aliases: []
-  # Read from the label itself: these counts are not cases in people, so no rate per 100,000 people is built.
+  # Read from the label itself: these counts are not cases in people, so a rate per 100,000 people from them
+  # is labelled as not a rate of disease in people (ADR 0018).
   not_a_human_case_count:
     "Rabies, Animal": "rabid animals, not people"
 contract: contracts/cdc_nndss_weekly.odcs.yaml

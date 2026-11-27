@@ -106,7 +106,7 @@ def test_sum_sql_and_method_are_exact(est: tuple[Registry, Engine, Path]) -> Non
     cm = compile_metric(reg.get("toy_cases"), "total", filters={"where": ["A", "B"]}, group_by=["where"],
                         period={"start": 2025, "end": 2026})  # fmt: skip
     assert cm.sql == (
-        'SELECT "place" AS "where", CASE WHEN count(*) FILTER (WHERE "n" IS NULL) = 0 THEN sum("n") END AS "total", '
+        'SELECT "place" AS "where", sum("n") AS "total", '
         'count(*) FILTER (WHERE "n" IS NULL) AS suppressed_rows, string_agg(DISTINCT "n_flag", \', \' ORDER BY '
         '"n_flag") FILTER (WHERE "n" IS NULL) AS flag FROM "toy_cases" WHERE NOT coalesce((place = \'ALL\'), false) '
         "AND "
@@ -115,13 +115,14 @@ def test_sum_sql_and_method_are_exact(est: tuple[Registry, Engine, Path]) -> Non
     assert cm.params == ["A", "B", "2025-01-01", "2026-12-31"]
     assert cm.columns == ["where", "total", "suppressed_rows", "flag"]
     assert cm.method == (
-        "Sum of cases (cases reported) by where, publisher total rows excluded. A group with any suppressed or "
-        "missing value has no total (never a partial sum); suppressed_rows gives how many of its values were empty."
+        "Sum of cases (cases reported) by where, publisher total rows excluded. A value with no number (suppressed, "
+        "missing or not reported) is never counted as 0: a group that has one gives the sum of its reported values "
+        "only, and suppressed_rows says how many had no number (flag gives the publisher's reason)."
     )
     out = eng.query_metric("toy_cases", "total", group_by=["where"], period={"start": 2025, "end": 2025})
-    # Regression: A has 3 cases one week and a suppressed week. Its total is unknown, never 3; the suppressed
-    # week is counted and its flag named.
-    assert out["rows"] == [["A", None, 1, "S"]]
+    # A has 3 cases one week and a suppressed week: the sum of the reported values, 3, with the suppressed week
+    # counted beside it and its flag named, never read as 0 (ADR 0018; it had no total before).
+    assert out["rows"] == [["A", 3, 1, "S"]]
     whole = eng.query_metric("toy_cases", "total", filters={"where": "B"})
     assert whole["rows"] == [[4, 0, None]]
     assert whole["sql"].endswith("WHERE NOT coalesce((place = 'ALL'), false) AND \"place\" = ?")
@@ -131,15 +132,19 @@ def test_sum_with_total_rows_kept_and_metric_filter(est: tuple[Registry, Engine,
     reg, eng, _ = est
     cm = compile_metric(reg.get("toy_cases"), "total_all_rows")
     assert cm.sql == (
-        'SELECT CASE WHEN count(*) FILTER (WHERE "n" IS NULL) = 0 THEN sum("n") END AS "total_all_rows", '
+        'SELECT sum("n") AS "total_all_rows", '
         'count(*) FILTER (WHERE "n" IS NULL) AS suppressed_rows, string_agg(DISTINCT "n_flag", \', \' ORDER BY '
         '"n_flag") FILTER (WHERE "n" IS NULL) AS flag FROM "toy_cases" WHERE (place = \'A\')'
     )
     assert cm.method == (
-        "Sum of cases (cases reported). A group with any suppressed or missing value has no total (never a partial "
-        "sum); suppressed_rows gives how many of its values were empty."
+        "Sum of cases (cases reported). A value with no number (suppressed, missing or not reported) is never "
+        "counted as 0: a group that has one gives the sum of its reported values only, and suppressed_rows says how "
+        "many had no number (flag gives the publisher's reason)."
     )
-    assert eng.query_metric("toy_cases", "total_all_rows")["rows"] == [[None, 1, "S"]]
+    rows = eng.query_metric("toy_cases", "total_all_rows")["rows"]
+    assert (
+        rows[0][1:] == [1, "S"] and rows[0][0] is not None
+    )  # the reported values, the empty one counted apart
 
 
 def test_estimates_are_read_with_their_bounds_and_flag(est: tuple[Registry, Engine, Path]) -> None:
@@ -177,7 +182,8 @@ def test_text_periods_compare_as_text(est: tuple[Registry, Engine, Path]) -> Non
     out = eng.query_metric(
         "toy_cases", "total", group_by=["season"], period={"dimension": "season", "end": 2024}
     )
-    assert out["rows"] == [["2024-25", None, 1, "S"]]  # a suppressed week: no season total
+    # A suppressed week: the season's sum of the reported weeks, with the suppressed one counted beside it.
+    assert out["rows"] == [["2024-25", 3, 1, "S"]]
     assert compile_metric(reg.get("toy_cases"), "total", period={"dimension": "season"}).params == []
 
 
@@ -212,20 +218,13 @@ def test_refusals_say_exactly_why(est: tuple[Registry, Engine, Path], kwargs: di
 def test_rates_refusals_are_plain_words(est: tuple[Registry, Engine, Path]) -> None:
     """Hard rule 12: the refusal names no metric, measure kind or dimension; the next step says what to do."""
     _, eng, _ = est
-    with pytest.raises(QueryRefused) as e:
-        eng.query_metric("toy_cases", "est_value")
-    assert (e.value.code, str(e.value)) == (
-        "would_combine_rates",
-        "This figure is published separately for each group and is never added up, so one figure can't be given "
-        "for all of them together.",
-    )
-    with pytest.raises(QueryRefused) as e:
-        eng.query_metric("toy_cases", "est_value", group_by=["where"])
-    assert str(e.value) == (
-        "More than one published figure matches some of the groups asked for. Each published figure is read on "
-        "its own and never added to another, so nothing is shown rather than one picked at random."
-    )
-    assert e.value.next_step.startswith("Use describe_dataset")
+    # Several published figures: each shown on its own row with the note (were refusals; ADR 0018). The note
+    # names no metric, measure kind or dimension.
+    for out in (eng.query_metric("toy_cases", "est_value"),
+                eng.query_metric("toy_cases", "est_value", group_by=["where"])):  # fmt: skip
+        note = out["method"].split("More than one published figure")[1]
+        assert len(out["rows"]) > 1 and "est_value" not in note and "estimate" not in note
+        assert "never added up or averaged" in note and "describe_dataset lists" in note
     one = eng.query_metric("toy_cases", "est_value", filters={"where": "B"})
     assert one["rows"] == [[0.5, 0.1, 0.9, None, False]]
 

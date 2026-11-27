@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Refusals become qualified answers, under hard rule 2, "show everything; qualify, don't decide" (ADR 0018,
+  #226). A figure that may mislead is worked out when asked, with a plain-words note citing the contract or
+  semantic-model rule behind it and, where there is one, the figure without that problem beside it. A tool
+  refuses only when nothing can be worked out, and `-` is still never 0.
+  - A sum of weekly counts across weeks says that weekly counts undercount the year and gives CDC's
+    year-to-date count beside it (`year_to_date_at_last_week` in the metric compiler; `query_sql` names the
+    column). A sum of running totals across weeks, or across places or years, is added up with a note.
+  - A sum that meets a count with no number adds the reported values only and says how many had none
+    (`suppressed_rows`; `…_values_with_no_number` in `query_sql`), instead of having no total or stopping.
+  - A `query_sql` sum that takes in the publisher's total rows keeps them and says so, with the sum without them
+    beside it (`…_without_total_rows`), instead of leaving them out.
+  - `get_rate`, `compare_rates` and `get_trend` work out a rate from *C. auris* screening counts, labelled
+    "screening detections, not incidence" from the NNDSS contract's `notIncidence`, with the clinical cases'
+    rate beside it (the contract's new `incidenceCounterpart`); animal rabies is labelled as not a rate of
+    disease in people; a count that covers only part of a place is labelled "catchment area only".
+  - When more than one published rate matches a group, each comes back on its own row with a note.
+  - `check_signal` adds up the weeks that have a number, names those that don't and, where it can, gives the
+    same check on the complete 4-week periods beside it; it refuses only when no current week has a number.
+  - The tool text Claude receives and the docs no longer say "never add them"; they say what a tool's note
+    means.
+
 ### Fixed
 
 - Release blockers from #173, where the served path returned wrong numbers:

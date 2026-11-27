@@ -163,7 +163,8 @@ models:
       the exact bytes the publisher sent.'
   - name: is_total_row
     data_type: boolean
-    description: True on the publisher's total and summary rows (the contract's totalRows), which are never added
-      to the rows they sum (hard rule 2).
+    description: True on the publisher's total and summary rows (the contract's totalRows). They are kept as rows;
+      a sum that takes one in with the rows it totals counts those cases twice, so the served answer says so and
+      gives the sum without it (hard rule 2, ADR 0018).
     meta:
       derived_from_contract: true

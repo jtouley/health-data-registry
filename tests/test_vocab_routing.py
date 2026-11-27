@@ -657,9 +657,12 @@ def test_real_rates_refuse_animal_counts(tmp_path: Path) -> None:
 
     reg = load_registry(ROOT)
     eng = Engine(registry=reg, lake=tmp_path / "empty", hub=None, fetch_at_run_time=False)
+    # A rate from animal counts is no longer refused (ADR 0018): it is labelled, citing the catalog's declaration.
     rate = _json(analysis.get_rate(reg, eng, condition="Rabies, Animal", year=2024, fmt="json"))
-    assert rate["refused"] == "not_a_human_count"
-    assert rate["message"] == (
-        "No rate per 100,000 people is given for 'Rabies, Animal': 'Rabies, Animal' counts rabid animals, not people."
+    assert rate.get("refused") != "not_a_human_count"
+    nndss = reg.get("cdc_nndss_weekly")
+    (series,) = [s for ds, s in analysis.series_for(reg, "Rabies, Animal", "cases") if ds.id == nndss.id][:1]
+    assert analysis.not_incidence_note(nndss, series) == (
+        "not a rate of disease in people: 'Rabies, Animal' counts rabid animals, not people (the catalog's "
+        "not_a_human_case_count for cdc_nndss_weekly), so this is that count per 100,000 people"
     )
-    assert rate["next_step"] == next_step_for("not_a_human_count")

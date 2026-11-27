@@ -7,7 +7,7 @@ status: draft
 domain: infectious_disease
 description:
   purpose: "Weekly provisional case counts of selected nationally notifiable infectious diseases reported by US states, New York City, the District of Columbia and territories to CDC's National Notifiable Diseases Surveillance System, 2022 onward."
-  usage: "Read the latest MMWR week of a year for year-to-date counts by state and condition. Never add weekly counts across weeks into a year: late reports reach only the year-to-date count. Add weekly counts across reporting areas only after excluding total rows."
+  usage: "Read the latest MMWR week of a year for year-to-date counts by state and condition. Weekly counts added across weeks undercount the year, because late reports reach only the year-to-date count: a sum across weeks says so and gives the year-to-date count beside it. A sum across reporting areas that takes in the total rows says so and gives the sum without them."
   limitations: "Provisional counts that are revised in later weeks; counts by jurisdiction of residence; no rates, no age or sex breakdown, no county."
   authoritativeDefinitions:
     - {type: canonicalUrl, url: "https://data.cdc.gov/d/x9gk-5huc", description: "Publisher dataset page"}
@@ -56,7 +56,7 @@ schema:
           - {property: sourceField, value: states}
           - property: partialPlaces
             value: {"New York": "New York State excluding New York City, which NNDSS reports as its own area; not the whole state GBD models"}
-            description: "The one declaration of areas that cover only part of the place of the same name: get_rate and get_trend refuse a rate against the whole place's population, and answers carry the note. From the dataset footnote that New York City is reported separately, and the structural check under totalRows (the 51 state/DC rows plus New York City add up to US RESIDENTS), so New York excludes New York City. Matched ignoring case and dots, so it covers 'NEW YORK' through 2024 and 'New York' from 2025."
+            description: "The one declaration of areas that cover only part of the place of the same name: get_rate and get_trend work out a rate against the whole place's population only with the note 'catchment area only: the population overstates the denominator' (ADR 0018), and answers carry the note. From the dataset footnote that New York City is reported separately, and the structural check under totalRows (the 51 state/DC rows plus New York City add up to US RESIDENTS), so New York excludes New York City. Matched ignoring case and dots, so it covers 'NEW YORK' through 2024 and 'New York' from 2025."
           - property: renamedLabels
             value: {"Commonwealth of Northern Mariana Islands": "Northern Mariana Islands"}
             description: "The 2025 tables name the territory by its official title, Commonwealth of the Northern Mariana Islands; 2022-2024 tables call it Northern Mariana Islands. Same jurisdiction, one row per table each year (live data, 2026-11-24)."
@@ -86,8 +86,11 @@ schema:
           - {property: role, value: dimension}
           - {property: sourceField, value: label}
           - property: notIncidence
-            value: {"Candida auris, screening": "people found to carry C. auris on screening swabs (colonisation), not new cases of disease in the population; for C. auris, the clinical cases take a rate"}
-            description: "Labels whose counts are not population incidence, so get_rate, compare_rates and get_trend on rates give no rate per 100,000 people for them; the counts themselves are returned as published. The maintainer's reviewed declaration of 25 Nov 2026 (PR #186). Supporting evidence, from the case-definition site the dataset notes cite (https://ndc.services.cdc.gov/): CDC's Candida auris 2023 case definition (CSTE position statement 22-ID-05, https://ndc.services.cdc.gov/case-definitions/candida-auris-2023/, read 2026-11-25) defines a screening case as a 'Person with confirmatory laboratory evidence from a swab collected for the purpose of screening for C. auris colonization regardless of site swabbed', apart from a clinical case (a specimen 'obtained during the normal course of care for diagnostic or treatment purposes'). The value depends on the exact label 'Candida auris, screening' (see cauris_labels_present)."
+            value: {"Candida auris, screening": "people found to carry C. auris on screening swabs (colonisation), not new cases of disease in the population"}
+            description: "Labels whose counts are not population incidence. get_rate, compare_rates and get_trend on rates work out a rate per 100,000 people from them when asked, labelled 'screening detections, not incidence' with this reason, and put the incidenceCounterpart label's rate beside it; the counts themselves are returned as published. The maintainer's reviewed declaration of 25 Nov 2026 (PR #186) that these counts are not incidence stands. Its first effect, no rate at all, is the maintainer's decision of 25 Nov 2026, changed on 27 Nov 2026 to 'qualify everything, don't decide' (ADR 0018, issue #226): the rate is given, with the label and reason. Supporting evidence, from the case-definition site the dataset notes cite (https://ndc.services.cdc.gov/): CDC's Candida auris 2023 case definition (CSTE position statement 22-ID-05, https://ndc.services.cdc.gov/case-definitions/candida-auris-2023/, read 2026-11-25) defines a screening case as a 'Person with confirmatory laboratory evidence from a swab collected for the purpose of screening for C. auris colonization regardless of site swabbed', apart from a clinical case (a specimen 'obtained during the normal course of care for diagnostic or treatment purposes'). The value depends on the exact label 'Candida auris, screening' (see cauris_labels_present)."
+          - property: incidenceCounterpart
+            value: {"Candida auris, screening": "Candida auris, clinical"}
+            description: "For each notIncidence label, the label whose counts are the incidence figure put beside it (ADR 0018). An exact structural fact from CDC's Candida auris 2023 case definition (CSTE position statement 22-ID-05), which defines the clinical and screening subtypes as the two kinds of C. auris case NNDSS reports."
         quality:
           - id: cauris_labels_present
             dimension: coverage
@@ -95,7 +98,7 @@ schema:
             type: sql
             query: "SELECT COUNT(DISTINCT label) FROM {object} WHERE label IN ('Candida auris, clinical', 'Candida auris, screening')"
             mustBe: 2
-            description: "Both C. auris labels the review queue flag_cauris_clinical_screening_swap and the notIncidence declaration read by name are still published (they were in the live data on 2026-11-24); if CDC renames one, the queue would go quiet and screening counts would lose their no-rate declaration without this warning."
+            description: "Both C. auris labels the review queue flag_cauris_clinical_screening_swap and the notIncidence declaration read by name are still published (they were in the live data on 2026-11-24); if CDC renames one, the queue would go quiet and screening rates would lose their 'screening detections, not incidence' label without this warning."
       - name: m1
         physicalType: BIGINT
         logicalType: integer
@@ -123,7 +126,7 @@ schema:
           - {property: sourceField, value: m1_flag}
           - {property: flagFor, value: m1}
           - {property: flagCodes, value: {"-": "no reported cases", "U": "unavailable", "N": "not reportable in this jurisdiction", "NN": "not nationally notifiable", "NP": "nationally notifiable but not published", "NC": "not calculated"}}
-          - {property: noCasesCode, value: "-", description: "Dataset notes (the publisher's codebook, quoted in flagCodes): '-: No reported cases — The reporting jurisdiction did not submit any cases to CDC.' Meaning, by the maintainer's declaration of 25 Nov 2026 (PR #186; it reverses issue #14's reading as a reported zero): '-' means not reported. A count with this flag is stored and returned as published: it has no number, keeps its flag and meaning, and is never counted as 0 or turned into a rate, and a sum that meets it stops."}
+          - {property: noCasesCode, value: "-", description: "Dataset notes (the publisher's codebook, quoted in flagCodes): '-: No reported cases — The reporting jurisdiction did not submit any cases to CDC.' Meaning, by the maintainer's declaration of 25 Nov 2026 (PR #186; it reverses issue #14's reading as a reported zero): '-' means not reported. A count with this flag is stored and returned as published: it has no number, keeps its flag and meaning, and is never counted as 0: a sum that meets it adds the reported values only and says how many had no number (ADR 0018), and no rate or trend point is worked out from it."}
         quality:
           - id: m1_flag_codes
             dimension: conformity
@@ -179,7 +182,7 @@ schema:
           - {property: sourceField, value: m3_flag}
           - {property: flagFor, value: m3}
           - {property: flagCodes, value: {"-": "no reported cases", "U": "unavailable", "N": "not reportable in this jurisdiction", "NN": "not nationally notifiable", "NP": "nationally notifiable but not published", "NC": "not calculated"}}
-          - {property: noCasesCode, value: "-", description: "Dataset notes (the publisher's codebook, quoted in flagCodes): '-: No reported cases — The reporting jurisdiction did not submit any cases to CDC.' Meaning, by the maintainer's declaration of 25 Nov 2026 (PR #186; it reverses issue #14's reading as a reported zero): '-' means not reported. A count with this flag is stored and returned as published: it has no number, keeps its flag and meaning, and is never counted as 0 or turned into a rate, and a sum that meets it stops."}
+          - {property: noCasesCode, value: "-", description: "Dataset notes (the publisher's codebook, quoted in flagCodes): '-: No reported cases — The reporting jurisdiction did not submit any cases to CDC.' Meaning, by the maintainer's declaration of 25 Nov 2026 (PR #186; it reverses issue #14's reading as a reported zero): '-' means not reported. A count with this flag is stored and returned as published: it has no number, keeps its flag and meaning, and is never counted as 0: a sum that meets it adds the reported values only and says how many had no number (ADR 0018), and no rate or trend point is worked out from it."}
       - name: m4
         physicalType: BIGINT
         logicalType: integer
@@ -207,7 +210,7 @@ schema:
           - {property: sourceField, value: m4_flag}
           - {property: flagFor, value: m4}
           - {property: flagCodes, value: {"-": "no reported cases", "U": "unavailable", "N": "not reportable in this jurisdiction", "NN": "not nationally notifiable", "NP": "nationally notifiable but not published", "NC": "not calculated"}}
-          - {property: noCasesCode, value: "-", description: "Dataset notes (the publisher's codebook, quoted in flagCodes): '-: No reported cases — The reporting jurisdiction did not submit any cases to CDC.' Meaning, by the maintainer's declaration of 25 Nov 2026 (PR #186; it reverses issue #14's reading as a reported zero): '-' means not reported. A count with this flag is stored and returned as published: it has no number, keeps its flag and meaning, and is never counted as 0 or turned into a rate, and a sum that meets it stops."}
+          - {property: noCasesCode, value: "-", description: "Dataset notes (the publisher's codebook, quoted in flagCodes): '-: No reported cases — The reporting jurisdiction did not submit any cases to CDC.' Meaning, by the maintainer's declaration of 25 Nov 2026 (PR #186; it reverses issue #14's reading as a reported zero): '-' means not reported. A count with this flag is stored and returned as published: it has no number, keeps its flag and meaning, and is never counted as 0: a sum that meets it adds the reported values only and says how many had no number (ADR 0018), and no rate or trend point is worked out from it."}
       - name: location1
         physicalType: VARCHAR
         logicalType: string

@@ -36,11 +36,10 @@ what it leaves out.
 - **A copy of the data whose checks never ran is never used.** The tool won't let a number look checked when it
   wasn't.
 
-**Today the tools don't yet do all of this, and this is changing.** Every empty cell, NNDSS's `-` included,
-already comes back empty with its flag, never as 0. Where today's answers differ, the sections below say so:
+**Where today's tools still differ, and this is changing.** Every empty cell, NNDSS's `-` included, comes back
+empty with its flag, never as 0, and the sums, rates and checks below are worked out with their notes. These
+still differ:
 
-- Some tools refuse a sum or a rate, or leave the publisher's total rows out of a sum, where this rule would work
-  the figure out and add a note.
 - A new copy of the data that failed one of its most serious (error-level) data checks is held back too, not only
   one whose checks never ran. You get no refusal: the tool keeps answering from the copy before it, so the
   numbers may be older than the publisher's latest; the fetch time in each answer's provenance line says how old.
@@ -58,17 +57,20 @@ Every row says which kind of number it is, in its `measure` column. There are fo
 | `percent` | A share, such as percent of isolates resistant | NHSN antimicrobial resistance | No |
 | `estimate` | A modelled value, not a count of reported cases | WHO tuberculosis incidence | No |
 
-- **Sums.** Today the tool adds only the count column and leaves the publisher's total rows out, so nothing is
-  counted twice; it shows rates, percents and estimates exactly as published; and if more than one published
-  rate matches what you asked, it refuses rather than average or add them, and says which breakdown to choose.
-  This is changing, under the [rule above](#show-everything-qualify-dont-decide): a sum you ask for will be
-  worked out, with a note when it may mislead. A sum that takes in a publisher's total row will say so and give
-  the figure without it; a sum of rates, percents or estimates will say that the total is not itself a rate,
-  percent or estimate.
+- **Sums.** A sum you ask for is worked out, with a note when it may mislead:
+  - A `query_sql` sum that takes in a publisher's total rows (the US totals, regional rows) says so, citing the
+    contract's `totalRows`, and gives the same sum without them in a column beside it (`…_without_total_rows`).
+    `get_series` adds only the places it names, so its sums never take in a total row unasked.
+  - A sum that meets a count with no number adds the reported values only and says how many had none
+    (`suppressed_rows` in `get_series`, `…_values_with_no_number` in `query_sql`). The empty values are never
+    counted as 0, and a sum with no reported value at all stays empty.
+  - Rates, percents and estimates come back exactly as published, never added up or averaged. If more than one
+    published figure matches a group you asked for, each comes back on its own row with a note naming the
+    breakdown that tells them apart.
 - **Measures never mix in one answer.** If a question matches series of different kinds (for example, a count from
   one source and a rate from another), the answer opens with a warning and the `measure` column tells them apart.
-  Today the tools don't compare or add numbers across measures. Under the rule above, a figure you ask for across
-  measures will come back with a note that it is not a count, rate or estimate of anything.
+  A figure you ask for across measures comes back with a note that it is not a count, rate or estimate of
+  anything.
 - **A number the tool works out is labelled as such.** `get_rate` divides cases by Census population and returns
   `rate_per_100k` with `lower_95` and `upper_95`; every row of `get_rate`, `compare_rates`, `get_trend`,
   `age_adjust` and `check_signal` ends with a `computed` column saying it was computed here and how, so it can't
@@ -100,18 +102,20 @@ Recent surveillance counts change as late reports arrive. Every row from a runni
 How NNDSS annual counts are read: the tool takes CDC's running year-to-date column at the last week published for
 that year. Adding up weekly counts undercounts the year, because late reports land in the running total, not in
 the week they happened: for Michigan in 2023, adding the weekly column gives 62 cases, the year-end running total
-103. Today the tool doesn't add weeks into a year, and it adds a year-to-date column across places only at one
-week, refusing otherwise. `query_sql` follows the same rules today: it refuses a sum of weekly counts or of
-year-to-date counts across weeks, and a sum across places leaves CDC's summary rows out (the US totals, US
-territories combined and the nine census divisions); Non-U.S. Residents stays in, as its own bucket. These
-`query_sql` rules apply to sums only. This is changing, under the [rule above](#show-everything-qualify-dont-decide):
-a weekly sum you ask for will come with that note and CDC's year-to-date figure beside it ("weekly counts
-undercount the year; CDC's year-to-date figure: 103").
+103. A sum of weekly counts across weeks is still worked out when asked, with that note, citing the semantic model
+(weeks are non-additive), and CDC's year-to-date figure beside it: in the named tools, the column
+`year_to_date_at_last_week` (the year-to-date count at the last week asked for that has a number); in `query_sql`,
+the note names the year-to-date column to read at the year's last week. A sum of year-to-date counts across weeks
+says that it counts each case again in every later week. A `query_sql` sum across places that takes in CDC's
+summary rows (the US totals, US territories combined and the nine census divisions) says so and gives the sum
+without them beside it; Non-U.S. Residents is not a summary row and counts as its own bucket. These `query_sql`
+notes apply to sums only.
 
 An empty NNDSS count flagged `-` is CDC's "no reported cases": the jurisdiction did not submit any cases (dataset
 notes). It is read as **not reported**, the maintainer's declaration of 25 Nov 2026, which reverses the earlier
 reading as a reported zero. It comes back empty, with the flag and its meaning beside it, and is **never counted
-as 0**: no total, rate or trend point is worked out from it. In `get_series` and `query_sql` the flag and its
+as 0**: no rate or trend point is worked out from it, and a sum that meets it adds the reported values only and
+says how many had no number. `check_signal` adds up the weeks that have a number and names the weeks that don't. In `get_series` and `query_sql` the flag and its
 meaning come back beside the empty value; `get_rate` and `get_trend` name the flag when they leave the year out.
 Every other flag (`U` unavailable, `N` not reportable, `NN`, `NP`, `NC`) leaves the cell empty too.
 
@@ -225,10 +229,10 @@ like it rose or fell.
   separately here, so each count may combine them as the condition's definition allows, and they cannot be split.
 - **C. auris:** clinical cases and screening (colonisation) cases are separate series. Screening counts people
   found to carry *C. auris*, not new cases of disease (the NNDSS contract's `notIncidence`); its counts are always
-  returned. Today the tools keep the two apart and give no rate per 100,000 people for screening. This is
-  changing, under the [rule above](#show-everything-qualify-dont-decide): a sum of the two, or a rate from
-  screening counts, will come back with the note "screening detections, not incidence" and the clinical figure
-  beside it.
+  returned. A rate per 100,000 people from screening counts comes back labelled "screening detections, not
+  incidence", citing that declaration, with the clinical cases' rate beside it on its own row (the contract's
+  `incidenceCounterpart`). Animal rabies works the same way: a rate from it is labelled as not a rate of disease
+  in people.
 - **RESP-NET** counts only laboratory-confirmed COVID-19, influenza and RSV hospitalisations.
 - **NHSN** covers pathogens from healthcare-associated infections reported to NHSN (CLABSI, CAUTI and SSI). It is
   not all clinical isolates in a state. Some phenotypes count non-susceptible rather than strictly resistant

@@ -59,9 +59,8 @@ models:
     data_type: varchar
     description: 'Notifiable condition as named in the NNDSS tables (for example Legionellosis, Candida auris, clinical;
       Syphilis, Primary and secondary). Case definitions: https://ndc.services.cdc.gov/. Not new cases of disease,
-      so no rate per 100,000 people: ''Candida auris, screening'' counts people found to carry C. auris on screening
-      swabs (colonisation), not new cases of disease in the population; for C. auris, the clinical cases take a
-      rate.'
+      so a rate per 100,000 people from them is labelled screening detections, not incidence: ''Candida auris, screening''
+      counts people found to carry C. auris on screening swabs (colonisation), not new cases of disease in the population.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -71,7 +70,7 @@ models:
       missing_codes: []
       not_incidence:
         Candida auris, screening: people found to carry C. auris on screening swabs (colonisation), not new cases
-          of disease in the population; for C. auris, the clinical cases take a rate
+          of disease in the population
     constraints:
     - type: not_null
   - name: m1

@@ -50,11 +50,14 @@ locations=[...])
   last resort, only when no tool above fits: query_sql(sql=<one read-only SELECT>)
 
 ━━━ WORDS THAT CHANGE THE NUMBER ━━━
-  "so far this year", "year to date": a running total read at ONE week (the latest); never add weeks or running \
-totals together.
+  "so far this year", "year to date": a running total read at ONE week (the latest). Don't add weeks or running \
+totals together yourself: weekly counts undercount the year, and a tool that adds them says so.
   "this year" for a running total is provisional; say so.
-  clinical vs screening, confirmed vs probable, or any two condition labels: different series; never add them.
-  rates, percents and estimates are never added up, across places or years.
+  clinical vs screening, confirmed vs probable, or any two condition labels: different series; keep them apart, \
+and if a figure across them is asked for, give the tool's note with it (C. auris screening: screening detections, \
+not incidence).
+  rates, percents and estimates: don't add them up yourself; a tool that works out such a figure says what it \
+can't mean.
   a county or city: pass it as a location; the place resolver matches it to the source's own place labels, and a \
 source that stops at the state declines with nearest_served (for example "Travis County, Texas" → Texas).
   a GBD cause or a modelled measure (DALYs, YLLs, modelled deaths): use the IHME GBD connector; this server \

@@ -2,8 +2,9 @@
 
 A clinician asks about C. auris in Michigan in 2024. The scripted client calls the real tools through
 server.py, in the order a client would, and every step asserts what the server must do: the right source, the
-clinical and screening series kept apart and never summed (hard rule 2), the publisher's flags and the Census
-denominator carried, total rows left out, and provenance on every number (source URL, retrieved_at, sha256 of the
+clinical and screening series kept apart, with a screening rate labelled "screening detections, not incidence"
+(hard rule 2, ADR 0018), the publisher's flags and the Census denominator carried, total rows left out of the
+places' figures, and provenance on every number (source URL, retrieved_at, sha256 of the
 raw bytes, version; hard rule 8). The four DEV trial questions (eval/dev/dev.jsonl, tag source=trial) are then
 scored with eval/scorer.py, the same rules the behaviour eval applies, so the two never drift apart.
 
@@ -165,17 +166,17 @@ def test_step5_rates_use_the_census_denominator_and_are_never_summed(journey: Jo
     out = journey.call("get_rate", condition="C. auris", locations=["Michigan"], year=2024)
     rows = {r["condition"]: r for r in client.table_rows(out)}
     assert set(rows) == {CLINICAL, SCREENING}
-    # Hard rule 2: the 95% interval comes back with every rate. Pinned to the exact Poisson (Garwood) bounds for
+    # Hard rule 2: published and computed uncertainty ranges always come back; here the 95% interval of every rate. Pinned to the exact Poisson (Garwood) bounds for
     # 21 cases in 1,000,000, so a change of interval method fails here too.
     r = rows[CLINICAL]
     assert (r["cases"], r["population"], r["rate_per_100k"]) == ("21.0", "1000000.0", "2.1")
     assert (r["lower_95"], r["upper_95"]) == ("1.3", "3.21"), r
     assert float(r["lower_95"]) <= float(r["rate_per_100k"]) <= float(r["upper_95"])
-    # Screening counts colonisation found by screening, not new cases of disease (the contract's notIncidence),
-    # so its count comes back with no rate per 100,000 people (issue #173; it was 5.7).
+    # Screening counts colonisation found by screening, not new cases of disease (the contract's notIncidence):
+    # its rate is worked out and labelled so (ADR 0018, issue #226; #186 had given it no rate).
     s = rows[SCREENING]
-    assert (s["cases"], s["rate_per_100k"], s["lower_95"], s["upper_95"]) == ("57.0", "", "", ""), s
-    assert "not new cases of disease" in s["flags"]
+    assert (s["cases"], s["rate_per_100k"]) == ("57.0", "5.7"), s
+    assert s["flags"].startswith("screening detections, not incidence: ") and "notIncidence" in s["flags"]
     for r in rows.values():
         assert (r["case_source"], r["population_source"]) == (NNDSS, CENSUS)
         assert "provisional" in r["flags"]
@@ -189,8 +190,8 @@ def test_step6_caveats_keep_the_sources_apart(journey: Journey) -> None:
     out = journey.call("list_caveats", condition="C. auris")
     assert "Candida auris clinical cases and screening (colonization) cases are separate series" in out
     assert (
-        "C. auris clinical cases and screening (colonisation) cases are different series; never add them."
-        in out
+        "C. auris clinical cases and screening (colonisation) cases are different series. A sum of the two, or a "
+        "rate from screening, counts screening detections, not incidence" in out
     )
     assert (
         "tracking page counts cases by specimen collection date" in out
