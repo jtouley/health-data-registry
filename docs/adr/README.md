@@ -18,10 +18,10 @@ records are not rewritten.
 | [0010](0010-apache-2-licence.md) | Apache-2.0 licence for the code | Proposed |
 | [0011](0011-local-stdio-first.md) | Local stdio server first; hosted Hugging Face Space later | Proposed |
 | [0012](0012-built-for-clinicians.md) | Built for clinicians: helpers as MCP prompts, with copy-paste docs | Accepted |
-| [0013](0013-browser-fetcher-on-government-hosts.md) | The browser fetcher may read government hosts: honest user agent, 10 s pace, no evasion; a challenge, CAPTCHA, 401, 403 or 429 stops the crawl | Accepted |
+| [0013](0013-browser-fetcher-on-government-hosts.md) | The browser fetcher may read government hosts: honest user agent, 10 s pace, no evasion; a challenge, CAPTCHA, 401, 403 or 429 stops the crawl | Accepted; superseded in part by [0016](0016-crawler-factory.md) (robots.txt on government hosts) |
 | [0014](0014-bibliographic-registries-as-primary-routes.md) | Bibliographic registries (Crossref, OpenAlex, Europe PMC) are primary-source routes for DOI records, not aggregators | Accepted |
 | [0015](0015-elt-raw-data-stored-as-sent.md) | ELT, not ETL: raw data is stored as the publisher sent it; values change only in staging and the dbt models; the raw source contract is loose; a change to the raw layer is a new contract version and a new snapshot, never a rewrite | Proposed |
-| [0016](0016-crawler-factory.md) | Crawler factory: a closed set of generic adapter types, per-source config in the catalog, named pure extensions, one shared fetch core ([audit](../dev/crawler-audit.md)) | Proposed |
+| [0016](0016-crawler-factory.md) | Crawler factory: a closed set of generic adapter types, per-source config in the catalog, named pure extensions, one shared fetch core ([audit](../dev/crawler-audit.md)) | Accepted |
 | [0017](0017-immutable-raw-reproducible-builds.md) | Immutable raw, reproducible builds: one raw writer, a build manifest pinning every input, outputs keyed by build id, determinism rules, a rebuild-from-raw test, and data-quality gates on `LATEST` and publishing | Proposed |
 | [0018](0018-show-everything-qualify-dont-decide.md) | Show everything; qualify, don't decide: every row the publisher sent comes back with its flag; any figure is computed when asked and qualified, citing the qualification's source, with the figure without the problem beside it where there is one; gaps are data; only a data check that never ran blocks. Replaces hard rule 2 | Accepted |
 
