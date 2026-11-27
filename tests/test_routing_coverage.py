@@ -68,7 +68,7 @@ def test_a_local_source_never_fits_a_place_it_does_not_cover(reg: Registry, ques
     ("question", "place"),
     [
         ("Mpox cases in Nigeria since 2022", "Nigeria"),
-        ("Brazil tuberculosis incidence 2015 to 2022", "Brazil"),
+        ("Tuberculosis incidence in Brazil, 2015 to 2022", "Brazil"),
     ],
 )
 def test_a_place_that_cant_be_read_is_unknown_never_a_fit(reg: Registry, question: str, place: str) -> None:

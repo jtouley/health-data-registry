@@ -114,7 +114,7 @@ def test_step1_suggest_routes_c_auris_to_nndss_only(journey: Journey) -> None:
         client.fitting_sources(out) == []
     )  # no source declares its places yet, so none is marked as fitting
     assert client.candidate_sources(out) == [NNDSS]
-    assert "places ['Michigan'], years [2024]" in out
+    assert "places Michigan, years 2024" in out
 
 
 def test_step2_describe_names_both_series_their_flags_and_caveats(journey: Journey) -> None:

@@ -10,15 +10,20 @@ All notable changes to this project are documented here. The format follows
 
 - `suggest_datasets` marks a source "fits" only when its declared coverage holds the question's place,
   condition and years (#111). A place it can't read, or a source that declares no places or conditions, is
-  "unknown", never a fit, and generic words ("cases", "years", "lost") never make a fit. Coverage is read in one
-  place, `coverage.declared_coverage`, from the contract's conformed place keys only; it will read the
-  coverage declaration once #223 adds it. A
-  question about years of life lost, DALYs or other GBD-modelled measures is handed to the IHME GBD connector.
-- `get_series` and `get_aligned_with_gbd` read a live source only when its declared coverage holds a place asked
-  for, and give one refusal per source, never one per series (#111).
+  "unknown", never a fit, and generic words ("cases", "years", "lost") never make a fit. A source's places come
+  only from its reviewed contract; until a source declares its places (#223), it is "unknown" for every place. A
+  question about years of life lost, DALYs or other GBD-modelled measures is handed to the IHME GBD connector. A
+  capitalised word is read as a possible place only where a place goes ("in Lagos"), never a sentence's first word
+  or a word such as "Black"; a question that names no condition is told to name one; Census and the abstract lists
+  are a plain "no" for a disease question; "TB", "HCV", "HBV", "flu", "MRSA" and "CDI" are read as the conditions
+  they stand for; and a hepatitis B source no longer fits a hepatitis C question. A question longer than 2,000
+  characters is refused at once.
+- `get_series` and `get_aligned_with_gbd` skip a live source only when its declared places leave out every place
+  asked for; a source that declares no places is read as before. Each gives one refusal per source, never one per
+  series, and a "no rows matched" answer names any source left unread (#111).
 - Detroit's annual dashboard loads again: its contract (0.1.1) marks `SUM(Cases) flag` as a field that appears only
   when the dashboard shows a suppressed count, so a clean read no longer refuses the whole source (#111). The MDHHS
-  measles Case Map had the same fault on a live read (2026-11-25) and gets the same fix (contract 0.1.1).
+  measles Case Map had the same fault on a live read and gets the same fix (contract 0.1.1).
 - `get_series(source_id=...)` honours the source asked for, or refuses in plain words; it never answers from
   another source's labels (#112). `query_sql` on a private abstract source no longer says other tools can answer;
   it says a search tool is planned and where to browse the abstracts for now (#112, #106).
@@ -32,8 +37,7 @@ All notable changes to this project are documented here. The format follows
   its rows are (a federal network such as RESP-NET covers selected counties in some states, and the abstract lists
   cover no country). Until a source declares its places (#223), it is "unknown" for any place, never a fit, and
   the reason names the place: NNDSS no longer fits a Detroit question, nor RESP-NET a Texas one (#111). A
-  declared country never holds a city reported apart from its state. A live source is still read for a place this
-  server can't name (a country), since its coverage can't be checked there.
+  declared country never holds a city reported apart from its state.
 - An RSV question reaches RESP-NET, whose condition words were dropped with its publisher's name, and a question
   about population reaches the Census denominator. Sources marked unknown are ranked by how few open questions
   they leave.

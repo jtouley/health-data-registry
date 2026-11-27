@@ -181,7 +181,7 @@ def words(text: str) -> set[str]:
     acute" gives "hepatitis b")."""
     low = text.lower().replace(".", " ").replace("'", "")
     pairs = re.findall(r"(?<![a-z0-9])([b-hj-z])\s+([a-z][a-z\-]*)", low)  # "q fever"
-    pairs += re.findall(r"([a-z][a-z\-]*)\s+([b-hj-z])(?![a-z0-9])", low)  # "hepatitis b"
+    pairs += re.findall(r"([a-z][a-z\-]*)\s+([b-hj-z])(?![a-z0-9\-])", low)  # "hepatitis b"
     out: set[str] = {f"{a} {b}" for a, b in pairs if a not in GENERIC_WORDS and b not in GENERIC_WORDS}
     for w in re.findall(r"[a-z0-9][a-z0-9\-]*", low):
         out.add(w)

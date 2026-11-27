@@ -181,7 +181,7 @@ def test_suggest_datasets_exact(registry: Registry) -> None:
                   "public-domain-us-federal (https://www.cdc.gov/other/agencymaterials.html)",
                   "CDC. Toy table. https://data.cdc.gov/d/toy0-toy0", "draft"]],
         "notes": [
-            "Read as: condition words ['legionellosis'], places ['Michigan'], years [2019, 2021].",
+            "Read as: condition words legionellosis, places Michigan, years 2019 to 2021.",
             "Public data shows what and where; your hospital's own data, kept in approved systems, answers why.",
             "Never put patient information in the chat.",
             "Next step: Open describe_dataset for a source search_datasets lists, pick one of its condition labels, "

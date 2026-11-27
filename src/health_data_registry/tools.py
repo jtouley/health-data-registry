@@ -908,7 +908,7 @@ def _suggest_literature(
     held = {m for ds in registry if (m := _meeting_of(ds))}
     notes = [
         f"Read as: a literature question (papers, abstracts or prior work) about '{search or 'no topic named'}', "
-        f"meetings {_listed(meetings) or 'any'}, years {_listed([str(y) for y in years]) or 'any'}.",
+        f"meetings {_listed(meetings) or 'any'}, years {_year_span(years)}.",
         f"For published papers, {SEARCH_PUBMED}"
         + (f" for '{search}'" if search else "")
         + ". This server lists conference abstracts (title, DOI and link), not papers.",
@@ -1032,7 +1032,7 @@ def suggest_datasets(
     rows.sort(key=lambda r: (rank[r[1]], r[4], r[0]))  # then fewest unknowns, most condition words matched
     notes = [
         f"Read as: condition words {_listed(sorted(specific)) or 'none'}, places {_listed(place_names) or 'none'}, "
-        f"years {_listed([str(y) for y in years]) or 'any'}.",
+        f"years {_year_span(years)}.",
         "Public data shows what and where; your hospital's own data, kept in approved systems, answers why.",
         NO_PATIENT_DATA,
     ]
@@ -1069,6 +1069,17 @@ def suggest_datasets(
         notes,
         extra={"presentation_rules": PRESENTATION_RULES},
     ).render(fmt)
+
+
+def _year_span(years: Sequence[int]) -> str:
+    """The years a question asks about, as the span it is read as: "any", "2024" or "2019 to 2021"."""
+    return (
+        "any"
+        if not years
+        else str(min(years))
+        if min(years) == max(years)
+        else f"{min(years)} to {max(years)}"
+    )
 
 
 def _quoted(words: Sequence[str]) -> str:
