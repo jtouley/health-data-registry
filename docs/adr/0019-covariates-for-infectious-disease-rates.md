@@ -11,7 +11,8 @@
   [ADR 0007](0007-odcs-contracts-and-semantic-models.md) (contracts and the contract facts rule),
   [ADR 0009](0009-licences-decide-mirroring.md) (licences decide what is mirrored),
   [ADR 0012](0012-built-for-clinicians.md) (built for clinicians),
-  [ADR 0016](0016-crawler-factory.md) (sources are config, not code)
+  [ADR 0016](0016-crawler-factory.md) (sources are config, not code),
+  [ADR 0018](0018-show-everything-qualify-dont-decide.md) (show everything; qualify, don't decide)
 
 ## Context
 
@@ -63,8 +64,8 @@ its licence checked before anything is mirrored.
   `age_adjust` and `check_signal` never return its values as an answer. The registry refuses a covariate that
   declares a series, a condition, a GBD cause or a disease area.
 - A covariate's measures follow the publisher's own rules. SVI's percentile ranks are estimates: they are never
-  summed, and an average of them is qualified rather than refused (hard rule 2 as the maintainer changed it on
-  27 Nov 2026, [#242](https://github.com/jtouley/health-data-registry/pull/242)), with the publisher's warning
-  that ranks from different SVI years are not comparable.
+  summed, and an average of them is qualified rather than refused (hard rule 2,
+  [ADR 0018](0018-show-everything-qualify-dont-decide.md)), with the publisher's warning that ranks from different
+  SVI years are not comparable.
 - Each new covariate is reviewed against this guard before it merges: what infectious-disease question does it
   serve, and at what area level?

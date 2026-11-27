@@ -12,7 +12,7 @@ records are not rewritten.
 | [0004](0004-aligned-data-no-gbd-verdicts.md) | Return GBD-aligned data; never a GBD-vs-local verdict; never call or mirror GBD | Accepted |
 | [0005](0005-raw-fetches-hash-addressed.md) | Raw fetches are kept, hash-addressed | Accepted |
 | [0006](0006-no-llm-extraction.md) | No LLM extraction into stored data | Accepted |
-| [0007](0007-odcs-contracts-and-semantic-models.md) | ODCS v3.2.0 contracts and dbt-style semantic models; the contract facts rule | Accepted |
+| [0007](0007-odcs-contracts-and-semantic-models.md) | ODCS v3.2.0 contracts and dbt-style semantic models; the contract facts rule | Accepted; its aggregation rule superseded by 0018 |
 | [0008](0008-governed-sql-and-metrics.md) | Named tools over reviewed metrics, with governed read-only SQL as the escape hatch | Accepted |
 | [0009](0009-licences-decide-mirroring.md) | Licences decide what is mirrored | Accepted |
 | [0010](0010-apache-2-licence.md) | Apache-2.0 licence for the code | Proposed |
@@ -23,6 +23,7 @@ records are not rewritten.
 | [0015](0015-elt-raw-data-stored-as-sent.md) | ELT, not ETL: raw data is stored as the publisher sent it; values change only in staging and the dbt models; the raw source contract is loose; a change to the raw layer is a new contract version and a new snapshot, never a rewrite | Proposed |
 | [0016](0016-crawler-factory.md) | Crawler factory: a closed set of generic adapter types, per-source config in the catalog, named pure extensions, one shared fetch core ([audit](../dev/crawler-audit.md)) | Accepted |
 | [0017](0017-immutable-raw-reproducible-builds.md) | Immutable raw, reproducible builds: one raw writer, a build manifest pinning every input, outputs keyed by build id, determinism rules, a rebuild-from-raw test, and data-quality gates on `LATEST` and publishing | Proposed |
+| [0018](0018-show-everything-qualify-dont-decide.md) | Show everything; qualify, don't decide: every row the publisher sent comes back with its flag; any figure is computed when asked and qualified, citing the qualification's source, with the figure without the problem beside it where there is one; gaps are data; only a data check that never ran blocks. Replaces hard rule 2 | Accepted |
 | [0019](0019-covariates-for-infectious-disease-rates.md) | Hard rule 11 widens to covariates that explain infectious-disease rates (e.g. SVI): area-level only, beside an infectious-disease answer and never a topic of their own, never a denominator, no new disease areas | Accepted |
 
 The spec's current positioning (three layers: crawler and lake, an open health data hub on Hugging Face, and the MCP

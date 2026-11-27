@@ -232,8 +232,25 @@ These come from the spec and [docs/adr/](docs/adr/README.md). A PR that breaks o
 1. **Facts that change a number** ([ADR 0007](docs/adr/0007-odcs-contracts-and-semantic-models.md), carried over
    from ADR017). A fact that changes a number comes only from the publisher's own codebook, an exact structural
    fact, or a maintainer's reviewed declaration. Anything else is an open question in the contract, never a guess.
-2. **Aggregation.** Frequency tables sum their count column and exclude total rows. Rates and estimates are never
-   summed. Published uncertainty ranges are returned, never dropped.
+2. **Show everything; qualify, don't decide** ([ADR 0018](docs/adr/0018-show-everything-qualify-dont-decide.md),
+   the maintainer's decision of 27 Nov 2026; it replaces the aggregation rule from ADR 0007). The ADR has the
+   examples; the clinician's copy is
+   [docs/data-conventions.md](docs/data-conventions.md#show-everything-qualify-dont-decide).
+   - Every row the publisher sent is returned with its flag and what it means (`-` is never turned into 0).
+     Published uncertainty ranges are always returned. Gaps are data a researcher can ask for
+     ([#223](https://github.com/jtouley/health-data-registry/issues/223)).
+   - Any figure we compute is computed when asked. Where a contract rule, a data check's result or a recorded
+     finding says it may mislead, the answer says so in plain words, cites that source
+     ([#225](https://github.com/jtouley/health-data-registry/issues/225)) and, where there is one, puts the figure
+     without that problem beside it, described by what it is, never as the safer or right one (ADR 0004).
+   - One thing still blocks: a data check that never ran
+     ([#222](https://github.com/jtouley/health-data-registry/issues/222)). That is about our own honesty, not
+     deciding for physicians.
+   - Binding now for new code and for any refusal or dropped row a PR's own change touches. Code that already
+     refuses sums and rates or leaves total rows out moves in
+     [#226](https://github.com/jtouley/health-data-registry/issues/226), and code that holds back a copy after a
+     failed check moves in [#243](https://github.com/jtouley/health-data-registry/issues/243); a PR is not wrong
+     for leaving that code untouched. Comments and tests citing "hard rule 2" for a refusal mean the old rule.
 3. **Review.** Contracts and semantic models may be drafted by inference or a model, but merge only after a
    maintainer reviews them. Until then `list_caveats` reports the contract as a draft.
 4. **No patient data.** No upload or local-file tool, ever. Tools read only catalogued public sources. Never join
