@@ -122,6 +122,13 @@ outputPorts:
     contractId: cdc_nrevss_positivity
     customProperties:
       - {property: hosted, value: true}
+  - name: cdc_schoolvaxview_kindergarten
+    description: SchoolVaxView vaccination coverage and exemptions among kindergartners, by state and school year.
+    type: tables
+    version: 0.1.0
+    contractId: cdc_schoolvaxview_kindergarten
+    customProperties:
+      - {property: hosted, value: true}
   - name: census_county_pop
     description: Census Bureau county and state resident population estimates, the denominator for rates.
     type: tables
