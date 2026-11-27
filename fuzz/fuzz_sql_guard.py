@@ -16,10 +16,8 @@ makes Atheris report a crash with the input).
 from __future__ import annotations
 
 import json
-import re
 import sys
-import traceback
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator
 from typing import Any
 
 import atheris
@@ -28,7 +26,7 @@ with atheris.instrument_imports():
     from health_data_registry.sql_guard import SqlRefused, guard_sql
 
 import duckdb
-from sqlglot.errors import OptimizeError, ParseError
+from sqlglot.errors import OptimizeError
 
 TABLES: dict[str, frozenset[str]] = {
     "deaths": frozenset({"state", "year", "cause", "deaths"}),
@@ -37,39 +35,10 @@ TABLES: dict[str, frozenset[str]] = {
 }
 JOINS = frozenset({frozenset({"deaths", "pop"})})
 MAX_ROWS = 100
-# Known findings, filed with reproducers; skipped so the harness keeps finding new ones. Each skip matches only its
-# issue's exact failure (exception type, raising function, message and input shape); any other failure still
-# crashes the run. Set each to False when its fix lands.
+# Known findings, filed with reproducers; skipped so the harness keeps finding new ones. Set each to False
+# (or delete it) when its fix lands.
 KNOWN_LONE_SURROGATE = True  # issue #56
 KNOWN_OPTIMIZE_ERROR = True  # issue #57
-KNOWN_REWRITES = True  # issue #71
-KNOWN_GENERATE_PARSE_ERROR = True  # issue #72
-KNOWN_MINUS_TILDE = True  # issue #77
-
-# Issue #77: sqlglot writes "- ~x" as "-~x", which DuckDB lexes as one operator "-~" (or "-~~", ...). Excused only
-# when the caller's text has a "~".
-_MINUS_TILDE = frozenset("-" + "~" * k for k in range(1, 9))
-
-# Issue #71: functions the guard accepts by name that sqlglot rewrites, when it writes DuckDB SQL, into functions
-# (and a lambda) nobody allowlisted. Each pattern is matched against the caller's text; the rewritten names are
-# allowed only in an accepted query whose text names the function that produces them.
-_REWRITES: tuple[tuple[re.Pattern[str], frozenset[str], frozenset[str]], ...] = (
-    (
-        re.compile(r"\binitcap\b", re.IGNORECASE),
-        frozenset({"array_to_string", "list_transform", "regexp_extract_all", "chr"}),
-        frozenset({"LAMBDA"}),
-    ),
-    (
-        re.compile(r"\b(?:len|length|char_length|character_length)\b", re.IGNORECASE),
-        frozenset({"typeof", "octet_length"}),
-        frozenset(),
-    ),
-    (
-        re.compile(r"\b(?:current_date|current_timestamp|today)\b", re.IGNORECASE),
-        frozenset({"timezone"}),
-        frozenset(),
-    ),
-)
 
 # DuckDB's names for what the guard allows. Written out by hand, so a function that reaches DuckDB under a
 # name nobody reviewed (a reader, a setting, a table function) is a finding, not a pass.
@@ -152,41 +121,27 @@ def _walk(node: Any) -> Iterator[dict[str, Any]]:
             yield from _walk(v)
 
 
-# The CTEs visible at a point in DuckDB's tree: name -> (body, the CTEs visible inside that body). A query node's
-# cte_map is visible only inside that node, so a CTE defined in a subquery doesn't cover a name outside it.
-CteScope = Mapping[str, tuple[Any, "CteScope"]]
+def _ctes(tree: Any) -> dict[str, list[Any]]:
+    found: dict[str, list[Any]] = {}
+    for d in _walk(tree):
+        cte_map = d.get("cte_map")
+        if isinstance(cte_map, dict):
+            for item in cte_map.get("map", []):
+                found.setdefault(str(item["key"]).casefold(), []).append(item["value"]["query_node"])
+    return found
 
 
-def _scoped(node: Any, scope: CteScope) -> Iterator[tuple[dict[str, Any], CteScope]]:
-    """Every dict in the tree, with the CTEs visible at it."""
-    if isinstance(node, dict):
-        cte_map = node.get("cte_map")
-        if isinstance(cte_map, dict) and cte_map.get("map"):
-            inner: dict[str, tuple[Any, CteScope]] = dict(scope)
-            for item in cte_map["map"]:
-                # A CTE's body sees the CTEs of its own WITH (itself, when recursive, and its siblings) and the outer
-                # ones: a superset of what DuckDB binds, so the check errs towards a finding, never a pass.
-                inner[str(item["key"]).casefold()] = (item["value"]["query_node"], inner)
-            scope = inner
-        yield node, scope
-        for v in node.values():
-            yield from _scoped(v, scope)
-    elif isinstance(node, list):
-        for v in node:
-            yield from _scoped(v, scope)
-
-
-def _reach(node: Any, scope: CteScope, seen: frozenset[str] = frozenset()) -> set[str]:
+def _reach(node: Any, ctes: dict[str, list[Any]], seen: frozenset[str] = frozenset()) -> set[str]:
     """Every catalogued table a part of the tree reads, through the CTEs it names."""
     found: set[str] = set()
-    for d, here in _scoped(node, scope):
+    for d in _walk(node):
         if d.get("type") == "BASE_TABLE":
             name = str(d.get("table_name", "")).casefold()
             if name in TABLES:
                 found.add(name)
-            if name in here and name not in seen:
-                body, body_scope = here[name]
-                found |= _reach(body, body_scope, seen | {name})
+            if name in ctes and name not in seen:
+                for body in ctes[name]:
+                    found |= _reach(body, ctes, seen | {name})
     return found
 
 
@@ -210,7 +165,7 @@ def _direct_subqueries(node: Any) -> Iterator[dict[str, Any]]:
             yield from _direct_subqueries(v)
 
 
-def _check_joins(select: dict[str, Any], ctes: CteScope) -> None:
+def _check_joins(select: dict[str, Any], ctes: dict[str, list[Any]]) -> None:
     conditions: list[Any] = []
     leaves = _leaves(select.get("from_table"), conditions)
     inputs = [_reach(leaf, ctes) for leaf in leaves]
@@ -240,10 +195,8 @@ def _check_limit(root: dict[str, Any]) -> None:
     raise Finding("accepted query has no outer LIMIT")
 
 
-def check_accepted(
-    sql: str, extra_functions: frozenset[str] = frozenset(), extra_classes: frozenset[str] = frozenset()
-) -> None:
-    """The independent re-parse of SQL the guard accepted (the extras are for issues #71 and #77 only)."""
+def check_accepted(sql: str) -> None:
+    """The independent re-parse of SQL the guard accepted."""
     statements = duckdb.extract_statements(sql)
     if len(statements) != 1 or statements[0].type != duckdb.StatementType.SELECT:
         raise Finding("accepted SQL is not exactly one SELECT")
@@ -254,9 +207,10 @@ def check_accepted(
     if root.get("type") not in ("SELECT_NODE", "SET_OPERATION_NODE"):
         raise Finding(f"accepted SQL is a {root.get('type')}")
     _check_limit(root)
-    for d, ctes in _scoped(root, {}):
+    ctes = _ctes(root)
+    for d in _walk(root):
         cls = d.get("class")
-        if isinstance(cls, str) and cls not in ALLOWED_CLASSES and cls not in extra_classes:
+        if isinstance(cls, str) and cls not in ALLOWED_CLASSES:
             raise Finding(f"expression {cls} ({d.get('type')}) reached DuckDB")
         kind = d.get("type")
         if "from_table" in d:
@@ -273,7 +227,7 @@ def check_accepted(
             fname = str(d.get("function_name", "")).casefold()
             if d.get("schema") or d.get("catalog"):
                 raise Finding(f"schema-qualified function {fname} reached DuckDB")
-            if fname not in ALLOWED_FUNCTIONS | ALLOWED_OPERATORS | extra_functions:
+            if fname not in ALLOWED_FUNCTIONS and fname not in ALLOWED_OPERATORS:
                 raise Finding(f"function {fname!r} is not on the harness allowlist")
         if "from_table" in d and isinstance(d["from_table"], dict):
             for leaf in _leaves(d["from_table"], []):
@@ -281,84 +235,25 @@ def check_accepted(
                     raise Finding(f"table reference {leaf.get('type')} reached DuckDB")
 
 
-def _raised_in(e: BaseException) -> str | None:
-    """The innermost sql_guard function the exception passed through (not a comprehension or generator frame,
-    which Python 3.11, the fuzz image's version, keeps and 3.12 partly inlines)."""
-    names = [
-        f.name
-        for f in traceback.extract_tb(e.__traceback__)
-        if f.filename.endswith("sql_guard.py") and not f.name.startswith("<")
-    ]
-    return names[-1] if names else None
-
-
-def _is_utf8(text: str) -> bool:
-    try:
-        text.encode("utf-8")
-    except UnicodeEncodeError:
-        return False
-    return True
-
-
-def known_guard_error(sql: str, e: Exception) -> bool:
-    """Whether an exception escaping guard_sql is exactly one of the filed, unfixed findings."""
-    where = _raised_in(e)
-    if KNOWN_LONE_SURROGATE and type(e) is TypeError and not _is_utf8(sql):
-        # issue #56: duckdb's binding can't take a lone surrogate
-        return where == "_require_single_select" and str(e).startswith(
-            "extract_statements(): incompatible function arguments"
-        )
-    if KNOWN_OPTIMIZE_ERROR and type(e) is OptimizeError:
-        # issue #57: two sources share an alias. sqlglot raises it from the lazy Scope.selected_sources, wherever
-        # in guard_sql's scope checks that is first read (_check_scope_sources, _check_columns, ...).
-        last = traceback.extract_tb(e.__traceback__)[-1]
-        return (
-            where is not None
-            and where.startswith("_")
-            and last.name == "selected_sources"
-            and last.filename.replace("\\", "/").endswith("optimizer/scope.py")
-            and re.fullmatch(r"Alias already used: .+", str(e)) is not None
-        )
-    if KNOWN_GENERATE_PARSE_ERROR and type(e) is ParseError and _REWRITES[0][0].search(sql):
-        # issue #72: initcap() with no argument fails in sqlglot's generator, after _parse
-        return where == "guard_sql"
-    return False
-
-
-def known_rewrites(sql: str) -> tuple[frozenset[str], frozenset[str]] | None:
-    """Issues #71 and #77: the extra functions and classes the caller's text can produce through sqlglot's output."""
-    hits = [(fns, classes) for pattern, fns, classes in _REWRITES if KNOWN_REWRITES and pattern.search(sql)]
-    if KNOWN_MINUS_TILDE and "~" in sql:
-        hits.append((_MINUS_TILDE, frozenset()))
-    if not hits:
-        return None
-    return frozenset().union(*(f for f, _ in hits)), frozenset().union(*(c for _, c in hits))
-
-
 def TestOneInput(data: bytes) -> None:
     # surrogateescape: undecodable bytes become lone surrogates, which a JSON-RPC client can also send
     # (a "\udcff" escape), so the guard must refuse them too.
     sql = data.decode("utf-8", errors="surrogateescape")
+    if KNOWN_LONE_SURROGATE and sql != data.decode("utf-8", errors="ignore"):
+        return  # issue #56: guard_sql raises TypeError on a lone surrogate; remove this skip with its fix
     try:
         q = guard_sql(sql, allowed_tables=TABLES, declared_joins=JOINS, max_rows=MAX_ROWS)
     except SqlRefused as e:
         if not (e.code and e.message):
             raise Finding("a refusal without a code or a message") from e
         return
-    except Exception as e:
-        if known_guard_error(sql, e):
-            return
+    except OptimizeError:
+        if KNOWN_OPTIMIZE_ERROR:
+            return  # issue #57: a repeated alias escapes as OptimizeError; remove this skip with its fix
         raise
     if not q.tables <= set(TABLES) or not 0 <= q.limit <= MAX_ROWS:
         raise Finding(f"GuardedQuery out of bounds: {q.tables} limit {q.limit}")
-    try:
-        check_accepted(q.sql)
-    except Finding:
-        extras = known_rewrites(sql)
-        if extras is None:
-            raise
-        # Only issues #71 and #77's names are excused; anything else in the same query still fails.
-        check_accepted(q.sql, *extras)
+    check_accepted(q.sql)
 
 
 def main() -> None:

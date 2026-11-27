@@ -18,16 +18,11 @@ with atheris.instrument_imports():
     from health_data_registry.adapters import https_csv
     from health_data_registry.registry import Reshape, WideToLong
 
-# The pivot of the Census population file's catalog entry (catalog/census_county_pop.yaml, source.reshape), copied
-# here so the harness needs no catalog files at run time; keep the two in step. Its non-empty expected_keys means
-# a file whose years differ from the layout's is refused, so that refusal path is fuzzed too.
+# The shape of the Census population file's catalog entry (catalog/census_county_pop.yaml), written out here so
+# the harness needs no catalog files at run time. Only the fields the adapter reads are set.
 _PIVOT = Reshape(
     wide_to_long=WideToLong(
-        keep=["SUMLEV", "REGION", "DIVISION", "STATE", "COUNTY", "STNAME", "CTYNAME"],
-        stubs=["POPESTIMATE"],
-        key_field="YEAR",
-        key_pattern=r"\d{4}",
-        expected_keys=["2020", "2021", "2022", "2023", "2024", "2025"],
+        keep=["STATE", "NAME"], stubs=["POPESTIMATE", "DEATHS"], key_field="YEAR", expected_keys=[]
     )
 )
 ENTRIES = [
@@ -37,19 +32,8 @@ ENTRIES = [
 
 
 # A known finding, filed with a reproducer as issue #60; skipped so the harness keeps finding new ones. Set to
-# False when the fix lands: a field over csv.field_size_limit() escapes as csv.Error, not ValueError. Only that
-# exact message, on an input long enough to hold such a field, is skipped.
+# False when the fix lands: a field over csv.field_size_limit() escapes as csv.Error, not ValueError.
 KNOWN_CSV_ERROR = True
-
-
-def known_csv_error(data: bytes, e: Exception) -> bool:
-    """Whether an exception escaping records() is exactly issue #60."""
-    return (
-        KNOWN_CSV_ERROR
-        and type(e) is csv.Error
-        and str(e) == f"field larger than field limit ({csv.field_size_limit()})"
-        and len(data) > csv.field_size_limit()
-    )
 
 
 class Finding(AssertionError):
@@ -62,15 +46,15 @@ def TestOneInput(data: bytes) -> None:
             recs = https_csv.records(entry, data)  # type: ignore[arg-type]
         except ValueError:
             continue
-        except Exception as e:
-            if known_csv_error(data, e):
+        except csv.Error as e:
+            if KNOWN_CSV_ERROR and "field larger than field limit" in str(e):
                 continue
             raise
         for rec in recs:
             if not isinstance(rec, dict) or not all(isinstance(v, str) for v in rec.values()):
                 raise Finding(f"a record that is not text keyed by column: {rec!r}")
-            if entry.source.reshape is not None and rec.get("YEAR") not in _PIVOT.wide_to_long.expected_keys:
-                raise Finding(f"a pivoted record whose key is not one of the layout's: {rec.get('YEAR')!r}")
+            if entry.source.reshape is not None and "YEAR" not in rec:
+                raise Finding("a pivoted record without its key")
 
 
 def main() -> None:

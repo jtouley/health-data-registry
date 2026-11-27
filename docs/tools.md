@@ -74,47 +74,6 @@ The same list, as the server itself describes each tool to Claude:
   rate or interval worked out here can't be mistaken for a published one.
 - **Structured output.** Every tool also takes `fmt="json"`, which returns the same columns, rows and notes as
   structured data. Claude uses this when it needs to; you don't need to ask.
-- **Long answers come in pages.** An answer too long for one reply is never cut off or refused: it comes back
-  in pages of real rows. See [Long answers: pages](#long-answers-pages).
-
-## Long answers: pages
-
-Every tool that returns rows (`get_series`, `get_aligned_with_gbd`, `get_rate`, `get_provenance`, the analysis
-tools and `query_sql`) takes two more parameters:
-
-| Parameter | Required | What it does |
-|---|---|---|
-| `page` | no | Which page of a long answer, counting from 1 (default 1) |
-| `pin` | no | Copied from the previous page's Next line; keeps every page on the same version of the data |
-
-When an answer is longer than one page (about 60,000 characters of text: Claude receives each answer twice, as
-text and as data, and the server counts both against a 120,000-character page), page 1 starts with a
-line like `# Page 1 of 4: rows 1–1,210 of 4,532. The full answer has 4,532 rows.` and ends with the exact call
-for the next page, for example
-`# Next: get_series(condition='legionellosis', page=2, pin='cdc_nndss_weekly:20261124T120000Z-…@release-2026-11-24~4532~…')`.
-The pin also holds the size of the whole answer and a signature, so a later page is cut from exactly the same rows
-as page 1, or refused.
-
-- **What Claude should do.** Fetch every page, then save all the rows to one CSV file or artifact rather than
-  pasting them into the chat, and work from that file. Tool descriptions and the helpers say so.
-- **Every page carries its sources.** Each page repeats the notes, including the `Provenance for …` line for
-  every source the answer read (the same line as above: publisher address, `retrieved_at`, raw-file sha256,
-  snapshot, contract version and review status, hub release, licence and citation), and each row keeps its
-  `period_status` and, from the analysis tools, its `computed` column.
-- **Pages fit together.** Rows come in a fixed order (`query_sql` adds `ORDER BY ALL` when a query has no
-  `ORDER BY`; with your own `ORDER BY`, ties come in no fixed order, so order by enough columns to break them).
-  The pin names the version each page read. If a newer release lands between pages, later pages still come from
-  the pinned version. If that version is no longer available, the tool says so in plain words and asks you to
-  start again from page 1; it never mixes pages from two versions.
-- **Whole-dataset downloads.** For a public-domain source read from an open data hub release, every page of a
-  long answer also gives the direct link to that release's file
-  (`https://huggingface.co/datasets/<org>/<name>/resolve/release-<date>/<source>/data/<source>.parquet`), with
-  its sha256, licence and citation, so Claude can download the whole source instead of paging. The file holds
-  every row of the source, not only the rows you asked for. Sources whose terms don't allow sharing (WHO) never
-  get a link; they only page. A link is always a fixed release file path and never carries your question.
-- **Command line.** The same tools on the command line (`health-data-registry get-series`, `get-aligned-with-gbd`,
-  `get-provenance`, `query-sql`, `get-rate`, `compare-rates`, `get-trend`, `age-adjust`, `check-signal`) take
-  `--page N` and `--pin …` and print the same pages.
 
 ## Finding data
 
@@ -401,8 +360,7 @@ sources; each table is named by its `source_id`.
 
 **Returns:** the table, then the query that ran, the method, one provenance line for every source the query read
 (a query over two tables lists both), and each source's caveats and review status.
-Results are capped at 5,000 rows, in pages when they are long (see [pages](#long-answers-pages)); a query without
-`ORDER BY` is run with `ORDER BY ALL`, so its rows and pages come in a fixed order.
+Results are capped at 5,000 rows.
 
 It refuses anything but a careful read: more than one statement, anything that writes or reads files, functions
 not on its allowlist, joins between tables that aren't declared, and queries that run too long. Prefer the named
@@ -429,11 +387,6 @@ The common ones:
 | "The open data hub … has no published release yet" | The hub's first data release isn't out | Try again later; nothing was guessed |
 | "This setup has reading data turned off for …" | This installation reads neither the hub (`HDR_HUB=off`) nor the publisher live (`HDR_FETCH_AT_RUN_TIME=0`), and has no local copy | Run the [Something's wrong](helpers.md#somethings-wrong) helper; whoever installed it removes whichever of the two settings is there |
 | "That query can't run: …" | `query_sql` refused the query | Use `get_series` or `describe_dataset` instead |
-| "Page 1 of N: …" | Not a problem: the answer is long and comes in pages | Fetch every page with the Next line, then save the rows to one CSV file or artifact |
-| "This page can't be shown: the data the first page came from … is no longer available here" | A newer version of the data replaced the one the earlier pages came from | Ask again without `page` and `pin`, and set the older pages aside |
-| "This page can't be shown: the answer no longer matches the first page" | The rows behind the answer changed between pages (for example, a source couldn't be read for page 1) | Ask again without `page` and `pin`, and set the older pages aside |
-| "The pin with this page doesn't match the one the previous page's Next line gave" | The pin was cut short or changed, or the hosted server restarted between pages | Copy the Next line exactly, or start again from page 1 |
-| "One row of this answer is too long to send in a reply" | A single row is longer than a page (usually a long text column) | Ask for fewer columns or one measure; `describe_dataset` shows which columns hold long text |
 | "The data for this question couldn't be read, so no numbers are shown" | Anything unexpected | Try again; if it keeps happening, run the [Something's wrong](helpers.md#somethings-wrong) helper |
 
 ## Helpers

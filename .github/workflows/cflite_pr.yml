@@ -9,16 +9,6 @@ on:
       - "src/**"
       - "fuzz/**"
       - ".clusterfuzzlite/**"
-      - ".dockerignore"
-      - ".github/workflows/cflite_pr.yml"
-  # pre-pr/** is the pre-PR gate (CLAUDE.md, "How changes land"): the fuzzing must pass there before a PR does.
-  push:
-    branches: ["pre-pr/**"]
-    paths:
-      - "src/**"
-      - "fuzz/**"
-      - ".clusterfuzzlite/**"
-      - ".dockerignore"
       - ".github/workflows/cflite_pr.yml"
 
 # Read-only token. No repository secret is used: github.token is the run's own short-lived token, which
@@ -26,8 +16,6 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same PR or pre-pr branch cancels the superseded fuzzing run (the scheduled batch run is a
-# separate workflow and is never cancelled).
 concurrency:
   group: cflite-pr-${{ github.ref }}
   cancel-in-progress: true

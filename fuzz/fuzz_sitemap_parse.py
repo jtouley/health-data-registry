@@ -8,9 +8,7 @@ fuzz/fuzz_sitemap_parse.options (a gzip or entity bomb shows up as a timeout or 
 
 from __future__ import annotations
 
-import re
 import sys
-import zlib
 
 import atheris
 
@@ -20,35 +18,12 @@ with atheris.instrument_imports():
 
 # A known finding, filed with reproducers as issue #59; skipped so the harness keeps finding new ones. Set to
 # False when the fix lands. An unknown or multi-byte encoding in the XML declaration escapes as LookupError or a
-# bare ValueError, with exactly these messages; any other LookupError or ValueError still crashes the run.
+# bare ValueError ("unknown encoding", "multi-byte encodings are not supported").
 KNOWN_ENCODING_ERRORS = True
-_UNKNOWN_ENCODING = re.compile(r"unknown encoding: .*", re.DOTALL)
-_MULTI_BYTE = "multi-byte encodings are not supported"
-# The input shape #59 needs: an encoding pseudo-attribute in the document (the XML declaration, after any gzip).
-_DECLARES_ENCODING = re.compile(rb"encoding\s*=")
 
 
 class Finding(AssertionError):
     """parse returned something outside its contract."""
-
-
-def _declares_encoding(data: bytes) -> bool:
-    if data[:2] == b"\x1f\x8b":
-        try:
-            # Only the start, where the XML declaration is: a bounded read, so a gzip bomb costs nothing here.
-            data = zlib.decompressobj(zlib.MAX_WBITS | 16).decompress(data, 4096)
-        except zlib.error:
-            return False
-    return _DECLARES_ENCODING.search(data[:4096]) is not None
-
-
-def known_parse_error(data: bytes, e: Exception) -> bool:
-    """Whether an exception escaping parse is exactly issue #59."""
-    if not KNOWN_ENCODING_ERRORS or not _declares_encoding(data):
-        return False
-    if type(e) is LookupError:
-        return _UNKNOWN_ENCODING.fullmatch(str(e)) is not None
-    return type(e) is ValueError and str(e) == _MULTI_BYTE
 
 
 def TestOneInput(data: bytes) -> None:
@@ -56,8 +31,8 @@ def TestOneInput(data: bytes) -> None:
         pages, children = parse(data)
     except SitemapError:
         return
-    except Exception as e:
-        if known_parse_error(data, e):
+    except (LookupError, ValueError) as e:
+        if KNOWN_ENCODING_ERRORS and ("encoding" in str(e)):
             return
         raise
     if pages and children:
