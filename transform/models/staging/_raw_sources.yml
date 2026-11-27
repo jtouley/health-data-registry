@@ -60,6 +60,56 @@ sources:
       data_type: varchar
       description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
         the exact bytes the publisher sent.'
+  - name: cdc_haicviz_isa
+    description: 'Raw records of HAICViz - iSA as the adapter hands them on, every value as text: the publisher''s
+      own fields, or for a wide table the adapter''s structural reshaping of them (see the staging model). Only
+      the full load the dataset''s LATEST pointer names is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_haicviz_isa.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - series
+      - topic
+      - value
+      - viewby
+      - yearname
+    columns:
+    - name: series
+      data_type: varchar
+      description: 'Publisher field series, as text; read into series (The group the figure is for: All cases, an
+        age group (such as 50-64 years), a sex, a race, an epidemiologic class (Hospital-onset, Healthcare-associated
+        community-onset, Community-associated), Dialysis, a syndrome, or a PFGE strain type (USA 100, USA 300, Other).)'
+    - name: topic
+      data_type: varchar
+      description: 'Publisher field topic, as text; read into topic (What the figure measures: Case rates or Death
+        rates, Syndromes (share of cases by syndrome), or a PFGE type topic (share of cases by strain type, for
+        all cases or one epidemiologic class).)'
+    - name: value
+      data_type: varchar
+      description: 'Publisher field value, as text; read into value (The published figure for the row''s topic and
+        group: a rate for Case rates and Death rates, or a share of cases (a fraction, unit not stated) for Syndromes
+        and the PFGE topics. Empty in 27 rows on 2026-11-25 (the 1-year age group in 2018, 2020 and 2021, and every
+        PFGE row in 2020 and 2021), and an empty one is never read as zero.)'
+    - name: viewby
+      data_type: varchar
+      description: 'Publisher field viewby, as text; read into viewby (Which breakdown the row belongs to: All cases,
+        Age, Sex, Race, Epi class, Dialysis, Syndromes, or the PFGE topic again. Each view covers the same cases
+        again.)'
+    - name: yearname
+      data_type: varchar
+      description: Publisher field yearname, as text; read into yearname (Surveillance year (2005 to 2021 on 2026-11-25).)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
   - name: cdc_haicviz_mugsi
     description: 'Raw records of HAICViz - MuGSI as the adapter hands them on, every value as text: the publisher''s
       own fields, or for a wide table the adapter''s structural reshaping of them (see the staging model). Only

@@ -4,6 +4,7 @@
 #    Inputs are SQL so the raw source needn't be loaded first.
 # 2. The total-row rule (contract totalRows, generated into the intermediate model): only CDC's 'All cases' rows are
 #    totals, in every view that has one, and a group beside them never is.
+# 3. The fact (marts): every row is kept, and an empty cell says "not published", never a zero.
 version: 2
 unit_tests:
 - name: stg_cdc_haicviz_mugsi_types_year_and_rate_and_keeps_an_empty_rate_empty
@@ -46,3 +47,16 @@ unit_tests:
     - {viewby: Organism, series: Klebsiella pneumoniae, is_total_row: false}
     - {viewby: Age, series: 80+ years, is_total_row: false}
     - {viewby: All cases, series: All cases, is_total_row: true}
+- name: fct_cdc_haicviz_mugsi_keeps_every_row_and_says_when_a_cell_is_empty
+  model: fct_cdc_haicviz_mugsi
+  given:
+  - input: ref('int_cdc_haicviz_mugsi')
+    rows:
+    - {yearname: 2022, organism: CRE, topic: Case Rates, viewby: All cases, series: All cases, value: 6.4, is_total_row: true, _snapshot_id: s1, _raw_sha256: h1}
+    - {yearname: 2022, organism: CRAB, topic: Death Rates, viewby: All cases, series: All cases, value: 0.0, is_total_row: true, _snapshot_id: s1, _raw_sha256: h1}
+    - {yearname: 2022, organism: CRAB, topic: Case Rates, viewby: Sex, series: Male, value: null, is_total_row: false, _snapshot_id: s1, _raw_sha256: h1}
+  expect:
+    rows:
+    - {year: 2022, organism: CRE, stratum: All cases, value: 6.4, value_status: published, is_total_row: true, snapshot_id: s1}
+    - {year: 2022, organism: CRAB, stratum: All cases, value: 0.0, value_status: published, is_total_row: true, snapshot_id: s1}
+    - {year: 2022, organism: CRAB, stratum: Male, value: null, value_status: "not published: the publisher's cell is empty", is_total_row: false, snapshot_id: s1}
