@@ -8,6 +8,7 @@ way Socrata leaves a suppressed field out of a row are the publisher's.
 from __future__ import annotations
 
 import csv
+import functools
 import io
 import json
 from pathlib import Path
@@ -98,8 +99,14 @@ SERIES_WEEK = [
 RECORDS += SERIES_WEEK
 
 
+@functools.cache
+def _registry() -> Registry:
+    """The real catalog, loaded once for this module: loading it is the slow part of every test here."""
+    return load_registry(ROOT)
+
+
 def _build(tmp_path: Path, records: list[dict[str, str]]) -> tuple[Registry, Engine, Path, Any]:
-    reg = load_registry(ROOT)
+    reg = _registry()
     lake = tmp_path / "lake"
     lake.mkdir()
     f = tmp_path / "p.ndjson"
@@ -119,13 +126,11 @@ def _rows(out: Any) -> list[dict[str, str]]:
 
 
 def _mine(question: str) -> dict[str, str]:
-    return next(
-        r for r in _rows(tools.suggest_datasets(load_registry(ROOT), question)) if r["source_id"] == DS
-    )
+    return next(r for r in _rows(tools.suggest_datasets(_registry(), question)) if r["source_id"] == DS)
 
 
 def test_a_plain_disease_question_never_gets_a_percent_of_deaths() -> None:
-    reg = load_registry(ROOT)
+    reg = _registry()
     for question in ("COVID-19", "Influenza", "RSV"):
         assert [s.label for d, s in series_for(reg, question) if d.id == DS] == [], question
 
@@ -145,14 +150,14 @@ def test_a_plain_disease_question_never_gets_a_percent_of_deaths() -> None:
 def test_a_deaths_question_gets_one_series_per_age_group_of_its_own_cause(question: str, cause: str) -> None:
     """However the deaths are asked about, only the cause named answers: an RSV question never also gets the
     Combined series, whose label holds "RSV" too."""
-    reg = load_registry(ROOT)
+    reg = _registry()
     found = [s for d, s in series_for(reg, question) if d.id == DS]
     assert len(found) == 3, question
     assert {s.filters["cause"] for s in found} == {cause}
 
 
 def test_a_bare_deaths_question_names_no_cause() -> None:
-    reg = load_registry(ROOT)
+    reg = _registry()
     for question in ("deaths", "mortality"):
         assert [s for d, s in series_for(reg, question) if d.id == DS] == [], question
 

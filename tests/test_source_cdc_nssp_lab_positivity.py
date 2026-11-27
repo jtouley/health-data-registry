@@ -8,6 +8,7 @@ leaves a suppressed field out of a row are the publisher's.
 from __future__ import annotations
 
 import csv
+import functools
 import io
 import json
 from pathlib import Path
@@ -53,8 +54,14 @@ RECORDS = [
 ]
 
 
+@functools.cache
+def _registry() -> Registry:
+    """The real catalog, loaded once for this module: loading it is the slow part of every test here."""
+    return load_registry(ROOT)
+
+
 def _build(tmp_path: Path, records: list[dict[str, str]]) -> tuple[Registry, Engine, Path, Any]:
-    reg = load_registry(ROOT)
+    reg = _registry()
     lake = tmp_path / "lake"
     lake.mkdir()
     f = tmp_path / "p.ndjson"
@@ -74,9 +81,7 @@ def _rows(out: Any) -> list[dict[str, str]]:
 
 
 def _mine(question: str) -> dict[str, str]:
-    return next(
-        r for r in _rows(tools.suggest_datasets(load_registry(ROOT), question)) if r["source_id"] == DS
-    )
+    return next(r for r in _rows(tools.suggest_datasets(_registry(), question)) if r["source_id"] == DS)
 
 
 def test_a_state_question_about_rsv_test_positivity_routes_here() -> None:
