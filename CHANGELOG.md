@@ -46,6 +46,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- NIS-Child vaccination coverage (`cdc_nis_child_coverage`, CDC data.cdc.gov fhky-rtsk): estimated percent of
+  young children vaccinated by a given age (e.g. by 24 months), by vaccine and dose, place (US, HHS region, state,
+  selected local areas) and birth year or birth cohort, read as published and never added up. Draft contract.
+  `get_series` reads single birth years only (the two- and four-year cohorts overlap them and stay in `query_sql`),
+  and each series' age and dose are draft choices pending a maintainer's review.
+  CDC's 95% interval is kept as the text CDC publishes ('92.2 to 96.1') and returned by `query_sql`; `get_series`
+  shows it once a staging extension splits it into two numbers (#172).
 - SchoolVaxView kindergarten coverage and exemptions (`cdc_schoolvaxview_kindergarten`, CDC data.cdc.gov
   ijqb-a7ye): the percent of kindergartners vaccinated, or with an exemption, by vaccine and dose or exemption
   type, state and school year, as each state reported it, read as published and never added up. Draft contract.

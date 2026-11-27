@@ -108,6 +108,13 @@ outputPorts:
     contractId: cdc_nndss_weekly
     customProperties:
       - {property: hosted, value: true}
+  - name: cdc_nis_child_coverage
+    description: NIS-Child vaccination coverage among children 0-35 months, by vaccine, place and birth year.
+    type: tables
+    version: 0.1.0
+    contractId: cdc_nis_child_coverage
+    customProperties:
+      - {property: hosted, value: true}
   - name: cdc_respnet
     description: RESP-NET hospitalization rates and clinical data (COVID-NET, FluSurv-NET, RSV-NET).
     type: tables
