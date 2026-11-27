@@ -27,6 +27,11 @@ All notable changes to this project are documented here. The format follows
 - Semantic-model versions: CDI, NNDSS and RESP-NET 0.2.0; Detroit annual and ED-visit models 0.1.1.
 - NHSN contract: two quality rules check that the confidence interval is filled wherever the percent resistant
   is, and only there, as the publisher's column descriptions state.
+- The Trusted gate's allowlist can take entries again. A test required it to stay empty, and the gate forbids
+  changing that test in the pull request that adds an entry, so no allowlist pull request could pass. The test
+  now checks that every entry is well-formed instead: it parses, its path is a plain path under an existing
+  top-level directory of this repository (a file a later pull request adds counts), and it has a comment above it
+  saying why.
 ### Changed
 
 - The README is rewritten for clinicians: five setup steps that each say what you'll see (the Start here
@@ -70,6 +75,11 @@ All notable changes to this project are documented here. The format follows
   for again without walking the listing, and one year that can't finish no longer holds the others back. A fetch
   sends exactly the URL the scope check approved, and every redirect stays on the source's own hosts. Valid HTML
   that leaves out optional end tags is read as a browser reads it.
+- SchoolVaxView kindergarten coverage and exemptions (`cdc_schoolvaxview_kindergarten`, CDC data.cdc.gov
+  ijqb-a7ye): the percent of kindergartners vaccinated, or with an exemption, by vaccine and dose or exemption
+  type, state and school year, as each state reported it, read as published and never added up. Draft contract.
+  CDC publishes no confidence intervals here. NA, NReq and the undefined NR and Nreq are no value, never zero, and
+  the published text is kept beside the number.
 - The Trusted gate (`.github/workflows/trusted-gate.yml`, `python -m health_data_registry.ratchet`, `make
   ratchet`): a check a pull request cannot edit, run from main's copy on `pull_request_target` with a read-only
   token, reading the pull request as data only (a required check once the `main` ruleset lists it, #138). It fails

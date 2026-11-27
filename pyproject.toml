@@ -55,6 +55,14 @@ dev = [
     "ruff>=0.6",
     "shellcheck-py>=0.10",
     "types-PyYAML>=6",
+    # The driver's tests need the SDK; dev includes the eval group so `uv sync` installs it for development.
+    { include-group = "eval" },
+]
+# The behaviour eval's question driver (eval/drive.py): the Claude API client that asks each question through the
+# server. Not a server dependency and not a default group: deploy and refresh syncs with --no-dev never install
+# it. The sealed workflow installs it with `uv sync --locked --no-dev --group eval`.
+eval = [
+    "anthropic>=1,<2",
 ]
 # dbt on DuckDB for the transform/ project (raw -> staging -> intermediate -> marts). Not a server dependency:
 # the MCP server only reads what the build produces.
@@ -119,7 +127,7 @@ branch = true
 [tool.mutmut]
 # Mutation tests run on the modules a change touches (scripts/mutate_changed.py, `make mutate`), not the whole tree.
 source_paths = ["src/health_data_registry/", "eval/", "scripts/branch_hygiene.py"]
-also_copy = [".github/", "eval/dev/", "catalog/", "config/", "contracts/", "semantic/", "docs/", "licenses/", "template/", "plugin/", ".claude-plugin/", "scripts/", "tools/", "assets/", "fuzz/", "transform/", "tests/fixtures/", "pyproject.toml", "README.md", "CLAUDE.md"]
+also_copy = [".github/", "eval/dev/", "eval/drive_prompt.md", "catalog/", "config/", "contracts/", "semantic/", "docs/", "licenses/", "template/", "plugin/", ".claude-plugin/", "scripts/", "tools/", "assets/", "fuzz/", "transform/", "tests/fixtures/", "pyproject.toml", "README.md", "CLAUDE.md"]
 pytest_add_cli_args = ["-m", "not network", "-x", "-q", "-p", "no:cacheprovider"]
 # The fuzz harness tests match known findings by the name of the sql_guard or adapter function an error is raised
 # in, which mutmut's trampolines rename; they test fuzz/ (never mutated), so mutmut leaves them out.
