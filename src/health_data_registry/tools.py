@@ -950,12 +950,20 @@ def _dataset_notes(ds: Dataset, m: Any, method: str, got: Sequence[SeriesRow]) -
     if ds.contract.rate_denominator:
         notes.append(f"{ds.id}: rate denominator: {ds.contract.rate_denominator}.")
     pairs = dict(p for col in ds.contract.columns for p in col.flag_codes)
+    zero = next((c.no_cases_code for c in ds.contract.columns if c.no_cases_code), None)
     if pairs:
+        who = ds.entry.agency
         notes.append(
             f"{ds.id}: the flag column gives the publisher's reason for an empty value: "
             + "; ".join(f"'{c}' = {t}" for c, t in pairs.items())
-            + ". '-' means no cases were reported, which is different from data that are unavailable or not "
-            "published; it is shown empty with its flag, never as 0, so no total or rate is worked out from it."
+            + "."
+            + (
+                f" '{zero}' is {who}'s 'no reported cases': the area did not submit any cases. It is read as not "
+                f"reported (the maintainer's declaration in the contract), so a count flagged '{zero}' has no number "
+                "and is never counted as 0: no total, rate or trend point is worked out from it."
+                if zero
+                else ""
+            )
         )
     return notes
 
@@ -1320,18 +1328,25 @@ def query_sql(
     )  # fmt: skip
 
 
+_SUM_RULE_CODES = frozenset({"weekly_sum", "empty_in_sum", "sum_over_subquery"})
+
+
 def _query_sql(engine: Engine, sql: str, fmt: Fmt) -> Result | Out:
     from health_data_registry.sql_guard import SqlRefused
 
     try:
         out = engine.query_sql(sql)
     except (SqlRefused, QueryRefused) as e:
+        code = getattr(e, "code", "refused")
         return message(
             f"That query can't run: {e} The other tools (get_series, describe_dataset) can usually answer the "
             "same question.",
             fmt,
-            refused=getattr(e, "code", "refused"),
-            next_step="Use get_series, get_rate or describe_dataset, which answer most questions without SQL.",
+            refused=code,
+            # A sum rule's refusal gives only the reason; its own next step says what to ask instead.
+            next_step=next_step_for(code)
+            if code in _SUM_RULE_CODES
+            else "Use get_series, get_rate or describe_dataset, which answer most questions without SQL.",
         )
     sources = [out["source"]] if out.get("source") else list(out.get("sources") or [])
     notes = [f"SQL run: {out['sql']}", f"Method: {out['method']}"]

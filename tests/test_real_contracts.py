@@ -97,4 +97,7 @@ def test_nndss_no_reported_cases_stays_empty_with_its_flag(real: tuple[Registry,
         "cdc_nndss_weekly", "weekly_cases", filters={**WEEK, "reporting_area": "DISTRICT OF COLUMBIA"}
     )
     assert out["rows"] == [[None, 1, "-"]]  # no number, one empty value, its flag: never read as 0 (#173)
-    assert "flagged '-' (no reported cases, in the publisher's codebook) is not read as 0" in out["method"]
+    assert (
+        "flagged '-' (no reported cases, in the publisher's codebook) has no number and is never counted as 0"
+        in (out["method"])
+    )

@@ -27,7 +27,7 @@ caveats:
   - "Counts for the most recent reporting years are provisional and can change in later weeks as jurisdictions send late or corrected reports; each week's table is published as it stood that week."
   - "Cases are assigned to the reporting jurisdiction (state of residence); cases whose usual residence is outside the US are counted under Non-U.S. Residents."
   - "Flag U means the jurisdiction could not send data; N means the condition was not reportable there; NN not nationally notifiable; NP notifiable but not published; NC not calculated."
-  - "A flag of '-' with an empty count means no reported cases that week. It is shown empty with its flag, never as 0, so a total or rate that needs it is not given."
+  - "A flag of '-' with an empty count is CDC's 'no reported cases': the jurisdiction did not submit any cases that week. It is read as not reported (the maintainer's declaration), so the count has no number and is never counted as 0: a total, rate or trend point that needs it is not given."
   - "The previous 52-week maximum and year-to-date counts cover only the period when the condition was reportable in that jurisdiction, so they can be incomplete."
   - "Year-to-date counts are cumulative: read the latest week of a year, never sum year-to-date values across weeks."
   - "Candida auris clinical cases and screening (colonization) cases are separate series and are not added together."

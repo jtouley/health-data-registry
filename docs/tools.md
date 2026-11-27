@@ -194,11 +194,11 @@ fetch time and case definition.
 | `sex` | no | Today only both sexes; no loaded source splits these series by sex |
 | `source_id` | no | Only this source, when more than one reports the condition |
 
-**Returns:** `location`, `year`, `value`, `lower`, `upper`, `period_status`, `measure`, `condition`,
-`case_status`, `case_definition`, `source_id`, `retrieved_at`. Then notes: the method, the publisher's web
+**Returns:** `location`, `year`, `value`, `lower`, `upper`, `observation_type`, `period_status`, `flag`,
+`measure`, `condition`, `case_status`, `case_definition`, `source_id`, `retrieved_at`. Then notes: the method, the publisher's web
 address, the main caveats, whether the contract is still a draft, and whether the local copy is a partial sample.
-`lower` and `upper` are filled only where the publisher gives bounds; empty values are missing or suppressed, not
-zeros.
+`lower` and `upper` are filled only where the publisher gives bounds. Empty values are missing, suppressed or not
+reported (CDC's `-`, no reported cases), never zeros; `flag` says which.
 
 **Try:** "How many clinical C. auris cases did Michigan and Ohio report each year from 2022 to 2025?" The
 [README example](../README.md#example) charts CDC's figures for Michigan alone, each year-end count beside CDC's
@@ -240,8 +240,9 @@ from the source's own rule, or "provisional"), `case_source`, `population_source
 the rate is crude and must not be compared with age-standardised GBD or CDC rates.
 
 The population is the Census Bureau's 1 July estimate (Vintage 2025) for states and the nation, 2020–2025. A count
-that is suppressed, covers only part of a place (for example New York State without New York City) or has no
-population gets no rate, and the `flags` column says why.
+that is suppressed, has no number (CDC's `-`, read as not reported), covers only part of a place (for example New
+York State without New York City) or has no population gets no rate, and the `flags` column says why. Counts that
+are not new cases of disease (animal rabies; *C. auris* screening, which finds colonisation) get no rate either.
 
 **Try:** "What was the crude rate of reported legionellosis per 100,000 in Michigan in 2024?"
 
@@ -329,7 +330,8 @@ with a 95% interval.
 **Returns:** a row per rate, then the rate ratio and the rate difference (`what`, `estimate`, `lower_95`,
 `upper_95`, `cases`, `population`, `period_status`, `flags`, `computed`). With fewer than 5 cases in a group, the
 ratio uses an exact conditional interval and the difference has none. A note says if the case definition changed
-between the two years.
+between the two years. When either side gets no rate (for the reasons under [`get_rate`](#get_rate)), it refuses
+and says which side and why.
 
 **Try:** "Is legionellosis more common in Michigan than in Ohio in 2023?"
 
@@ -386,8 +388,9 @@ the same, preceding and following 4 weeks in each of the past 5 years.
 
 **Returns:** `location`, `condition`, `year`, `weeks`, `current_4_week_total`, `historical_mean`, `historical_sd`,
 `ratio`, `lower_limit`, `upper_limit`, `signal` (above, below or within limits), `source_id`, `computed`. A
-week with no number, CDC's `-` (no reported cases) included, is never counted as zero: it refuses instead. A flag means more or fewer reports than usual, not an
-outbreak.
+week with no number, CDC's `-` (read as not reported) included, is never counted as zero: it refuses instead.
+For rare conditions and small places most 4-week windows include a `-` week, so it often refuses there. A signal
+means more or fewer reports than usual, not an outbreak.
 
 **Try:** "Were legionellosis reports in Michigan unusual in week 20 of 2024?"
 
@@ -407,9 +410,11 @@ Results are capped at 5,000 rows, in pages when they are long (see [pages](#long
 
 It refuses anything but a careful read: more than one statement, anything that writes or reads files, functions
 not on its allowlist, joins between tables that aren't declared, and queries that run too long. A sum follows
-the contract's rules too: across places it leaves the publisher's total rows out (the method says so); it never
-adds weekly counts or year-to-date counts across weeks; and an empty value (CDC's `-` included) stops it rather
-than counting as 0. Prefer the named tools: they apply every rule of the contract for you.
+the contract's rules too: across places it leaves the publisher's total rows out of that sum (the method says
+so); it never adds weekly counts or year-to-date counts across weeks; an empty value (CDC's `-` included) stops
+it rather than counting as 0; and it refuses a filter on the count it adds up, which would drop the empty values
+unseen. These rules cover sums only, not other ways of combining values (an average, a product, a largest
+value). Prefer the named tools: they apply every rule of the contract for you.
 
 ## When a tool says no
 
@@ -424,9 +429,10 @@ The common ones:
 | "Rates and estimates can't be added up …" | More than one published rate matches, and rates are never combined | Choose the breakdown it names |
 | "… is a running total, so it is read once per …" or "… is read at one …" | A running total asked for the wrong way | Ask by year, for one place at a time, or at one week |
 | "'…' matches more than one series …" | `compare_rates` needs the same series on both sides | Use the full name of one series |
-| "No rate per 100,000 people is given for '…'" | The counts are not new cases of disease in people (animal rabies; *C. auris* screening, which finds colonisation) | Use `get_series` for the counts, or ask about the clinical cases |
-| "This would add up counts across several weeks …" | Weekly counts of a year undercount it: late reports reach only the year-to-date count | Ask `get_series` for the year, or ask for one week |
-| "This sum includes a value the publisher left empty …" | `query_sql` met an empty value (no reported cases, unavailable or suppressed), which is never counted as 0 | Ask for the rows without adding them up, or use `get_series` |
+| "No rate per 100,000 people is given for '…'" | The counts are not new cases of disease in people (animal rabies; *C. auris* screening, which finds colonisation) | Use `get_series` for the counts, or, for *C. auris*, ask about the clinical cases |
+| "This would add up counts across several weeks …" | Adding up a year's weekly counts gives too few cases: late reports reach only the year-to-date count | Ask `get_series` for the year, or ask for one week |
+| "This sum includes a count that has no number …" or "This sum filters on the count it adds up …" | `query_sql` met a count with no number (CDC's `-`, unavailable or suppressed), which is never counted as 0 or left out unseen | Ask for the rows without adding them up, or use `get_series` |
+| "A rate for … can't be worked out …" | `compare_rates`: one side gets no rate (see [`get_rate`](#get_rate)) | Use `get_series` for the counts on that side |
 | "Population counts (Census) aren't loaded yet …" | `get_rate` has no denominator on this setup | Use `get_series`, or a published rate |
 | "… could not be reached to download …" | A restricted source (WHO) is fetched from the publisher, and the publisher's site didn't answer | Try again in a few minutes |
 | "The hub release … has no file …" or "… does not list …" | The hub release the server reads from is incomplete | Try again later, or [open an issue](https://github.com/jtouley/health-data-registry/issues) |

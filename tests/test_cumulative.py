@@ -71,7 +71,7 @@ version: 0.1.0
 dimensions:
   - {name: state, column: area, type: categorical, non_additive: false}
   - {name: year, column: year, type: time, non_additive: false}
-  - {name: week, column: week, type: time, non_additive: false}
+  - {name: week, column: week, type: time, non_additive: true, non_additive_reason: late reports reach only the running total}
 measures:
   - {name: wk, column: wk, kind: count}
   - {name: ytd, column: ytd, kind: running_count}
@@ -241,7 +241,7 @@ def test_weekly_counts_are_never_the_annual_figure(tmp_path: Path) -> None:
     # running total), so the compiler refuses it (issue #173); one row per week is still read.
     with pytest.raises(QueryRefused) as e:
         eng.query_metric("toy_cases", "weekly", filters={"state": ["MICHIGAN"]}, group_by=["year"])
-    assert e.value.code == "weekly_sum" and "year-to-date count at the year's last week" in str(e.value)
+    assert e.value.code == "weekly_sum" and "year-to-date count at the year's last week" in e.value.next_step
     weekly = eng.query_metric(
         "toy_cases", "weekly", filters={"state": ["MICHIGAN"]}, group_by=["year", "week"]
     )
@@ -413,8 +413,9 @@ def test_compiled_running_total_sql_is_exact(tmp_path: Path) -> None:
 
 
 SEQ_SEMANTIC = SEMANTIC.replace(
-    "  - {name: week, column: week, type: time, non_additive: false}\n",
-    "  - {name: week, column: week, type: time, non_additive: false}\n  - {name: epi_seq, column: week, type: time, non_additive: false}\n"
+    "  - {name: week, column: week, type: time, non_additive: true, non_additive_reason: late reports reach only the running total}\n",
+    "  - {name: week, column: week, type: time, non_additive: true, non_additive_reason: late reports reach only the running total}\n"
+    "  - {name: epi_seq, column: week, type: time, non_additive: true, non_additive_reason: late reports reach only the running total}\n"
     "  - {name: span_id, column: year, type: time, non_additive: false}\n",
 ).replace(
     "  - {name: weekly,",
@@ -498,4 +499,4 @@ def test_no_flagged_cell_is_a_bare_zero_or_a_bare_empty(tmp_path: Path, code: st
     assert row["value"] is None and row["period_status"].startswith("no number published")
     if code == "-":
         assert "'-' = no reported cases" in row["period_status"]
-        assert "never read as 0" in row["period_status"]
+        assert "never counted as 0" in row["period_status"]

@@ -396,13 +396,20 @@ def sample_blocked_message(dataset: str, quality: Mapping[str, Any] | None) -> s
     blocking check still fails the command that built it: the build never fails open (issue #173).
     """
     q = quality or {}
-    parts = _blocking_parts(q) if q.get("tool") == "contract-rules" else ["no data checks have run on it"]
-    if not parts:
-        return None
+    if q.get("tool") != "contract-rules":
+        lead = f"{dataset}: no data checks have run on this development sample."
+    else:
+        parts = _blocking_parts(q)
+        if not parts:
+            return None
+        lead = (
+            f"{dataset}: on this development sample, {' and '.join(parts)}. A check that judges the whole load (a "
+            "row count, or that some counts are present) can fail only because the sample stops at --max-rows "
+            "rows, so look at that first."
+        )
     return (
-        f"{dataset}: on this development sample, {' and '.join(parts)}. The sample stays as the local copy for "
-        "development only and is never published. Compare the data with the publisher's page, then refresh "
-        "without --max-rows, or have a maintainer fix the contract."
+        f"{lead} The sample stays as the local copy for development only and is never published. Compare the "
+        "data with the publisher's page, then refresh without --max-rows, or have a maintainer fix the contract."
     )
 
 

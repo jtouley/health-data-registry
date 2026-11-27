@@ -361,6 +361,13 @@ def no_rate_reason(ds: Dataset, s: Series) -> tuple[str, str] | None:
     return None
 
 
+def _no_number_why(ds: Dataset, o: Obs) -> str:
+    """Why a count has no number, in the publisher's words when its flag says (NNDSS '-': no reported cases)."""
+    code = "" if o.flag is None else str(o.flag)
+    meaning = dict(pair for col in ds.contract.columns for pair in col.flag_codes).get(code) if code else None
+    return f"has no number (publisher flag '{code}' = {meaning})" if meaning else "suppressed or missing"
+
+
 def _not_human(matches: Sequence[tuple[Dataset, Series]]) -> list[str]:
     """For each matched label whose counts take no rate per 100,000 people (a declaration says why), one line."""
     return list(
@@ -437,7 +444,7 @@ def _rate_rows(
                     "in the source, so no total and no rate (it is not zero)"
                 )
             elif o.value is None:
-                flags.append("count suppressed or missing in the source, so no rate (it is not zero)")
+                flags.append(f"count {_no_number_why(ds, o)} in the source, so no rate (it is not zero)")
             elif not is_count(o.value):
                 flags.append(
                     f"the source's count {o.value:g} is not a whole, non-negative number of cases, so no rate"
@@ -693,9 +700,11 @@ def get_trend(
             return message(
                 f"No trend in rates per 100,000 people is given for '{condition}': "
                 + "; ".join(_not_human(matches))
-                + '. Ask again with fit_on="counts" for a trend in the counts themselves.',
+                + ".",
                 fmt,
                 refused=_no_rate_code(matches),
+                next_step='Ask again with fit_on="counts" for a trend in the counts themselves, or use get_series '
+                "to read them as published.",
             )
         skipped = _not_human(matches)
         matches = [(ds, s) for ds, s in matches if not no_rate_reason(ds, s)]
@@ -720,7 +729,7 @@ def get_trend(
                 seg = [o for o in got if o.year in years]
                 left_out = [f"{o.year} not the year's total ({o.not_total})" for o in seg if o.not_total]
                 left_out += [
-                    f"{o.year} suppressed or missing" for o in seg if o.value is None and not o.not_total
+                    f"{o.year} {_no_number_why(ds, o)}" for o in seg if o.value is None and not o.not_total
                 ]
                 if not include_provisional:
                     left_out += [
@@ -1026,8 +1035,8 @@ def check_signal(
             # An empty week is never a zero, whatever its flag ('-' included): say which flag it carries.
             codes = sorted({str(flags[(y, w)]) for w in span if weekly[(y, w)] is None and flags.get((y, w))})
             why = "; ".join(f"'{c}' = {meaning[c]}" if c in meaning else f"'{c}'" for c in codes)
-            return f"{y} weeks {first}-{first + WINDOW - 1} include a week with no number" + (
-                f" (publisher flag {why})" if why else " (suppressed or missing)"
+            return f"{y} weeks {first}-{first + WINDOW - 1} include a week with no number, " + (
+                f"publisher flag {why}" if why else "suppressed or missing"
             )
         return float(sum(v for v in vals if isinstance(v, float)))
 
@@ -1041,10 +1050,15 @@ def check_signal(
     if problems:
         return message(
             f"CDC's historical-limits check needs complete weekly counts for this year and the past {HISTORY_YEARS} "
-            f"years, and some are missing ({'; '.join(problems[:3])}"
+            f"years, and some weeks are not in the data or have no number: {'; '.join(problems[:3])}"
             + ("; and more" if len(problems) > 3 else "")
-            + "). A week with no number is never counted as zero, so no signal is shown. Use get_series for what "
-            "is there.",
+            + ". A week with no number is never counted as 0, so no signal is shown"
+            + (
+                ": CDC's '-' (no reported cases) is read as not reported, never as zero cases."
+                if any("no reported cases" in p for p in problems)
+                else "."
+            )
+            + " Use get_series for what is there.",
             fmt,
             refused="incomplete_history",
         )

@@ -71,8 +71,9 @@ NNDSS_ROWS: list[dict[str, Any]] = [
     nndss("US RESIDENTS", CLIN, 2024, 52, m1="40", m3="400", summary=True),
     nndss("EAST NORTH CENTRAL", CLIN, 2024, 52, m1="10", m3="100", summary=True),
     nndss("TOTAL", CLIN, 2024, 52, m1="41", m3="401", summary=True),
-    # Legionellosis in Ohio, weeks 1-20 of 2019-2024, for the weekly sums and the signal check. The year-to-date
-    # count at week 20 of 2024 is larger than the sum of its weeks: 12 late reports reached only the running total.
+    # Legionellosis in Ohio, weeks 1-20 of 2019-2024, for the weekly sums and the signal check. In 2024 week 16 is
+    # '-' and week 21 is the year's last published week: its year-to-date count (51) is larger than the sum of the
+    # year's weeks (39), because 12 late reports reached only the running total.
     *(r for y in range(2019, 2024) for r in weeks("OHIO", LEGIO, y, [2] * 20)),
     *weeks("OHIO", LEGIO, 2024, [2] * 15 + [None] + [2] * 4),
     nndss("OHIO", LEGIO, 2024, 21, m1="1", m3="51"),
@@ -123,7 +124,7 @@ def test_a_dash_year_comes_back_as_not_reported_never_zero(served: tuple[Registr
     (own,) = [r for r in got if r["observation_type"] == "year_end_ytd"]
     assert own["value"] is None  # was 0
     assert own["flag"] == "-"
-    assert "no reported cases" in own["period_status"] and "never read as 0" in own["period_status"]
+    assert "no reported cases" in own["period_status"] and "never counted as 0" in own["period_status"]
 
 
 def test_get_rate_gives_no_rate_for_a_dash_year(served: tuple[Registry, Engine]) -> None:
@@ -178,17 +179,26 @@ def test_query_sql_never_adds_a_dash_value_as_zero(served: tuple[Registry, Engin
 
 
 def test_query_sql_refuses_adding_weeks_into_a_year(served: tuple[Registry, Engine]) -> None:
-    _reg, eng = served
-    sql = "SELECT sum(m1) FROM cdc_nndss_weekly WHERE label = 'Legionellosis' AND year = 2023 AND states = 'OHIO'"
+    reg, eng = served
+    sql = "SELECT sum(m1) FROM cdc_nndss_weekly WHERE label = 'Legionellosis' AND year = 2024 AND states = 'OHIO'"
     out = tools.query_sql(eng, sql, fmt="json")
-    assert refused(out) == "weekly_sum"  # was 40 against a year-to-date count of 40+ late reports
-    assert "year-to-date" in out["message"] and "last week" in out["message"]
+    assert refused(out) == "weekly_sum"  # weeks 1-21 summed to 39 (or stopped at week 16's '-')
+    assert "late" in out["message"] and "year-to-date count at the year's last week" in out["next_step"]
+    # The right answer is there: the year-to-date count at the year's last published week, 51.
+    got = rows(tools.get_series(reg, eng, condition=LEGIO, locations=["Ohio"], year_start=2024, year_end=2024,
+                                fmt="json"))  # fmt: skip
+    (own,) = [r for r in got if r["observation_type"] == "year_end_ytd"]
+    assert own["value"] == 51
+    sql = sql.replace("2024", "2023")
     # Running totals added across weeks count the same cases again and again: refused too.
     out = tools.query_sql(eng, sql.replace("sum(m1)", "sum(m3)"), fmt="json")
     assert refused(out) == "weekly_sum"
     # One week, or one row per week, is fine: nothing is added across weeks.
     one_week = sql.replace("sum(m1)", "sum(m1) AS n") + " AND week = 20"
     assert rows(tools.query_sql(eng, one_week, fmt="json")) == [{"n": 2}]
+    assert rows(
+        tools.query_sql(eng, sql.replace("sum(m1)", "sum(m1) AS n") + " AND week IN (20)", fmt="json")
+    ) == [{"n": 2}]
     by_week = rows(tools.query_sql(eng, sql.replace("sum(m1)", "week, sum(m1) AS n") + " GROUP BY week",
                                    fmt="json"))  # fmt: skip
     assert len(by_week) == 20
@@ -200,11 +210,56 @@ def test_the_weekly_metric_is_never_added_into_a_year(served: tuple[Registry, En
         eng.query_metric(NNDSS, "weekly_cases", filters={"condition": LEGIO, "reporting_area": "OHIO"},
                          group_by=["mmwr_year"])  # fmt: skip
     assert e.value.code == "weekly_sum"  # was 40 for each full year
-    assert "last week" in str(e.value)
+    assert (
+        "late" in str(e.value) and "last week" in e.value.next_step
+    )  # the reason, then the action, once each
+    assert "last week" not in str(e.value)
     # By week, as check_signal reads it, is unchanged.
     out = eng.query_metric(NNDSS, "weekly_cases", filters={"condition": LEGIO, "reporting_area": "OHIO",
                            "mmwr_year": 2023}, group_by=["mmwr_week"])  # fmt: skip
     assert len(out["rows"]) == 20
+
+
+def test_a_year_with_one_dash_week_still_has_its_count_and_rate(served: tuple[Registry, Engine]) -> None:
+    """Not over-refusing: Ohio 2024 has '-' in week 16, but its year-to-date count at week 21 has a number."""
+    reg, eng = served
+    got = rows(tools.get_series(reg, eng, condition=LEGIO, locations=["Ohio"], year_start=2024, year_end=2024,
+                                fmt="json"))  # fmt: skip
+    (own,) = [r for r in got if r["observation_type"] == "year_end_ytd"]
+    assert own["value"] == 51 and not own["period_status"].startswith(("incomplete", "no number"))
+    (rate,) = rows(analysis.get_rate(reg, eng, condition=LEGIO, year=2024, locations=["Ohio"], fmt="json"))
+    assert rate["cases"] == 51 and rate["rate_per_100k"] == 4.25  # 51 / 1,200,000 x 100,000
+
+
+@pytest.mark.parametrize(
+    ("filters", "group_by", "allowed"),
+    [
+        ({"mmwr_year": 2024, "mmwr_week": [20]}, [], True),
+        ({"mmwr_year": 2024, "mmwr_week": [19, 20]}, [], False),
+        ({"mmwr_year": 2024}, ["mmwr_week"], True),
+    ],
+)
+def test_the_weekly_rule_reads_one_week_however_it_is_pinned(
+    served: tuple[Registry, Engine], filters: dict[str, Any], group_by: list[str], allowed: bool
+) -> None:
+    _reg, eng = served
+    for metric in ("weekly_cases", "us_resident_weekly_cases"):
+        f = {
+            "condition": LEGIO,
+            **({"reporting_area": "OHIO"} if metric == "weekly_cases" else {}),
+            **filters,
+        }
+        if allowed:
+            assert eng.query_metric(NNDSS, metric, filters=f, group_by=group_by)["rows"]
+        else:
+            with pytest.raises(QueryRefused) as e:
+                eng.query_metric(NNDSS, metric, filters=f, group_by=group_by)
+            assert e.value.code == "weekly_sum", metric
+    with pytest.raises(QueryRefused) as e:
+        eng.query_metric(
+            NNDSS, "us_resident_weekly_cases", filters={"condition": LEGIO}, group_by=["mmwr_year"]
+        )
+    assert e.value.code == "weekly_sum"
 
 
 # ------------------------------------------------------------------------------- 3. total rows never in a sum
@@ -228,6 +283,35 @@ def test_query_sql_leaves_total_rows_out_of_a_sum_across_areas(served: tuple[Reg
     assert rows(tools.query_sql(eng, us, fmt="json")) == [{"cases": 400}]
     per_area = sql.replace("sum(m3) AS cases", "states, sum(m3) AS cases") + " GROUP BY states"
     assert {r["states"]: r["cases"] for r in rows(tools.query_sql(eng, per_area, fmt="json"))}["TOTAL"] == 401
+    # Two different areas in IN, one of them a total row, cross areas: the total row is left out, with the note.
+    two = sql.replace("states <> 'NEW JERSEY'", "states IN ('MICHIGAN', 'TOTAL')")
+    out = tools.query_sql(eng, two, fmt="json")
+    assert rows(out) == [{"cases": 21}] and any("left out" in n for n in out["notes"])
+    # A listing beside a window sum keeps every row it lists; only the sum leaves the total rows out.
+    listing = (
+        "SELECT states, m3, sum(m3) OVER (PARTITION BY week) AS cases FROM cdc_nndss_weekly WHERE label = "
+        "'Candida auris, clinical' AND year = 2024 AND week = 52 AND states <> 'NEW JERSEY'"
+    )
+    got = {r["states"]: r for r in rows(tools.query_sql(eng, listing, fmt="json"))}
+    assert set(got) == {"MICHIGAN", "US RESIDENTS", "EAST NORTH CENTRAL", "TOTAL"}
+    assert {r["cases"] for r in got.values()} == {21}
+
+
+def test_query_sql_never_skips_an_empty_value_in_a_sum(served: tuple[Registry, Engine]) -> None:
+    _reg, eng = served
+    base = (
+        "FROM cdc_nndss_weekly WHERE label = 'Candida auris, clinical' AND year = 2024 AND week = 52 "
+        "AND states IN ('NEW JERSEY', 'MICHIGAN')"
+    )
+    # coalesce(m3, 0) is the old 0 reading by hand: still stopped.
+    assert refused(tools.query_sql(eng, f"SELECT sum(coalesce(m3, 0)) {base}", fmt="json")) == "empty_in_sum"
+    # Dropping the empty values first would make a partial total look whole: refused.
+    out = tools.query_sql(eng, f"SELECT sum(m3) {base} AND m3 IS NOT NULL", fmt="json")
+    assert refused(out) == "empty_in_sum" and "filters on the count it adds up" in out["message"]
+    # Counting the empty values tests them, it doesn't add them up: answered.
+    counted = rows(tools.query_sql(eng, f"SELECT sum(CASE WHEN m3 IS NULL THEN 1 ELSE 0 END) AS n {base}",
+                                   fmt="json"))  # fmt: skip
+    assert counted == [{"n": 1}]
 
 
 # ------------------------------------------------------------------------------- 4. no rate from screening
@@ -318,7 +402,7 @@ def test_the_guard_applies_each_sum_rule() -> None:
     from health_data_registry.sql_guard import SqlRefused
 
     q = _guard("SELECT sum(m3) FROM cdc_nndss_weekly WHERE week = 52")
-    assert "NOT COALESCE((NOT cdc_nndss_weekly.location2 IS NULL), FALSE)" in q.sql and q.notes
+    assert "FILTER(WHERE NOT COALESCE((NOT cdc_nndss_weekly.location2 IS NULL), FALSE))" in q.sql and q.notes
     assert "ERROR('hdr-empty-value-in-sum')" in q.sql
     # One area, or one row per area (a window partition too): nothing to leave out.
     assert not _guard("SELECT sum(m3) FROM cdc_nndss_weekly WHERE week = 52 AND states = 'TOTAL'").notes
@@ -333,7 +417,15 @@ def test_the_guard_applies_each_sum_rule() -> None:
     # A sum over a WITH table built from a ruled table can't be checked, so it is refused.
     with pytest.raises(SqlRefused) as e:
         _guard("WITH w AS (SELECT * FROM cdc_nndss_weekly) SELECT sum(m3) FROM w")
-    assert e.value.code == "non_additive"
+    assert e.value.code == "sum_over_subquery"
+    # A table with no sum rules (an empty SumRules) leaves a sum over a WITH table alone.
+    from health_data_registry.sql_guard import SumRules, guard_sql
+
+    plain = guard_sql("WITH w AS (SELECT n FROM t) SELECT sum(n) FROM w", allowed_tables={"t": frozenset({"n"})},
+                      sum_rules={"t": SumRules()})  # fmt: skip
+    assert "SUM(n)" in plain.sql and not SumRules()
+    # A per-week column only tested inside a sum is not added up across weeks.
+    assert _guard("SELECT sum(CASE WHEN m1 IS NULL THEN 1 ELSE 0 END) FROM cdc_nndss_weekly").sql
     # In a join, only the ruled table's columns are wrapped, and its total rows are left out only when a sum
     # reads it; a sum of the other table's column alone leaves the join's rows as they are.
     joined = _guard("SELECT sum(m3), sum(popestimate) FROM cdc_nndss_weekly AS n JOIN census_county_pop AS c "
@@ -369,3 +461,48 @@ def test_not_incidence_is_declared_on_the_condition_column_for_catalogued_labels
         (root / "contracts" / "cdc_nndss_weekly.odcs.yaml").write_text(contract)
         with pytest.raises(RegistryError, match=why):
             load_registry(root)
+
+
+def test_only_the_guards_own_error_is_read_as_an_empty_value() -> None:
+    """A caller's literal that quotes the sentinel in some other engine error is not an empty_in_sum refusal."""
+    import duckdb
+
+    from health_data_registry.sql_guard import EMPTY_IN_SUM, GuardedQuery, SqlRefused, harden, run_guarded
+
+    con = duckdb.connect()
+    harden(con)
+    spoof = GuardedQuery(sql=f"SELECT CAST('{EMPTY_IN_SUM}' AS INTEGER)", tables=frozenset(), limit=1)
+    with pytest.raises(SqlRefused) as e:
+        run_guarded(con, spoof)
+    assert e.value.code != "empty_in_sum"
+
+
+@pytest.mark.parametrize(
+    ("quality", "says"),
+    [
+        ({"tool": "contract-rules", "results": [{"test": "r1", "status": "fail", "severity": "error"}]},
+         "r1 failed"),
+        ({"tool": "contract-rules", "rule_errors": [{"test": "r2", "error": "x", "severity": "error"}]},
+         "r2 could not run"),
+        ({}, "no data checks have run on this development sample"),
+    ],
+)  # fmt: skip
+def test_a_blocked_sample_names_its_own_kind(quality: dict[str, Any], says: str) -> None:
+    from health_data_registry.quality import sample_blocked_message
+
+    msg = sample_blocked_message("toy", quality)
+    assert msg and says in msg and "never published" in msg
+    assert ("--max-rows rows" in msg) == (quality.get("tool") == "contract-rules")
+
+
+def test_running_totals_along_a_dimension_make_it_non_additive() -> None:
+    import yaml
+
+    from health_data_registry.registry import SemanticModel
+
+    doc = yaml.safe_load((ROOT / "semantic" / "cdc_nndss_weekly.yaml").read_text())
+    week = next(d for d in doc["dimensions"] if d["name"] == "mmwr_week")
+    week["non_additive"] = False
+    del week["non_additive_reason"]
+    with pytest.raises(ValueError, match="declare non_additive: true"):
+        SemanticModel.model_validate(doc)

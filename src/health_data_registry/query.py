@@ -69,11 +69,12 @@ NEXT_STEPS: dict[str, str] = {
     "one on its own row.",
     "not_a_human_count": "Use get_series to read these counts as published; they are not cases in people, so "
     "there is no rate per 100,000 people.",
-    "not_incidence": "Use get_series to read these counts as published, or ask about the clinical cases, which "
-    'do take a rate. For a trend in the counts themselves, ask get_trend with fit_on="counts".',
-    "weekly_sum": "Use get_series for each year's count, which reads the year-to-date figure at the year's last "
-    "week, or ask for one week at a time.",
+    "not_incidence": "Use get_series to read these counts as published. A trend in the counts themselves is "
+    'available from get_trend with fit_on="counts".',
+    "weekly_sum": "For a year's count, use get_series, which reads the year-to-date count at the year's last week, "
+    "or ask for one week at a time.",
     "empty_in_sum": "Ask for the rows without adding them up, to see each value with its flag, or use get_series.",
+    "sum_over_subquery": "Write the sum directly over the catalogued table, without an inner query or WITH table.",
     "bad_page": "Ask for page=1, or leave page out.",
     "no_such_page": "Ask for a page the answer has, or leave page out for page 1.",
     "bad_pin": "Copy the Next line from the previous page exactly, or ask again without page and pin.",
@@ -104,15 +105,19 @@ def _q(ident: str) -> str:
 
 
 def within_period(sem: Any) -> str | None:
-    """The dimension a source's running total is kept along within each period (NNDSS: mmwr_week), or None.
+    """The column a source's running total is kept along within each period (NNDSS: week), or None.
 
-    Declared by the semantic model's cumulative_latest metric (its order_by). In such a source, late reports are
-    added to the running total, not to the week they belong to, so a count per week is never added up across
-    that dimension into a period's total: the running total at the period's last week is the period's count.
+    Declared by the semantic model: its cumulative_latest metrics' order_by, which SemanticModel validation
+    requires to name one column, through dimensions declared non_additive. In such a source, late reports are
+    added to the running total, not to the week they belong to, so a count per week is never added up across that
+    column into a period's total: the running total at the period's last week is the period's count.
     """
-    return next(
-        (str(m.order_by) for m in sem.metrics if m.aggregation == "cumulative_latest" and m.order_by), None
-    )
+    cols = {
+        sem.dimension(str(m.order_by)).column
+        for m in sem.metrics
+        if m.aggregation == "cumulative_latest" and m.order_by
+    }
+    return cols.pop() if len(cols) == 1 else None
 
 
 @dataclass(frozen=True)
@@ -160,14 +165,19 @@ def compile_metric(
                 "row each.",
             )
     within = within_period(sem)
+    on_within = [
+        d.name for d in sem.dimensions if d.column == within
+    ]  # every name the model gives that column
     if (
         metric.aggregation == "sum"
         and measure.kind == "count"
-        and within is not None
-        and within not in group_by
-        and not is_single_value((filters or {}).get(within))
+        and on_within
+        and not any(d in group_by or is_single_value((filters or {}).get(d)) for d in on_within)
     ):
-        raise QueryRefused("weekly_sum", weekly_sum_message(within))
+        raise QueryRefused("weekly_sum", weekly_sum_message(str(within)))
+    # The running-total column held under one of its names holds it under all of them.
+    held_within = any(d in group_by or is_single_value((filters or {}).get(d)) for d in on_within)
+    pinned_within = on_within if held_within else []
 
     def dim(name: str) -> str:
         if name not in dims:
@@ -225,7 +235,9 @@ def compile_metric(
     group_cols = [dim(g) for g in group_by]
     # Hard rule 2: a sum never adds across a dimension whose values overlap or count different things.
     loose = unpinned_non_additive(
-        sem, metric, [*group_by, *(d for d, v in (filters or {}).items() if is_single_value(v))]
+        sem,
+        metric,
+        [*group_by, *(d for d, v in (filters or {}).items() if is_single_value(v)), *pinned_within],
     )
     if loose:
         # Plain words only (hard rule 12): each dimension's clinical description and the reason its values can't
@@ -296,8 +308,9 @@ def compile_metric(
             + ". A group with any suppressed or missing value has no total (never a partial sum); "
             "suppressed_rows gives how many of its values were empty."
             + (
-                f" An empty value flagged '{zero}' (no reported cases, in the publisher's codebook) is not read as 0: "
-                "it stays empty with its flag, so a group that has one has no total."
+                f" A count flagged '{zero}' (no reported cases, in the publisher's codebook) has no number and is "
+                "never counted as 0: it is read as not reported (the maintainer's declaration in the contract), so a "
+                "group that has one has no total."
                 if zero is not None
                 else ""
             )
@@ -329,11 +342,13 @@ def compile_metric(
 
 def non_additive_columns(ds: Dataset) -> frozenset[str]:
     """Columns a sum in query_sql must filter to one value or group by: the semantic model's non_additive
-    dimensions, and every categorical dimension a model leaves undeclared (fail closed)."""
+    dimensions, and every categorical dimension a model leaves undeclared (fail closed). The period a running
+    total is kept along (within_period) is left to sum_rules, whose refusal says why weeks never add up."""
+    within = within_period(ds.semantic)
     return frozenset(
         d.column
         for d in ds.semantic.dimensions
-        if d.non_additive or (d.non_additive is None and d.type == "categorical")
+        if (d.non_additive or (d.non_additive is None and d.type == "categorical")) and d.column != within
     )
 
 
@@ -356,7 +371,7 @@ def sum_rules(ds: Dataset) -> SumRules:
         per_week=frozenset(
             m.column.casefold() for m in sem.measures if within and m.kind in ("count", "running_count")
         ),
-        within=sem.dimension(within).column.casefold() if within else None,
+        within=within.casefold() if within else None,
     )
 
 
@@ -459,9 +474,9 @@ def _compile_cumulative(
     )
     zero = m_flag.no_cases_code if m_flag else None
     # A period with no number (e.g. '-' in every week) stays empty, with its flag: the codebook's "no reported
-    # cases" code is never read as 0, so it is never added up or turned into a rate (issue #173).
+    # cases" code is never counted as 0, so it is never added up or turned into a rate (issue #173).
     not_zero = (
-        f" || CASE WHEN c.last_flag = {_lit(zero)} THEN '; shown as published, never read as 0' ELSE '' END"
+        f" || CASE WHEN c.last_flag = {_lit(zero)} THEN '; read as not reported, never counted as 0' ELSE '' END"
         if zero is not None
         else ""
     )
@@ -581,6 +596,13 @@ class Engine:
     # this engine's own connection (stdio, the CLI): see isolation.py for why.
     isolation: Any = None
     _sources: list[Any] = field(default_factory=list)  # isolation.Source per table, as connect() set them up
+    _sum_rules: dict[str, SumRules] = field(default_factory=dict)  # built once, on the first query_sql
+
+    def sum_rules(self) -> dict[str, SumRules]:
+        """Each source's SumRules for query_sql, built once from the registry (it never changes in a process)."""
+        if not self._sum_rules:
+            self._sum_rules = {ds.id: sum_rules(ds) for ds in self.registry}
+        return self._sum_rules
 
     def connect(self) -> duckdb.DuckDBPyConnection:
         # Every read starts here: a call past its deadline (one the hosted guard gave up on) stops before it
@@ -1035,7 +1057,7 @@ class Engine:
             max_rows=MAX_ROWS,
             ordered=True,
             non_additive={ds.id: non_additive_columns(ds) for ds in self.registry},
-            sum_rules={ds.id: sum_rules(ds) for ds in self.registry},
+            sum_rules=self.sum_rules(),
         )
         for t in sorted(q.tables):
             if t in self.registry.datasets:
@@ -1117,6 +1139,15 @@ def envelope(
     if m.catalog_status != "reviewed":
         notes.insert(0, "This dataset's contract is a draft that no maintainer has reviewed yet.")
     if m.partial:
+        # A development sample (refresh --max-rows) is served locally even when a blocking check failed on it;
+        # the refresh exited 1 for it, and every answer from it says so too.
+        from health_data_registry.quality import sample_blocked_message
+
+        checked = (m.quality or {}).get(
+            "tool"
+        ) == "contract-rules"  # a live read's partial copy has no checks
+        if checked and (blocked := sample_blocked_message(ds.id, m.quality)):
+            notes.insert(0, blocked)
         notes.insert(0, "This snapshot is a partial sample, not the full dataset.")
     if truncated:
         notes.insert(0, f"Only the first {MAX_ROWS} rows are shown.")

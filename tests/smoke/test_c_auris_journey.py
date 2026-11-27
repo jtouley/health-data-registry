@@ -307,7 +307,7 @@ def test_trial_measles_returns_indigenous_and_imported_apart(
     assert journey.registry.get(NNDSS).contract.flag_column("m3").no_cases_code == "-"  # type: ignore[union-attr]
     (imported_2024,) = [r for r in rows if r["condition"] == "Measles, Imported" and r["year"] == "2024"]
     assert "'-' = no reported cases" in imported_2024["period_status"], imported_2024
-    assert "never read as 0" in imported_2024["period_status"], imported_2024
+    assert "never counted as 0" in imported_2024["period_status"], imported_2024
     assert_provenance_on_every_number(journey, out)
     scored = score_question(trials["trial-29479c90"], journey.calls, journey.responses, client.answer([out]))
     assert scored.a.passed, scored

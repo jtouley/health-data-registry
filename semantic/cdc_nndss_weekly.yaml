@@ -1,14 +1,17 @@
 dataset: cdc_nndss_weekly
 # 0.2.0: weekly counts are added up for one condition label at a time, never across labels.
-version: 0.2.0
+# 0.3.0 (issue #173): weekly counts are never added up across weeks (mmwr_week is non-additive), and an empty
+# count flagged '-' is never counted as 0, so a group or year that has one has no total.
+version: 0.3.0
 # reporting_area is additive only because the contract's totalRows drops the summary areas from every sum that
 # excludes totals (its structural check: 51 state/DC rows + New York City = US RESIDENTS); validate refuses a summed
 # metric that keeps the total rows and adds areas. Weeks and years are separate periods; running totals are read at
-# one week (single_value_of).
+# one week (single_value_of). Weeks are non-additive: late reports reach only the year-to-date count, so a year's
+# weekly counts add up to less than its year-to-date count at the last week (annual_cases reads that).
 dimensions:
   - {name: reporting_area, column: states, type: categorical, non_additive: false, description: "State, New York City, territory, census division or US summary area where the cases were reported (by residence)."}
   - {name: mmwr_year, column: year, type: time, non_additive: false, description: "MMWR (epidemiological) year."}
-  - {name: mmwr_week, column: week, type: time, non_additive: false, description: "MMWR week within the year (1-52 or 53)."}
+  - {name: mmwr_week, column: week, type: time, non_additive: true, non_additive_reason: "late reports reach only the year-to-date count, so a year's weekly counts add up to less than the year's own count", description: "MMWR week within the year (1-52 or 53)."}
   - name: condition
     column: label
     type: categorical

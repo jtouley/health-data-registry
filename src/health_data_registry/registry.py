@@ -562,7 +562,7 @@ class Column:
     # Labels the publisher renamed between years: (later label, the earlier label it continues).
     renamed_labels: tuple[tuple[str, str], ...] = ()
     # The flag code the publisher's codebook defines as "no reported cases" (NNDSS: '-'). An empty count with it
-    # is shown empty with that meaning: never read as 0, added up or turned into a rate (issue #173).
+    # has no number and keeps that meaning: never counted as 0, added up or turned into a rate (issue #173).
     no_cases_code: str | None = None
     # Condition labels whose counts are not new cases of disease in the population (NNDSS: C. auris screening,
     # which counts colonisation found by screening), each with the reason in plain words: (label, why). Declared
@@ -1110,6 +1110,23 @@ class SemanticModel(_Strict):
                 )
             _check_uncertainty(metric, m, measures)
         dims = {d.name: d for d in self.dimensions}
+        # A running total kept within each period (cumulative_latest's order_by) makes that dimension one whose
+        # per-period counts never add up to the period (late reports reach only the running total): the model
+        # declares it non_additive, and every such metric names the same one (query.within_period reads it).
+        within = {
+            str(m.order_by) for m in self.metrics if m.aggregation == "cumulative_latest" and m.order_by
+        }
+        if len({dims[w].column for w in within}) > 1:
+            raise ValueError(
+                "cumulative_latest metrics keep running totals along different columns "
+                f"({', '.join(sorted(within))}); order them all by one"
+            )
+        for w in within:
+            if not dims[w].non_additive:
+                raise ValueError(
+                    f"dimension {w}: a cumulative_latest metric keeps a running total along it, so counts never "
+                    "add up across it; declare non_additive: true with a non_additive_reason"
+                )
         summed = [m.name for m in self.metrics if m.aggregation == "sum"]
         undeclared = [d.name for d in self.dimensions if d.non_additive is None]
         declared = len(undeclared) < len(self.dimensions)

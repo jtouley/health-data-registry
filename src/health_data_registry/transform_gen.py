@@ -183,6 +183,9 @@ def _columns(contract: Contract, model: str) -> list[dict[str, Any]]:
         if column.flag_codes:
             meanings = "; ".join(f"{code} = {meaning}" for code, meaning in column.flag_codes)
             description = f"{description} Codes (publisher's codebook): {meanings}."
+        if column.not_incidence:
+            reasons = "; ".join(f"'{label}' counts {why}" for label, why in column.not_incidence)
+            description = f"{description} Not new cases of disease, so no rate per 100,000 people: {reasons}."
         col: dict[str, Any] = {
             "name": c.name,
             "data_type": DBT_TYPES[c.physical_type],
@@ -194,6 +197,7 @@ def _columns(contract: Contract, model: str) -> list[dict[str, Any]]:
                 "unit": c.unit,
                 "codes": list(c.codes),
                 "missing_codes": list(c.missing_codes),
+                **({"not_incidence": dict(column.not_incidence)} if column.not_incidence else {}),
             },
         }
         tests: list[dict[str, Any]] = []

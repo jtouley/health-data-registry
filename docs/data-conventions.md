@@ -61,11 +61,15 @@ that year. Weekly counts are **never** added up to make a year, because late rep
 not in the week they happened: for Michigan in 2023, adding the weekly column gives 62 cases, the year-end running
 total 103. A year-to-date column is added across places only at one week; the tool refuses it otherwise.
 `query_sql` follows the same rules: it refuses a sum of weekly counts or of year-to-date counts across weeks, and
-a sum across places leaves CDC's total rows (US, regions, territories combined) out.
+a sum across places leaves CDC's summary rows out (the US totals, US territories combined and the nine census
+divisions); Non-U.S. Residents stays in, as its own bucket. These `query_sql` rules apply to sums only.
 
-An empty NNDSS count flagged `-` is CDC's "no reported cases" (dataset notes). It comes back empty, with the flag
-and its meaning beside it, and is **never read as 0**: no total, rate or trend point is worked out from it. Every
-other flag (`U` unavailable, `N` not reportable, `NN`, `NP`, `NC`) leaves the cell empty too.
+An empty NNDSS count flagged `-` is CDC's "no reported cases": the jurisdiction did not submit any cases (dataset
+notes). It is read as **not reported**, the maintainer's declaration of 25 Nov 2026, which reverses the earlier
+reading as a reported zero. It comes back empty, with the flag and its meaning beside it, and is **never counted
+as 0**: no total, rate or trend point is worked out from it. In `get_series` and `query_sql` the flag and its
+meaning come back beside the empty value; `get_rate` and `get_trend` name the flag when they leave the year out.
+Every other flag (`U` unavailable, `N` not reportable, `NN`, `NP`, `NC`) leaves the cell empty too.
 
 Other sources:
 
@@ -83,13 +87,13 @@ reported cases" (NNDSS `-`): the cell stays empty, with its flag and that meanin
 
 | Source | What an empty cell can mean |
 |---|---|
-| NNDSS weekly | A flag explains it: `U` the jurisdiction could not send data; `N` not reportable there; `NN` not nationally notifiable; `NP` notifiable but not published; `NC` not calculated. A flag of `-` with an empty count means no reported cases (dataset notes); it stays empty with the flag, never 0. |
+| NNDSS weekly | A flag explains it: `U` the jurisdiction could not send data; `N` not reportable there; `NN` not nationally notifiable; `NP` notifiable but not published; `NC` not calculated. A flag of `-` with an empty count is CDC's "no reported cases", read as not reported; it stays empty with the flag, never 0. |
 | NHSN resistance | Resistant count and percent resistant are shown only when at least 20 isolates were tested; smaller cells are empty. |
 | RESP-NET | Some estimated cumulative rates for the current season are published empty. |
 | WHO tuberculosis | No value published for that country and year. |
 
-NNDSS's `-` is stored and returned as published (empty, with the flag). Whether it ever means a true zero is an
-open question in the contract until a maintainer declares it from CDC's documentation.
+NNDSS's `-` is stored and returned as published (empty, with the flag). The maintainer declared on 25 Nov 2026
+that it means not reported, never a zero; the declaration is in the contract.
 
 ## Uncertainty
 
