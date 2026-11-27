@@ -22,7 +22,7 @@ metrics:
     exclude_total_rows: false
     filters: ["indicator_label = 'Up-to-date'"]
     uncertainty: none
-    uncertainty_reason: "CDC publishes a 95% confidence interval half width (ci_half_width_95pct) that reads as percentage points beside an estimate published as a proportion; with the two on different scales no interval is built here (open question 'Scale'); read it with query_sql."
+    uncertainty_reason: "CDC publishes a 95% confidence interval half width (ci_half_width_95pct) that reads as percentage points beside an estimate published as a proportion; with the two on different scales no interval is built here, and query_sql reads the half width as published."
   - name: weekly_vaccination_and_intent
     description: "Weekly share of adults in one age group, place and demographic group in one level of vaccination and intent, as published (a proportion from 0 to 1) and never added up."
     measure: coverage_share
@@ -30,7 +30,7 @@ metrics:
     exclude_total_rows: false
     filters: ["indicator_label = '4-level vaccination and intent'"]
     uncertainty: none
-    uncertainty_reason: "CDC publishes a 95% confidence interval half width (ci_half_width_95pct) that reads as percentage points beside an estimate published as a proportion; with the two on different scales no interval is built here (open question 'Scale'); read it with query_sql."
+    uncertainty_reason: "CDC publishes a 95% confidence interval half width (ci_half_width_95pct) that reads as percentage points beside an estimate published as a proportion; with the two on different scales no interval is built here, and query_sql reads the half width as published."
 series:
   - condition: "RSV vaccination"
     label: "RSV vaccination coverage, adults 75 and older (ever vaccinated, NIS-FRVM survey, weekly cumulative; a proportion from 0 to 1 as CDC publishes it)"
