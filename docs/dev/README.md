@@ -231,10 +231,14 @@ Each failure names the file and line and says what weakened. An allowlistable on
 own pull request went through the review round and merged. Add the entry first, then the change that needs it;
 once the entry is on `main`, push or edit the pull request's title to run the gate again (re-running the old run
 reuses the `main` it started with). The allowlist may hold any number of entries, but each must be well-formed,
-which `tests/test_ratchet.py` checks on every run: it parses as `path :: line`, its path is a plain repo-relative
-path to a file (one the entry's own pull request adds later counts, as long as its top-level directory exists), and
-a comment with text stands above it in its own block, saying why. An entry that breaks one of these fails the
-tests of the allowlist's own pull request, with the line number and the reason.
+which `tests/test_ratchet.py` checks on every run: it parses as `path :: line`; its path is a plain repo-relative
+path to a file under an existing top-level directory (a file that a later pull request adds counts, so a typo below
+the top level is not caught); and a comment with text stands above it in its own block, saying why. The comments
+that open the file are its header and never count as an entry's reason, so leave a blank line after the header.
+An entry that breaks one of these fails the tests of the allowlist's own pull request, with the line number and
+the reason. The check also runs on `main` and on every later pull request, so one that removes or renames a
+top-level directory an entry names fails it too, and can't fix the entry itself: first remove or update the entry
+in a pull request that changes only the allowlist, merge it, then run the checks again.
 
 **What it cannot stop.** A pull request that changes the gate's own files is judged by `main`'s gate, but once it
 merges, the next pull request is judged by the changed gate; the gate only makes such a change stand alone

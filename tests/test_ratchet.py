@@ -1182,22 +1182,31 @@ def _repo_kind(root: Path) -> Callable[[str], str | None]:
 def allowlist_problems(text: str, kind: Callable[[str], str | None]) -> list[str]:
     """Why each entry of an allowlist is malformed, one line per problem; [] when every entry is well-formed.
 
-    An entry parses as `path :: line`; its path is a plain repo-relative path whose top-level directory (or file)
-    exists in the checkout, and which is a file if it exists at all (an entry may name a file its own pull request
-    has not added yet, or a removed test's path at the merge base); and a comment with text stands above it in its
-    own block (lines between blank lines), not only in the header that opens the file.
+    An entry parses as `path :: line`. Its path is a plain repo-relative path whose top-level directory (or file)
+    exists in the checkout, which runs through no file, and which is a file if it exists at all: an entry may name
+    a file that a later pull request adds, or a removed test's path at the merge base, so a typo below the top level
+    is not caught. A comment with text stands above it in its own block (lines between blank lines). The header is
+    the run of comment lines that opens the file (after any blank lines) and ends at the first blank or other line;
+    it is never an entry's reason, so an entry whose block starts in the header is told to leave a blank line.
     """
     problems = []
     lines = text.splitlines()
-    header = next((i for i, raw in enumerate(lines) if not raw.strip().startswith("#")), len(lines))
+    first = next((i for i, raw in enumerate(lines) if raw.strip()), len(lines))
+    header_end = next(
+        (i for i in range(first, len(lines)) if not lines[i].strip().startswith("#")), len(lines)
+    )  # lines[first:header_end] is the header; numbering below is 1-based
     reason = False
+    in_header_block = first < header_end
     for number, raw in enumerate(lines, 1):
         line = raw.strip()
         if not line:
             reason = False
+            in_header_block = (
+                in_header_block and number <= first
+            )  # blank lines before the header keep it open
             continue
         if line.startswith("#"):
-            reason = reason or (number > header and line.lstrip("#").strip() != "")
+            reason = reason or (number > header_end and line.lstrip("#").strip() != "")
             continue
         entries = r.parse_allowlist(line)
         if len(entries) != 1:
@@ -1205,24 +1214,41 @@ def allowlist_problems(text: str, kind: Callable[[str], str | None]) -> list[str
             continue
         ((path, _),) = entries
         parts = path.split("/")
+        through = next(
+            ("/".join(parts[:i]) for i in range(1, len(parts)) if kind("/".join(parts[:i])) == "file"), None
+        )
         if path.startswith("/") or "\\" in path or any(p in ("", ".", "..") or p != p.strip() for p in parts):
             problems.append(f"line {number}: {path} is not a plain repo-relative path")
         elif kind(parts[0]) is None:
             problems.append(
                 f"line {number}: {path} names no file in this repository ({parts[0]} does not exist)"
             )
+        elif through is not None:
+            problems.append(f"line {number}: {path} runs through {through}, which is a file, not a directory")
         elif kind(path) == "dir":
             problems.append(f"line {number}: {path} is a directory, not a file")
-        if not reason:
+        if not reason and in_header_block:
+            problems.append(
+                f"line {number}: no comment above the entry says why: the comments right above it are part of the "
+                "file's header; put a blank line after the header, then the entry's own comment"
+            )
+        elif not reason:
             problems.append(f"line {number}: no comment above the entry says why")
     return problems
+
+
+ALLOWLIST_NEXT_STEP = (
+    "Fix or remove each entry named above in a pull request that changes only .github/ratchet-allowlist.txt, "
+    "merge it, then run this pull request's checks again (docs/dev/README.md#the-trusted-gate)."
+)
 
 
 def test_every_allowlist_entry_is_well_formed() -> None:
     # Under mutmut the suite runs in mutants/; read the checkout's own allowlist.
     source = ROOT.parent if ROOT.name == "mutants" else ROOT
     text = (source / r.ALLOWLIST).read_text(encoding="utf-8")
-    assert allowlist_problems(text, _repo_kind(source)) == []
+    problems = allowlist_problems(text, _repo_kind(source))
+    assert problems == [], "\n".join([*problems, ALLOWLIST_NEXT_STEP])
 
 
 ALLOWLIST_HEADER = "# The Trusted gate's allowlist.\n#\n# Say why in a comment above each entry.\n"
@@ -1260,6 +1286,8 @@ def test_an_allowlist_with_reasoned_entries_is_well_formed() -> None:
         ("# why\nsrc\\a.py :: x", "not a plain repo-relative path"),
         ("# why\nscr/a.py :: x", "names no file in this repository (scr does not exist)"),
         ("# why\nsrc :: x", "is a directory, not a file"),
+        ("# why\nMakefile/x :: y", "runs through Makefile, which is a file"),
+        ("# why\nsrc/a.py/b.py :: y", "runs through src/a.py, which is a file"),
         ("src/a.py :: x", "no comment above the entry says why"),
         ("#\nsrc/a.py :: x", "no comment above the entry says why"),
         ("# why\n\nsrc/a.py :: x", "no comment above the entry says why"),
@@ -1272,9 +1300,32 @@ def test_a_malformed_allowlist_entry_is_named(entry: str, problem: str) -> None:
     assert problem in problems[0]
 
 
-def test_the_header_is_no_reason_for_an_entry() -> None:
-    problems = allowlist_problems(f"{ALLOWLIST_HEADER}src/a.py :: x\n", REPO.get)
-    assert problems == ["line 4: no comment above the entry says why"]
+HEADER_BLOCK_PROBLEM = (
+    "no comment above the entry says why: the comments right above it are part of the file's header; put a blank "
+    "line after the header, then the entry's own comment"
+)
+
+
+@pytest.mark.parametrize(
+    ("text", "line"),
+    [
+        (f"{ALLOWLIST_HEADER}src/a.py :: x\n", 4),
+        # A reason appended straight under the header is still in the header's block: say so, not "no comment".
+        (f"{ALLOWLIST_HEADER}# PR #1: why\nsrc/a.py :: x\n", 5),
+        # Blank lines before the header don't turn the header into a reason.
+        (f"\n\n{ALLOWLIST_HEADER}src/a.py :: x\n", 6),
+    ],
+)
+def test_the_header_is_no_reason_for_an_entry(text: str, line: int) -> None:
+    assert allowlist_problems(text, REPO.get) == [f"line {line}: {HEADER_BLOCK_PROBLEM}"]
+
+
+def test_an_entry_after_a_blank_line_under_a_leading_blank_header_is_well_formed() -> None:
+    assert allowlist_problems(f"\n{ALLOWLIST_HEADER}\n# PR #1: why\nsrc/a.py :: x\n", REPO.get) == []
+
+
+def test_an_allowlist_that_opens_with_an_entry_has_no_header_to_blame() -> None:
+    assert allowlist_problems("src/a.py :: x\n", REPO.get) == ["line 1: no comment above the entry says why"]
 
 
 def test_a_new_pyproject_is_compared_with_nothing() -> None:
