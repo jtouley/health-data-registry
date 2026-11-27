@@ -12,7 +12,7 @@ description:
   authoritativeDefinitions:
     - {type: canonicalUrl, url: "https://data.cdc.gov/d/qtbi-xd4i", description: "Publisher dataset page"}
     - {type: businessDefinition, url: "https://data.cdc.gov/api/views/qtbi-xd4i.json", description: "Socrata metadata: dataset description, Data Limitations, Glossary/Methodology (data suppression), column descriptions and licence, read 2026-11-25"}
-    - {type: businessDefinition, url: "https://ndc.services.cdc.gov/conditions/lyme-disease/", description: "Lyme disease surveillance case definitions by year, linked from the dataset description (not fetched; see openQuestions)"}
+    - {type: businessDefinition, url: "https://ndc.services.cdc.gov/conditions/lyme-disease/", description: "Lyme disease surveillance case definitions by year, linked from the dataset description; read 2026-11-27, it lists definitions dated 1995, 1996, 2008, 2011, 2017 and 2022 (effective years not yet reviewed; see openQuestions)"}
     - {type: businessDefinition, url: "https://www.cdc.gov/mmwr/volumes/73/wr/mm7306a1.htm", description: "MMWR on the 2022 case definition change, linked from the dataset description (not fetched)"}
 servers:
   - id: data_cdc_gov
@@ -130,6 +130,15 @@ schema:
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: sex}
+        quality:
+          - id: sex_is_a_listed_value
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["Female", "Male", "Unknown", "Suppressed"]}
+            mustBe: 0
+            description: "The column description lists Female, Male and Unknown, and the Glossary/Methodology adds the suppressed marker. Another label is a warning to review, never a reason to stop the load."
       - name: age_cat_yrs
         physicalType: VARCHAR
         logicalType: string
@@ -141,6 +150,15 @@ schema:
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: age_cat_yrs}
+        quality:
+          - id: age_group_is_a_listed_value
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["0-19", "20+", "Unknown", "Suppressed"]}
+            mustBe: 0
+            description: "The column description lists the 0-19 and 20+ year groups and Unknown, and the Glossary/Methodology adds the suppressed marker. Another label is a warning to review, never a reason to stop the load."
       - name: frequency
         physicalType: BIGINT
         logicalType: integer
@@ -162,7 +180,7 @@ schema:
             dimension: completeness
             severity: error
             type: sql
-            description: "Fill rate at error level: an all-empty frequency column passes the check above, and a table with no counts can't answer anything (every one of 40,468 rows had a count on 2026-11-25). The generated fill-rate check says the same at warn level."
+            description: "Fill rate at error level: an all-empty frequency column passes the check above, and a table with no counts can't answer anything (every one of 40,468 rows had a count on 2026-11-25). It replaces the generated fill-rate check on this column, which fires on the same all-empty condition at warn level, so a warning from that check only ever appears beside this error."
             query: "SELECT COUNT(*) FROM {object} WHERE frequency IS NOT NULL"
             mustBeGreaterThan: 0
     quality:
@@ -187,10 +205,14 @@ customProperties:
       kind: publisher_suppressed
       threshold: 5
       description: "Glossary/Methodology: cells are suppressed for low frequency (fewer than 5 Lyme disease records with the same combination of county, state, sex and age group); the suppressed values are re-coded 'suppressed' and the records are never removed. The count is kept; only the label is withheld."
+  - property: caseDefinitionChangesUndated
+    value: "CDC's case definition page lists Lyme disease case definitions dated 2008, 2011 and 2017 inside these years, and the year each took effect is not yet reviewed"
+    description: "Read 2026-11-27 from https://ndc.services.cdc.gov/conditions/lyme-disease/. Until a maintainer records them as dated caseDefinitions, get_trend fits no trend across these years and compare_rates between two of them says the definition may differ."
   - property: openQuestions
     value:
-      - "Case definition: which CSTE Lyme disease case definitions apply to each year 2008 to 2021 is on CDC's case definition page, not in the data. Add as caseDefinitions after a maintainer reads them."
+      - "Case definition: CDC's case definition page (read 2026-11-27) lists Lyme disease definitions dated 2008, 2011 and 2017. Which took effect in which reporting year is not in the data. Add them as caseDefinitions after a maintainer reviews them; until then caseDefinitionChangesUndated keeps get_trend from fitting one trend across them."
       - "Which high-incidence states used other surveillance methods whose data were not reportable to CDC before 2022, and in which years (dataset Data Limitations)? Needed before any state is compared across years."
       - "State and county are withheld independently. On 2026-11-25 every row with a suppressed or unknown state also has a suppressed or unknown county (83 suppressed-state rows, 561 cases), so these count only in the national total."
+      - "Required keys: year, state, fips, case_status, sex and age_cat_yrs are required (staging refuses an empty one) because every row had a value in each on 2026-11-25; the publisher does not say a key is never blank. Confirm, or relax required and treat an empty key as its own group."
       - "Revisions: CDC updates the table annually after verification. Are earlier years in this table revised when a new year is added?"
       - "GBD: GBD 2023 has no Lyme disease cause (IHME connector lookup, 2026-11-25). A maintainer confirms that no GBD cause is mapped."

@@ -66,7 +66,10 @@ All notable changes to this project are documented here. The format follows
   data.cdc.gov x5j9-wybp), `cdc_lyme_county_2008_2021` (qtbi-xd4i) and `cdc_lyme_county_1992_2007` (84rx-ksgd,
   confirmed cases only), on the existing Socrata adapter. Counts by county of residence, case status, sex and age
   group add up to a state or the nation; CDC's 'Suppressed' labels are kept, and the eras are never joined into
-  one trend.
+  one trend. CDC lists further case definitions inside the 1992-2007 and 2008-2021 tables (1995 and 1996; 2008,
+  2011 and 2017), so `get_trend` fits no trend across those years until a maintainer records when each took
+  effect, and `compare_rates` between two of them says the definition may differ. A county question is not routed
+  to these tables yet: the answers are by state and for the nation.
 - The crawler factory's core (ADR 0016, step 1 and the types step 2 names). Every source is read by one generic
   adapter type chosen in its catalog entry (`type:`; the older `portal:` is read for one more release and `validate`
   warns about it), configured by that type's strict block, plus named extensions it opts in to. New types:

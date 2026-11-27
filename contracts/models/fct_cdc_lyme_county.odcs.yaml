@@ -6,20 +6,20 @@ version: 0.1.0
 status: draft
 domain: infectious_disease
 description:
-  purpose: "One fact table over CDC's three Lyme disease county tables (cdc_lyme_county_1992_2007, cdc_lyme_county_2008_2021, cdc_lyme_county), every published row kept, each labelled with the table and case-definition era it came from and with flags saying when CDC withheld or did not know its state or county."
-  usage: "Add frequency within one era only. The eras never form one trend: CDC split the tables where the case definitions changed (1992-2007 confirmed only; probable cases from 2008; laboratory evidence alone in high-incidence states from 2022). The flags qualify a row; nothing is dropped, moved or filled in because of them."
+  purpose: "One fact table over CDC's three Lyme disease county tables (cdc_lyme_county_1992_2007, cdc_lyme_county_2008_2021, cdc_lyme_county), every published row kept, each labelled with the table and case-definition era it came from, with the source's total-row flag, and with flags saying when its state or county can't be placed."
+  usage: "Add frequency within one era only, and never on a row where is_total_row is true. The eras never form one trend: CDC split the tables where the case definitions changed (1992-2007 confirmed only; probable cases from 2008; laboratory evidence alone in high-incidence states from 2022), and CDC's case definition page lists further definitions inside the first two eras. The flags qualify a row; nothing is dropped, moved or filled in because of them. Nothing in the read path reads this table yet: the tools read each source's snapshot (issue #265)."
   limitations: "Inherits every open question of the three source contracts. Which state a row with a withheld state and a known county belongs to is not decided here (hard rule 1)."
 schema:
   - name: fct_cdc_lyme_county
     physicalName: fct_cdc_lyme_county
     physicalType: table
     logicalType: object
-    description: "One row per published count: source table, year, state, county of residence, case status, sex and age group, with flags beside the published values."
+    description: "One row per published count: source table, year, state, county of residence, case status, sex and age group, with flags beside the published values. Counts add up within one case-definition era only; the eras never form one trend."
     customProperties:
       - {property: layer, value: marts}
       - property: totalRows
-        value: none
-        description: "None of the three source tables has total rows (their contracts' totalRows is none), and this table only unions them."
+        value: is_total_row
+        description: "is_total_row carries each source's own total-row flag from its intermediate model. None of the three source contracts declares total rows today (their totalRows is none), so it is false on every row; if one ever does, the flag reaches this table instead of being lost."
       - {property: tableShape, value: frequency_table}
     properties:
       - name: source_id
@@ -34,7 +34,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "The span of years CDC published together because the case definitions in it match, as the dataset descriptions give them: 1992-2007, 2008-2021 or 2022 onward. Counts are added within one era only."
+        description: "The table CDC published the row in. CDC split Lyme disease data into these spans where the case definitions changed (dataset descriptions): 1992-2007, 2008-2021 or 2022 onward. CDC's case definition page lists further definitions inside the first two spans, and which applies in each year is an open question in their contracts. Add counts within one era only."
         customProperties: [{property: role, value: dimension}]
       - name: year
         physicalType: BIGINT
@@ -42,7 +42,7 @@ schema:
         required: true
         primaryKey: true
         primaryKeyPosition: 2
-        description: "Reporting year."
+        description: "Reporting year, 1992 onward, as CDC assigns it; each year sits in exactly one era (the source contracts' error-severity era rules check it)."
         customProperties: [{property: role, value: dimension}]
       - name: state
         physicalType: VARCHAR
@@ -58,7 +58,7 @@ schema:
         required: true
         primaryKey: true
         primaryKeyPosition: 4
-        description: "County of residence as published: a five-digit FIPS code, or 'Suppressed' or 'Unknown' (and three 1992-1993 rows with a state-only value)."
+        description: "County of residence as published: a five-digit FIPS code, 'Suppressed' when CDC withheld it to protect privacy, 'Unknown' when it was not reported, or, in a few 1992-1993 rows, a value that is neither ('41  .', '42  .'; an open question in the 1992-2007 contract). Connecticut's codes change to its planning regions from 2023, so its 2008-2021 and 2023 codes don't line up."
         customProperties: [{property: role, value: dimension}]
       - name: case_status
         physicalType: VARCHAR
@@ -66,7 +66,7 @@ schema:
         required: true
         primaryKey: true
         primaryKeyPosition: 5
-        description: "Confirmed or Probable, as published."
+        description: "Confirmed or Probable, as published; 1992-2007 rows are all Confirmed, as the probable definition began in 2008."
         customProperties: [{property: role, value: dimension}]
       - name: sex
         physicalType: VARCHAR
@@ -90,17 +90,23 @@ schema:
         required: false
         description: "Number of Lyme disease cases in the group, as published; empty stays empty, never zero."
         customProperties: [{property: role, value: measure}, {property: unit, value: cases}]
-      - name: state_withheld
+      - name: is_total_row
         physicalType: BOOLEAN
         logicalType: boolean
         required: true
-        description: "True when the state reads 'Suppressed' or 'Unknown': the cases count in the nation but in no state's figure."
+        description: "True on a publisher's total row, carried from the source's intermediate model (its contract's totalRows); such a row is never added to the rows it sums (hard rule 2). False on every row today: none of the three source contracts declares total rows."
         customProperties: [{property: role, value: attribute}]
-      - name: county_withheld
+      - name: state_unplaced
         physicalType: BOOLEAN
         logicalType: boolean
         required: true
-        description: "True when the county is not a five-digit FIPS code ('Suppressed', 'Unknown' or a state-only value): the cases can't be placed in a county."
+        description: "True when the state is not a two-letter postal code: 'Suppressed' (CDC withheld it to protect privacy), 'Unknown' (it was not reported) or any other label. The cases count in the nation but in no state's figure."
+        customProperties: [{property: role, value: attribute}]
+      - name: county_unplaced
+        physicalType: BOOLEAN
+        logicalType: boolean
+        required: true
+        description: "True when the cases can't be placed in a county: the FIPS value is not five digits ('Suppressed' for privacy, 'Unknown' when not reported, or a 1992-1993 value that is neither), or the state is unplaced. A known county under an unplaced state counts in no county's figure, so a county's sum is always part of its state's."
         customProperties: [{property: role, value: attribute}]
       - name: _snapshot_id
         physicalType: VARCHAR
@@ -112,7 +118,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "The sha256 fingerprint of the raw files the row was parsed from."
+        description: "The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order: the exact bytes the publisher sent."
         customProperties: [{property: role, value: attribute}]
 customProperties:
   - {property: unreliableRule, value: {kind: none, description: "None here: the source contracts carry CDC's suppression rule (fewer than 5 records), which withholds labels, not counts."}}

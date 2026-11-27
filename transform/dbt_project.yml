@@ -43,7 +43,9 @@ models:
     flag:
       +materialized: table
       +schema: flag
-    # Dimensions and one fact per source; metrics read them.
+    # Dimensions and one fact per published dataset; metrics read them. A dataset a publisher split into
+    # case-definition eras (CDC's three Lyme disease tables) is one fact, each row labelled with its source and
+    # era. No metric reads a mart yet (issue #265).
     marts:
       +materialized: table
       +schema: marts

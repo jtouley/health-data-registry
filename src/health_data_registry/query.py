@@ -61,6 +61,8 @@ NEXT_STEPS: dict[str, str] = {
     "nothing_to_compare": "Ask again with other_location or other_year.",
     "no_rate": "Use get_rate to see which places and years have both a count and a population.",
     "too_few_points": "Ask for a longer span of years, or use get_series to read the counts.",
+    "case_definition_undated": "Use get_series to read the yearly counts with their case definitions, or "
+    "compare_rates between two years, whose notes say the definition may differ.",
     "would_combine_rates": "Use describe_dataset to see the filters, and ask for one published group at a time.",
     "publisher_unreachable": "Try again in a few minutes.",
     "publisher_bad_table": "Try again later; if it keeps happening, run the Something's wrong helper.",

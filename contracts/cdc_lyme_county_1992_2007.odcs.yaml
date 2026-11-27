@@ -12,7 +12,7 @@ description:
   authoritativeDefinitions:
     - {type: canonicalUrl, url: "https://data.cdc.gov/d/84rx-ksgd", description: "Publisher dataset page"}
     - {type: businessDefinition, url: "https://data.cdc.gov/api/views/84rx-ksgd.json", description: "Socrata metadata: dataset description, Data Limitations, Glossary/Methodology (data suppression), column descriptions and licence, read 2026-11-25"}
-    - {type: businessDefinition, url: "https://ndc.services.cdc.gov/conditions/lyme-disease/", description: "Lyme disease surveillance case definitions by year, linked from the dataset description (not fetched; see openQuestions)"}
+    - {type: businessDefinition, url: "https://ndc.services.cdc.gov/conditions/lyme-disease/", description: "Lyme disease surveillance case definitions by year, linked from the dataset description; read 2026-11-27, it lists definitions dated 1995, 1996, 2008, 2011, 2017 and 2022 (effective years not yet reviewed; see openQuestions)"}
     - {type: businessDefinition, url: "https://www.cdc.gov/mmwr/volumes/73/wr/mm7306a1.htm", description: "MMWR on the 2022 case definition change, linked from the dataset description (not fetched)"}
 servers:
   - id: data_cdc_gov
@@ -130,6 +130,15 @@ schema:
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: sex}
+        quality:
+          - id: sex_is_a_listed_value
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["Female", "Male", "Unknown", "Suppressed"]}
+            mustBe: 0
+            description: "The column description lists Female, Male and Unknown, and the Glossary/Methodology adds the suppressed marker. Another label is a warning to review, never a reason to stop the load."
       - name: age_cat_yrs
         physicalType: VARCHAR
         logicalType: string
@@ -141,6 +150,15 @@ schema:
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: age_cat_yrs}
+        quality:
+          - id: age_group_is_a_listed_value
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["0-19", "20+", "Unknown", "Suppressed"]}
+            mustBe: 0
+            description: "The column description lists the 0-19 and 20+ year groups and Unknown, and the Glossary/Methodology adds the suppressed marker. Another label is a warning to review, never a reason to stop the load."
       - name: frequency
         physicalType: BIGINT
         logicalType: integer
@@ -162,7 +180,7 @@ schema:
             dimension: completeness
             severity: error
             type: sql
-            description: "Fill rate at error level: an all-empty frequency column passes the check above, and a table with no counts can't answer anything (every one of 13,180 rows had a count on 2026-11-25). The generated fill-rate check says the same at warn level."
+            description: "Fill rate at error level: an all-empty frequency column passes the check above, and a table with no counts can't answer anything (every one of 13,180 rows had a count on 2026-11-25). It replaces the generated fill-rate check on this column, which fires on the same all-empty condition at warn level, so a warning from that check only ever appears beside this error."
             query: "SELECT COUNT(*) FROM {object} WHERE frequency IS NOT NULL"
             mustBeGreaterThan: 0
     quality:
@@ -187,11 +205,15 @@ customProperties:
       kind: publisher_suppressed
       threshold: 5
       description: "Glossary/Methodology: cells are suppressed for low frequency (fewer than 5 Lyme disease records with the same combination of county, state, sex and age group); the suppressed values are re-coded 'suppressed' and the records are never removed. The count is kept; only the label is withheld."
+  - property: caseDefinitionChangesUndated
+    value: "CDC's case definition page lists Lyme disease case definitions dated 1995 and 1996 inside these years, and the year each took effect is not yet reviewed"
+    description: "Read 2026-11-27 from https://ndc.services.cdc.gov/conditions/lyme-disease/. Until a maintainer records them as dated caseDefinitions, get_trend fits no trend across these years and compare_rates between two of them says the definition may differ."
   - property: openQuestions
     value:
-      - "Case definition: which CSTE Lyme disease case definitions apply to each year 1992 to 2007 is on CDC's case definition page, not in the data. Add as caseDefinitions after a maintainer reads them."
+      - "Case definition: CDC's case definition page (read 2026-11-27) lists Lyme disease definitions dated 1995 and 1996, and none earlier, so 1992 to 1994 are not covered there. Which took effect in which reporting year is not in the data. Add them as caseDefinitions after a maintainer reviews them; until then caseDefinitionChangesUndated keeps get_trend from fitting one trend across them."
       - "Only Confirmed appears in this table (13,180 rows on 2026-11-25), matching the dataset description that the probable definition began in 2008. Confirm with the publisher that no probable cases are held back for these years."
       - "State and county are withheld independently: on 2026-11-25, 2 rows (2 cases) have state 'Suppressed' but a county FIPS code (51059 and 25015). Which state do they count toward? Read as published, a state's figure adds only rows whose state column names it, so these count only in the national total; the state is never taken from the FIPS code without a reviewed declaration (hard rule 1)."
-      - "Three rows carry a FIPS value that is neither five digits nor a marker: '41  .' (Oregon, 1992, 13 cases) and '42  .' (Pennsylvania, 1992 and 1993, 1,173 and 1,082 cases), read 2026-11-25. They look like state-only codes with no county, but the publisher does not say so. Kept as published; the fips_is_five_digits_or_a_marker warning reports them, and they count toward their state and the nation, never a county."
+      - "Three rows carry a FIPS value that is neither five digits nor a marker: '41  .' (Oregon, 1992, 13 cases) and '42  .' (Pennsylvania, 1992 and 1993, 1,173 and 1,082 cases), read 2026-11-25. They look like state-only codes with no county, but the publisher does not say so. Kept as published; the fips_is_five_digits_or_a_marker warning reports them, and they count toward their state and the nation, never a county. Until a maintainer reviews them, the warning fires on every load of this table with the same count (3), so a new malformed value shows only as a higher count; once reviewed, these exact (year, state, fips) rows can be excluded from the rule, citing this question, so that it measures 0 and fires only on something new."
+      - "Required keys: year, state, fips, case_status, sex and age_cat_yrs are required (staging refuses an empty one) because every row had a value in each on 2026-11-25; the publisher does not say a key is never blank. Confirm, or relax required and treat an empty key as its own group."
       - "Revisions: CDC updates the table annually after verification. Are earlier years in this table revised when a new year is added?"
       - "GBD: GBD 2023 has no Lyme disease cause (IHME connector lookup, 2026-11-25). A maintainer confirms that no GBD cause is mapped."

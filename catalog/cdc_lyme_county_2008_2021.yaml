@@ -7,9 +7,11 @@ country: US
 research_areas: [infectious_disease]
 id_areas: [vector_borne]
 years: {start: 2008, end: 2021}
-# County of residence (FIPS), state (postal code) and, by adding every row, the nation. A county or state CDC
-# suppressed is written 'Suppressed' and stays in the national count only.
-geography: [nation, state, county]
+# State (postal code) and, by adding every row, the nation. A suppressed county counts in its state when the
+# state is known; a suppressed or unknown state counts in the nation only. The county of residence (FIPS) is in
+# the data (query_sql, the fct_cdc_lyme_county mart), but no tool answers by county yet, so county is left out
+# here and a county question isn't routed to these tables (issue #262).
+geography: [nation, state]
 shape: frequency_table
 grain: "One row is one year, county of residence, case status (confirmed or probable), sex and age group (0-19 or 20+ years), with the number of Lyme disease cases reported to NNDSS for that combination. Where fewer than 5 records shared a combination, CDC wrote 'Suppressed' in place of the county, state, sex or age group, and kept the row and its count."
 refresh: annual
@@ -30,7 +32,7 @@ codebook_url: https://data.cdc.gov/api/views/qtbi-xd4i.json
 caveats:
   - "The 2008 case definitions counted probable cases for the first time. Before the 2022 definition, several high-incidence states had begun other ways of surveillance whose data were not reportable to CDC (dataset Data Limitations). Years 2022 onward (cdc_lyme_county) and 1992 to 2007 (cdc_lyme_county_1992_2007) are separate sources and are never joined to this one into one trend."
   - "Counts are confirmed and probable cases reported to NNDSS by county of residence. CDC says not every case is reported, some reported cases may be another illness, and a sudden change can reflect a state's capacity to capture and classify cases rather than a true change in disease."
-  - "Where fewer than 5 records share a county, state, sex and age group, CDC writes 'Suppressed' in place of those values and keeps the row. Those cases count in the national total (and the state's, when only the county is withheld) but can't be placed in a county; they are never dropped and never spread across places."
+  - "Where fewer than 5 records share a county, state, sex and age group, CDC writes 'Suppressed' in place of those values and keeps the row. Those cases count in the national total (and the state's, when only the county is withheld) but can't be placed in a county; they are never dropped and never spread across places. In an answer that lists every state, rows labelled 'Suppressed' or 'Unknown' are these cases, not a place."
   - "A state's figure adds only the rows whose state column names it; rows with a suppressed or unknown state count only in the national total."
   - "Counts are by reporting year; CDC updates the table once a year after health departments verify the data."
 gbd:

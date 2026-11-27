@@ -216,6 +216,18 @@ def case_definition_years(ds: Dataset, condition: str) -> list[tuple[int, str]]:
     return sorted(out)
 
 
+def undated_definition_change(ds: Dataset) -> str | None:
+    """Why the case definition changed inside this source's years on dates the contract doesn't record yet.
+
+    From the contract's caseDefinitionChangesUndated. It stands only while caseDefinitions is empty: once a
+    maintainer records the dated changes, a trend is split there instead (case_definition_years).
+    """
+    text = contract_property(ds, "caseDefinitionChangesUndated")
+    if not text or contract_property(ds, "caseDefinitions"):
+        return None
+    return str(text).strip()
+
+
 def is_count(value: float | None) -> bool:
     """A whole, non-negative number of cases; anything else is never truncated into one."""
     return value is not None and value >= 0 and float(value).is_integer()
@@ -641,9 +653,13 @@ def compare_rates(
         except QueryRefused as e:
             return refusal(e, fmt)
         changes = [y for y, _ in defs if min(a.year, b.year) < y <= max(a.year, b.year)]
+        undated = undated_definition_change(a.case_ds)
         if changes:
             out_notes.insert(0, f"The case definition changed in {', '.join(map(str, changes))}, between the two "
                              "years compared: part of any difference may be the definition, not the disease.")  # fmt: skip
+        elif undated:
+            out_notes.insert(0, f"The case definition may have changed between the two years compared ({undated}): "
+                             "part of any difference may be the definition, not the disease.")  # fmt: skip
     if _provisional(a.status) or _provisional(b.status):
         out_notes.append("At least one count is provisional and may change.")
     return _computed(
@@ -717,11 +733,16 @@ def get_trend(
     used: list[Dataset] = []
     too_few: list[str] = []
     no_denominator: list[str] = []
+    undated: dict[str, str] = {}
     try:
         pop, pop_years = populations(engine, _population_series(registry), [location], year_start, year_end)
         for ds, s in matches:
             got, _ = read_series(engine, ds, s, [location], year_start, year_end)
             if not got:
+                continue
+            why = undated_definition_change(ds)
+            if why:  # one fit across an unrecorded definition change would read as a change in the disease
+                undated[ds.id] = why
                 continue
             used.append(ds)
             changes = case_definition_years(ds, s.condition)
@@ -791,6 +812,14 @@ def get_trend(
                 refused="no_trend",
             )
         return refusal(e, fmt)
+    if undated and not table:
+        return message(
+            f"No trend is fitted for '{condition}' in {location}: "
+            + "; ".join(f"{k}: {v}" for k, v in undated.items())
+            + ". A single percent change across those years would mix case definitions.",
+            fmt,
+            refused="case_definition_undated",
+        )
     if no_denominator and not table:
         return message(
             "A trend in rates needs a Census population for every year fitted (and counts that cover the whole "
@@ -831,6 +860,12 @@ def get_trend(
         out_notes.append("Not fitted (no population for every year): " + "; ".join(no_denominator) + ".")
     if skipped:
         out_notes.append("Not fitted on rates: " + "; ".join(skipped) + ".")
+    if undated:
+        out_notes.append(
+            "Not fitted (the case definition changed inside these years, on dates not yet recorded): "
+            + "; ".join(f"{k}: {v}" for k, v in undated.items())
+            + "."
+        )
     out_notes += spelling_notes([str(r[1]) for r in table])
     if fit_on == "counts":
         out_notes.append(

@@ -537,6 +537,47 @@ def test_trend_without_definition_changes_says_it_assumes_none(tmp_path: Path) -
     assert any("assumes the definition stayed the same" in n for n in out["notes"])
 
 
+UNDATED_RULES = (
+    "customProperties:\n"
+    + NONE_RULE
+    + '  - {property: caseDefinitionChangesUndated, value: "toy definitions dated 2017 and 2019, not yet reviewed"}\n'
+)
+
+
+def test_trend_refuses_to_fit_across_an_undated_definition_change(tmp_path: Path) -> None:
+    reg, eng = build(tmp_path, rules=UNDATED_RULES)
+    out = analysis.get_trend(reg, eng, condition="legionellosis", location="Ohio", fmt="json")
+    assert out["refused"] == "case_definition_undated"
+    assert "toy_weekly: toy definitions dated 2017 and 2019" in out["message"]
+    assert "get_series" in out["next_step"] and "compare_rates" in out["next_step"]
+    assert analysis.undated_definition_change(reg.get("toy_weekly")) == (
+        "toy definitions dated 2017 and 2019, not yet reviewed"
+    )
+
+
+def test_an_undated_definition_change_gives_way_to_dated_ones(tmp_path: Path) -> None:
+    rules = CASES_RULES + '  - {property: caseDefinitionChangesUndated, value: "toy, superseded"}\n'
+    reg, eng = build(tmp_path, rules=rules)
+    assert analysis.undated_definition_change(reg.get("toy_weekly")) is None
+    out = analysis.get_trend(reg, eng, condition="legionellosis", location="Michigan", fmt="json")
+    assert set(rows_by(out, "case_definition_from")) == {"", 2020}
+
+
+def test_compare_two_years_notes_an_undated_definition_change(tmp_path: Path) -> None:
+    reg, eng = build(tmp_path, rules=UNDATED_RULES)
+    out = analysis.compare_rates(
+        reg, eng, condition="legionellosis", location="Ohio", year=2022, other_year=2018, fmt="json"
+    )
+    assert out["notes"][0] == (
+        "The case definition may have changed between the two years compared (toy definitions dated 2017 and "
+        "2019, not yet reviewed): part of any difference may be the definition, not the disease."
+    )
+    same = analysis.compare_rates(
+        reg, eng, condition="legionellosis", location="Ohio", year=2022, other_location="Michigan", fmt="json"
+    )
+    assert not any("may have changed" in n for n in same["notes"])
+
+
 def test_trend_refuses_too_few_points(env: tuple[Registry, Engine]) -> None:
     reg, eng = env
     text = analysis.get_trend(reg, eng, condition="legionellosis", location="Michigan", year_start=2022)

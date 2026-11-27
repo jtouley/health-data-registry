@@ -103,6 +103,38 @@ models:
           checks: The dataset description says a probable case definition was first included in 2008, so these years
             hold confirmed cases only. Another status is a warning to review, never a reason to stop the load.
   - odcs_check:
+      name: cdc_lyme_county_1992_2007_sex_is_a_listed_value
+      arguments:
+        measure_sql: SELECT CASE WHEN count(*) FILTER (WHERE NOT ("sex" IS NULL OR trim(CAST("sex" AS VARCHAR))
+          = '')) = 0 THEN NULL ELSE count(*) FILTER (WHERE NOT ("sex" IS NULL OR trim(CAST("sex" AS VARCHAR)) =
+          '') AND "sex" NOT IN ('Female', 'Male', 'Unknown', 'Suppressed')) END FROM {object}
+        condition: measured = 0
+        nothing_to_judge: true
+      config:
+        severity: warn
+        meta:
+          dimension: conformity
+          rule: sex_is_a_listed_value
+          contract: contracts/cdc_lyme_county_1992_2007.odcs.yaml
+          checks: The column description lists Female, Male and Unknown, and the Glossary/Methodology adds the suppressed
+            marker. Another label is a warning to review, never a reason to stop the load.
+  - odcs_check:
+      name: cdc_lyme_county_1992_2007_age_group_is_a_listed_value
+      arguments:
+        measure_sql: SELECT CASE WHEN count(*) FILTER (WHERE NOT ("age_cat_yrs" IS NULL OR trim(CAST("age_cat_yrs"
+          AS VARCHAR)) = '')) = 0 THEN NULL ELSE count(*) FILTER (WHERE NOT ("age_cat_yrs" IS NULL OR trim(CAST("age_cat_yrs"
+          AS VARCHAR)) = '') AND "age_cat_yrs" NOT IN ('0-19', '20+', 'Unknown', 'Suppressed')) END FROM {object}
+        condition: measured = 0
+        nothing_to_judge: true
+      config:
+        severity: warn
+        meta:
+          dimension: conformity
+          rule: age_group_is_a_listed_value
+          contract: contracts/cdc_lyme_county_1992_2007.odcs.yaml
+          checks: The column description lists the 0-19 and 20+ year groups and Unknown, and the Glossary/Methodology
+            adds the suppressed marker. Another label is a warning to review, never a reason to stop the load.
+  - odcs_check:
       name: cdc_lyme_county_1992_2007_case_counts_not_negative
       arguments:
         measure_sql: SELECT COUNT(*) FROM {object} WHERE frequency < 0
@@ -126,8 +158,9 @@ models:
           rule: some_case_counts_present
           contract: contracts/cdc_lyme_county_1992_2007.odcs.yaml
           checks: 'Fill rate at error level: an all-empty frequency column passes the check above, and a table with
-            no counts can''t answer anything (every one of 13,180 rows had a count on 2026-11-25). The generated
-            fill-rate check says the same at warn level.'
+            no counts can''t answer anything (every one of 13,180 rows had a count on 2026-11-25). It replaces the
+            generated fill-rate check on this column, which fires on the same all-empty condition at warn level,
+            so a warning from that check only ever appears beside this error.'
   - odcs_check:
       name: cdc_lyme_county_1992_2007_fill_rate_frequency
       arguments:

@@ -94,8 +94,9 @@ flowchart LR
    lake, the live read and the dbt model apply the same SQL. They may reshape, and so change the grain (one raw
    row makes a declared number of rows, checked on load), but they never compute a value or filter a row; the
    contract's primary key includes any field they add to the grain. Business rules go in intermediate models (also
-   generated from the contracts), review queues in `flag_*` models, and dimensions and one fact per source in
-   marts. Each raw load is written once in the lake it lands in, records first, then a
+   generated from the contracts), review queues in `flag_*` models, and dimensions and one fact per published
+   dataset in marts (a dataset a publisher split into case-definition eras, such as CDC's three Lyme disease
+   tables, is one fact, each row labelled with its source and era). Each raw load is written once in the lake it lands in, records first, then a
    `<snapshot_id>.meta.json` naming its fetches (URL, route, the browser capture URL for a dashboard, time,
    sha256), robots overrides and its load mode (`rawLoad`: snapshot; an incremental load is refused until
    staging supports it). In the weekly refresh each run starts from a fresh lake, so the records and their

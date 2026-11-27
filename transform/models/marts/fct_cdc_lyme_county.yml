@@ -3,7 +3,8 @@ version: 2
 models:
 - name: fct_cdc_lyme_county
   description: 'One row per published count: source table, year, state, county of residence, case status, sex and
-    age group, with flags beside the published values.'
+    age group, with flags beside the published values. Counts add up within one case-definition era only; the eras
+    never form one trend.'
   config:
     materialized: table
     contract:
@@ -44,8 +45,10 @@ models:
     - type: not_null
   - name: case_definition_era
     data_type: varchar
-    description: 'The span of years CDC published together because the case definitions in it match, as the dataset
-      descriptions give them: 1992-2007, 2008-2021 or 2022 onward. Counts are added within one era only.'
+    description: 'The table CDC published the row in. CDC split Lyme disease data into these spans where the case
+      definitions changed (dataset descriptions): 1992-2007, 2008-2021 or 2022 onward. CDC''s case definition page
+      lists further definitions inside the first two spans, and which applies in each year is an open question in
+      their contracts. Add counts within one era only.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -57,7 +60,8 @@ models:
     - type: not_null
   - name: year
     data_type: bigint
-    description: Reporting year.
+    description: Reporting year, 1992 onward, as CDC assigns it; each year sits in exactly one era (the source contracts'
+      error-severity era rules check it).
     meta:
       logical_type: integer
       physical_type: BIGINT
@@ -81,8 +85,10 @@ models:
     - type: not_null
   - name: fips
     data_type: varchar
-    description: 'County of residence as published: a five-digit FIPS code, or ''Suppressed'' or ''Unknown'' (and
-      three 1992-1993 rows with a state-only value).'
+    description: 'County of residence as published: a five-digit FIPS code, ''Suppressed'' when CDC withheld it
+      to protect privacy, ''Unknown'' when it was not reported, or, in a few 1992-1993 rows, a value that is neither
+      (''41  .'', ''42  .''; an open question in the 1992-2007 contract). Connecticut''s codes change to its planning
+      regions from 2023, so its 2008-2021 and 2023 codes don''t line up.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -94,7 +100,8 @@ models:
     - type: not_null
   - name: case_status
     data_type: varchar
-    description: Confirmed or Probable, as published.
+    description: Confirmed or Probable, as published; 1992-2007 rows are all Confirmed, as the probable definition
+      began in 2008.
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -143,27 +150,44 @@ models:
         name: fct_cdc_lyme_county_frequency_filled
         config:
           severity: warn
-  - name: state_withheld
+  - name: is_total_row
     data_type: boolean
-    description: 'True when the state reads ''Suppressed'' or ''Unknown'': the cases count in the nation but in
-      no state''s figure.'
+    description: 'True on a publisher''s total row, carried from the source''s intermediate model (its contract''s
+      totalRows); such a row is never added to the rows it sums (hard rule 2). False on every row today: none of
+      the three source contracts declares total rows.'
     meta:
       logical_type: boolean
       physical_type: BOOLEAN
-      source_field: state_withheld
+      source_field: is_total_row
       unit: null
       codes: []
       missing_codes: []
     constraints:
     - type: not_null
-  - name: county_withheld
+  - name: state_unplaced
     data_type: boolean
-    description: 'True when the county is not a five-digit FIPS code (''Suppressed'', ''Unknown'' or a state-only
-      value): the cases can''t be placed in a county.'
+    description: 'True when the state is not a two-letter postal code: ''Suppressed'' (CDC withheld it to protect
+      privacy), ''Unknown'' (it was not reported) or any other label. The cases count in the nation but in no state''s
+      figure.'
     meta:
       logical_type: boolean
       physical_type: BOOLEAN
-      source_field: county_withheld
+      source_field: state_unplaced
+      unit: null
+      codes: []
+      missing_codes: []
+    constraints:
+    - type: not_null
+  - name: county_unplaced
+    data_type: boolean
+    description: 'True when the cases can''t be placed in a county: the FIPS value is not five digits (''Suppressed''
+      for privacy, ''Unknown'' when not reported, or a 1992-1993 value that is neither), or the state is unplaced.
+      A known county under an unplaced state counts in no county''s figure, so a county''s sum is always part of
+      its state''s.'
+    meta:
+      logical_type: boolean
+      physical_type: BOOLEAN
+      source_field: county_unplaced
       unit: null
       codes: []
       missing_codes: []
@@ -184,7 +208,8 @@ models:
     - type: not_null
   - name: _raw_sha256
     data_type: varchar
-    description: The sha256 fingerprint of the raw files the row was parsed from.
+    description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+      the exact bytes the publisher sent.'
     meta:
       logical_type: string
       physical_type: VARCHAR

@@ -32,7 +32,7 @@ series:
     location_dimension: state
     time_dimension: year
     case_status: "confirmed and probable, added"
-    case_definition: "CSTE Lyme disease surveillance case definitions in force from 2008 to 2021 (probable cases counted from 2008); not comparable with 2022 or later, and the definitions changed within these years"
+    case_definition: "CSTE Lyme disease surveillance case definitions in force from 2008 to 2021 (probable cases counted from 2008); not comparable with 2022 or later; CDC's case definition page lists definitions dated 2008, 2011 and 2017 within these years, so get_trend fits no trend across them until their effective years are reviewed"
   - condition: "Lyme disease"
     label: "Lyme disease cases, confirmed only (2008-2021 case definition)"
     metric: lyme_cases_confirmed
@@ -40,7 +40,7 @@ series:
     location_dimension: state
     time_dimension: year
     case_status: "confirmed"
-    case_definition: "CSTE Lyme disease surveillance case definitions in force from 2008 to 2021 (probable cases counted from 2008); not comparable with 2022 or later, and the definitions changed within these years"
+    case_definition: "CSTE Lyme disease surveillance case definitions in force from 2008 to 2021 (probable cases counted from 2008); not comparable with 2022 or later; CDC's case definition page lists definitions dated 2008, 2011 and 2017 within these years, so get_trend fits no trend across them until their effective years are reviewed"
   - condition: "Lyme disease"
     label: "Lyme disease cases, confirmed and probable, all reported cases in the United States (2008-2021 case definition)"
     metric: lyme_cases_all
@@ -48,4 +48,4 @@ series:
     place_coverage: "United States: every reported case, including those whose state or county CDC suppressed or did not know"
     time_dimension: year
     case_status: "confirmed and probable, added"
-    case_definition: "CSTE Lyme disease surveillance case definitions in force from 2008 to 2021 (probable cases counted from 2008); not comparable with 2022 or later, and the definitions changed within these years"
+    case_definition: "CSTE Lyme disease surveillance case definitions in force from 2008 to 2021 (probable cases counted from 2008); not comparable with 2022 or later; CDC's case definition page lists definitions dated 2008, 2011 and 2017 within these years, so get_trend fits no trend across them until their effective years are reviewed"
