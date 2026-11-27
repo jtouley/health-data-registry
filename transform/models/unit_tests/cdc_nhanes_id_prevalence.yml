@@ -1,9 +1,11 @@
 # Hand-written dbt unit tests for cdc_nhanes_id_prevalence, one file per source like its siblings' staging tests.
-# 1. Staging (staging.typed_select): the estimate and its 95% bounds stay the numbers NCHS sent, and NCHS's flag
-#    stays as published; an estimate NCHS flags not available ('- - -') is empty, never zero. Inputs are SQL so the
-#    raw source needn't be loaded first.
-# 2. Intermediate: only NCHS's Total row is a total, and each flag gets its meaning from the NCHS footnotes.
-# 3. The fact (marts): every row is kept; a flagged estimate says so in words, and a missing one says why.
+# 1. Staging (staging.typed_select): the estimate, its standard error and its 95% bounds stay the numbers NCHS sent,
+#    and NCHS's flag stays as published; an estimate NCHS flags not available ('- - -') or sent blank is empty, never
+#    zero and never a failed cast. Inputs are SQL so the raw source needn't be loaded first.
+# 2. Intermediate: only NCHS's Total row is a total (an empty group is not), and each flag gets its meaning from the
+#    NCHS footnotes, a padded flag included.
+# 3. The fact (marts): every row is kept; a flagged estimate says so in words, and a missing one says why, naming a
+#    flag the footnotes don't list rather than calling the cell empty.
 version: 2
 unit_tests:
 - name: stg_cdc_nhanes_id_prevalence_keeps_the_estimate_interval_and_flag_as_published
@@ -17,11 +19,14 @@ unit_tests:
       select 'Herpes simplex virus type 2' as "topic", 'Infectious diseases' as "taxonomy", 'Multiple Characteristics' as "classification", 'Sex and age group' as "group", 'Male: 20-29 years' as "subgroup", 'Male' as "nesting_label", 'Percent of population, crude' as "estimate_type", '1999-2000' as "time_period", '6.2' as "estimate", '2.3' as "standard_error", '2.2' as "estimate_lci", '13' as "estimate_uci", '*' as "flag", 'FN' as "footnote_id_list", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
       union all
       select 'Herpes simplex virus type 1' as "topic", 'Infectious diseases' as "taxonomy", 'Demographic Characteristic' as "classification", 'Race and Hispanic origin' as "group", 'Asian only, non-Hispanic' as "subgroup", cast(null as varchar) as "nesting_label", 'Percent of population, crude' as "estimate_type", '1999-2000' as "time_period", cast(null as varchar) as "estimate", cast(null as varchar) as "standard_error", cast(null as varchar) as "estimate_lci", cast(null as varchar) as "estimate_uci", '- - -' as "flag", 'FN' as "footnote_id_list", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select 'Herpes simplex virus type 1' as "topic", 'Infectious diseases' as "taxonomy", 'Demographic Characteristic' as "classification", 'Sex' as "group", 'Female' as "subgroup", cast(null as varchar) as "nesting_label", 'Percent of population, crude' as "estimate_type", '2001-2002' as "time_period", '' as "estimate", ' ' as "standard_error", '' as "estimate_lci", ' ' as "estimate_uci", '- - -' as "flag", 'FN' as "footnote_id_list", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
   expect:
     rows:
-    - {subgroup: 20-49 years, time_period: 2017-2018, estimate: 14.6, estimate_lci: 12.4, estimate_uci: 17.1, flag: null, _snapshot_id: s1, _raw_sha256: h1}
-    - {subgroup: "Male: 20-29 years", time_period: 1999-2000, estimate: 6.2, estimate_lci: 2.2, estimate_uci: 13.0, flag: "*", _snapshot_id: s1, _raw_sha256: h1}
-    - {subgroup: "Asian only, non-Hispanic", time_period: 1999-2000, estimate: null, estimate_lci: null, estimate_uci: null, flag: "- - -", _snapshot_id: s1, _raw_sha256: h1}
+    - {subgroup: 20-49 years, time_period: 2017-2018, estimate: 14.6, standard_error: 1.2, estimate_lci: 12.4, estimate_uci: 17.1, flag: null, _snapshot_id: s1, _raw_sha256: h1}
+    - {subgroup: "Male: 20-29 years", time_period: 1999-2000, estimate: 6.2, standard_error: 2.3, estimate_lci: 2.2, estimate_uci: 13.0, flag: "*", _snapshot_id: s1, _raw_sha256: h1}
+    - {subgroup: "Asian only, non-Hispanic", time_period: 1999-2000, estimate: null, standard_error: null, estimate_lci: null, estimate_uci: null, flag: "- - -", _snapshot_id: s1, _raw_sha256: h1}
+    - {subgroup: Female, time_period: 2001-2002, estimate: null, standard_error: null, estimate_lci: null, estimate_uci: null, flag: "- - -", _snapshot_id: s1, _raw_sha256: h1}
 - name: int_cdc_nhanes_id_prevalence_flags_only_the_total_row_and_explains_each_flag
   model: int_cdc_nhanes_id_prevalence
   given:
@@ -30,11 +35,13 @@ unit_tests:
     - {infection: Herpes simplex virus type 2, population_group: Total, subgroup: 20-49 years, time_period: 2017-2018, estimate: 14.6, flag: null}
     - {infection: Herpes simplex virus type 2, population_group: Sex and age group, subgroup: "Male: 20-29 years", time_period: 1999-2000, estimate: 6.2, flag: "*"}
     - {infection: Herpes simplex virus type 1, population_group: Race and Hispanic origin, subgroup: "Asian only, non-Hispanic", time_period: 1999-2000, estimate: null, flag: "- - -"}
+    - {infection: Herpes simplex virus type 1, population_group: null, subgroup: Female, time_period: 2019-2020, estimate: 50.0, flag: " ^^ "}
   expect:
     rows:
     - {subgroup: 20-49 years, is_total_row: true, flag_meaning: null}
     - {subgroup: "Male: 20-29 years", is_total_row: false, flag_meaning: "the estimate does not meet NCHS standards of reliability (NCHS footnote NA_NHANES06)"}
-    - {subgroup: "Asian only, non-Hispanic", is_total_row: false, flag_meaning: "data are not available (NCHS footnote NA_NHANES07); never a zero"}
+    - {subgroup: "Asian only, non-Hispanic", is_total_row: false, flag_meaning: "data are not available (NCHS footnote NA_NHANES07) and never a zero"}
+    - {subgroup: Female, is_total_row: false, flag_meaning: "2019-2020 data are not nationally representative (NCHS footnote NA_NHANES09)"}
 - name: fct_cdc_nhanes_id_prevalence_keeps_every_row_and_qualifies_flagged_estimates
   model: fct_cdc_nhanes_id_prevalence
   given:
@@ -42,11 +49,15 @@ unit_tests:
     rows:
     - {infection: Herpes simplex virus type 2, population_group: Total, subgroup: 20-49 years, time_period: 2017-2018, estimate: 14.6, flag: null, flag_meaning: null, is_total_row: true, _snapshot_id: s1, _raw_sha256: h1}
     - {infection: Herpes simplex virus type 2, population_group: Sex and age group, subgroup: "Male: 20-29 years", time_period: 1999-2000, estimate: 6.2, flag: "*", flag_meaning: "the estimate does not meet NCHS standards of reliability (NCHS footnote NA_NHANES06)", is_total_row: false, _snapshot_id: s1, _raw_sha256: h1}
-    - {infection: Herpes simplex virus type 1, population_group: Race and Hispanic origin, subgroup: "Asian only, non-Hispanic", time_period: 1999-2000, estimate: null, flag: "- - -", flag_meaning: "data are not available (NCHS footnote NA_NHANES07); never a zero", is_total_row: false, _snapshot_id: s1, _raw_sha256: h1}
+    - {infection: Herpes simplex virus type 1, population_group: Race and Hispanic origin, subgroup: "Asian only, non-Hispanic", time_period: 1999-2000, estimate: null, flag: "- - -", flag_meaning: "data are not available (NCHS footnote NA_NHANES07) and never a zero", is_total_row: false, _snapshot_id: s1, _raw_sha256: h1}
     - {infection: Herpes simplex virus type 1, population_group: Sex, subgroup: Female, time_period: 2001-2002, estimate: 60.0, flag: "~", flag_meaning: null, is_total_row: false, _snapshot_id: s1, _raw_sha256: h1}
+    - {infection: Herpes simplex virus type 1, population_group: Sex, subgroup: Male, time_period: 2001-2002, estimate: null, flag: "~", flag_meaning: null, is_total_row: false, _snapshot_id: s1, _raw_sha256: h1}
+    - {infection: Herpes simplex virus type 1, population_group: Sex, subgroup: Male, time_period: 2003-2004, estimate: null, flag: null, flag_meaning: null, is_total_row: false, _snapshot_id: s1, _raw_sha256: h1}
   expect:
     rows:
     - {subgroup: 20-49 years, estimate: 14.6, estimate_status: published, is_total_row: true}
     - {subgroup: "Male: 20-29 years", estimate: 6.2, estimate_status: "published, flagged: the estimate does not meet NCHS standards of reliability (NCHS footnote NA_NHANES06)", is_total_row: false}
-    - {subgroup: "Asian only, non-Hispanic", estimate: null, estimate_status: "not published: data are not available (NCHS footnote NA_NHANES07); never a zero", is_total_row: false}
+    - {subgroup: "Asian only, non-Hispanic", estimate: null, estimate_status: "not published: data are not available (NCHS footnote NA_NHANES07) and never a zero", is_total_row: false}
     - {subgroup: Female, estimate: 60.0, estimate_status: "published, flagged: NCHS wrote '~', a flag its footnotes do not list", is_total_row: false}
+    - {subgroup: Male, estimate: null, estimate_status: "not published: NCHS wrote '~', a flag its footnotes do not list", is_total_row: false}
+    - {subgroup: Male, estimate: null, estimate_status: "not published: the publisher's cell is empty", is_total_row: false}

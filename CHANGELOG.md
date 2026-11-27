@@ -55,8 +55,9 @@ All notable changes to this project are documented here. The format follows
   and 2 antibody seroprevalence for US adults aged 20-49, 1999-2000 to 2017-2018 (data.cdc.gov v7tk-n6v3), with
   NCHS's 95% confidence intervals and reliability flags returned on every row.
 - Staging reads a publisher field that holds either a number or a code in its place (HepTracker's counts and
-  rates): a flag column on the same field keeps the code as published and the number reads it as empty, so a new
-  code is kept and reported instead of stopping the load. A contract can declare a numeric field's digit grouping
+  rates), when the contract declares it (`inlineCodes` on the flag column): the number accepts only a plain
+  decimal number, and the flag keeps every other text, trimmed, so a new code (or text such as "NaN") is kept and
+  reported instead of stopping the load or vanishing. A contract can declare a numeric field's digit grouping
   (`thousandsSeparator`), and only a value written as whole groups of three loses it ("1,232" is 1232; "1,5" is
   kept as published).
 - New source, draft (contract not yet reviewed): `cdc_nrevss_positivity`, CDC's weekly national percent of laboratory tests

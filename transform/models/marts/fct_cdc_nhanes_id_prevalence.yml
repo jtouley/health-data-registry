@@ -3,8 +3,8 @@ version: 2
 models:
 - name: fct_cdc_nhanes_id_prevalence
   description: 'One row per published cell of cdc_nhanes_id_prevalence: every row of the latest load, none removed,
-    none added. Grain: infection x time_period x population_group x subgroup, unique on the full table (340 rows,
-    2026-11-25).'
+    none added. Grain: infection x time_period x population_group x subgroup x estimate_type, unique on the full
+    table. Each population group covers the same adults again, so never add across groups.'
   config:
     materialized: table
     contract:
@@ -21,9 +21,10 @@ models:
     - time_period
     - population_group
     - subgroup
+    - estimate_type
   data_tests:
   - one_row_per_key:
-      name: fct_cdc_nhanes_id_prevalence_one_row_per_infection_time_period_population_group_subgroup
+      name: fct_cdc_nhanes_id_prevalence_one_row_per_infection_time_period_population_group_subgroup_estimate_type
       arguments:
         columns: *id001
   columns:
@@ -41,7 +42,7 @@ models:
     - type: not_null
   - name: time_period
     data_type: varchar
-    description: Two-year NHANES survey cycle.
+    description: The two-year NHANES survey cycle the estimate is for, from 1999-2000 to 2017-2018.
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -65,7 +66,8 @@ models:
     - type: not_null
   - name: subgroup
     data_type: varchar
-    description: The subgroup within the grouping.
+    description: 'The subgroup within the grouping: 20-49 years for Total, an age band, Female or Male, a race and
+      Hispanic origin group, or a sex and age band such as Female: 20-29 years.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -75,15 +77,28 @@ models:
       missing_codes: []
     constraints:
     - type: not_null
+  - name: estimate_type
+    data_type: varchar
+    description: 'The kind of estimate as NCHS names it: Percent of population, crude (the only kind on 2026-11-25).
+      Read it before comparing estimates: another kind would be its own row.'
+    meta:
+      logical_type: string
+      physical_type: VARCHAR
+      source_field: estimate_type
+      unit: null
+      codes: []
+      missing_codes: []
+    constraints:
+    - type: not_null
   - name: estimate
     data_type: double
-    description: Crude percent with antibody as NCHS published it; empty where NCHS flags it not available, never
-      a zero.
+    description: Percent of the group with antibody to the virus, of the kind estimate_type names, as NCHS published
+      it; empty where NCHS flags it not available, never a zero.
     meta:
       logical_type: number
       physical_type: DOUBLE
       source_field: estimate
-      unit: null
+      unit: '%'
       codes: []
       missing_codes: []
     data_tests:
@@ -93,12 +108,12 @@ models:
           severity: warn
   - name: standard_error
     data_type: double
-    description: Standard error of the estimate, as published.
+    description: Standard error of the estimate, in percentage points, as published; empty where the estimate is.
     meta:
       logical_type: number
       physical_type: DOUBLE
       source_field: standard_error
-      unit: null
+      unit: percentage points
       codes: []
       missing_codes: []
     data_tests:
@@ -108,12 +123,13 @@ models:
           severity: warn
   - name: estimate_lci
     data_type: double
-    description: Lower bound of NCHS's 95% confidence interval, as published.
+    description: Lower bound of NCHS's 95% confidence interval for the estimate, in percent, as published; empty
+      where the estimate is.
     meta:
       logical_type: number
       physical_type: DOUBLE
       source_field: estimate_lci
-      unit: null
+      unit: '%'
       codes: []
       missing_codes: []
     data_tests:
@@ -123,12 +139,13 @@ models:
           severity: warn
   - name: estimate_uci
     data_type: double
-    description: Upper bound of NCHS's 95% confidence interval, as published.
+    description: Upper bound of NCHS's 95% confidence interval for the estimate, in percent, as published; empty
+      where the estimate is.
     meta:
       logical_type: number
       physical_type: DOUBLE
       source_field: estimate_uci
-      unit: null
+      unit: '%'
       codes: []
       missing_codes: []
     data_tests:
@@ -153,12 +170,27 @@ models:
           severity: warn
   - name: estimate_status
     data_type: varchar
-    description: '''published'', ''published, flagged: '' and what NCHS''s flag means (such as not meeting NCHS
-      standards of reliability), or ''not published: '' and why.'
+    description: '''published''; ''published, flagged: '' and what NCHS''s flag means (such as not meeting NCHS
+      standards of reliability), or that NCHS wrote a flag its footnotes do not list; ''not published: '' and what
+      NCHS''s flag means, or that NCHS wrote a flag its footnotes do not list; or ''not published: the publisher''s
+      cell is empty'' when there is neither an estimate nor a flag.'
     meta:
       logical_type: string
       physical_type: VARCHAR
       source_field: estimate_status
+      unit: null
+      codes: []
+      missing_codes: []
+    constraints:
+    - type: not_null
+  - name: footnote_id_list
+    data_type: varchar
+    description: 'The ids of NCHS''s footnotes for the row, comma-separated, each defined in https://data.cdc.gov/d/iqm3-hbev:
+      the only place the footnotes beyond the flag reach this table.'
+    meta:
+      logical_type: string
+      physical_type: VARCHAR
+      source_field: footnote_id_list
       unit: null
       codes: []
       missing_codes: []
@@ -191,7 +223,8 @@ models:
     - type: not_null
   - name: raw_sha256
     data_type: varchar
-    description: The sha256 of the raw publisher file the row came from (hard rule 8).
+    description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+      the exact bytes the publisher sent (hard rule 8).'
     meta:
       logical_type: string
       physical_type: VARCHAR

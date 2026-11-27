@@ -4,5 +4,5 @@
 select
   stg.*,
   coalesce((population_group = 'Total'), false) AS "is_total_row",
-  CASE trim("flag") WHEN '*' THEN 'the estimate does not meet NCHS standards of reliability (NCHS footnote NA_NHANES06)' WHEN '- - -' THEN 'data are not available (NCHS footnote NA_NHANES07); never a zero' WHEN '^' THEN 'estimates by race and Hispanic origin for August 2021-August 2023 are not shown (NCHS footnote NA_NHANES08)' WHEN '^^' THEN '2019-2020 data are not nationally representative (NCHS footnote NA_NHANES09)' ELSE NULL END AS "flag_meaning"
+  CASE trim("flag") WHEN '*' THEN 'the estimate does not meet NCHS standards of reliability (NCHS footnote NA_NHANES06)' WHEN '- - -' THEN 'data are not available (NCHS footnote NA_NHANES07) and never a zero' WHEN '^' THEN 'estimates by race and Hispanic origin for August 2021-August 2023 are not shown (NCHS footnote NA_NHANES08)' WHEN '^^' THEN '2019-2020 data are not nationally representative (NCHS footnote NA_NHANES09)' ELSE NULL END AS "flag_meaning"
 from {{ ref('stg_cdc_nhanes_id_prevalence') }} as stg

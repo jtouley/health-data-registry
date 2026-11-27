@@ -4,6 +4,6 @@
 select
   stg.*,
   coalesce((grouping = 'Area' AND stratum = 'Total'), false) AS "is_total_row",
-  CASE trim("count_flag") WHEN '—' THEN 'not reported (CDC''s column description); never a zero' WHEN 'U' THEN 'unavailable (CDC''s column description)' WHEN 'N' THEN 'not reportable (CDC''s column description)' WHEN 'S' THEN 'suppressed (CDC''s column description)' WHEN 'UR' THEN 'unreliable (CDC''s column description)' ELSE NULL END AS "count_flag_meaning",
-  CASE trim("rate_flag") WHEN '—' THEN 'not reported (CDC''s column description); never a zero' WHEN 'U' THEN 'unavailable (CDC''s column description)' WHEN 'N' THEN 'not reportable (CDC''s column description)' WHEN 'S' THEN 'suppressed (CDC''s column description)' WHEN 'UR' THEN 'unreliable (CDC''s column description)' ELSE NULL END AS "rate_flag_meaning"
+  CASE trim("count_flag") WHEN '—' THEN 'not reported (CDC''s column description) and never a zero' WHEN 'U' THEN 'unavailable (CDC''s column description)' WHEN 'N' THEN 'not reportable (CDC''s column description)' WHEN 'S' THEN 'suppressed (CDC''s column description)' WHEN 'UR' THEN 'unreliable (CDC''s column description)' ELSE NULL END AS "count_flag_meaning",
+  CASE trim("rate_flag") WHEN '—' THEN 'not reported (CDC''s Count column description, which the Rate column shares) and never a zero' WHEN 'U' THEN 'unavailable (CDC''s Count column description, which the Rate column shares)' WHEN 'N' THEN 'not reportable (CDC''s Count column description, which the Rate column shares)' WHEN 'S' THEN 'suppressed (CDC''s Count column description, which the Rate column shares)' WHEN 'UR' THEN 'unreliable (CDC''s Count column description, which the Rate column shares)' ELSE NULL END AS "rate_flag_meaning"
 from {{ ref('stg_cdc_heptracker') }} as stg

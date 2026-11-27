@@ -31,8 +31,9 @@ models:
   - odcs_check:
       name: cdc_nhanes_id_prevalence_one_row_per_cell
       arguments:
-        measure_sql: SELECT COUNT(*) FROM (SELECT infection, time_period, population_group, subgroup FROM {object}
-          GROUP BY infection, time_period, population_group, subgroup HAVING COUNT(*) > 1)
+        measure_sql: SELECT COUNT(*) FROM (SELECT infection, time_period, population_group, subgroup, estimate_type
+          FROM {object} GROUP BY infection, time_period, population_group, subgroup, estimate_type HAVING COUNT(*)
+          > 1)
         condition: measured = 0
       config:
         severity: error
@@ -40,8 +41,9 @@ models:
           dimension: uniqueness
           rule: one_row_per_cell
           contract: contracts/cdc_nhanes_id_prevalence.odcs.yaml
-          checks: 'Grain: one estimate per infection, survey cycle, group and subgroup (an exact structural fact
-            of the full table, 340 rows, on 2026-11-25). A repeat would mean two figures for one cell.'
+          checks: 'Grain: one estimate per infection, survey cycle, group, subgroup and kind of estimate (an exact
+            structural fact of the full table, 340 rows, on 2026-11-25). A repeat would mean two figures for one
+            cell.'
   - odcs_check:
       name: cdc_nhanes_id_prevalence_total_estimates_present
       arguments:
@@ -53,8 +55,8 @@ models:
           dimension: completeness
           rule: total_estimates_present
           contract: contracts/cdc_nhanes_id_prevalence.odcs.yaml
-          checks: 'Fill rate for the Total rows the headline series read, which the percent rule also covers: at
-            least one is published (all 20 were on 2026-11-25).'
+          checks: 'Presence check for the Total rows the headline series read, which the percent rule also covers:
+            at least one is published (a presence check, not a share; all 20 were on 2026-11-25).'
   - odcs_check:
       name: cdc_nhanes_id_prevalence_infections_known
       arguments:
@@ -138,13 +140,14 @@ models:
         measure_sql: SELECT COUNT(*) FROM {object} WHERE estimate IS NULL AND flag IS NULL
         condition: measured = 0
       config:
-        severity: warn
+        severity: error
         meta:
           dimension: consistency
           rule: an_estimate_or_a_flag
           contract: contracts/cdc_nhanes_id_prevalence.odcs.yaml
           checks: An empty estimate carries NCHS's flag saying why (- - -, not available, on all 20 empty estimates
-            on 2026-11-25); an empty estimate with no flag is a gap with no reason.
+            on 2026-11-25); an empty estimate with no flag is a gap with no reason. An error, like HepTracker's
+            a_count_or_a_code.
   - odcs_check:
       name: cdc_nhanes_id_prevalence_flag_codes_known
       arguments:
@@ -296,7 +299,9 @@ models:
       missing_codes: []
   - name: estimate_type
     data_type: varchar
-    description: 'The kind of estimate (ESTIMATE_TYPE): Percent of population, crude.'
+    description: 'The kind of estimate (ESTIMATE_TYPE): Percent of population, crude. Part of the key, so a second
+      kind of estimate for the same cell (an age-adjusted percent, say) is its own row, reported by estimates_are_crude_percents,
+      never a repeated key.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -333,7 +338,7 @@ models:
       logical_type: number
       physical_type: DOUBLE
       source_field: standard_error
-      unit: null
+      unit: percentage points
       codes: []
       missing_codes: []
   - name: estimate_lci
@@ -362,8 +367,8 @@ models:
     data_type: varchar
     description: 'NCHS''s flag on the estimate (FLAG), exactly as published; empty when the estimate carries none.
       Codes (publisher''s codebook): * = the estimate does not meet NCHS standards of reliability (NCHS footnote
-      NA_NHANES06); - - - = data are not available (NCHS footnote NA_NHANES07); never a zero; ^ = estimates by race
-      and Hispanic origin for August 2021-August 2023 are not shown (NCHS footnote NA_NHANES08); ^^ = 2019-2020
+      NA_NHANES06); - - - = data are not available (NCHS footnote NA_NHANES07) and never a zero; ^ = estimates by
+      race and Hispanic origin for August 2021-August 2023 are not shown (NCHS footnote NA_NHANES08); ^^ = 2019-2020
       data are not nationally representative (NCHS footnote NA_NHANES09).'
     meta:
       logical_type: string

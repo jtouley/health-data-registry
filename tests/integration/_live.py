@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import ssl
 import urllib.parse
 import urllib.request
@@ -19,6 +20,7 @@ import duckdb
 import yaml
 
 from health_data_registry.registry import SemanticModel, unpinned_non_additive
+from health_data_registry.staging import PLAIN_NUMBER, ungroup, ungrouped_sql
 
 ROOT = Path(__file__).resolve().parents[2]
 TIMEOUT_S = 60
@@ -82,12 +84,17 @@ def check_structure(con: Mapping[str, Any], rows: list[dict[str, Any]], served_f
                 v = r.get(src)
                 if v in (None, ""):
                     continue
-                try:
-                    float(str(v).replace(sep, "") if sep else v)
-                except (TypeError, ValueError):
+                if plain_number(v, sep) is None:
                     assert str(v) in allowed, (
                         f"{p['name']}: non-numeric value {v!r} is not a declared missing code"
                     )
+
+
+def plain_number(value: Any, sep: str | None = None) -> float | None:
+    """The publisher's text read as staging reads it: digit grouping dropped only from whole groups of three, and
+    only a plain decimal number accepted ('1,5', 'NaN' and 'inf' are not numbers here, as they are not there)."""
+    text = ungroup(str(value).strip(), sep)
+    return float(text) if re.fullmatch(PLAIN_NUMBER, text) else None
 
 
 def duckdb_metric(
@@ -119,7 +126,9 @@ def duckdb_metric(
         text = f"j->>'$.\"{src}\"'"
         sep = custom(p).get("thousandsSeparator")
         if sep and typ in ("BIGINT", "INTEGER", "DOUBLE"):  # digit grouping the contract declares: '1,234'
-            text = f"replace({text}, '{sep}', '')"
+            text = ungrouped_sql(
+                text, sep
+            )  # staging's own rule: only whole groups of three, the literal escaped
         if typ == "BIGINT":  # publishers send '176.0' for counts
             expr = f"TRY_CAST(TRY_CAST({text} AS DOUBLE) AS BIGINT)"
         else:

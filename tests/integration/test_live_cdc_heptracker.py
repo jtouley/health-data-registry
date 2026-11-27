@@ -26,10 +26,8 @@ def live():
 
 
 def _number(text):
-    try:
-        return float(str(text).replace(",", ""))
-    except ValueError:
-        return None
+    # Staging's own reading: whole groups of three lose their commas; 'NaN' or '1,5' is not a number.
+    return _live.plain_number(text, ",")
 
 
 def test_contract_structure(live):

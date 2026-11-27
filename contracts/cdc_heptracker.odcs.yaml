@@ -142,28 +142,29 @@ schema:
             dimension: completeness
             severity: error
             type: sql
-            description: "Fill rate for the case rows counts_not_negative reads: an all-empty subset passes it, so at least one case count must be published (5,425 of 6,535 were on 2026-11-25)."
+            description: "Presence check for the case rows counts_not_negative reads: an all-empty subset passes it, so at least one case count must be published (a presence check, not a share; 5,425 of 6,535 were on 2026-11-25)."
             query: "SELECT COUNT(*) FROM {object} WHERE case_or_death = 'Case' AND reported_count IS NOT NULL"
             mustBeGreaterThan: 0
           - id: death_counts_present
             dimension: completeness
             severity: warn
             type: sql
-            description: "Fill rate for the death rows: at least one death count is published (1,848 of 2,053 were on 2026-11-25)."
+            description: "Presence check for the death rows: at least one death count is published (a presence check, not a share; 1,848 of 2,053 were on 2026-11-25)."
             query: "SELECT COUNT(*) FROM {object} WHERE case_or_death = 'Death' AND reported_count IS NOT NULL"
             mustBeGreaterThan: 0
       - name: count_flag
         physicalType: VARCHAR
         logicalType: string
         required: false
-        description: "CDC's code where it published no count, exactly as written; empty beside a published count."
+        description: "CDC's code where it published no count, as written (surrounding spaces trimmed); empty beside a published count. Any text in the Count field that isn't a plain number is kept here, so a new code is reported, never lost."
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: count}
           - {property: flagFor, value: reported_count}
+          - {property: inlineCodes, value: true}
           - property: flagCodes
             value:
-              "—": "not reported (CDC's column description); never a zero"
+              "—": "not reported (CDC's column description) and never a zero"
               "U": "unavailable (CDC's column description)"
               "N": "not reportable (CDC's column description)"
               "S": "suppressed (CDC's column description)"
@@ -197,27 +198,35 @@ schema:
             mustBe: 0
           - id: national_case_rates_present
             dimension: completeness
+            severity: error
+            type: sql
+            description: "Presence check for the nationwide case rates the headline series read: at least one is published (a presence check, not a share; every year of the six conditions with rates was on 2026-11-25). An error, like case_counts_present: if the Rate field's format changed, every rate would move to rate_flag and only warnings would fire."
+            query: "SELECT COUNT(*) FROM {object} WHERE case_or_death = 'Case' AND grouping = 'Area' AND stratum = 'Total' AND rate IS NOT NULL"
+            mustBeGreaterThan: 0
+          - id: death_rates_present
+            dimension: completeness
             severity: warn
             type: sql
-            description: "Fill rate for the nationwide case rates the headline series read: at least one is published (every year of the six conditions with rates was on 2026-11-25)."
-            query: "SELECT COUNT(*) FROM {object} WHERE case_or_death = 'Case' AND grouping = 'Area' AND stratum = 'Total' AND rate IS NOT NULL"
+            description: "Presence check for the death rates the death-rate series read: at least one death rate is published (a presence check, not a share)."
+            query: "SELECT COUNT(*) FROM {object} WHERE case_or_death = 'Death' AND rate IS NOT NULL"
             mustBeGreaterThan: 0
       - name: rate_flag
         physicalType: VARCHAR
         logicalType: string
         required: false
-        description: "CDC's code where it published no rate, exactly as written; empty beside a published rate or where the publisher sent no rate at all."
+        description: "CDC's code where it published no rate, as written (surrounding spaces trimmed); empty beside a published rate or where the publisher sent no rate at all. Any text in the Rate field that isn't a plain number is kept here, so a new code is reported, never lost."
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: rate}
           - {property: flagFor, value: rate}
+          - {property: inlineCodes, value: true}
           - property: flagCodes
             value:
-              "—": "not reported (CDC's column description); never a zero"
-              "U": "unavailable (CDC's column description)"
-              "N": "not reportable (CDC's column description)"
-              "S": "suppressed (CDC's column description)"
-              "UR": "unreliable (CDC's column description)"
+              "—": "not reported (CDC's Count column description, which the Rate column shares) and never a zero"
+              "U": "unavailable (CDC's Count column description, which the Rate column shares)"
+              "N": "not reportable (CDC's Count column description, which the Rate column shares)"
+              "S": "suppressed (CDC's Count column description, which the Rate column shares)"
+              "UR": "unreliable (CDC's Count column description, which the Rate column shares)"
         quality:
           - id: rate_codes_known
             dimension: conformity
@@ -261,6 +270,7 @@ customProperties:
       - "Is a case placed by the reporting jurisdiction or by residence, and does CDC's 'Total' include cases reported by territories or non-residents? Until confirmed, 'Total' is shown as CDC labels it (nationwide), never relabelled United States."
       - "Case definitions: acute, chronic and perinatal hepatitis B and C and hepatitis A as CSTE defines them change over 2011-2023 (for example the 2020 hepatitis C definition). Which definition applies each year is in the Technical Notes, not the data; add as caseDefinitions after a maintainer reads them."
       - "Deaths: underlying or multiple cause of death, and which ICD-10 codes? Not stated in the data."
+      - "Year: is it the year a case was reported (cases) and the year of death (deaths), or another date such as onset? Not stated in the data; read in the Technical Notes."
       - "Do the age groups, sexes, races and ethnicities or HHS regions add up to the nationwide Total, and do the states? Not stated. totalRows marks the labelled Total and nothing is added."
       - "Spelling: risk exposures use both 'Missing/Unknown' and 'Missing/unknown', and some age groups use an en dash (45–64) where others use a hyphen (0-19). Kept as published; filters copy the label exactly."
       - "Are recent years revised in later releases (rowsUpdatedAt 2026-01-29)?"

@@ -89,8 +89,9 @@ sources:
       data_type: varchar
       description: Publisher field count, as text; read into reported_count (Number of cases or deaths as CDC published
         it, its digit grouping removed (1,232 reads as 1232). Empty where CDC wrote a code instead (see count_flag),
-        and never a zero.); count_flag (CDC's code where it published no count, exactly as written; empty beside
-        a published count.)
+        and never a zero.); count_flag (CDC's code where it published no count, as written (surrounding spaces trimmed);
+        empty beside a published count. Any text in the Count field that isn't a plain number is kept here, so a
+        new code is reported, never lost.)
     - name: event
       data_type: varchar
       description: 'Publisher field event, as text; read into condition (The viral hepatitis condition as CDC names
@@ -101,8 +102,9 @@ sources:
       description: 'Publisher field rate, as text; read into rate (Cases or deaths per 100,000 population as CDC
         published it (Rate: ''Rates calculated per 100,000 population''). Empty where CDC wrote a code instead (see
         rate_flag) or gave no rate (risk groups, sex-and-age groups, perinatal infection), and never a zero.); rate_flag
-        (CDC''s code where it published no rate, exactly as written; empty beside a published rate or where the
-        publisher sent no rate at all.)'
+        (CDC''s code where it published no rate, as written (surrounding spaces trimmed); empty beside a published
+        rate or where the publisher sent no rate at all. Any text in the Rate field that isn''t a plain number is
+        kept here, so a new code is reported, never lost.)'
     - name: type
       data_type: varchar
       description: 'Publisher field type, as text; read into case_or_death (Case (reported to NNDSS) or Death (from
@@ -167,7 +169,8 @@ sources:
     - name: estimate_type
       data_type: varchar
       description: 'Publisher field estimate_type, as text; read into estimate_type (The kind of estimate (ESTIMATE_TYPE):
-        Percent of population, crude.)'
+        Percent of population, crude. Part of the key, so a second kind of estimate for the same cell (an age-adjusted
+        percent, say) is its own row, reported by estimates_are_crude_percents, never a repeated key.)'
     - name: estimate_uci
       data_type: varchar
       description: Publisher field estimate_uci, as text; read into estimate_uci (Upper bound of the 95% confidence

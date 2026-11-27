@@ -115,10 +115,11 @@ models:
           severity: warn
   - name: count_flag
     data_type: varchar
-    description: 'CDC''s code where it published no count, exactly as written; empty beside a published count. Codes
-      (publisher''s codebook): — = not reported (CDC''s column description); never a zero; U = unavailable (CDC''s
-      column description); N = not reportable (CDC''s column description); S = suppressed (CDC''s column description);
-      UR = unreliable (CDC''s column description).'
+    description: 'CDC''s code where it published no count, as written (surrounding spaces trimmed); empty beside
+      a published count. Any text in the Count field that isn''t a plain number is kept here, so a new code is reported,
+      never lost. Codes (publisher''s codebook): — = not reported (CDC''s column description) and never a zero;
+      U = unavailable (CDC''s column description); N = not reportable (CDC''s column description); S = suppressed
+      (CDC''s column description); UR = unreliable (CDC''s column description).'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -172,10 +173,13 @@ models:
           severity: warn
   - name: rate_flag
     data_type: varchar
-    description: 'CDC''s code where it published no rate, exactly as written; empty beside a published rate or where
-      the publisher sent no rate at all. Codes (publisher''s codebook): — = not reported (CDC''s column description);
-      never a zero; U = unavailable (CDC''s column description); N = not reportable (CDC''s column description);
-      S = suppressed (CDC''s column description); UR = unreliable (CDC''s column description).'
+    description: 'CDC''s code where it published no rate, as written (surrounding spaces trimmed); empty beside
+      a published rate or where the publisher sent no rate at all. Any text in the Rate field that isn''t a plain
+      number is kept here, so a new code is reported, never lost. Codes (publisher''s codebook): — = not reported
+      (CDC''s Count column description, which the Rate column shares) and never a zero; U = unavailable (CDC''s
+      Count column description, which the Rate column shares); N = not reportable (CDC''s Count column description,
+      which the Rate column shares); S = suppressed (CDC''s Count column description, which the Rate column shares);
+      UR = unreliable (CDC''s Count column description, which the Rate column shares).'
     meta:
       logical_type: string
       physical_type: VARCHAR

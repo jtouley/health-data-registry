@@ -572,6 +572,11 @@ class Column:
     # ("1,234"), an exact structural fact of the publisher's text. Staging drops it only from a value written as
     # whole groups of three digits, so "1,5" is never read as 15.
     thousands_separator: str | None = None
+    # customProperties.inlineCodes: true on a VARCHAR flag column that reads the same publisher field as the
+    # numeric column it flags, because the publisher writes a code in place of the number (HepTracker's 'S').
+    # Staging then keeps any text that isn't a plain number in the flag and reads it as empty in the number,
+    # instead of stopping the load. Declared, never inferred from two columns sharing a field.
+    inline_codes: bool = False
 
     def partial_note(self, label: str) -> str | None:
         """The contract's note when this place label covers only part of the place it is named after."""
@@ -846,6 +851,12 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
                 f"{expected_id}.{name}: thousandsSeparator is one character (a comma, a space or an apostrophe) "
                 "on a numeric column"
             )
+        inline = cp.get("inlineCodes", False)
+        if not isinstance(inline, bool) or (inline and (cp.get("flagFor") is None or ptype != "VARCHAR")):
+            raise RegistryError(
+                f"{expected_id}.{name}: inlineCodes is true or false, and true only on a VARCHAR flag column "
+                "(flagFor)"
+            )
         pairs = {k: _pairs(cp.get(k), f"{expected_id}.{name}.{k}") for k in _PAIR_PROPS}
         zero = cp.get("noCasesCode")
         if zero is not None and (cp.get("flagFor") is None or str(zero) not in dict(pairs["flagCodes"])):
@@ -871,10 +882,12 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
                 no_cases_code=None if zero is None else str(zero),
                 may_be_empty=may_be_empty,
                 thousands_separator=sep,
+                inline_codes=inline,
             )
         )
     if not cols:
         raise RegistryError(f"{expected_id}: contract declares no properties")
+    _check_inline_codes(expected_id, cols)
     names = [c.name for c in cols]
     if len(set(names)) != len(names):
         raise RegistryError(f"{expected_id}: duplicate column names in contract")
@@ -1509,6 +1522,25 @@ def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticMode
             raise RegistryError(f"{entry.id}: {c.name} flags unknown column {c.flag_for}")
         if c.flag_codes and c.flag_for is None:
             raise RegistryError(f"{entry.id}: {c.name} lists flagCodes but flags no column (flagFor)")
+
+
+def _check_inline_codes(contract_id: str, cols: list[Column]) -> None:
+    """A flag reading its number's own publisher field declares inlineCodes, and only such a flag does."""
+    by_name = {c.name: c for c in cols}
+    for c in cols:
+        number = by_name.get(c.flag_for) if c.flag_for is not None else None
+        shares = number is not None and number.source_field == c.source_field
+        numeric = number is not None and number.physical_type in ("BIGINT", "INTEGER", "DOUBLE")
+        if c.inline_codes and not (shares and numeric):
+            raise RegistryError(
+                f"{contract_id}.{c.name}: inlineCodes needs flagFor to name a numeric column that reads the same "
+                "sourceField"
+            )
+        if shares and numeric and not c.inline_codes:
+            raise RegistryError(
+                f"{contract_id}.{c.name}: it reads the same sourceField as {c.flag_for}, so the publisher writes "
+                "codes in place of the number; declare inlineCodes: true to keep them, or read another field"
+            )
 
 
 def load_registry(root: Path | None = None) -> Registry:

@@ -6,16 +6,19 @@ select
   time_period,
   population_group,
   subgroup,
+  estimate_type,
   estimate,
   standard_error,
   estimate_lci,
   estimate_uci,
   flag,
   case
-    when estimate is null then 'not published: ' || coalesce(flag_meaning, 'the publisher''s cell is empty')
+    when estimate is null and flag is not null then 'not published: ' || coalesce(flag_meaning, 'NCHS wrote ''' || flag || ''', a flag its footnotes do not list')
+    when estimate is null then 'not published: the publisher''s cell is empty'
     when flag is not null then 'published, flagged: ' || coalesce(flag_meaning, 'NCHS wrote ''' || flag || ''', a flag its footnotes do not list')
     else 'published'
   end as estimate_status,
+  footnote_id_list,
   is_total_row,
   _snapshot_id as snapshot_id,
   _raw_sha256 as raw_sha256

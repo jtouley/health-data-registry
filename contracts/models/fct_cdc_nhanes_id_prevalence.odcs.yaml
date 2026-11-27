@@ -14,7 +14,7 @@ schema:
     physicalName: fct_cdc_nhanes_id_prevalence
     physicalType: table
     logicalType: object
-    description: "One row per published cell of cdc_nhanes_id_prevalence: every row of the latest load, none removed, none added. Grain: infection x time_period x population_group x subgroup, unique on the full table (340 rows, 2026-11-25)."
+    description: "One row per published cell of cdc_nhanes_id_prevalence: every row of the latest load, none removed, none added. Grain: infection x time_period x population_group x subgroup x estimate_type, unique on the full table. Each population group covers the same adults again, so never add across groups."
     customProperties:
       - {property: layer, value: marts}
       - {property: totalRows, value: "is_total_row"}
@@ -34,7 +34,7 @@ schema:
         required: true
         primaryKey: true
         primaryKeyPosition: 2
-        description: "Two-year NHANES survey cycle."
+        description: "The two-year NHANES survey cycle the estimate is for, from 1999-2000 to 2017-2018."
         customProperties: [{property: role, value: dimension}]
       - name: population_group
         physicalType: VARCHAR
@@ -50,32 +50,40 @@ schema:
         required: true
         primaryKey: true
         primaryKeyPosition: 4
-        description: "The subgroup within the grouping."
+        description: "The subgroup within the grouping: 20-49 years for Total, an age band, Female or Male, a race and Hispanic origin group, or a sex and age band such as Female: 20-29 years."
+        customProperties: [{property: role, value: dimension}]
+      - name: estimate_type
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 5
+        description: "The kind of estimate as NCHS names it: Percent of population, crude (the only kind on 2026-11-25). Read it before comparing estimates: another kind would be its own row."
         customProperties: [{property: role, value: dimension}]
       - name: estimate
         physicalType: DOUBLE
         logicalType: number
         required: false
-        description: "Crude percent with antibody as NCHS published it; empty where NCHS flags it not available, never a zero."
-        customProperties: [{property: role, value: measure}]
+        description: "Percent of the group with antibody to the virus, of the kind estimate_type names, as NCHS published it; empty where NCHS flags it not available, never a zero."
+        customProperties: [{property: role, value: measure}, {property: unit, value: "%"}]
       - name: standard_error
         physicalType: DOUBLE
         logicalType: number
         required: false
-        description: "Standard error of the estimate, as published."
-        customProperties: [{property: role, value: attribute}]
+        description: "Standard error of the estimate, in percentage points, as published; empty where the estimate is."
+        customProperties: [{property: role, value: attribute}, {property: unit, value: "percentage points"}]
       - name: estimate_lci
         physicalType: DOUBLE
         logicalType: number
         required: false
-        description: "Lower bound of NCHS's 95% confidence interval, as published."
-        customProperties: [{property: role, value: measure}]
+        description: "Lower bound of NCHS's 95% confidence interval for the estimate, in percent, as published; empty where the estimate is."
+        customProperties: [{property: role, value: measure}, {property: unit, value: "%"}]
       - name: estimate_uci
         physicalType: DOUBLE
         logicalType: number
         required: false
-        description: "Upper bound of NCHS's 95% confidence interval, as published."
-        customProperties: [{property: role, value: measure}]
+        description: "Upper bound of NCHS's 95% confidence interval for the estimate, in percent, as published; empty where the estimate is."
+        customProperties: [{property: role, value: measure}, {property: unit, value: "%"}]
       - name: flag
         physicalType: VARCHAR
         logicalType: string
@@ -86,7 +94,13 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "'published', 'published, flagged: ' and what NCHS's flag means (such as not meeting NCHS standards of reliability), or 'not published: ' and why."
+        description: "'published'; 'published, flagged: ' and what NCHS's flag means (such as not meeting NCHS standards of reliability), or that NCHS wrote a flag its footnotes do not list; 'not published: ' and what NCHS's flag means, or that NCHS wrote a flag its footnotes do not list; or 'not published: the publisher's cell is empty' when there is neither an estimate nor a flag."
+        customProperties: [{property: role, value: attribute}]
+      - name: footnote_id_list
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The ids of NCHS's footnotes for the row, comma-separated, each defined in https://data.cdc.gov/d/iqm3-hbev: the only place the footnotes beyond the flag reach this table."
         customProperties: [{property: role, value: attribute}]
       - name: is_total_row
         physicalType: BOOLEAN
@@ -104,7 +118,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "The sha256 of the raw publisher file the row came from (hard rule 8)."
+        description: "The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order: the exact bytes the publisher sent (hard rule 8)."
         customProperties: [{property: role, value: attribute}]
 customProperties:
   - {property: unreliableRule, value: {kind: none, description: "The publisher's own codes and flags are carried on every row (see contracts/cdc_nhanes_id_prevalence.odcs.yaml)."}}

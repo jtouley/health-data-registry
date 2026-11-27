@@ -20,9 +20,10 @@ models:
     - time_period
     - population_group
     - subgroup
+    - estimate_type
   data_tests:
   - one_row_per_key:
-      name: stg_cdc_nhanes_id_prevalence_one_row_per_infection_time_period_population_group_subgroup
+      name: stg_cdc_nhanes_id_prevalence_one_row_per_infection_time_period_population_group_subgroup_estimate_type
       arguments:
         columns: *id001
   columns:
@@ -107,7 +108,9 @@ models:
           severity: warn
   - name: estimate_type
     data_type: varchar
-    description: 'The kind of estimate (ESTIMATE_TYPE): Percent of population, crude.'
+    description: 'The kind of estimate (ESTIMATE_TYPE): Percent of population, crude. Part of the key, so a second
+      kind of estimate for the same cell (an age-adjusted percent, say) is its own row, reported by estimates_are_crude_percents,
+      never a repeated key.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -153,7 +156,7 @@ models:
       logical_type: number
       physical_type: DOUBLE
       source_field: standard_error
-      unit: null
+      unit: percentage points
       codes: []
       missing_codes: []
     data_tests:
@@ -197,8 +200,8 @@ models:
     data_type: varchar
     description: 'NCHS''s flag on the estimate (FLAG), exactly as published; empty when the estimate carries none.
       Codes (publisher''s codebook): * = the estimate does not meet NCHS standards of reliability (NCHS footnote
-      NA_NHANES06); - - - = data are not available (NCHS footnote NA_NHANES07); never a zero; ^ = estimates by race
-      and Hispanic origin for August 2021-August 2023 are not shown (NCHS footnote NA_NHANES08); ^^ = 2019-2020
+      NA_NHANES06); - - - = data are not available (NCHS footnote NA_NHANES07) and never a zero; ^ = estimates by
+      race and Hispanic origin for August 2021-August 2023 are not shown (NCHS footnote NA_NHANES08); ^^ = 2019-2020
       data are not nationally representative (NCHS footnote NA_NHANES09).'
     meta:
       logical_type: string
