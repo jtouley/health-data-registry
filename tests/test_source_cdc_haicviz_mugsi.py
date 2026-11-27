@@ -66,9 +66,11 @@ def _rows(out: Any) -> list[dict[str, str]]:
 )
 def test_a_plain_question_about_cre_or_crab_routes_here(question: str) -> None:
     rows = _rows(tools.suggest_datasets(load_registry(ROOT), question))
-    row = next(r for r in rows if r["source_id"] == DS)
-    assert row["can_answer"] == "yes", row
-    assert rows.index(row) < 3
+    # No source declares its places yet (#111), so the best a question gets is "unknown" for the place alone:
+    # it is offered first, with that one open question.
+    assert rows[0]["source_id"] == DS and rows[0]["can_answer"] == "unknown", rows[0]
+    assert rows[0]["why"].startswith("this source doesn't declare which places it covers yet"), rows[0]
+    assert ";" not in rows[0]["why"], rows[0]
 
 
 def test_a_state_question_is_told_there_are_no_state_values() -> None:
