@@ -41,7 +41,7 @@ from typing import Any
 
 import duckdb
 
-from health_data_registry.quality import QualityBlocked, QualityReport, blocked_message
+from health_data_registry.quality import QualityBlocked, QualityReport, blocked_message, expected_ids
 from health_data_registry.registry import Dataset
 from health_data_registry.staging import Staged, check_snapshot, stage, write_parquet
 
@@ -225,7 +225,7 @@ def build_snapshot(
         existing = Manifest.read(out / "manifest.json")
         # The stored verdict may be missing (a snapshot from before the rules) or stale (rules edited since):
         # the contract's current rules run again on the kept file, which is never rewritten.
-        _promote(lake, ds.id, replace(existing, quality=judge_snapshot(out, ds)))
+        _promote(lake, ds, replace(existing, quality=judge_snapshot(out, ds)))
         return existing
     tmp = Path(tempfile.mkdtemp(prefix=f".{ds.id}-", dir=lake))
     try:
@@ -270,7 +270,7 @@ def build_snapshot(
         if tmp.exists():
             shutil.rmtree(tmp, ignore_errors=True)
     keep()
-    _promote(lake, ds.id, manifest)
+    _promote(lake, ds, manifest)
 
     return manifest
 
@@ -364,15 +364,19 @@ def judge_snapshot(snapshot: Path, ds: Dataset) -> dict[str, Any]:
         return QualityReport((), (error,)).as_dict()
 
 
-def _promote(lake: Path, dataset_id: str, manifest: Manifest) -> None:
+def _promote(lake: Path, ds: Dataset, manifest: Manifest) -> None:
     """Point LATEST at a new snapshot, unless a contract rule blocks it (an error-severity failure or a rule that
     could not run): then the snapshot and its raw records stay on disk for inspection, LATEST keeps naming the
     copy before it, and QualityBlocked says why. A partial development sample is never published, so its rules
-    are reported as caveats only."""
-    reason = None if manifest.partial else blocked_message(dataset_id, manifest.quality)
+    are reported as caveats only. A check of the contract's that has no result never ran, so it blocks too."""
+    reason = (
+        None
+        if manifest.partial
+        else blocked_message(ds.id, manifest.quality, expected=expected_ids(ds.contract))
+    )
     if reason:
         raise QualityBlocked(reason)
-    _point_latest(lake, dataset_id, manifest.snapshot_id)
+    _point_latest(lake, ds.id, manifest.snapshot_id)
 
 
 def _point_latest(lake: Path, dataset_id: str, snapshot_id: str) -> None:

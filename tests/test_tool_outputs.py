@@ -249,13 +249,20 @@ def test_provenance_and_caveats_exact(registry: Registry, lake: Path) -> None:
     assert len(_json(tools.get_provenance(registry, eng, source_id="toy_cases", fmt="json"))["notes"]) == 6
     cav = _json(tools.list_caveats(registry, source_id="toy_cases", fmt="json"))
     assert cav["columns"] == ["source_id", "kind", "caveat"]
-    assert cav["rows"][:4] == [
+    assert cav["rows"][:5] == [
         ["toy_cases", "caveat", "Counts for the latest year are provisional."],
         ["toy_cases", "not yet confirmed", "Is 'N' a true zero or not notifiable?"],
         ["toy_cases", "unreliable values", "None stated (toy)."],
+        [
+            "toy_cases",
+            "data checks",
+            "No quality rules declared: the contract sets no checks of its own on these numbers, so only the "
+            "general checks run (the table has rows; columns are not left empty). Compare with the publisher's "
+            "page before relying on them.",
+        ],
         ["toy_cases", "review", "Contract is a draft; no maintainer has reviewed it yet."],
     ]
-    assert [r[:2] for r in cav["rows"][4:]] == [["all", "geography"]] * len(tools.GEOGRAPHY_TRAPS)
+    assert [r[:2] for r in cav["rows"][5:]] == [["all", "geography"]] * len(tools.GEOGRAPHY_TRAPS)
     other = _json(tools.list_caveats(registry, source_id="nope", fmt="json"))
     assert all(r[0] == "all" for r in other["rows"])
     assert all(

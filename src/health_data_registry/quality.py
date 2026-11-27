@@ -25,6 +25,12 @@ connection (staging.check_snapshot).
 
 The same rules become named dbt tests (transform_gen.py), so the transform build and the read path check the
 same things.
+
+A run that leaves a check with no result proves nothing (issue #222). Every report carries the ids of the checks
+it was asked to run (`expected`); an expected check with neither a result nor a rule error, or a record with no
+result at all, is not evaluated, and that blocks, whatever the check's severity. A contract that declares no
+quality rules of its own still gets the generated checks, so its record is never empty; list_caveats says plainly
+that it declares none.
 """
 
 from __future__ import annotations
@@ -312,13 +318,29 @@ def measure(con: duckdb.DuckDBPyConnection, table: str, rule: Rule) -> tuple[flo
 class QualityReport:
     results: tuple[dict[str, Any], ...]
     rule_errors: tuple[dict[str, str], ...]
+    # The ids of every check the run was asked to make (rules_for): each must come back as a result or a rule
+    # error, or the check never ran (issue #222).
+    expected: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "tool": "contract-rules",
             "results": list(self.results),
             "rule_errors": list(self.rule_errors),
+            "expected": list(self.expected),
         }
+
+    @property
+    def never_ran(self) -> tuple[str, ...]:
+        """Expected checks with neither a result nor a rule error: not evaluated, so they block."""
+        seen = {str(r.get("test")) for r in self.results} | {str(e.get("test")) for e in self.rule_errors}
+        return tuple(dict.fromkeys(i for i in self.expected if i not in seen))
+
+    @property
+    def ran_nothing(self) -> bool:
+        """No result and no rule error at all. Every run has at least the volume check (has_rows), so an empty
+        record means the checks never ran: it blocks, even when nothing says which checks were expected."""
+        return not self.results and not self.rule_errors
 
     def caveats(self) -> list[str]:
         """Plain-words caveats for answers: data failures only (a broken rule is a maintainer's job).
@@ -355,32 +377,77 @@ class QualityReport:
 
     @property
     def blocking(self) -> bool:
-        """True when an error-severity rule failed or was not evaluated, or any rule could not run."""
-        return any(
-            r.get("status") == "fail" or (r.get("status") == NOT_EVALUATED and r.get("severity") == "error")
-            for r in self.results
-        ) or bool(self.rule_errors)
+        """True when an error-severity rule failed or was not evaluated, any rule could not run, or a check
+        never ran (an expected check with no result, or no result at all)."""
+        return (
+            any(
+                r.get("status") == "fail"
+                or (r.get("status") == NOT_EVALUATED and r.get("severity") == "error")
+                for r in self.results
+            )
+            or bool(self.rule_errors)
+            or self.unchecked
+        )
+
+    @property
+    def unchecked(self) -> bool:
+        """Some check never ran: an expected check has no result, or the record has none at all."""
+        return self.ran_nothing or bool(self.never_ran)
 
 
 class QualityBlocked(ValueError):
     """A snapshot failed an error-severity rule, or a rule could not run: it is never served or published."""
 
 
-def blocked_message(dataset: str, quality: Mapping[str, Any] | None) -> str | None:
+def expected_ids(contract: Any) -> tuple[str, ...]:
+    """The id of every check a run of the contract's rules must report on (rules_for)."""
+    return tuple(r.id for r in rules_for(contract))
+
+
+def _report(q: Mapping[str, Any], expected: Sequence[str] = ()) -> QualityReport:
+    """A stored quality record as a report. The checks expected are the record's own and the caller's (the
+    contract's current rules), so a record can't drop a check from its own expected list and pass."""
+    wanted = tuple(dict.fromkeys([*(str(i) for i in q.get("expected") or ()), *expected]))
+    return QualityReport(tuple(q.get("results") or ()), tuple(q.get("rule_errors") or ()), wanted)
+
+
+def unchecked_message(
+    dataset: str, quality: Mapping[str, Any] | None, *, expected: Sequence[str] = ()
+) -> str | None:
+    """Why a table's data checks never ran, in plain words; None when every expected check reported.
+
+    The live path blocks on this alone: a live table with a failed check is answered with a caveat, but one whose
+    checks never ran is not answered at all (issue #222)."""
+    q = quality or {}
+    report = _report(q, expected)
+    if q.get("tool") == "contract-rules" and not report.unchecked:
+        return None
+    return (
+        f"{dataset}: the data checks on the publisher's table did not all run, so nothing says these numbers "
+        "passed them and none are shown. Other sources are not affected. Try again later; if it keeps happening, "
+        "run the Something's wrong helper."
+    )
+
+
+def blocked_message(
+    dataset: str, quality: Mapping[str, Any] | None, *, expected: Sequence[str] = ()
+) -> str | None:
     """Why a snapshot's quality record (a manifest's `quality`) blocks it, in plain words; None when it doesn't.
 
     Three kinds, named apart: a failed error-severity rule (a data failure), an error-severity value rule with
     no values to judge (not evaluated), and a rule that could not run (a metric error). Each leaves the copy
     unchecked or failing: it is kept for inspection, but LATEST stays where it was and export-public refuses it.
     A missing record, or one no contract-rules run wrote, blocks too: no check ran, so nothing says it passed.
+    So does a record with no result at all, or one where a check in `expected` (the contract's current checks,
+    expected_ids) or in the record's own expected list has no result: that check was never evaluated (#222).
     """
     q = quality or {}
-    if q.get("tool") != "contract-rules":
+    if q.get("tool") != "contract-rules" or _report(q, expected).ran_nothing:
         return (
             f"{dataset}: no data checks have run on this copy, so it is not served or published and the copy "
             "before it stays. Refresh it, or have a maintainer check the contract."
         )
-    parts = _blocking_parts(q)
+    parts = _blocking_parts(q, expected)
     if not parts:
         return None
     return (
@@ -389,17 +456,19 @@ def blocked_message(dataset: str, quality: Mapping[str, Any] | None) -> str | No
     )
 
 
-def sample_blocked_message(dataset: str, quality: Mapping[str, Any] | None) -> str | None:
+def sample_blocked_message(
+    dataset: str, quality: Mapping[str, Any] | None, *, expected: Sequence[str] = ()
+) -> str | None:
     """Why a development sample (refresh --max-rows) fails a blocking check, in plain words; None when it doesn't.
 
     A sample is kept as the local copy so a maintainer can work with it, and it is never published, but a failed
     blocking check still fails the command that built it: the build never fails open (issue #173).
     """
     q = quality or {}
-    if q.get("tool") != "contract-rules":
+    if q.get("tool") != "contract-rules" or _report(q, expected).ran_nothing:
         lead = f"{dataset}: no data checks have run on this development sample."
     else:
-        parts = _blocking_parts(q)
+        parts = _blocking_parts(q, expected)
         if not parts:
             return None
         lead = (
@@ -413,10 +482,10 @@ def sample_blocked_message(dataset: str, quality: Mapping[str, Any] | None) -> s
     )
 
 
-def _blocking_parts(q: Mapping[str, Any]) -> list[str]:
+def _blocking_parts(q: Mapping[str, Any], expected: Sequence[str] = ()) -> list[str]:
     """What blocks a contract-rules quality record, one plain phrase per kind; empty when nothing does."""
-    results = q.get("results") or []
-    report = QualityReport(tuple(results), tuple(q.get("rule_errors") or ()))
+    report = _report(q, expected)
+    results = report.results
     if not report.blocking:  # the one definition of what blocks, for a fresh build and a rerun alike
         return []
     failed = [str(r.get("test")) for r in results if r.get("status") == "fail"]
@@ -437,6 +506,10 @@ def _blocking_parts(q: Mapping[str, Any]) -> list[str]:
 
     if broken:
         parts.append(f"the check{'s' if len(broken) > 1 else ''} {', '.join(broken)} could not run")
+    if missing := report.never_ran:
+        parts.append(
+            f"the check{'s' if len(missing) > 1 else ''} {', '.join(missing)} returned no result (never judged)"
+        )
     return parts
 
 
@@ -446,6 +519,7 @@ def rules_for(contract: Any) -> tuple[Rule, ...]:
 
 
 def run_rules(con: duckdb.DuckDBPyConnection, table: str, rules: Sequence[Rule]) -> QualityReport:
+    """Every rule, each to a result or a rule error; the report names them all as expected."""
     results: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     for rule in rules:
@@ -485,4 +559,4 @@ def run_rules(con: duckdb.DuckDBPyConnection, table: str, rules: Sequence[Rule])
                 "expected": rule.bound_text(),
             }
         )
-    return QualityReport(tuple(results), tuple(errors))
+    return QualityReport(tuple(results), tuple(errors), tuple(rule.id for rule in rules))

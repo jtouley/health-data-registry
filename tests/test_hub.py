@@ -617,6 +617,36 @@ def test_a_bad_live_table_is_refused_for_that_source_only(
     assert eng.manifest("toy_listed").origin == "publisher" and len(calls) == 2
 
 
+def test_a_live_table_whose_checks_never_ran_is_refused(
+    tmp_path: Path, reg: Registry, released: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #222: a live table answers with a caveat when a check fails, but never when its checks did not run."""
+    from health_data_registry import quality, staging
+
+    real = staging.run_rules
+    runs: list[int] = []
+
+    def flaky(con: Any, table: str, rules: Any) -> quality.QualityReport:
+        runs.append(1)
+        return quality.QualityReport((), ()) if len(runs) == 1 else real(con, table, rules)
+
+    monkeypatch.setattr(staging, "run_rules", flaky)
+    eng = engine(reg, tmp_path, released, fetch_at_run_time=True, getter=lambda url: raw_fetch(url, RECORDS))
+    with pytest.raises(QueryRefused) as e:
+        eng.manifest("toy_listed")
+    assert e.value.code == "quality_not_run"
+    assert str(e.value) == (
+        "toy_listed: the data checks on the publisher's table did not all run, so nothing says these numbers "
+        "passed them and none are shown. Other sources are not affected. Try again later; if it keeps happening, "
+        "run the Something's wrong helper."
+    )
+    tables = {r[0] for r in eng.connect().execute("SELECT table_name FROM duckdb_tables()").fetchall()}
+    assert "toy_listed" not in tables and "toy_listed" not in eng.manifests  # dropped, not just unlisted
+    # The hub source still answers, and the next question reads the publisher afresh.
+    assert eng.manifest("toy_cases").origin == "hub"
+    assert eng.manifest("toy_listed").origin == "publisher"
+
+
 def test_cache_never_evicts_a_file_a_view_reads(tmp_path: Path, reg: Registry, released: Path) -> None:
     eng = engine(reg, tmp_path, released)
     eng.manifest("toy_cases")

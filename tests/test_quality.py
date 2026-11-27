@@ -415,8 +415,7 @@ def test_a_failed_error_rule_blocks_latest_and_publishing(tmp_path: Path) -> Non
         "x: the checks a, b could not run, so this copy is not served or published and the copy before it stays. "
         "Compare the data with the publisher's page, then refresh, or have a maintainer fix the contract."
     )
-    assert q.blocked_message("x", {"tool": "contract-rules", "results": [], "rule_errors": []}) is None
-    # No record at all, or one no contract-rules run wrote, is not a pass: nothing was checked (fail closed).
+    # No record at all, one no contract-rules run wrote, or one with no result, is not a pass (fail closed, #222).
     unchecked = (
         "x: no data checks have run on this copy, so it is not served or published and the copy before it "
         "stays. Refresh it, or have a maintainer check the contract."
@@ -424,6 +423,7 @@ def test_a_failed_error_rule_blocks_latest_and_publishing(tmp_path: Path) -> Non
     assert q.blocked_message("x", None) == unchecked
     assert q.blocked_message("x", {}) == unchecked
     assert q.blocked_message("x", {"results": [], "rule_errors": []}) == unchecked
+    assert q.blocked_message("x", {"tool": "contract-rules", "results": [], "rule_errors": []}) == unchecked
 
 
 def test_a_kept_snapshot_is_judged_by_the_current_rules_not_its_stored_record(tmp_path: Path) -> None:
@@ -506,3 +506,137 @@ def test_snapshots_and_live_tables_carry_their_quality_results(tmp_path: Path) -
     staged = stage_checked(con, ds.contract, "raw", table="toy_cases", temp=True)
     assert staged.notes() == m.notes
     assert staged.quality.as_dict() == m.quality
+
+
+# Issue #222: a run that leaves a check with no result proves nothing, so it blocks (fail closed).
+NO_CHECKS_RAN = (
+    "toy_cases: no data checks have run on this copy, so it is not served or published and the copy before it "
+    "stays. Refresh it, or have a maintainer check the contract."
+)
+
+
+def _drop(test: str) -> Any:
+    """A check_snapshot whose report lost one check's result, and that check from its own expected list."""
+    from health_data_registry import staging
+
+    def probe(path: str, contract: Any, table: str) -> q.QualityReport:
+        real = staging.check_snapshot(path, contract, table)
+        return q.QualityReport(
+            tuple(r for r in real.results if r["test"] != test),
+            real.rule_errors,
+            tuple(i for i in real.expected if i != test),
+        )
+
+    return probe
+
+
+@pytest.mark.parametrize(
+    ("probe", "message"),
+    [
+        (lambda *_: q.QualityReport((), ()), NO_CHECKS_RAN),
+        (lambda *_: q.QualityReport((), (), ("has_rows",)), NO_CHECKS_RAN),
+        (
+            _drop("has_rows"),
+            "toy_cases: the check has_rows returned no result (never judged), so this copy is not served or "
+            "published and the copy before it stays. Compare the data with the publisher's page, then refresh, or "
+            "have a maintainer fix the contract.",
+        ),
+    ],
+    ids=["empty-results", "empty-results-with-expected", "missing-rule-id"],
+)
+def test_checks_with_no_result_block_latest_and_publishing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, probe: Any, message: str
+) -> None:
+    from health_data_registry import store
+    from health_data_registry.publish import PublishCheckFailed, export_public
+
+    reg = load_registry(write_registry(tmp_path / "reg"))
+    ds = reg.get("toy_cases")
+    page = tmp_path / "p.ndjson"
+    write_ndjson(page, RECORDS)
+    lake = tmp_path / "lake"
+    lake.mkdir()
+    good = build_snapshot(lake, ds, [raw_fetch("https://data.cdc.gov/resource/a.json", RECORDS)], [page])
+    latest = lake / "datasets" / "toy_cases" / "LATEST"
+    assert latest.read_text() == good.snapshot_id + "\n"
+    monkeypatch.setattr(store, "check_snapshot", probe)
+    # A fresh build whose checks came back incomplete: kept for inspection, LATEST stays on the good copy.
+    with pytest.raises(q.QualityBlocked) as e:
+        build_snapshot(lake, ds, [raw_fetch("https://data.cdc.gov/resource/b.json", RECORDS)], [page])
+    assert str(e.value) == message and latest.read_text() == good.snapshot_id + "\n"
+    # The same bytes again (the rerun path re-judges the kept copy): still blocked.
+    with pytest.raises(q.QualityBlocked):
+        build_snapshot(lake, ds, [raw_fetch("https://data.cdc.gov/resource/a.json", RECORDS)], [page])
+    assert latest.read_text() == good.snapshot_id + "\n"
+    # export-public re-judges LATEST and refuses it too.
+    with pytest.raises(PublishCheckFailed, match=r"toy_cases: .*(no data checks have run|never judged)"):
+        export_public(reg, lake, str(tmp_path / "out"), run_date="2026-11-25")
+
+
+def test_a_record_cannot_drop_a_check_the_contract_expects() -> None:
+    record = {"tool": "contract-rules", "results": [{"test": "a", "status": "pass"}], "rule_errors": [],
+              "expected": ["a"]}  # fmt: skip
+    assert q.blocked_message("x", record) is None
+    assert "the check b returned no result" in str(q.blocked_message("x", record, expected=("a", "b")))
+    assert "the check b returned no result" in str(q.sample_blocked_message("x", record, expected=("a", "b")))
+    # Every check reported, as a result or a rule error: nothing is missing.
+    assert not q.QualityReport(
+        ({"test": "a", "status": "pass"},), ({"test": "b", "error": "x"},), ("a", "b")
+    ).never_ran
+
+
+def test_a_rule_error_a_data_failure_and_a_missing_result_are_named_apart() -> None:
+    record = {
+        "tool": "contract-rules",
+        "results": [
+            {
+                "test": "a",
+                "checks": "A.",
+                "status": "fail",
+                "severity": "error",
+                "observed": 1.0,
+                "expected": "should equal 0",
+            }
+        ],
+        "rule_errors": [{"test": "b", "error": "column gone"}],
+        "expected": ["a", "b", "c"],
+    }
+    assert q.blocked_message("x", record) == (
+        "x: the error-severity check a failed and the check b could not run and the check c returned no result "
+        "(never judged), so this copy is not served or published and the copy before it stays. Compare the data "
+        "with the publisher's page, then refresh, or have a maintainer fix the contract."
+    )
+    report = q._report(record)
+    assert report.never_ran == ("c",) and [e["test"] for e in report.rule_errors] == ["b"]
+    assert [r["test"] for r in report.results if r["status"] == "fail"] == ["a"]
+    # A rule error is never a caveat about the numbers; a data failure is.
+    assert len(report.caveats()) == 1
+
+
+def test_a_contract_with_no_rules_of_its_own_is_served_with_a_caveat(tmp_path: Path) -> None:
+    from health_data_registry import tools
+
+    reg = load_registry(write_registry(tmp_path / "reg"))
+    ds = reg.get("toy_cases")
+    assert ds.contract.quality == ()
+    page = tmp_path / "p.ndjson"
+    write_ndjson(page, RECORDS)
+    lake = tmp_path / "lake"
+    lake.mkdir()
+    m = build_snapshot(lake, ds, [raw_fetch("https://data.cdc.gov/resource/a.json", RECORDS)], [page])
+    assert latest_snapshot(lake, "toy_cases") is not None  # not blocked
+    assert (
+        m.quality["expected"]
+        == list(q.expected_ids(ds.contract))
+        == [r["test"] for r in m.quality["results"]]
+    )
+    assert q.blocked_message("toy_cases", m.quality, expected=q.expected_ids(ds.contract)) is None
+    rows = tools.list_caveats(reg, source_id="toy_cases", fmt="json")["rows"]
+    assert [r[1:] for r in rows if r[1] == "data checks"] == [
+        ["data checks", "No quality rules declared: the contract sets no checks of its own on these numbers, so "
+         "only the general checks run (the table has rows; columns are not left empty). Compare with the "
+         "publisher's page before relying on them."]
+    ]  # fmt: skip
+    ruled = load_registry(write_registry(tmp_path / "ruled", contract=RULED))
+    rows = tools.list_caveats(ruled, source_id="toy_cases", fmt="json")["rows"]
+    assert not [r for r in rows if r[1] == "data checks"]
