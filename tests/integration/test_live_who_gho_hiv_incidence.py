@@ -6,6 +6,8 @@ fails on the structure check with its name, never with a bare KeyError elsewhere
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from tests.integration import _live
@@ -16,7 +18,7 @@ PLACES = ("ZAF", "KEN", "GLOBAL")
 
 
 @pytest.fixture(scope="module")
-def live():  # type: ignore[no-untyped-def]
+def live() -> Any:
     cat, con, sem = _live.load(DS)
     flt = "SpatialDim in ('ZAF','KEN','GLOBAL','USA') and TimeDim ge 2018"
     body = _live.get_json(cat, _live.with_query(cat["source"]["api_url"], {"$filter": flt}))
@@ -26,12 +28,12 @@ def live():  # type: ignore[no-untyped-def]
     return cat, con, sem, rows, served
 
 
-def test_contract_structure(live) -> None:  # type: ignore[no-untyped-def]
+def test_contract_structure(live: Any) -> None:
     _cat, con, _sem, rows, served = live
     _live.check_structure(con, rows, served)
 
 
-def test_sex_codes_and_grain(live) -> None:  # type: ignore[no-untyped-def]
+def test_sex_codes_and_grain(live: Any) -> None:
     _cat, _con, _sem, rows, _ = live
     assert {r.get("Dim1") for r in rows} <= {"SEX_BTSX", "SEX_FMLE", "SEX_MLE", "SEX_NOA"}
     keys = [(r.get("SpatialDim"), r.get("TimeDim"), r.get("Dim1")) for r in rows]
@@ -39,7 +41,7 @@ def test_sex_codes_and_grain(live) -> None:  # type: ignore[no-untyped-def]
     assert {r.get("IndicatorCode") for r in rows} == {"SDGHIV"}
 
 
-def test_no_us_row_so_nothing_is_answered_for_the_united_states(live) -> None:  # type: ignore[no-untyped-def]
+def test_no_us_row_so_nothing_is_answered_for_the_united_states(live: Any) -> None:
     _cat, _con, _sem, rows, _ = live
     assert not [r for r in rows if r.get("SpatialDim") == "USA"], (
         "WHO now publishes the US: update the caveat"
@@ -47,7 +49,7 @@ def test_no_us_row_so_nothing_is_answered_for_the_united_states(live) -> None:  
 
 
 @pytest.mark.parametrize("place", PLACES)
-def test_latest_both_sexes_estimate_with_bounds_two_ways(live, place) -> None:  # type: ignore[no-untyped-def]
+def test_latest_both_sexes_estimate_with_bounds_two_ways(live: Any, place: str) -> None:
     _cat, con, sem, rows, _ = live
     mine = [
         r
