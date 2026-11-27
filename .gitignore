@@ -17,8 +17,6 @@ lake/
 .env
 mutants/
 mutation-report/
-# mutmut stats from scripts/mutate_changed.py --collect-stats (nightly mutation run)
-.mutmut-cache/
 # Sitemap snapshots live in a private Hugging Face dataset, never in git
 sitemaps/
 *.xml.gz

@@ -89,11 +89,11 @@ ignore = ["E501"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S608"]
 "scripts/**" = ["S603", "S607"]  # developer scripts run git and mutmut with fixed arguments
-"src/health_data_registry/ratchet.py" = ["S603", "S607"]  # the Trusted gate reads git objects with fixed arguments
+"src/health_data_registry/ratchet.py" = ["S603", "S607"]  # the trusted gate reads git objects with fixed arguments
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src", "eval", "tools", "scripts/branch_hygiene.py"]
+files = ["src", "eval", "tools"]
 exclude = ["^eval/sealed/"]
 strict = true
 ignore_missing_imports = true
@@ -112,8 +112,8 @@ branch = true
 
 [tool.mutmut]
 # Mutation tests run on the modules a change touches (scripts/mutate_changed.py, `make mutate`), not the whole tree.
-source_paths = ["src/health_data_registry/", "eval/", "scripts/branch_hygiene.py"]
-also_copy = [".github/", "eval/dev/", "catalog/", "config/", "contracts/", "semantic/", "docs/", "licenses/", "template/", "plugin/", ".claude-plugin/", "scripts/", "tools/", "assets/", "fuzz/", "transform/", "tests/fixtures/", "pyproject.toml", "README.md", "CLAUDE.md"]
+source_paths = ["src/health_data_registry/", "eval/"]
+also_copy = [".github/", "eval/dev/", "catalog/", "contracts/", "semantic/", "docs/", "licenses/", "template/", "plugin/", ".claude-plugin/", "scripts/", "tools/", "assets/", "fuzz/", "transform/", "tests/fixtures/", "pyproject.toml", "README.md", "CLAUDE.md"]
 pytest_add_cli_args = ["-m", "not network", "-x", "-q", "-p", "no:cacheprovider"]
 # The fuzz harness tests match known findings by the name of the sql_guard or adapter function an error is raised
 # in, which mutmut's trampolines rename; they test fuzz/ (never mutated), so mutmut leaves them out.

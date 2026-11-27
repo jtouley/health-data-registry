@@ -47,7 +47,6 @@ layer because it checks the same catalog and semantic layer the tools use.
 | `geo.py` | One place whatever the publisher calls it; GBD location names |
 | `evaluation.py` | Sealed blind sets, the scorer and the release gate |
 | `adapters/socrata.py`, `adapters/who_gho.py` | Per-portal fetch and column metadata |
-| `ratchet.py` | CI only, not used by the server: the Trusted gate's ratchet, which fails a pull request that weakens the checks guarding `main` ([dev docs](dev/README.md#the-trusted-gate)) |
 | `cli.py` | `serve`, `refresh <dataset>\|--all`, `fetch <source>`, `export-public --to`, `check-contracts`, `validate`, `eval` |
 
 ## Data flow

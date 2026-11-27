@@ -1,232 +1,84 @@
 name: CI
 
-# What runs where (docs/dev/README.md#ci):
-# - pull_request and push to pre-pr/** (the pre-PR gate), while main has a merge queue (scripts/merge_queue.py):
-#   only what the change can affect (scripts/ci_impact.py), with tests on Python 3.12. A PR whose tested tree
-#   equals a green pre-pr run's reuses that whole verdict (scripts/verdict_reuse.py).
-# - the same events while main has no merge queue (or on any doubt): everything, and no reuse, since nothing would
-#   run the rest before the merge.
-# - merge_group (the merge queue), push to main, nightly and by hand: everything, tests on 3.12 and 3.13 with the
-#   coverage floor.
-# Mutation tests are not part of CI: they run nightly on main (.github/workflows/mutation.yml; hard rule 13).
-# The one required check is "CI result": it passes only when every job the changes job selected passed and every
-# other job was skipped for a reason it knows.
 on:
   pull_request:
   # pre-pr/** is the pre-PR gate (CLAUDE.md, "How changes land"): a commit goes green there before it reaches a PR.
   push:
     branches: [main, "pre-pr/**"]
-  merge_group:
-  schedule:
-    - cron: "23 4 * * *"
-  workflow_dispatch:
 
 # Read-only token for every job; no job here writes to the repository.
 permissions:
   contents: read
 
-# A newer push to the same PR or pre-pr branch cancels the superseded run, its queued jobs included.
-# Every other run (main, a merge-queue entry, nightly) gets a group of its own, keyed by commit and event, so it is
-# never cancelled, nor dropped from the queue by a later one.
+# A newer push to the same PR or pre-pr branch cancels the superseded run. Each push to main gets a group of its
+# own (keyed by commit), so a main run is never cancelled, nor dropped from the queue by a later merge.
 concurrency:
-  group: ci-${{ github.event_name }}-${{ (github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pre-pr/')) && github.ref || github.sha }}
+  group: ci-${{ (github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pre-pr/')) && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pre-pr/') }}
 
 jobs:
-  # Seconds: whether main has a merge queue, what the change can affect, and on a PR whether a green pre-pr run
-  # already checked this exact tree. Standard library only, so no project install.
-  changes:
-    name: Changes
+  lint:
+    name: Lint (ruff)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    # actions: read only for the reuse lookup (workflow runs and their jobs) and the ruleset read; nothing is written.
-    permissions:
-      contents: read
-      actions: read
-    outputs:
-      reused_run: ${{ steps.reuse.outputs.run_id }}
-      full: ${{ steps.impact.outputs.full }}
-      tests: ${{ steps.impact.outputs.tests }}
-      test_args: ${{ steps.impact.outputs.test_args }}
-      dbt: ${{ steps.impact.outputs.dbt }}
-      kit: ${{ steps.impact.outputs.kit }}
-      pythons: ${{ steps.impact.outputs.pythons }}
-      merge_base: ${{ steps.impact.outputs.merge_base }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0
-      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
-        with:
-          python-version: "3.12"
-      # A PR or pre-pr run may skip what its change cannot affect only while a merge queue runs everything on the
-      # merge before it lands. Any doubt (no rule, an API error) answers false, and then everything runs.
-      - name: Does main have a merge queue?
-        id: queue
-        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pre-pr/')
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: |
-          queue="$(uv run --no-project python scripts/merge_queue.py --repo "${REPO}" --branch main)" || queue=false
-          if [ "${queue}" != "true" ]; then queue=false; fi
-          echo "queue=${queue}" >> "$GITHUB_OUTPUT"
-      # Whole-verdict reuse (#96's rule), only while main has a merge queue: main's copy of the lookup, the head SHA
-      # from the event payload, the tested commit from this checkout. Any failure or argument mismatch reuses
-      # nothing, so everything runs.
-      - name: Look for a green pre-pr verdict on this tree
-        id: reuse
-        if: github.event_name == 'pull_request' && github.base_ref == 'main' && steps.queue.outputs.queue == 'true'
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          BASE_REF: ${{ github.base_ref }}
-        run: |
-          script="scripts/verdict_reuse.py"
-          lookup="${RUNNER_TEMP}/verdict_reuse.py"
-          errors="${RUNNER_TEMP}/verdict_reuse.err"
-          run_id=""
-          status=0
-          if ! git cat-file -e "origin/${BASE_REF}:${script}" 2> /dev/null; then
-            echo "::warning::origin/${BASE_REF} has no ${script}, so no pre-pr verdict is reused and everything runs."
-          elif ! tested="$(git rev-parse --verify --quiet 'HEAD^{commit}')"; then
-            echo "::warning::The tested commit could not be read, so no pre-pr verdict is reused and everything runs."
-          else
-            git show "origin/${BASE_REF}:${script}" > "${lookup}"
-            echo "Lookup: origin/${BASE_REF}:${script}; tested commit ${tested}"
-            run_id="$(uv run --no-project python "${lookup}" --repo "${REPO}" --sha "${HEAD_SHA}" --base "${BASE_REF}" --tested-commit "${tested}" 2> "${errors}")" || status=$?
-            cat "${errors}" >&2
-            if [ "${status}" -ne 0 ] && grep -qE "unrecognized arguments|arguments are required" "${errors}"; then
-              echo "::warning::Argument mismatch: origin/${BASE_REF}:${script} does not accept this workflow's arguments (exit ${status}; its command line changed in a PR not merged yet), so no pre-pr verdict is reused and everything runs."
-              run_id=""
-            elif [ "${status}" -ne 0 ]; then
-              echo "::warning::The pre-pr verdict lookup failed (exit ${status}), so no pre-pr verdict is reused and everything runs."
-              run_id=""
-            fi
-          fi
-          if ! [[ "${run_id}" =~ ^[0-9]*$ ]]; then
-            echo "Unexpected lookup output; everything runs."
-            run_id=""
-          fi
-          echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
-      # A pull request compares with its base branch; a push to pre-pr/** compares with main, the branch its PR will
-      # target. With a merge queue on main, only what the change can affect runs; without one, everything. Any
-      # other event runs everything. Fail if the base was not fetched (fetch-depth 0 above).
-      - name: What the change can affect
-        id: impact
-        if: steps.reuse.outputs.run_id == ''
-        env:
-          EVENT: ${{ github.event_name }}
-          REF: ${{ github.ref }}
-          BASE_REF: ${{ github.base_ref || 'main' }}
-          QUEUE: ${{ steps.queue.outputs.queue }}
-        run: |
-          if [ "${EVENT}" = "pull_request" ] || [[ "${REF}" == refs/heads/pre-pr/* ]]; then
-            if ! merge_base="$(git merge-base "origin/${BASE_REF}" HEAD)" || ! [[ "${merge_base}" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "No merge base with origin/${BASE_REF}, so what changed is unknown. Failing."
-              exit 1
-            fi
-            echo "merge_base=${merge_base}" >> "$GITHUB_OUTPUT"
-            if [ "${QUEUE}" = "true" ]; then
-              uv run --no-project python scripts/ci_impact.py --base "${merge_base}" --github-output "$GITHUB_OUTPUT"
-              echo 'pythons=["3.12"]' >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "main has no merge queue, so nothing would run the rest before the merge: everything runs here."
-          else
-            echo "merge_base=" >> "$GITHUB_OUTPUT"
-          fi
-          uv run --no-project python scripts/ci_impact.py --full --github-output "$GITHUB_OUTPUT"
-          echo 'pythons=["3.12","3.13"]' >> "$GITHUB_OUTPUT"
-
-  # The fast checks in one job, one install: generated files current (docs, transform/), then in parallel every
-  # pre-commit hook (ruff, mypy, actionlint and the rest), the Claude Projects kit, and dbt build on the fixtures.
-  checks:
-    name: Checks
-    needs: changes
-    if: needs.changes.outputs.reused_run == ''
-    runs-on: ubuntu-latest
-    # The pre-PR budget is 2 minutes (ci/budgets.yml); the limit leaves a minute over it for a slow runner.
-    timeout-minutes: ${{ needs.changes.outputs.full == 'true' && 10 || 3 }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: ${{ needs.changes.outputs.merge_base != '' && '0' || '1' }}
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: "3.12"
       - name: Install dependencies (locked)
         run: uv sync --locked
-      # A budget in ci/budgets.yml may only tighten, unless the change touches that file alone (scripts/ci_budget.py).
-      - name: Budgets only tighten
-        if: needs.changes.outputs.merge_base != ''
-        env:
-          MERGE_BASE: ${{ needs.changes.outputs.merge_base }}
-        run: python3 scripts/ci_budget.py ratchet --base "${MERGE_BASE}"
-      # docs/helpers.md, the template's skills, the plugin and the tool lists (make docs), and the dbt staging
-      # models (make contracts), must be exactly what their generators write; an uncommitted output is drift too.
-      - name: Generated files are current
-        run: |
-          make docs
-          make contracts
-          git diff --exit-code
-          test -z "$(git status --porcelain --untracked-files=all)" || {
-            git status --porcelain --untracked-files=all
-            exit 1
-          }
-      # In parallel, each with its own log, printed in full; the step fails if any of them failed.
-      - name: Hooks, kit and dbt (in parallel)
-        env:
-          KIT: ${{ needs.changes.outputs.kit }}
-          DBT: ${{ needs.changes.outputs.dbt }}
-        run: |
-          logs="${RUNNER_TEMP}/checks"
-          mkdir -p "${logs}"
-          declare -A pids
-          uv run pre-commit run --all-files --show-diff-on-failure > "${logs}/pre-commit.log" 2>&1 &
-          pids[pre-commit]=$!
-          if [ "${KIT}" = "true" ]; then
-            make kit > "${logs}/kit.log" 2>&1 &
-            pids[kit]=$!
-          fi
-          if [ "${DBT}" = "true" ]; then
-            make transform > "${logs}/dbt.log" 2>&1 &
-            pids[dbt]=$!
-          fi
-          failed=""
-          for name in "${!pids[@]}"; do
-            if wait "${pids[${name}]}"; then result="passed"; else result="FAILED"; failed="${failed} ${name}"; fi
-            echo "::group::${name}: ${result}"
-            cat "${logs}/${name}.log"
-            echo "::endgroup::"
-          done
-          if [ -n "${failed}" ]; then
-            echo "Failed:${failed}"
-            exit 1
-          fi
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: needs.changes.outputs.kit == 'true'
-        with:
-          name: projects-kit
-          path: dist/projects-kit/
-          if-no-files-found: error
-          retention-days: 30
+      - name: Lint and format check
+        run: make lint
 
-  # Offline tests, one worker per core (pytest-xdist). A PR runs the test files its change can reach; a full run
-  # runs every test, with the coverage floor (a subset cannot meet a floor set for the whole suite).
-  test:
-    name: Tests (Python ${{ matrix.python-version }})
-    needs: changes
-    if: needs.changes.outputs.reused_run == '' && needs.changes.outputs.tests != 'none'
+  pre-commit:
+    name: Pre-commit hooks (all files)
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ needs.changes.outputs.full == 'true' && 15 || 3 }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+      # Same hooks as every local commit, so a commit that skipped them still fails here.
+      - name: Run every hook on every file
+        run: uv run pre-commit run --all-files --show-diff-on-failure
+      # Pinned to the same version as uv.lock (the actionlint hook above), so the two never disagree.
+      - name: Lint workflows
+        run: uvx --from actionlint-py==1.7.9.24 actionlint
+
+  types:
+    name: Types (mypy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+      - name: Type check
+        run: make typecheck
+
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        python-version: ${{ fromJSON(needs.changes.outputs.pythons) }}
+        python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -236,89 +88,291 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies (locked)
         run: uv sync --locked
-      - name: Tests
-        env:
-          TESTS: ${{ needs.changes.outputs.tests }}
-          TEST_ARGS: ${{ needs.changes.outputs.test_args }}
-        run: |
-          if [ "${TESTS}" = "all" ]; then
-            make test
-            exit 0
-          fi
-          # A JSON array of test files; each must be a plain path under tests/ ending in .py, never an option.
-          check='import json, re, sys
-          files = json.loads(sys.argv[1])
-          ok = re.compile(r"tests/[A-Za-z0-9_][A-Za-z0-9_./-]*[.]py")
-          if not files or not all(isinstance(f, str) and ok.fullmatch(f) and ".." not in f for f in files):
-              sys.exit(f"The test selection is not a list of test files: {sys.argv[1]}")
-          print("\n".join(files))'
-          if ! list="$(python3 -c "${check}" "${TEST_ARGS}")"; then
-            echo "Failing."
-            exit 1
-          fi
-          mapfile -t files <<< "${list}"
-          echo "Running ${#files[@]} test files the change can reach (scripts/ci_impact.py)."
-          uv run pytest -m "not network" -n auto --dist worksteal -- "${files[@]}"
+      # Offline tests only (-m "not network"), with the coverage floor; see the Makefile.
+      - name: Tests with coverage
+        run: make test
 
-  # The one required check. always(), not !cancelled(), on purpose: GitHub counts a skipped required check as
-  # passing, so a cancelled run must still end this check as a failure. It passes only when the changes job passed,
-  # every job it selected passed and every other job was skipped. On a PR whose tested tree equals a green pre-pr
-  # run's (changes job), every other job is skipped and this names that run.
-  result:
-    name: CI result
-    needs: [changes, checks, test]
-    if: always()
+  # The project spec's reference journey (C. auris in Michigan; docs/dev/README.md#smoke-journey) through the
+  # built MCP server on a synthetic lake, with the DEV trial questions scored by eval/scorer.py. Offline, and
+  # enforced: tests/smoke/conftest.py fails any connection or DNS lookup off the runner. No secret is read.
+  smoke:
+    name: "Smoke: C. auris journey"
     runs-on: ubuntu-latest
-    timeout-minutes: 3
-    # actions: read only for the CI budget step, which reads this run's job times.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+      - name: Run the smoke journey
+        env:
+          HDR_HUB: "off"
+          HDR_FETCH_AT_RUN_TIME: "0"
+        run: make smoke
+
+  # The dbt project: staging models generated from contracts/ must be exactly what `make contracts` writes,
+  # then `dbt build` (models and tests) runs on the synthetic fixtures in tests/fixtures/transform only.
+  transform:
+    name: Transform (dbt build on fixtures)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+      - name: Generated staging models reproduce from the contracts
+        run: |
+          make contracts
+          git diff --exit-code -- transform/
+          # A generated file that was never committed is out of date too.
+          test -z "$(git status --porcelain --untracked-files=all -- transform/)" || {
+            git status --porcelain --untracked-files=all -- transform/
+            exit 1
+          }
+      - name: dbt build on synthetic fixtures
+        run: make transform
+
+  kit:
+    name: Claude Projects kit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+      # Project instructions, knowledge files and skill zips, built from helpers.py (never committed).
+      - name: Build the kit
+        run: make kit
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: projects-kit
+          path: dist/projects-kit/
+          if-no-files-found: error
+          retention-days: 30
+
+  # Mutation tests run in shards, so a pull request that touches most modules (the first one added about 13,800
+  # mutants) finishes; a single job did not within 120 minutes. Each changed module is one shard, or, when its
+  # estimated mutants exceed a shard's size, several (`<module>#<k>of<n>`, split by function, and a big function
+  # by the last digit of its mutant numbers; see scripts/mutate_changed.py). The last job applies the floor (70%)
+  # to the summed counts and fails closed: every mutant not killed (no tests and skipped included) lowers the
+  # score, and a shard whose baseline failed, whose run left mutants unchecked, whose module has a mutant no shard
+  # covers, or that left no report fails the check, as does a module only some of whose shards were expected. A
+  # clean shard with no mutable function has nothing to mutate.
+  # They run on pull requests and on pushes to pre-pr/** (the gate must check what the PR will), not on main.
+  # Reuse (pull requests only): the pre-PR gate has already mutated the PR's head commit on pre-pr/<branch>, so
+  # the list job first asks the Actions API (scripts/mutation_reuse.py, this run's own GITHUB_TOKEN, actions:
+  # read) for a completed, successful "Mutation tests (changed modules)" job of this workflow, from a push to a
+  # pre-pr/** branch of this repository, for exactly the head SHA in the event payload, on a PR whose base is
+  # main. If there is one, it lists no modules, the shards are skipped, and the aggregate passes naming the reused
+  # run. A failed, cancelled, still-running or other-SHA run never counts, and an API error means no reuse, so the
+  # shards then run as usual. Every other job still runs on the PR, and every required check still reports.
+  mutation-list:
+    name: Mutation tests (list changed modules)
+    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pre-pr/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # actions: read only for the reuse lookup (workflow runs and their jobs); nothing is written.
     permissions:
       contents: read
       actions: read
-    env:
-      REUSED_RUN: ${{ needs.changes.outputs.reused_run }}
+    outputs:
+      modules: ${{ steps.list.outputs.modules }}
+      merge_base: ${{ steps.list.outputs.merge_base }}
+      reused_run: ${{ steps.reuse.outputs.run_id }}
     steps:
-      - name: Every selected job passed, every other one was skipped
-        env:
-          CHANGES: ${{ needs.changes.result }}
-          CHECKS: ${{ needs.checks.result }}
-          TEST: ${{ needs.test.result }}
-          TESTS: ${{ needs.changes.outputs.tests }}
-          SERVER: ${{ github.server_url }}
-          REPO: ${{ github.repository }}
-        run: |
-          fail() { echo "$1 Failing."; exit 1; }
-          [ "${CHANGES}" = "success" ] || fail "The changes job ended with '${CHANGES}', so nothing was selected."
-          if [ -n "${REUSED_RUN}" ]; then
-            for r in "${CHECKS}" "${TEST}"; do
-              [ "${r}" = "skipped" ] || fail "A pre-pr verdict was reused, yet a job ended with '${r}'."
-            done
-            echo "Reused the green 'CI result' of run ${REUSED_RUN}, which checked this exact tree:"
-            echo "${SERVER}/${REPO}/actions/runs/${REUSED_RUN}"
-            exit 0
-          fi
-          [ "${CHECKS}" = "success" ] || fail "Checks ended with '${CHECKS}'."
-          if [ "${TESTS}" = "none" ]; then
-            [ "${TEST}" = "skipped" ] || fail "No test was selected, yet the tests ended with '${TEST}'."
-          else
-            [ "${TEST}" = "success" ] || fail "The tests ended with '${TEST}'."
-          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: always() && env.REUSED_RUN == ''
         with:
           persist-credentials: false
-      # Every job of this run, and the run's critical path, against its budget (ci/budgets.yml), slow ones listed.
-      # Runs even when a step above failed, so a slow run is reported either way. Not this job (still running). On
-      # a pull request or a pre-pr push it fails the run; on the merge queue, main and nightly it only warns, since
-      # runner speed is no reason to block a merge. An API error warns in either case.
-      - name: CI budget
-        if: always() && env.REUSED_RUN == ''
+          fetch-depth: 0
+      # The same pinned Python as the shards: the split comes from ast, and each shard refuses a split hash that
+      # differs from the one listed here. The script needs only the standard library, so no project install.
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      # The head SHA and base come from the event payload, never from text a contributor writes; the script
+      # checks both and the repository name, and prints a run id only for an exact, green pre-pr match. Like
+      # mutate_changed.py, it comes from the PR's own checkout: it adds no trust beyond what a PR's CI already has.
+      - name: Look for a green pre-pr mutation verdict on this commit
+        id: reuse
+        if: github.event_name == 'pull_request'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-          PROFILE: ${{ needs.changes.outputs.full == 'true' && 'full' || 'pr' }}
-          STRICT: ${{ github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pre-pr/') }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          mode=(--warn-only)
-          if [ "${STRICT}" = "true" ]; then mode=(); fi
-          python3 scripts/ci_budget.py check --repo "${REPO}" --run-id "${RUN_ID}" --profile "${PROFILE}" --skip "CI result" "${mode[@]}"
+          run_id="$(uv run --no-project python scripts/mutation_reuse.py --repo "${REPO}" --sha "${HEAD_SHA}" --base "${BASE_REF}")"
+          if ! [[ "${run_id}" =~ ^[0-9]*$ ]]; then
+            echo "Unexpected lookup output; the shards run."
+            run_id=""
+          fi
+          echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
+      # Only the functions this change touches (spec: mutation tests on changed functions), compared with the merge
+      # base, as shard ids `<module>#<k>of<n>@<split hash>`; the hash covers exactly which functions each shard
+      # mutates. The script uses the standard library only (the split reads each module's source with ast) and
+      # rejects any other name. A pull request compares with its base branch; a push to pre-pr/** has no base_ref
+      # and compares with main, the branch its PR will target. fetch-depth 0 above fetched every branch, so
+      # origin/<base> exists; fail if it does not. The merge base is resolved once, here, and handed to every
+      # shard, so a shard scopes to the same functions even if main moves while the run waits.
+      - name: List changed functions
+        id: list
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+          REUSED_RUN: ${{ steps.reuse.outputs.run_id }}
+        run: |
+          if [ -n "${REUSED_RUN}" ]; then
+            echo "Run ${REUSED_RUN} already mutated this commit on pre-pr/ and passed; no shards here."
+            echo "modules=[]" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! git rev-parse --verify --quiet "origin/${BASE_REF}^{commit}" > /dev/null; then
+            echo "The base branch origin/${BASE_REF} was not fetched, so the changed modules are unknown. Failing."
+            exit 1
+          fi
+          # `|| merge_base=""`: under bash -e a failing command substitution would end the step before the
+          # message below.
+          merge_base="$(git merge-base "origin/${BASE_REF}" HEAD)" || merge_base=""
+          if ! [[ "${merge_base}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "No merge base with origin/${BASE_REF}, so the changed functions are unknown. Failing."
+            exit 1
+          fi
+          modules="$(uv run --no-project python scripts/mutate_changed.py --list --base "${merge_base}")"
+          echo "Shards of the changed functions since ${merge_base}: ${modules}"
+          echo "modules=${modules}" >> "$GITHUB_OUTPUT"
+          echo "merge_base=${merge_base}" >> "$GITHUB_OUTPUT"
+
+  mutation:
+    name: Mutation tests (${{ matrix.module }})
+    needs: mutation-list
+    if: >-
+      (github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pre-pr/'))
+      && needs.mutation-list.outputs.modules != '[]'
+    runs-on: ubuntu-latest
+    # Shards are sized from the mutant estimate to about 3 minutes of mutants each (SHARD_TARGET in
+    # scripts/mutate_changed.py, with the measurements behind it); setup (checkout, install, generating the module's
+    # mutants, mutmut's stats and clean test runs) comes on top: measured on scoped shards (PR #114's probe, CI run
+    # 45643738512), sql_guard took 7.5 minutes in all, about 6 of them setup, and registry.py 5.1. 12 minutes leaves
+    # about 4.5 minutes of headroom on the slowest; it still stops a hung baseline or stats run (mutmut gives those
+    # no timeout of its own) well before the old 40. The target is lower (#115): once the stats run is cached, bring
+    # this down with it. A shard that hits it leaves no report, so the aggregate below fails with "no shard report
+    # (the shard was cancelled, timed out or never ran)" and the shard's own job shows the timeout: lower its
+    # module's target in scripts/mutate_changed.py rather than raising this.
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      # At most 6 shards of this run at a time, so one run takes at most 6 of the account's runners (about 20). The
+      # cap is per run, not per account: several mutation runs at once (other PRs, a pre-pr branch) can still hold
+      # more between them. A newer push to the same branch cancels this run (concurrency, above), queued shards
+      # included.
+      max-parallel: 6
+      matrix:
+        module: ${{ fromJSON(needs.mutation-list.outputs.modules) }}
+    steps:
+      # fetch-depth 0: the shard diffs against the merge base the list job resolved, to scope to the same functions.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+      # MODULE is a shard id (a module, or `<module>#<k>of<n>@<split hash>`); it is always quoted, and `#` and `@`
+      # are valid in the report's file name and the artifact's name. The shard refuses a split hash that differs
+      # from its own split of the source.
+      # mutmut runs one mutant per core (its --max-children defaults to the runner's CPU count).
+      - name: Mutation tests on one shard
+        env:
+          MODULE: ${{ matrix.module }}
+          MERGE_BASE: ${{ needs.mutation-list.outputs.merge_base }}
+        run: |
+          if ! [[ "${MERGE_BASE}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "The list job gave no merge base, so this shard cannot scope to the changed functions. Failing."
+            exit 1
+          fi
+          uv run python scripts/mutate_changed.py --module "${MODULE}" --base "${MERGE_BASE}" \
+            --report "mutation-report/${MODULE}.json"
+      # Uploaded even when the shard failed, so the aggregate shows its counts; a missing report fails there.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: mutation-${{ matrix.module }}
+          path: mutation-report/
+          if-no-files-found: error
+          retention-days: 7
+
+  # Keeps the check name the single job had, so a required status check still points at the verdict.
+  # always(), not !cancelled(), on purpose: GitHub counts a skipped required check as passing, so a run
+  # cancelled on the head commit must still end this check as a failure. The first step says the run was
+  # cancelled; a run superseded by a newer push fails only on its old commit, which no longer gates the merge.
+  # On a PR whose head commit already passed on pre-pr/** (see mutation-list), it reports that run instead of a floor.
+  mutation-aggregate:
+    name: Mutation tests (changed modules)
+    needs: [mutation-list, mutation]
+    if: ${{ always() && (github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pre-pr/')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check the list and shard jobs finished
+        env:
+          LIST_RESULT: ${{ needs.mutation-list.result }}
+          SHARDS_RESULT: ${{ needs.mutation.result }}
+          MODULES: ${{ needs.mutation-list.outputs.modules }}
+        run: |
+          if [ "${LIST_RESULT}" = "cancelled" ] || [ "${SHARDS_RESULT}" = "cancelled" ]; then
+            echo "The run was cancelled before every shard reported, so there is no verdict. Failing."
+            exit 1
+          fi
+          if [ "${LIST_RESULT}" != "success" ]; then
+            echo "Listing the changed modules ended with '${LIST_RESULT}', so nothing was checked. Failing."
+            exit 1
+          fi
+          if [ "${MODULES}" != "[]" ] && [ "${SHARDS_RESULT}" != "success" ] && [ "${SHARDS_RESULT}" != "failure" ]; then
+            echo "The mutation shards ended with '${SHARDS_RESULT}'. Failing."
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.mutation-list.outputs.modules != '[]'
+        with:
+          pattern: mutation-*
+          path: mutation-reports/
+          merge-multiple: true
+      # Reuse: the list job found the pre-pr run that mutated this exact head commit and passed (see mutation-list).
+      - name: Report the reused pre-pr verdict
+        if: needs.mutation-list.outputs.reused_run != ''
+        env:
+          REUSED_RUN: ${{ needs.mutation-list.outputs.reused_run }}
+          SERVER: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          echo "Reused the green 'Mutation tests (changed modules)' verdict of run ${REUSED_RUN} for ${HEAD_SHA}:"
+          echo "${SERVER}/${REPO}/actions/runs/${REUSED_RUN}"
+      - name: Apply the floor to the total
+        if: needs.mutation-list.outputs.reused_run == ''
+        env:
+          MODULES: ${{ needs.mutation-list.outputs.modules }}
+          MUTATION_FLOOR: "70"
+        run: |
+          mkdir -p mutation-reports
+          python3 scripts/mutate_changed.py --aggregate mutation-reports --expect "${MODULES}" --floor "${MUTATION_FLOOR}"

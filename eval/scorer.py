@@ -15,16 +15,9 @@ scorer states outright. The baseline's own scoring scripts (`scoring/fabcheck.py
 were kept with the baseline run, outside this repo; the rules below are ported from them.
 
 - R1 Class: `class_score`, one rule per expected class, from what the answer does (declines, hands off to the
-  IHME GBD connector or another connector, asks which series is meant, shows numbers) and what the tools
-  returned.
+  IHME GBD connector, asks which series is meant, shows numbers) and what the tools returned.
 - R2 Target: `target_score`, the datasets the answer uses or names against `expected_datasets`, and the places
-  it names against `expected_nearest` (for HANDOFF_CONNECTOR, the connectors it names against the record's
-  connector targets).
-- C1 HANDOFF_CONNECTOR generalises HANDOFF_GBD: the record names its target connectors in `expected_nearest`
-  (`gbd`, `openalex` or `pubmed`, with or without `_connector`, several joined by "|"), and any other item there is
-  a place. Only the hand-off itself is scored (Class: did it hand off; Target: to a connector it expects), never
-  what the other connector returns. HANDOFF_GBD stays as an alias: its records keep their class name and score
-  exactly as before (`handoff`, R6 and the place rule), so the frozen DEV and TEST labels are unaffected.
+  it names against `expected_nearest`.
 - R3 Provenance: `provenance_score`, each number shown must sit under a complete provenance line from a dataset
   whose tool response held that number.
 - R4 Fabrication: `check_fabrication`, token-level numeric matching (rules N1-N6 in `eval/numbers.py`): each
@@ -79,7 +72,7 @@ were kept with the baseline run, outside this repo; the rules below are ported f
   H1 ANSWER: Class 0; Target 2 when every expected dataset is the source of a get_series series in the
   transcript, else 0. H2 DECLINE_NEAREST/DECLINE_ELSEWHERE where an expected dataset serves the asked condition
   as a series: that dataset counts as named, then the usual rules. H3 the same classes with no such series:
-  Class at most 1, Target 0. H4 HANDOFF_GBD, HANDOFF_CONNECTOR and OUT_OF_SCOPE: the usual rules. H5 DISAMBIGUATE: the candidates
+  Class at most 1, Target 0. H4 HANDOFF_GBD and OUT_OF_SCOPE: the usual rules. H5 DISAMBIGUATE: the candidates
   after "Ask:" in the record's notes are matched against the conditions the server lists; none listed: Class
   0; some: Target at most 1; all, or no parsable list: the usual rules.
 """
@@ -94,28 +87,20 @@ from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from . import numbers as num
 
 type ExpectedClass = Literal[
-    "ANSWER",
-    "DECLINE_NEAREST",
-    "DECLINE_ELSEWHERE",
-    "HANDOFF_GBD",
-    "HANDOFF_CONNECTOR",
-    "DISAMBIGUATE",
-    "OUT_OF_SCOPE",
+    "ANSWER", "DECLINE_NEAREST", "DECLINE_ELSEWHERE", "HANDOFF_GBD", "DISAMBIGUATE", "OUT_OF_SCOPE"
 ]
 CLASSES: tuple[ExpectedClass, ...] = (
     "ANSWER",
     "DECLINE_NEAREST",
     "DECLINE_ELSEWHERE",
     "HANDOFF_GBD",
-    "HANDOFF_CONNECTOR",
     "DISAMBIGUATE",
     "OUT_OF_SCOPE",
 )
@@ -125,10 +110,6 @@ type Split = Literal["dev", "test"]
 # Frozen hashes of the two splits (rubric: a mismatch voids the run). TEST lives encrypted off-repo.
 DEV_SHA256 = "7591b7f5294b25ccf582be2a24ae07584d1b6fa6c5dbaf96a2806a64c3f8ab7a"
 TEST_SHA256 = "6d689deb8179559a7d676587c6c3d5b91980af7a21ca64f72488121778646c53"
-# Re-audited TEST label sets: sha256 of the ciphertext -> sha256 of its plaintext. Each entry is added by a reviewed
-# pull request after a label re-audit (see `eval.label_check`); the frozen TEST v1 needs none. `load_expected`
-# accepts no other hash in place of the frozen one, and `eval.sealed_run` reads the ciphertext side.
-REAUDITED_TEST: Mapping[str, str] = MappingProxyType({})
 
 SQL_TOOL = "query_sql"
 NEUTRAL_DENOMINATOR = {"get_rate": "census_county_pop"}  # R5
@@ -215,23 +196,6 @@ SOURCE_COMMENT_RE = re.compile(r"^# ([a-z][a-z0-9_]*): ", re.M)
 SQL_FROM_RE = re.compile(r"\b(?:FROM|JOIN)\s+\"?([a-z][a-z0-9_]*)\"?", re.I)
 ERROR_RESPONSE_RE = re.compile(r"^(?:Error|That query can't run|No loaded source reports|Unknown )", re.I)
 HANDOFF_RE = re.compile(r"\bIHME\b|\bGBD\b", re.I)
-# C1: the connectors a reply can hand off to, each found by name in the reply's prose.
-CONNECTOR_RES: Mapping[str, re.Pattern[str]] = {
-    "gbd": HANDOFF_RE,
-    "openalex": re.compile(r"\bOpenAlex\b", re.I),
-    "pubmed": re.compile(r"\bPubMed\b", re.I),
-}
-CONNECTOR_TARGET_RE = re.compile(r"(?P<name>[a-z]+?)(?:_connector)?")
-# C1: a connector counts as handed off to only in a sentence with hand-off wording, and not when a negation comes
-# before it in its clause ("I can't search PubMed", "not in OpenAlex", "this server has no PubMed data").
-HANDOFF_WORDING_RE = re.compile(
-    r"\b(?:ask|use|try|query|search|consult|see|check|turn to|connector|hand(?:s|ed)? (?:it )?off|refer)\b",
-    re.I,
-)
-CLAUSE_START_RE = re.compile(r"[.;:!?,\n]|\b(?:but|so|instead|however|then)\b", re.I)
-NEGATED_CLAUSE_RE = re.compile(
-    r"\b(?:no|not|never|neither|nor|without|cannot|can't|can\u2019t|don't|doesn't|isn't|won't)\b", re.I
-)
 GBD_VERDICT_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(p, re.I)
     for p in (
@@ -274,41 +238,6 @@ class ExpectedRecord(BaseModel):
             return (v,)
         return v
 
-    @model_validator(mode="after")
-    def _connector_named(self) -> ExpectedRecord:
-        """C1: a HANDOFF_CONNECTOR record must name at least one connector it expects."""
-        if self.expected_class == "HANDOFF_CONNECTOR" and not self.connector_targets:
-            raise ValueError(
-                f"{self.id}: HANDOFF_CONNECTOR needs a connector in expected_nearest ({', '.join(CONNECTOR_RES)})"
-            )
-        return self
-
-    def _nearest_items(self) -> tuple[str, ...]:
-        """C1: for HANDOFF_CONNECTOR, `expected_nearest` items split on "|"; for every other class, as given."""
-        if self.expected_class != "HANDOFF_CONNECTOR":
-            return self.expected_nearest
-        return tuple(p.strip() for item in self.expected_nearest for p in item.split("|") if p.strip())
-
-    @staticmethod
-    def _connector(item: str) -> str | None:
-        m = CONNECTOR_TARGET_RE.fullmatch(item.strip().lower())
-        return m.group("name") if m and m.group("name") in CONNECTOR_RES else None
-
-    @property
-    def connector_targets(self) -> frozenset[str]:
-        """C1: the connectors a hand-off may go to: `gbd` for the HANDOFF_GBD alias, the connectors named in
-        `expected_nearest` for HANDOFF_CONNECTOR, and none for every other class."""
-        if self.expected_class == "HANDOFF_GBD":
-            return frozenset({"gbd"})
-        if self.expected_class != "HANDOFF_CONNECTOR":
-            return frozenset()
-        return frozenset(c for c in map(self._connector, self._nearest_items()) if c)
-
-    @property
-    def expected_places(self) -> tuple[str, ...]:
-        """The places the reply must name: `expected_nearest` without the connector targets (C1)."""
-        return tuple(i for i in self._nearest_items() if self._connector(i) is None)
-
 
 @dataclass(frozen=True)
 class ToolCall:
@@ -350,13 +279,9 @@ Score only the criterion named below, from the rubric, using the transcript and 
 
 Criterion: {criterion}
 - class: does the reply's behaviour match the expected class {expected_class}? 2 matches, 1 partly, 0 wrong.
-  HANDOFF_CONNECTOR means handing the question off to another connector (expected: {connector_targets}); only
-  the hand-off is judged, never what that connector would return. With OpenAlex or PubMed the reply may also
-  list what this server holds beside the hand-off; with GBD it must show no numbers and no "GBD vs local" verdict.
 - target: does it use or name exactly the expected datasets {expected_datasets} with the right series and
   filter (no total rows added, no screening added to clinical, no NYC inside New York State), and name every
-  expected nearest place {expected_places}? A publisher's successor series, named with how it differs, counts.
-  For HANDOFF_CONNECTOR it must also name one of the expected connectors {connector_targets}.
+  expected nearest place {expected_nearest}? A publisher's successor series, named with how it differs, counts.
   2 exact, 1 right dataset but wrong series, filter or only some places, 0 wrong.
 - provenance: does every number carry source URL, retrieved_at, sha256 and dataset version, and are the needed
   caveats stated (provisional counts, year-to-date read at the last week and never summed, '-' means no reported
@@ -398,8 +323,7 @@ class LLMGrader:
             criterion=criterion.value,
             expected_class=e.expected_class,
             expected_datasets=list(e.expected_datasets),
-            expected_places=list(e.expected_places),
-            connector_targets=sorted(e.connector_targets),
+            expected_nearest=list(e.expected_nearest),
             notes=e.notes,
             transcript=transcript,
             answer=case.answer,
@@ -458,7 +382,6 @@ class Observation:
     shown_tokens: tuple[num.Token, ...] = ()
     named_text: str = ""
     data_returned: bool = False
-    connectors: frozenset[str] = frozenset()  # C1: connectors the reply names
 
 
 @dataclass(frozen=True)
@@ -727,24 +650,6 @@ def _negated(dataset_id: str, prose: str) -> bool:
     return mentions > 0 and negated >= mentions
 
 
-def handed_off_connectors(prose: str) -> frozenset[str]:
-    """C1: the connectors the reply hands off to. A mention counts when its sentence has hand-off wording ("ask",
-    "use", "search", "connector", ...) and no negation comes before it in its clause, so "I can't search PubMed",
-    "not in OpenAlex" and "keyed to GBD location names" are not hand-offs."""
-    found = set()
-    for sentence in _sentences(prose):
-        if not HANDOFF_WORDING_RE.search(sentence):
-            continue
-        for name, pattern in CONNECTOR_RES.items():
-            for m in pattern.finditer(sentence):
-                before = sentence[: m.start()]
-                clause = CLAUSE_START_RE.split(before)[-1]
-                if not NEGATED_CLAUSE_RE.search(clause):
-                    found.add(name)
-                    break
-    return frozenset(found)
-
-
 def _place_named(place: str, text: str) -> bool:
     """A place is named when it appears as whole words, case-insensitively."""
     return re.search(rf"(?<!\w){re.escape(place)}(?!\w)", text, re.I) is not None
@@ -1004,7 +909,7 @@ def observe(
         asked_question=asked,
         cited_datasets=frozenset(cited),
         fitting_datasets=frozenset(fitting),
-        named_places=frozenset(p for p in expected.expected_places if _place_named(p, prose)),
+        named_places=frozenset(p for p in expected.expected_nearest if _place_named(p, prose)),
         sql_called=any(c.tool == SQL_TOOL for c in calls),
         called_datasets=call_datasets(calls, responses, ids),
         target_flags=target_flags(calls, responses, shown, fab, named),
@@ -1012,7 +917,6 @@ def observe(
         shown_tokens=tuple(shown),
         named_text=named,
         data_returned=data_returned(calls, responses),
-        connectors=handed_off_connectors(prose),
     )
 
 
@@ -1047,10 +951,6 @@ def class_score(expected: ExpectedRecord, obs: Observation) -> int:
       nothing; 0 no decline.
     - HANDOFF_GBD: 2 hands off to IHME/GBD with no numbers and no verdict; 1 hands off but also shows numbers or
       gives a "GBD vs local" verdict; 0 no hand-off (burden treated as observed counts, or nothing).
-    - HANDOFF_CONNECTOR (C1): 0 hands off to no connector; else, when the expected connectors it hands off to are
-      GBD alone, the HANDOFF_GBD rule (1 with numbers or a verdict, 2 without); otherwise 2: beside an OpenAlex or
-      PubMed hand-off the reply may list what this server holds (abstracts, years, DOIs), and the fabrication gate
-      still checks every number. Which connector it named is Target's question, not Class's.
     - DISAMBIGUATE: 2 asks with no numbers; 1 asks after showing numbers (R7); 0 never asks.
     - OUT_OF_SCOPE: 2 declines with no numbers; 1 no numbers but asks or hands off instead of declining;
       0 shows numbers, or neither declines, asks nor hands off.
@@ -1076,12 +976,6 @@ def class_score(expected: ExpectedRecord, obs: Observation) -> int:
             if not obs.handoff:
                 return 0
             return 1 if numbers or obs.gbd_verdict else 2
-        case "HANDOFF_CONNECTOR":
-            if not obs.connectors:
-                return 0
-            if obs.connectors & expected.connector_targets == {"gbd"} and (numbers or obs.gbd_verdict):
-                return 1
-            return 2
         case "DISAMBIGUATE":
             if not obs.asked_question:
                 return 0
@@ -1103,13 +997,8 @@ def target_score(expected: ExpectedRecord, obs: Observation) -> int:
     - E set: 2 when every expected id is in F; 1 when some are; 0 when none are. Extra datasets named beside
       them don't lower the score (R5); numbers cited only from an unexpected dataset are 0.
     Place part, when expected_nearest is set: 2 all named, 1 some, 0 none (whole words, case-insensitive).
-    Connector part, HANDOFF_CONNECTOR only (C1): 2 when the reply hands off to a connector the record expects,
-    else 0; its `expected_nearest` items that are not connectors are its places. With an OpenAlex or PubMed
-    target, listing this server's data is optional, so the dataset part is also 2 when every dataset the reply
-    names is expected (none included).
     """
     wanted = set(expected.expected_datasets)
-    optional = expected.expected_class == "HANDOFF_CONNECTOR" and bool(expected.connector_targets - {"gbd"})
     got = set(obs.fitting_datasets)
     if not wanted:
         dataset_part = 0 if got else 2
@@ -1117,14 +1006,12 @@ def target_score(expected: ExpectedRecord, obs: Observation) -> int:
         if not obs.shown_numbers:
             got |= obs.called_datasets
         hit = wanted & got
-        dataset_part = 2 if hit == wanted or (optional and got <= wanted) else 1 if hit else 0
-    places = expected.expected_places
+        dataset_part = 2 if hit == wanted else 1 if hit else 0
+    places = expected.expected_nearest
     score = dataset_part
     if places:
         named = len(obs.named_places)
         score = min(score, 2 if named == len(places) else 1 if named else 0)
-    if expected.expected_class == "HANDOFF_CONNECTOR":
-        score = min(score, 2 if obs.connectors & expected.connector_targets else 0)
     return min(score, 1) if obs.target_flags else score
 
 
@@ -1355,20 +1242,9 @@ def _checked(score: int) -> int:
 # Files
 
 
-def load_expected(path: Path, split: Split, sha256: str | None = None) -> list[ExpectedRecord]:
-    """Read a split file after checking its frozen sha256; a mismatch voids the run, so it raises.
-
-    `sha256` names a re-audited TEST set in place of the frozen hash. It must be a plaintext hash listed in
-    `REAUDITED_TEST`, which only a reviewed pull request changes, so no caller can point a run at labels nobody
-    reviewed. Left out, the split's frozen hash applies.
-    """
-    frozen = DEV_SHA256 if split == "dev" else TEST_SHA256
-    want = frozen if sha256 is None else sha256
-    if want != frozen and not (split == "test" and want in REAUDITED_TEST.values()):
-        raise ScorerError(
-            f"{want} is not a reviewed re-audited {split} label set: only the frozen hash or one listed in "
-            "REAUDITED_TEST in eval/scorer.py is accepted; the run is void"
-        )
+def load_expected(path: Path, split: Split) -> list[ExpectedRecord]:
+    """Read a split file after checking its frozen sha256; a mismatch voids the run, so it raises."""
+    want = DEV_SHA256 if split == "dev" else TEST_SHA256
     data = path.read_bytes()
     if hashlib.sha256(data).hexdigest() != want:
         raise ScorerError(f"{path.name} does not match the frozen {split} sha256; the run is void")

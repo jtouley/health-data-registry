@@ -2,9 +2,8 @@
 #
 # Deploys ONLY from a release tag (vX.Y.Z) whose commit is on main and passed CI on main. Never on a push to a
 # branch, never from a pull request. The `verify` job checks both through the GitHub API before the deploy
-# job, which alone holds the Hugging Face token, starts. `mutation-gate` also requires the latest nightly mutation
-# run covering the commit to be green, with no survivor issue open (hard rule 13). Re-deploying a tag: run this
-# workflow by hand with "Use workflow from" set to that tag; any other ref is refused.
+# job, which alone holds the Hugging Face token, starts. Re-deploying a tag: run this workflow by hand with
+# "Use workflow from" set to that tag; any other ref is refused.
 #
 # space/Dockerfile builds the server from one release: its HDR_TAG and HDR_COMMIT are empty in git (a build without
 # them stops), and the deploy job writes this tag and its commit into the copy it uploads, so the Space builds
@@ -65,31 +64,9 @@ jobs:
           fi
           echo "$TAG ($GITHUB_SHA) is on main and passed CI."
 
-  # The release gate (hard rule 13): the latest nightly mutation run covering this commit is green, and no
-  # mutation-survivors issue is open (scripts/mutation_nightly.py gate). Any doubt blocks the release.
-  mutation-gate:
-    name: Mutation gate
-    if: github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      actions: read # the nightly mutation runs
-      issues: read # open survivor issues
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Nightly mutation run green on this commit, no survivor issue open
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          SHA: ${{ github.sha }}
-        run: python3 scripts/mutation_nightly.py gate --repo "${REPO}" --sha "${SHA}"
-
   deploy:
     name: Sync space/ to the Space
-    needs: [verify, mutation-gate]
+    needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: space

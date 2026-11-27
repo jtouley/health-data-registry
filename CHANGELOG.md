@@ -42,18 +42,12 @@ All notable changes to this project are documented here. The format follows
 ### Added
 
 - The Trusted gate (`.github/workflows/trusted-gate.yml`, `python -m health_data_registry.ratchet`, `make
-  ratchet`): a check a pull request cannot edit, run from main's copy on `pull_request_target` with a read-only
-  token, reading the pull request as data only (a required check once the `main` ruleset lists it, #138). It fails
-  a change that lowers a coverage, mutation or other floor, adds a skip, pragma, type-ignore, noqa or lint
-  relaxation not in `.github/ratchet-allowlist.txt`, adds a settings file beside `pyproject.toml`, a symbolic link
-  or a submodule, drops tests, removes or loosens a required check, touches `eval/sealed/`, adds a way around the
-  git hooks or removes a hook, loosens `ci/budgets.yml` (a new key included), or weakens a job that runs mutation
-  tests (PR shards, the nightly run, the release gate's mutation check).
-- A `pre-push` hook (`scripts/pre_push_gate.py`, installed by `make hooks`): a push to a pull request branch (any
-  branch but `pre-pr/**`, `wip/**`, `dependabot/**` and `main`) is refused unless that exact commit already
-  passed CI on a `pre-pr/` branch, and a push to `pre-pr/**` first runs ruff, mypy and the changed modules' tests.
-  Create a PR branch at the green commit (`git push origin <sha>:refs/heads/<branch>`), and merge main locally
-  instead of using GitHub's "Update branch".
+  ratchet`): a required check a pull request cannot edit, run from main's copy on `pull_request_target` with a
+  read-only token, reading the pull request as data only. It fails a change that lowers a coverage, mutation or
+  other floor, adds a skip, pragma, type-ignore, noqa or lint relaxation not in `.github/ratchet-allowlist.txt`,
+  drops tests, removes or loosens a required check, touches `eval/sealed/`, adds a way around the git hooks,
+  loosens `ci/budgets.yml` (a new key included), or weakens a job that runs mutation tests (PR shards, the nightly
+  run, the release gate's mutation check).
 - `serve --http`: the hosted, read-only connector over stateless Streamable HTTP (hub releases and live reads
   only), with one deadline per tool call, a result-size cap, rate limits per MCP session and overall, and no
   request content in any log; `space/` for a Hugging Face Docker Space and `docs/dev/hosting.md`.
