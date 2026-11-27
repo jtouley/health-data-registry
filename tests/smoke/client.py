@@ -72,6 +72,21 @@ def fitting_sources(suggest_response: str) -> list[str]:
     return [r["source_id"] for r in table_rows(suggest_response) if r.get("can_answer") == "yes"]
 
 
+def candidate_sources(suggest_response: str) -> list[str]:
+    """The datasets a client would try: those that fit, and those whose only open question is that they don't
+    declare their places yet (no source declares them until #223), in suggest_datasets' order."""
+    return [
+        r["source_id"]
+        for r in table_rows(suggest_response)
+        if r.get("can_answer") == "yes"
+        or (
+            r.get("can_answer") == "unknown"
+            and r.get("why", "").startswith("this source doesn't declare which places it covers yet")
+            and ";" not in r.get("why", "")
+        )
+    ]
+
+
 def out_of_scope_answer(condition: str, place: str, suggest_response: str, series_response: str) -> str:
     """Decline when no tool offered a source or a row; otherwise name what the tools offered, as a client would."""
     offered = fitting_sources(suggest_response)
