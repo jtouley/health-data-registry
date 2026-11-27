@@ -1,0 +1,76 @@
+dataset: cdc_haicviz_isa
+# 0.1.0: first draft. Every figure is a rate read from its one published cell, for the EIP sites combined; nothing
+# is ever added. The syndrome and PFGE shares have no metric until their unit is confirmed (contract openQuestions).
+version: 0.1.0
+dimensions:
+  - {name: year, column: yearname, type: time, non_additive: false, description: "Surveillance year."}
+  - name: topic
+    column: topic
+    type: categorical
+    non_additive: true
+    non_additive_reason: "case rates, death rates and shares of cases by syndrome or strain type are different measures"
+    description: "Case rates, Death rates, Syndromes, or a PFGE strain-type topic."
+  - name: view
+    column: viewby
+    type: categorical
+    non_additive: true
+    non_additive_reason: "each breakdown counts the same patients again"
+    description: "How the patients are broken down: all cases, or by age, sex, race, epidemiologic class, dialysis, syndrome or strain type."
+  - name: stratum
+    column: series
+    type: categorical
+    non_additive: true
+    non_additive_reason: "'All cases' sits beside its groups, and CDC doesn't say the groups add up to it"
+    description: "The group the figure is for: all cases, an age group, a sex, a race, hospital-onset, healthcare-associated community-onset or community-associated, dialysis patients, a syndrome or a strain type."
+measures:
+  - {name: isa_rate, column: value, kind: rate, unit: "per 100,000 population (assumed; not stated in the table)", description: "Invasive Staphylococcus aureus cases or deaths per population in the EIP sites, as published."}
+metrics:
+  - name: isa_case_rate
+    description: "Invasive Staphylococcus aureus cases per population in the EIP sites, all cases, from the published 'All cases' row; never added."
+    measure: isa_rate
+    aggregation: none
+    exclude_total_rows: false
+    # One published cell per year: every grain column but the year is pinned.
+    filters: ["topic = 'Case rates'", "viewby = 'All cases'", "series = 'All cases'"]
+    uncertainty: none
+    # Structural: the contract has no interval column.
+    uncertainty_reason: "CDC's HAICViz table gives no confidence interval for these rates."
+  - name: isa_death_rate
+    description: "Deaths among people with invasive Staphylococcus aureus per population in the EIP sites, from the published 'All cases' row; never added."
+    measure: isa_rate
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["topic = 'Death rates'", "viewby = 'All cases'", "series = 'All cases'"]
+    uncertainty: none
+    uncertainty_reason: "CDC's HAICViz table gives no confidence interval for these rates."
+  - name: isa_case_rate_by_stratum
+    description: "Invasive Staphylococcus aureus cases per population for one published group (an age group, a sex, a race, or an epidemiologic class); the 'All cases' rows and the dialysis rate (another population) are left out, and nothing is added."
+    measure: isa_rate
+    aggregation: none
+    exclude_total_rows: true
+    filters: ["topic = 'Case rates'", "viewby IN ('Age', 'Sex', 'Race', 'Epi class')"]
+    uncertainty: none
+    uncertainty_reason: "CDC's HAICViz table gives no confidence interval for these rates."
+  - name: isa_death_rate_by_epi_class
+    description: "Deaths per population among hospital-onset, healthcare-associated community-onset or community-associated invasive Staphylococcus aureus cases; one row per class, never added."
+    measure: isa_rate
+    aggregation: none
+    exclude_total_rows: true
+    filters: ["topic = 'Death rates'", "viewby = 'Epi class'"]
+    uncertainty: none
+    uncertainty_reason: "CDC's HAICViz table gives no confidence interval for these rates."
+series:
+  - condition: "Invasive Staphylococcus aureus"
+    label: "Invasive Staphylococcus aureus case rate (EIP sites, all ages)"
+    metric: isa_case_rate
+    measure: rate
+    place_coverage: "the Emerging Infections Program sites combined, not by state"
+    time_dimension: year
+    case_definition: "HAIC invasive S. aureus (definition, and whether MRSA only, in CDC's reports; not yet in the contract)"
+  - condition: "Invasive Staphylococcus aureus"
+    label: "Invasive Staphylococcus aureus death rate (EIP sites, all ages)"
+    metric: isa_death_rate
+    measure: rate
+    place_coverage: "the Emerging Infections Program sites combined, not by state"
+    time_dimension: year
+    case_definition: "HAIC invasive S. aureus (definition, and whether MRSA only, in CDC's reports; not yet in the contract)"

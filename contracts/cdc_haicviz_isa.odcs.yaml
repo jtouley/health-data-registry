@@ -1,0 +1,160 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: cdc_haicviz_isa
+name: HAICViz - iSA
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Annual invasive Staphylococcus aureus case and death rates, and shares of cases by syndrome and PFGE strain type, from the Healthcare-Associated Infections Community Interface of CDC's Emerging Infections Program, pooled across EIP sites (dataset description, https://data.cdc.gov/api/views/ssz5-s49e.json)."
+  usage: "Read one topic, view, stratum and year as published, or follow one over the years. Never add rates, and never add across age groups, sexes, races or epidemiologic classes."
+  limitations: "EIP sites only, pooled, no state breakdown; data through 2021; the Socrata metadata has no column descriptions or unit, and does not say whether the figures are MRSA only or all S. aureus, so most meanings below come from the published labels."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://data.cdc.gov/d/ssz5-s49e", description: "Publisher dataset page"}
+    - {type: businessDefinition, url: "https://data.cdc.gov/api/views/ssz5-s49e.json", description: "Socrata metadata (dataset description and interpretation notes; columns have no descriptions), read 2026-11-25"}
+    - {type: businessDefinition, url: "https://www.cdc.gov/healthcare-associated-infections/php/haic-eip/invasive-staphylococcus.html", description: "CDC's iSA surveillance page: hospital-onset (HO), healthcare-associated community-onset (HACO) and community-associated (CA) invasive MRSA and MSSA, 7 EIP sites; MRSA-only reports to 2015; read 2026-11-25"}
+servers:
+  - id: data_cdc_gov
+    server: data.cdc.gov
+    type: api
+    location: https://data.cdc.gov/resource/ssz5-s49e.json
+schema:
+  - name: cdc_haicviz_isa
+    physicalName: cdc_haicviz_isa
+    physicalType: table
+    logicalType: object
+    description: "Long table: one published figure for the Emerging Infections Program sites combined (not a state, not the United States) per year x topic x view x stratum."
+    dataGranularityDescription: "yearname x topic x viewby x series (the primary key, unique on the full table, 710 rows, 2026-11-25)"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://data.cdc.gov/api/views/ssz5-s49e.json"}
+    customProperties:
+      - property: totalRows
+        value: "series = 'All cases'"
+        description: "Rows labelled 'All cases' by CDC (every distinct topic, viewby and series checked on the full table, 710 rows, 2026-11-25): the overall row (viewby 'All cases') and the 'All cases' row inside the Age, Sex, Race and Epi class views. The syndrome and PFGE rows and the Dialysis row have none. Whether the groups of a view add up to it is not stated; nothing here is ever added."
+      - {property: tableShape, value: rate_table}
+      - property: idDimensions
+        value:
+          condition: null
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: null
+          period: yearname
+          provisionalFlag: null
+        description: "The whole dataset is one organism (invasive Staphylococcus aureus), so there is no condition column. Whether it is MRSA only is not stated, so no resistance column is named. Hospital-onset, healthcare-associated community-onset and community-associated are epidemiologic classes (series under viewby 'Epi class'), not a case status. PFGE strain types (USA 100, USA 300, Other) sit in series under the PFGE topics. No case definition, case status or provisional column."
+    properties:
+      - name: yearname
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "Surveillance year (2005 to 2021 on 2026-11-25)."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: yearname}
+      - name: topic
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "What the figure measures: Case rates or Death rates, Syndromes (share of cases by syndrome), or a PFGE type topic (share of cases by strain type, for all cases or one epidemiologic class)."
+        enum: [{value: Case rates}, {value: Death rates}, {value: Syndromes}, {value: "PFGE type: All cases"}, {value: "PFGE type: Community-associated"}, {value: "PFGE type: Healthcare-associated community-onset"}, {value: "PFGE type: Hospital-onset"}]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: topic}
+        quality:
+          - id: topic_labels_known
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["Case rates", "Death rates", "Syndromes", "PFGE type: All cases", "PFGE type: Community-associated", "PFGE type: Healthcare-associated community-onset", "PFGE type: Hospital-onset"]}
+            mustBe: 0
+            description: "Every distinct topic on the full table (710 rows, 2026-11-25) is one of these seven. Every metric and the rate rules filter on these exact labels, so a relabel is reported here instead of making a metric return nothing."
+      - name: viewby
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 3
+        description: "Which breakdown the row belongs to: All cases, Age, Sex, Race, Epi class, Dialysis, Syndromes, or the PFGE topic again. Each view covers the same cases again."
+        examples: ["All cases", "Age", "Sex", "Race", "Epi class", "Dialysis", "Syndromes", "PFGE type: All cases"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: viewby}
+      - name: series
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 4
+        description: "The group the figure is for: All cases, an age group (such as 50-64 years), a sex, a race, an epidemiologic class (Hospital-onset, Healthcare-associated community-onset, Community-associated), Dialysis, a syndrome, or a PFGE strain type (USA 100, USA 300, Other)."
+        examples: ["All cases", "> 65 years", "Female", "Black", "Hospital-onset", "Dialysis", "Non-bloodstream infection", "USA 300"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: series}
+      - name: value
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "The published figure for the row's topic and group: a rate for Case rates and Death rates, or a share of cases (a fraction, unit not stated) for Syndromes and the PFGE topics. Empty in 27 rows on 2026-11-25 (the 1-year age group in 2018, 2020 and 2021, and every PFGE row in 2020 and 2021), and an empty one is never read as zero."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: value}
+          - {property: unit, value: "see topic: a rate (per 100,000 assumed, not stated) or a share of cases"}
+        quality:
+          - id: values_not_negative
+            dimension: conformity
+            severity: error
+            type: sql
+            description: "Every topic is a rate of cases or deaths or a share of cases, and none of these is ever negative."
+            query: "SELECT COUNT(*) FROM {object} WHERE value < 0"
+            mustBe: 0
+          - id: case_rates_present
+            dimension: completeness
+            severity: error
+            type: sql
+            description: "Fill rate for the Case rates rows the headline series reads: an all-empty subset passes values_not_negative, so at least one case rate must carry a value (367 of 370 did on 2026-11-25)."
+            query: "SELECT COUNT(*) FROM {object} WHERE topic = 'Case rates' AND value IS NOT NULL"
+            mustBeGreaterThan: 0
+          - id: death_rates_present
+            dimension: completeness
+            severity: warn
+            type: sql
+            description: "Fill rate for the Death rates rows: at least one death rate carries a value (all 85 did on 2026-11-25)."
+            query: "SELECT COUNT(*) FROM {object} WHERE topic = 'Death rates' AND value IS NOT NULL"
+            mustBeGreaterThan: 0
+    quality:
+      - id: one_row_per_year_and_stratum
+        dimension: uniqueness
+        severity: error
+        type: sql
+        description: "Grain: one published figure per year, topic, view and stratum (an exact structural fact of the full table, 710 rows, on 2026-11-25). A repeat would mean two figures for one cell."
+        query: "SELECT COUNT(*) FROM (SELECT yearname, topic, viewby, series FROM {object} GROUP BY yearname, topic, viewby, series HAVING COUNT(*) > 1)"
+        mustBe: 0
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: licenceSource, value: "No licence field in the Socrata metadata (read 2026-11-25). A CDC work on data.cdc.gov, a US federal work under 17 USC 105. A maintainer confirms the wording (see openQuestions)."}
+  - {property: citation, value: "Centers for Disease Control and Prevention, Emerging Infections Program HAIC. HAICViz - iSA. https://data.cdc.gov/d/ssz5-s49e"}
+  - {property: refresh, value: annual}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "Each refresh stores the complete table as a dated, append-only load. Incremental loading waits for a reviewed row key and the publisher's update field."
+  - {property: geographyBasis, value: "the Emerging Infections Program sites that run invasive S. aureus surveillance, combined; no state values; which counties, and when they changed, is not in the data (see openQuestions)"}
+  - {property: rateDenominator, value: "unresolved: no unit or population is stated in the table or on CDC's iSA page; per 100,000 catchment population is assumed for Case rates and Death rates, and the Dialysis rate uses an unstated population of dialysis patients (see openQuestions)"}
+  - {property: unreliableRule, value: {kind: none, description: "None with a threshold: the dataset description says small numbers for some topics or filters may make year-to-year changes difficult to interpret, but states no cut-off and marks no value."}}
+  - property: openQuestions
+    value:
+      - "Licence: no licence field in the Socrata metadata (2026-11-25); public-domain-us-federal is assumed from its being a CDC work. A maintainer confirms the wording."
+      - "MRSA only or all S. aureus? CDC's reports were MRSA only through 2015 and cover MRSA and MSSA from 2016; this table runs 2005 to 2021 with no break and no resistance column. Which organism is counted, and does it change in 2016? Needed before any figure is called an MRSA or an S. aureus rate."
+      - "Unit and denominator: the table states no unit. Are Case rates and Death rates per 100,000 catchment residents, from which census estimates, and are they crude? What population is the Dialysis rate (2064.7 in 2019) per?"
+      - "Syndromes and PFGE topics: the values are fractions (the three syndrome values for a year sum to about 1). Are they shares of all cases, of typed isolates, or something else? No metric reads them until this is confirmed."
+      - "Death rates: deaths among cases within what window (in hospital, 30 days)? Not stated in the table."
+      - "Which EIP sites and counties run iSA surveillance each year (CDC's page says 7 sites), and when did the catchment change? Must come from the iSA methods, not inferred."
+      - "Case definition: invasive S. aureus as HAIC defines it (isolation from a normally sterile site in a catchment resident, the epidemiologic-class definitions and their look-back windows) and its effective years are in CDC's reports, not the data; add as caseDefinitions after a maintainer reads them."
+      - "Do the groups of one view add up to its 'All cases' row (age groups, sexes, races, epidemiologic classes)? Not stated. totalRows marks the labelled totals and nothing is added."
+      - "27 rows have no value (2026-11-25): the 1-year age group in 2018, 2020 and 2021, and every PFGE row in 2020 and 2021. Suppressed for small numbers, or not collected? No missing code is published; the empty value is kept, never read as zero."
+      - "2021 has no Race rows (16 race rows per series against 17 years). Not published, or withheld? Not stated."
+      - "Data end in 2021 although CDC's iSA page reports 2024 (checked 2026-11-25). Coverage after 2021 is unknown until the publisher says whether later years will be added here."
+      - "Proposed GBD keys: none. Invasive S. aureus spans several GBD causes (bloodstream infection, pneumonia, skin and bone infections), and GBD models Staphylococcus aureus as a pathogen under several causes. A maintainer decides whether any mapping is meaningful."

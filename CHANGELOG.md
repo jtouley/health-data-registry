@@ -41,6 +41,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- New source, draft (contract not yet reviewed): `cdc_haicviz_isa`, CDC's Emerging Infections Program case and
+  death rates for invasive Staphylococcus aureus since 2005 (HAICViz iSA, data.cdc.gov ssz5-s49e), on the existing
+  Socrata adapter. Every rate is for the EIP sites combined, never called a state figure, and nothing is added;
+  whether the figures are MRSA only is an open question, so none is called an MRSA rate.
 - The Trusted gate (`.github/workflows/trusted-gate.yml`, `python -m health_data_registry.ratchet`, `make
   ratchet`): a check a pull request cannot edit, run from main's copy on `pull_request_target` with a read-only
   token, reading the pull request as data only (a required check once the `main` ruleset lists it, #138). It fails
