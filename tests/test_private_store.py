@@ -462,3 +462,8 @@ def test_a_private_store_that_is_not_connected_says_where_to_read_instead(
     monkeypatch.setattr(private, "read_rows", lambda lake, d: private.PrivateRows([], "local", []))
     _, m = eng._read_private(ds)
     assert m.retrieved_at == "" and m.partial
+    undated = [a_row(DOI_A, retrieved_at=None), a_row(DOI_B, retrieved_at="2026-11-20T00:00:00+00:00")]
+    monkeypatch.setattr(private, "read_rows", lambda lake, d: private.PrivateRows(undated, "local", []))
+    assert (
+        eng._read_private(ds)[1].retrieved_at == "2026-11-20T00:00:00+00:00"
+    )  # a row without a date adds none

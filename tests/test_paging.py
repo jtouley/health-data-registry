@@ -1105,9 +1105,12 @@ def test_a_long_next_line_is_what_each_json_page_reserves_room_for(
     assert _real_plan("json", budget, long_call=True) == want
 
 
-def _synthetic(n: int, k: int, extra: Any, budget: int) -> tuple[list[tuple[int, int]], list[int], int]:
-    """Plan n rows of k characters (k + 1 with the newline) under a render of exactly k head characters plus the
-    rows' own cost plus extra(rows); returns the bounds, the rooms each pass used, and the row cost."""
+def _synthetic(
+    n: int, k: int, extra: Any, budget: int, per_page: int = 0
+) -> tuple[list[tuple[int, int]], list[int], int]:
+    """Plan n rows of k characters (k + 1 with the newline) under a render of exactly 20 head characters, plus
+    per_page characters for each unit of the page number, plus the rows' own cost, plus extra(rows); returns the
+    bounds, the rooms each pass used, and the row cost."""
     res = tools.Result(["a"], [["x" * k] for _ in range(n)], [])
     costs = [paging._row_cost(r, "csv") for r in res.rows]
     rooms: list[int] = []
@@ -1118,7 +1121,8 @@ def _synthetic(n: int, k: int, extra: Any, budget: int) -> tuple[list[tuple[int,
         return real_cut(c, room)
 
     def render(lo: int, hi: int, i: int, bounds: list[tuple[int, int]]) -> Any:
-        return "h" * 20 + "x" * (sum(costs[lo:hi]) + (extra(hi - lo) if hi > lo else 0))
+        rows = sum(costs[lo:hi]) + (extra(hi - lo) if hi > lo else 0)
+        return "h" * 20 + "p" * (per_page * i) + "x" * rows
 
     import unittest.mock
 
@@ -1155,6 +1159,8 @@ def test_two_row_pages_are_measured_too() -> None:
             [9_000, 8_100],
         ),  # a steady small overshoot: a tenth of the room a pass
         (40, 9, lambda r: 50 * r, 400, [180, -720]),  # a huge one: half the overshoot
+        (40, 9, lambda r: 50 * r, 401, [180, -719]),  # an odd one: half, rounded down
+        (200, 999, lambda r: 10, 2 * (20 + 9_000) + 10, [9_005, 8_105]),  # a tenth, rounded down
         (30, 1, lambda r: 1 if r > 1 else 0, 21, [-10]),  # no room at all: one row a page, never re-measured
         (
             30,
@@ -1226,3 +1232,9 @@ def test_a_page_past_the_end_is_refused_as_no_such_page(registry: Registry, eng:
     two = _respond(registry, eng, "json", 1, None, 60_000)
     beyond = _respond(registry, eng, "json", two["page"]["pages"] + 1, None, 60_000)
     assert beyond["refused"] == "no_such_page"
+
+
+def test_the_room_reserves_the_widest_page_number_and_no_more() -> None:
+    """The empty-page estimate is rendered as page len(rows) + 1, the most pages a plan can have."""
+    _, rooms, _ = _synthetic(20, 9, lambda r: 0, 300, per_page=5)
+    assert rooms[0] == 300 // 2 - (20 + 5 * 21)
