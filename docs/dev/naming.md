@@ -43,8 +43,8 @@ uv run python -m health_data_registry.naming assert-private "$REPO"
 It refuses any repo that isn't `<HDR_PRIVATE_HF_OWNER>/health-data-registry-private-...` or `...-ops-...`,
 creates the repo private if it is missing, and refuses if Hugging Face reports it public. `hf upload --private`
 alone is not enough: it is ignored for a repo that already exists. A new private source or job gets its name
-from `naming.py`; it is created by the maintainer before its first run, except `ops-sitemaps`, which
-`sitemaps snapshot` creates private at run time if it is missing.
+from `naming.py`; it is created by the maintainer before its first run, except `ops-sitemaps` and `ops-release-gate`, which
+`sitemaps snapshot` and the refresh (`naming assert-private`) create private at run time if missing.
 
 ## The repositories today
 
@@ -55,7 +55,8 @@ from `naming.py`; it is created by the maintainer before its first run, except `
 | `jtouley/health-data-registry-private-croi-abstracts-index` | CROI abstract metadata rows (no text) |
 | `jtouley/health-data-registry-private-croi-abstracts-text` | CROI abstract text. CROI Foundation's, never redistributed |
 | `jtouley/health-data-registry-ops-croi-crawl` | CROI crawl checkpoint, fetch log and rows so far |
-| `jtouley/health-data-registry-ops-raw-archive` | Raw publisher bytes and fetch logs; created only when the raw archive is turned on |
+| `jtouley/health-data-registry-ops-raw-archive` | Raw publisher bytes, fetch logs and raw records with their load metadata; created only when the raw archive is turned on |
+| `jtouley/health-data-registry-ops-release-gate` | The release gate's `SERVING`, `builds.jsonl` and `serving_log.jsonl`; created private by `refresh.yml` on its first run with a token |
 | `jtouley/health-data-registry-ops-sitemaps` | Weekly sitemap copies, latest page lists and diffs; created by `sitemaps.yml` on its first run |
 | `jtouley/health-data-registry-private-<conference>-abstracts` | DOI-harvested abstracts (IDWeek, SHEA, APIC, ICID), once the DOI harvester merges |
 

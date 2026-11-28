@@ -15,9 +15,15 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
 dependencies = [
+    # Entity-safe XML for xlsx parts (no DTDs, no entities, no external references).
+    "defusedxml>=0.7.1,<1",
     "duckdb>=1.4,<3",
+    # Linear-time matching for catalogued patterns that run over publisher pages (no catastrophic backtracking).
+    "google-re2>=1.1,<2",
     "huggingface-hub>=1.0,<3",
     "mcp>=2.3,<3",
+    "pdfminer-six>=20251107",  # CVE-2025-64512: older releases can load a pickled CMap from a crafted PDF
+    "pdfplumber>=0.11.8,<1",
     "pydantic>=2.7,<3",
     "pyyaml>=6",
     "sqlglot>=26,<31",
@@ -45,10 +51,28 @@ dev = [
     "pre-commit>=4.7.0",
     "pytest>=8",
     "pytest-cov>=5",
+    "pytest-xdist>=3.6",
     "ruff>=0.6",
     "shellcheck-py>=0.10",
     "types-PyYAML>=6",
+    # The driver's tests need the SDK; dev includes the eval group so `uv sync` installs it for development.
+    { include-group = "eval" },
 ]
+# The behaviour eval's question driver (eval/drive.py): the Claude API client that asks each question through the
+# server. Not a server dependency and not a default group: deploy and refresh syncs with --no-dev never install
+# it. The sealed workflow installs it with `uv sync --locked --no-dev --group eval`.
+eval = [
+    "anthropic>=1,<2",
+]
+# dbt on DuckDB for the transform/ project (raw -> staging -> intermediate -> marts). Not a server dependency:
+# the MCP server only reads what the build produces.
+transform = [
+    # 1.10 or later: the generated tests put their values under `arguments:`, which dbt-core 1.9 can't read.
+    "dbt-duckdb>=1.10,<2",
+]
+
+[tool.uv]
+default-groups = ["dev", "transform"]
 
 [build-system]
 requires = ["hatchling"]
@@ -79,10 +103,11 @@ ignore = ["E501"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S608"]
 "scripts/**" = ["S603", "S607"]  # developer scripts run git and mutmut with fixed arguments
+"src/health_data_registry/ratchet.py" = ["S603", "S607"]  # the Trusted gate reads git objects with fixed arguments
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src", "eval", "tools"]
+files = ["src", "eval", "tools", "scripts/branch_hygiene.py"]
 exclude = ["^eval/sealed/"]
 strict = true
 ignore_missing_imports = true
@@ -101,7 +126,9 @@ branch = true
 
 [tool.mutmut]
 # Mutation tests run on the modules a change touches (scripts/mutate_changed.py, `make mutate`), not the whole tree.
-source_paths = ["src/health_data_registry/", "eval/"]
-also_copy = ["eval/dev/", "catalog/", "contracts/", "semantic/", "docs/", "licenses/", "template/", "plugin/", ".claude-plugin/", "scripts/", "tools/", "assets/", "pyproject.toml", "README.md", "CLAUDE.md"]
+source_paths = ["src/health_data_registry/", "eval/", "scripts/branch_hygiene.py"]
+also_copy = [".github/", "eval/dev/", "eval/drive_prompt.md", "catalog/", "config/", "contracts/", "semantic/", "docs/", "licenses/", "template/", "plugin/", ".claude-plugin/", "scripts/", "tools/", "assets/", "fuzz/", "transform/", "tests/fixtures/", "pyproject.toml", "README.md", "CLAUDE.md"]
 pytest_add_cli_args = ["-m", "not network", "-x", "-q", "-p", "no:cacheprovider"]
-pytest_add_cli_args_test_selection = ["tests/", "--ignore=tests/integration", "--ignore=tests/test_metamorphic.py"]
+# The fuzz harness tests match known findings by the name of the sql_guard or adapter function an error is raised
+# in, which mutmut's trampolines rename; they test fuzz/ (never mutated), so mutmut leaves them out.
+pytest_add_cli_args_test_selection = ["tests/", "--ignore=tests/integration", "--ignore=tests/test_metamorphic.py", "--ignore=tests/test_fuzz_harnesses.py"]

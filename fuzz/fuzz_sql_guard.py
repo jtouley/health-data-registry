@@ -45,10 +45,15 @@ KNOWN_OPTIMIZE_ERROR = True  # issue #57
 KNOWN_REWRITES = True  # issue #71
 KNOWN_GENERATE_PARSE_ERROR = True  # issue #72
 KNOWN_MINUS_TILDE = True  # issue #77
+KNOWN_MINUS_SLASH = True  # issue #171
 
 # Issue #77: sqlglot writes "- ~x" as "-~x", which DuckDB lexes as one operator "-~" (or "-~~", ...). Excused only
 # when the caller's text has a "~".
 _MINUS_TILDE = frozenset("-" + "~" * k for k in range(1, 9))
+
+# Issue #171: sqlglot reads "-//x" as a negated column named "//" and writes it as "-// //x", which DuckDB lexes as
+# one operator "-//". Excused only when the caller's text has a "//".
+_MINUS_SLASH = frozenset({"-//"})
 
 # Issue #71: functions the guard accepts by name that sqlglot rewrites, when it writes DuckDB SQL, into functions
 # (and a lambda) nobody allowlisted. Each pattern is matched against the caller's text; the rewritten names are
@@ -243,7 +248,7 @@ def _check_limit(root: dict[str, Any]) -> None:
 def check_accepted(
     sql: str, extra_functions: frozenset[str] = frozenset(), extra_classes: frozenset[str] = frozenset()
 ) -> None:
-    """The independent re-parse of SQL the guard accepted (the extras are for issues #71 and #77 only)."""
+    """The independent re-parse of SQL the guard accepted (the extras are for issues #71, #77 and #171 only)."""
     statements = duckdb.extract_statements(sql)
     if len(statements) != 1 or statements[0].type != duckdb.StatementType.SELECT:
         raise Finding("accepted SQL is not exactly one SELECT")
@@ -285,11 +290,15 @@ def _raised_in(e: BaseException) -> str | None:
     """The innermost sql_guard function the exception passed through (not a comprehension or generator frame,
     which Python 3.11, the fuzz image's version, keeps and 3.12 partly inlines)."""
     names = [
-        f.name
+        # Under mutation testing (mutmut) a function `f` runs as `x_f__mutmut_orig` or `x_f__mutmut_<n>`.
+        _MUTMUT_NAME.sub(r"\1", f.name)
         for f in traceback.extract_tb(e.__traceback__)
         if f.filename.endswith("sql_guard.py") and not f.name.startswith("<")
     ]
     return names[-1] if names else None
+
+
+_MUTMUT_NAME = re.compile(r"\Ax_(.+)__mutmut_(?:orig|\d+)\Z")
 
 
 def _is_utf8(text: str) -> bool:
@@ -326,10 +335,13 @@ def known_guard_error(sql: str, e: Exception) -> bool:
 
 
 def known_rewrites(sql: str) -> tuple[frozenset[str], frozenset[str]] | None:
-    """Issues #71 and #77: the extra functions and classes the caller's text can produce through sqlglot's output."""
+    """Issues #71, #77 and #171: the extra functions and classes the caller's text can produce through sqlglot's
+    output."""
     hits = [(fns, classes) for pattern, fns, classes in _REWRITES if KNOWN_REWRITES and pattern.search(sql)]
     if KNOWN_MINUS_TILDE and "~" in sql:
         hits.append((_MINUS_TILDE, frozenset()))
+    if KNOWN_MINUS_SLASH and "//" in sql:
+        hits.append((_MINUS_SLASH, frozenset()))
     if not hits:
         return None
     return frozenset().union(*(f for f, _ in hits)), frozenset().union(*(c for _, c in hits))
@@ -357,7 +369,7 @@ def TestOneInput(data: bytes) -> None:
         extras = known_rewrites(sql)
         if extras is None:
             raise
-        # Only issues #71 and #77's names are excused; anything else in the same query still fails.
+        # Only issues #71, #77 and #171's names are excused; anything else in the same query still fails.
         check_accepted(q.sql, *extras)
 
 

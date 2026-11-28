@@ -4,13 +4,25 @@
 #            redistribution); every other source is private or read live and is never fetched here
 #   fetch    one job per source (matrix, fail-fast off): fresh fetch into an empty lake, uploaded as an
 #            artifact; nothing is restored from the Actions cache, so every run starts from the publishers
-#   raw      optional: the raw publisher bytes and fetch logs go to a maintainer-only PRIVATE dataset
-#            (vars.HDR_RAW_DATASET), never to the public release
+#   raw      optional: the raw publisher bytes, fetch logs and parsed raw records with their load metadata go
+#            to a maintainer-only PRIVATE dataset (vars.HDR_RAW_DATASET), never to the public release
+#   transform  dbt builds staging, intermediate and the review queues from this run's raw records and runs every
+#            contract rule as a test. It holds no secret and runs outside the hub-publish environment, so
+#            third-party code never shares a job with the publish token: dbt and its dependencies (uv.lock), and
+#            the dbt packages `dbt deps` fetches at run time from hub.getdbt.com and codeload.github.com, outside
+#            PyPI and uv.lock (pinned in transform/package-lock.yml and checked against the reviewed sha256s in
+#            transform/package-digests.yml before the build). Its only output is dbt's run record
+#            (run_results.json, manifest.json), as an artifact.
 #   publish  runs only when every fetch job passed: it checks each planned source has a snapshot, merges the
-#            per-source lakes, re-checks every contract, then `export-public` publishes a new immutable
-#            release-<run date> tag to the hub. A release is never partial: if any source fails, nothing is
+#            per-source lakes, re-checks every contract, runs the release gate on the transform job's run record,
+#            then `export-public` publishes a new immutable release-<run date> tag to the hub, and the gate
+#            records that exact tag as served. A release is never partial: if any source fails, nothing is
 #            published or tagged and report-failure opens an issue instead. Skipped with a notice when no
-#            Hugging Face token is set; runs only on main.
+#            Hugging Face token is set (then nothing is recorded as served); runs only on main, and only after
+#            mutation-gate: the latest nightly mutation run covering this commit is green and no survivor issue
+#            is open (hard rule 13). The gate's state (SERVING, builds.jsonl, serving_log.jsonl) is restored from
+#            and kept in the private ops dataset <owner>/health-data-registry-ops-release-gate (naming.py),
+#            checked private first.
 #   report-failure  opens (or comments on) one issue when any job fails on main
 #
 # Secrets: HF_TOKEN is the one secret. HF_PUBLISH_TOKEN and HF_CRAWL_TOKEN, if ever set, override it for the
@@ -178,13 +190,90 @@ jobs:
           # `hf upload --private` is ignored for an existing repo: refuse unless Hugging Face reports it private.
           uv run --no-sync python -m health_data_registry.naming assert-private "$RAW_DATASET"
           # raw/<sha256> is content-addressed, so a file already archived is the same bytes.
+          # raw_records/<id>/<snapshot id>.ndjson and .meta.json: the parsed loads and their fetch metadata, which
+          # otherwise last only as long as the 7-day lake artifacts.
           uv run --no-sync hf upload "$RAW_DATASET" lake . --repo-type dataset --private \
-            --include "raw/*" --include "fetch_log/*" \
-            --commit-message "Raw bytes and fetch logs, run ${GITHUB_RUN_ID}"
+            --include "raw/*" --include "fetch_log/*" --include "raw_records/*" --exclude "*.tmp" \
+            --commit-message "Raw bytes, fetch logs and raw records, run ${GITHUB_RUN_ID}"
+
+  transform:
+    name: Transform build (no secrets)
+    needs: [plan, fetch]
+    if: ${{ success() && github.ref == 'refs/heads/main' && !inputs.source }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+          enable-cache: false
+      - name: Install dependencies (locked)
+        run: uv sync --locked --no-dev
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: lake-*
+          path: lake/
+          merge-multiple: true
+      # The dbt packages the generated tests use, at the exact versions in transform/package-lock.yml
+      # (metaplane/dbt_expectations 0.10.10, godatadriven/dbt_date 0.21.0). The job fails if `dbt deps` would
+      # change the lock (re-resolved versions) or the installed files are not the reviewed ones (a moved tag), so
+      # the build never runs without its data-quality tests or on unreviewed macro code.
+      - name: dbt deps (pinned and checked packages)
+        env:
+          DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
+        run: |
+          uv run --no-sync --directory transform dbt deps --profiles-dir . --project-dir .
+          git diff --exit-code transform/package-lock.yml
+          uv run --no-sync python scripts/dbt_packages.py
+      # dbt's own exit status is not used: the gate in the publish job reads its run record, and a missing or
+      # empty record holds the release.
+      - name: dbt build (models, tests and unit tests)
+        env:
+          HDR_LAKE: ${{ github.workspace }}/lake
+          HDR_TRANSFORM_DB: ${{ runner.temp }}/transform.duckdb
+          DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
+        run: |
+          dbt_status=0
+          uv run --no-sync --directory transform dbt build --profiles-dir . --project-dir . || dbt_status=$?
+          echo "dbt build exited ${dbt_status}; the release gate decides from its run record."
+      - name: Keep dbt's run record for the release gate
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: transform-run
+          path: |
+            transform/target/run_results.json
+            transform/target/manifest.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  # The release gate (hard rule 13): the latest nightly mutation run covering this commit is green, and no
+  # mutation-survivors issue is open (scripts/mutation_nightly.py gate). Any doubt blocks the release.
+  mutation-gate:
+    name: Mutation gate
+    if: github.ref == 'refs/heads/main' && !inputs.source
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read # the nightly mutation runs
+      issues: read # open survivor issues
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Nightly mutation run green on this commit, no survivor issue open
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: python3 scripts/mutation_nightly.py gate --repo "${REPO}" --sha "${SHA}"
 
   publish:
     name: Check and publish the release
-    needs: [plan, fetch]
+    needs: [plan, fetch, transform, mutation-gate]
     # Only a full refresh on main publishes, and only when every fetch passed (success() is explicit so the
     # rule can't be lost by a later edit); a single-source run never does.
     if: ${{ success() && github.ref == 'refs/heads/main' && !inputs.source }}
@@ -210,6 +299,16 @@ jobs:
           pattern: lake-*
           path: lake/
           merge-multiple: true
+      # Data only (two JSON files the gate parses); no code from the transform job runs here.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true # a missing run record is judged by the gate, which holds the release
+        with:
+          name: transform-run
+          path: transform/target/
+      # One run date for staging and publishing, so a run that crosses midnight UTC can't stage one date and tag
+      # another.
+      - name: Fix the run date
+        run: echo "RUN_DATE=$(date -u +%Y-%m-%d)" >> "$GITHUB_ENV"
       - name: Every planned source has a snapshot
         env:
           SOURCES: ${{ needs.plan.outputs.sources }}
@@ -228,9 +327,42 @@ jobs:
       # The pre-publish checks include the data: every snapshot has rows, and each data file has exactly the
       # rows its snapshot's manifest records. Any problem stops the run before anything is uploaded.
       - name: Stage the release locally (pre-publish and row-count checks, no upload)
-        run: uv run --no-sync health-data-registry export-public --to build/release-preview
+        run: uv run --no-sync health-data-registry export-public --to build/release-preview --run-date "$RUN_DATE"
+      # The gate's state outlives the run only in the private ops dataset. A failed restore fails the job, so an
+      # empty state never overwrites the real one. With no token there is nothing to restore, and nothing is
+      # published or recorded as served either.
+      - name: Restore the release gate's state (private ops dataset)
+        id: ops
+        env:
+          HF_TOKEN: ${{ secrets.HF_CRAWL_TOKEN || secrets.HF_TOKEN }}
+          HF_HUB_DISABLE_TELEMETRY: "1"
+          HDR_PRIVATE_HF_OWNER: ${{ vars.HDR_PRIVATE_HF_OWNER }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::notice::Release gate state not kept: no HF_TOKEN secret (or HF_CRAWL_TOKEN override). Nothing will be published or recorded as served."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ops_repo=$(uv run --no-sync python -m health_data_registry.naming ops release-gate) \
+            || { echo "::error::HDR_PRIVATE_HF_OWNER is not a Hugging Face user or organisation name"; exit 1; }
+          uv run --no-sync python -m health_data_registry.naming assert-private "$ops_repo"
+          uv run --no-sync hf download "$ops_repo" --repo-type dataset --local-dir "$HDR_LAKE/ops" \
+            --include SERVING --include "*.jsonl"
+          rm -rf "$HDR_LAKE/ops/.cache"
+          echo "repo=$ops_repo" >> "$GITHUB_OUTPUT"
+          echo "go=true" >> "$GITHUB_OUTPUT"
+      # The release gate, on the transform job's run record: it passes the build only if every model, seed and
+      # snapshot built, at least one test ran, nothing was skipped, every check ran and every error-severity test
+      # and unit test passed. A held build stops here, so nothing is uploaded and the release already on the hub
+      # stays the one served. A pass records the verdict only; "served" is recorded after the upload. The models and
+      # tests a build must have come from the contracts, the run record and manifest must be from one dbt run, and
+      # the build id is a hash of the inputs (LATEST snapshots, contracts, $GITHUB_SHA), so a rerun on the same
+      # inputs gives the same id. --run-date ties the pass to this run's release tag.
+      - name: Release gate
+        run: uv run --no-sync health-data-registry gate --target transform/target --ops "$HDR_LAKE/ops" --run-date "$RUN_DATE"
       # export-public tags the hub commit release-<run date> (release-<run date>.N for a correction); a tag is
-      # never moved or deleted. It runs its own pre-publish checks and uploads nothing if one fails.
+      # never moved or deleted. It runs its own pre-publish checks and uploads nothing if one fails. It writes the
+      # tag it created to release-tag only once the upload succeeded.
       - name: Publish the release and tag it on the open data hub
         env:
           HF_TOKEN: ${{ secrets.HF_PUBLISH_TOKEN || secrets.HF_TOKEN }}
@@ -239,10 +371,33 @@ jobs:
         run: |
           hub_repo=$(uv run --no-sync python -m health_data_registry.naming public)
           if [ -z "$HF_TOKEN" ]; then
-            echo "::notice::Not published: add the HF_TOKEN secret with write access to $hub_repo. The release was staged and checked."
+            echo "::notice::Not published: add the HF_TOKEN secret with write access to $hub_repo. The release was staged and checked; nothing is recorded as served."
             exit 0
           fi
-          uv run --no-sync health-data-registry export-public --to "hf://datasets/$hub_repo"
+          uv run --no-sync health-data-registry export-public --to "hf://datasets/$hub_repo" \
+            --run-date "$RUN_DATE" --tag-file "$RUNNER_TEMP/release-tag"
+      - name: Record the uploaded release as served
+        run: |
+          if [ ! -s "$RUNNER_TEMP/release-tag" ]; then
+            echo "Nothing was uploaded, so nothing is recorded as served."
+            exit 0
+          fi
+          tag=$(cat "$RUNNER_TEMP/release-tag")
+          uv run --no-sync health-data-registry gate --target transform/target --ops "$HDR_LAKE/ops" --confirm "$tag"
+      # Runs after a hold too, so the hold is kept in the log; only when the state was restored first.
+      - name: Keep the release gate's state (private ops dataset)
+        if: ${{ always() && steps.ops.outputs.go == 'true' }}
+        env:
+          HF_TOKEN: ${{ secrets.HF_CRAWL_TOKEN || secrets.HF_TOKEN }}
+          HF_HUB_DISABLE_TELEMETRY: "1"
+          HDR_PRIVATE_HF_OWNER: ${{ vars.HDR_PRIVATE_HF_OWNER }}
+          OPS_REPO: ${{ steps.ops.outputs.repo }}
+        run: |
+          uv run --no-sync python -m health_data_registry.naming assert-private "$OPS_REPO"
+          if [ -n "$(ls -A "$HDR_LAKE/ops" 2>/dev/null)" ]; then
+            uv run --no-sync hf upload "$OPS_REPO" "$HDR_LAKE/ops" . --repo-type dataset --private \
+              --include SERVING --include "*.jsonl" --commit-message "Release gate state, run ${GITHUB_RUN_ID}"
+          fi
       - name: Keep the manual publish checklist
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -253,7 +408,7 @@ jobs:
 
   report-failure:
     name: Open or update the failure issue
-    needs: [plan, fetch, raw, publish]
+    needs: [plan, fetch, raw, transform, mutation-gate, publish]
     if: ${{ failure() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -266,7 +421,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TITLE: "Weekly refresh failed"
         run: |
-          body="The weekly refresh, contract check or publish failed: $RUN_URL
+          body="The weekly refresh, contract check, mutation gate or publish failed: $RUN_URL
 
           A source may have changed shape, moved, or be down. Check the run log, then update the
           adapter or contract in a pull request. No release is published or tagged until every source passes."

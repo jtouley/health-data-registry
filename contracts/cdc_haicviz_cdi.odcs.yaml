@@ -31,7 +31,7 @@ schema:
     customProperties:
       - property: totalRows
         value: "viewby = 'Total' AND series = 'Total'"
-        description: "The overall all-cases row for each topic and year (labels observed in the full table, 718 rows, 2026-11-24). Rows with grouping 'All cases' inside the Age, Sex and Race views are strata of those views, not totals."
+        description: "The overall all-cases row for each topic and year (labels observed in the full table, 718 rows, 2026-11-24). Rows with grouping 'All cases' inside the Age, Sex and Race views are strata of those views, not totals. Structural fact checked live 2026-11-25 (viewby = 'Total', 2011-2022): each year has exactly one Total row per topic, under grouping 'All cases'; the healthcare- and community-associated rows beside it sit under 'Epi Class' (2011-2019, 2022) or 'Epi class' (2020-2021); topic is 'Number of Cases' through 2021 and 'Number of cases' in 2022."
       - {property: tableShape, value: frequency_table}
       - property: idDimensions
         value:
@@ -42,6 +42,28 @@ schema:
           period: yearname
           provisionalFlag: null
         description: "The whole dataset is one condition (Clostridioides difficile infection), so there is no condition column. Strain (ribotype) appears in series for topic 'Strain type' only; no resistance field. Healthcare- vs community-associated is an epidemiologic class (grouping/series), not a case status. Period is calendar year. No case definition, case status or provisional column."
+    quality:
+      - id: rows_raw_to_staging
+        type: custom
+        engine: dbt-expectations
+        implementation: {check: row_count_matches, model: staging, compare: raw}
+        dimension: consistency
+        severity: error
+        description: "Staging has exactly as many rows as the raw load it types: staging drops and adds no row (an exact structural fact of the generated staging model)."
+      - id: rows_staging_to_intermediate
+        type: custom
+        engine: dbt-expectations
+        implementation: {check: row_count_matches, model: intermediate, compare: staging}
+        dimension: consistency
+        severity: error
+        description: "The intermediate model has exactly as many rows as staging: it only adds columns beside each staging row (an exact structural fact). It guards the generated intermediate model, which today is a view with no join, filter or aggregation, so it checks our code, not the publisher's data; it becomes a reconciliation of the data once a mart can change the grain (#131)."
+      - id: load_within_refresh
+        type: custom
+        engine: dbt-expectations
+        implementation: {check: load_within_sla, model: staging, sla: frequency}
+        dimension: timeliness
+        severity: warn
+        description: "The latest load is no older than the annual cadence in slaProperties frequency. It times our copy, not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold."
     properties:
       - name: yearname
         physicalType: BIGINT
@@ -89,25 +111,33 @@ schema:
         physicalType: DOUBLE
         logicalType: number
         required: false
-        description: "The published number: a case count when topic is number of cases, cases per 100,000 population when topic is case rates, unconfirmed for strain type. Published as text; cast to number."
+        description: "The published number: a case count when topic is number of cases, cases per 100,000 population when topic is case rates, unconfirmed for strain type."
         customProperties:
           - {property: role, value: measure}
           - {property: sourceField, value: value}
           - {property: unit, value: "see topic: 1 (cases) or /100000"}
+slaProperties:
+  - {property: frequency, value: 1, unit: y, driver: analytics}
 customProperties:
   - {property: licence, value: public-domain-us-federal}
   - {property: citation, value: "Centers for Disease Control and Prevention, Emerging Infections Program HAIC. HAICViz - CDI. https://data.cdc.gov/d/abgz-qs4g"}
   - {property: refresh, value: annual}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "Each refresh stores the complete table as a dated, append-only load. Incremental loading (only rows new or changed since the last load) waits for a reviewed row key and the publisher's update field."
   - {property: geographyBasis, value: "the Emerging Infections Program catchment areas combined; no state values"}
   - {property: rateDenominator, value: "the EIP catchment population per 100,000; which estimates, and whether rates are crude, are not confirmed (see openQuestions)"}
   - {property: unreliableRule, value: {kind: none, description: "None stated: data.cdc.gov publishes no codebook or small-number rule for these EIP figures (see openQuestions)."}}
   - property: openQuestions
     value:
+      - "Freshness: the publisher's own last-update time is not stored, so load_within_refresh times our latest load against the annual cadence (slaProperties frequency), not the publisher's update. The weekly refresh fetches every source into an empty lake, so there the load is minutes old and the check passes; it says something about the data only once it times the publisher's update. Store the publisher's update time (e.g. Socrata rowsUpdatedAt) in the snapshot manifest, then check that instead."
+      - "Freshness grace: how long past the annual cadence should a load count as stale? Nothing the publisher states sets a grace period, so load_within_refresh warns at exactly the cadence. Maintainer to decide."
       - "Licence: no licence field in the Socrata metadata; public-domain-us-federal assumed from its being a CDC work."
       - "No column descriptions or codebook are published on data.cdc.gov. Which EIP sites and counties contribute, and did the catchment change over 2011-2022? (EIP site page on www.cdc.gov not fetched.)"
       - "Strain type rows: is value the percent of typed isolates with that ribotype, or a count? Unit not stated; no metric defined for it."
       - "Definitions of healthcare-associated vs community-associated (onset setting and look-back windows) are not on data.cdc.gov."
       - "Case rate denominators: which population estimates, and are rates crude? Assumed crude, not confirmed."
+      - "Do the strata of one view and grouping add up to its Total row (HA + CA = all cases; age groups that never overlap)? Not stated on data.cdc.gov. Until a maintainer confirms it, the semantic model marks stratum non_additive and each stratum is read on its own."
       - "'Number of Cases' rows for Total by epi class exist for 2011-2019 and 2022 under 'Epi Class' and for 2020-2021 under 'Epi class': confirm these are one series."
       - "Data end in 2022 although rowsUpdatedAt is 2025-05-13. Coverage after 2022 is unknown until the publisher says whether later years are lagged, withheld or not collected. Affects whether refresh should stay annual."
       - "Case definition: EIP CDI case definition (positive C. difficile toxin or molecular assay in a catchment resident, with the incident-case window) and its effective years are not in the data; add as caseDefinitions after a maintainer reads the EIP CDI methods."

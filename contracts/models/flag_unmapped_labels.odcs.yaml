@@ -1,0 +1,48 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: flag_unmapped_labels
+name: Review queue - condition labels the catalog does not list
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Lists condition labels a stored source publishes that its reviewed catalog list (conditions.labels) does not have: a new or renamed label, so questions about it can't be routed until a maintainer adds it or declares the rename."
+  usage: "A review queue for maintainers. It removes and changes nothing. The SQL is generated from the catalog by `make contracts`; labels are compared exactly as published."
+  limitations: "Mapping a label to a condition concept comes later (the control plane's reviewed crosswalk); this queue only says the label is not in the catalog's list."
+schema:
+  - name: flag_unmapped_labels
+    physicalName: flag_unmapped_labels
+    physicalType: table
+    logicalType: object
+    description: "One row per stored source and published condition label missing from that source's catalog list."
+    customProperties:
+      - {property: layer, value: flag}
+      - {property: totalRows, value: none}
+      - {property: tableShape, value: registry}
+    properties:
+      - name: dataset
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The catalogued source that publishes the label."
+        customProperties: [{property: role, value: dimension}]
+      - name: label
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The label exactly as published."
+        customProperties: [{property: role, value: dimension}]
+      - name: row_count
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "How many published rows carry the label."
+        customProperties: [{property: role, value: attribute}]
+      - name: reason
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Why the row is in the queue, in plain words."
+        customProperties: [{property: role, value: attribute}]
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None: a review queue, not published numbers."}}

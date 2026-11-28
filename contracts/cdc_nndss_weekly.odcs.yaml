@@ -7,7 +7,7 @@ status: draft
 domain: infectious_disease
 description:
   purpose: "Weekly provisional case counts of selected nationally notifiable infectious diseases reported by US states, New York City, the District of Columbia and territories to CDC's National Notifiable Diseases Surveillance System, 2022 onward."
-  usage: "Read the latest MMWR week of a year for year-to-date counts by state and condition; sum weekly counts across weeks or reporting areas only after excluding total rows."
+  usage: "Read the latest MMWR week of a year for year-to-date counts by state and condition. Never add weekly counts across weeks into a year: late reports reach only the year-to-date count. Add weekly counts across reporting areas only after excluding total rows."
   limitations: "Provisional counts that are revised in later weeks; counts by jurisdiction of residence; no rates, no age or sex breakdown, no county."
   authoritativeDefinitions:
     - {type: canonicalUrl, url: "https://data.cdc.gov/d/x9gk-5huc", description: "Publisher dataset page"}
@@ -44,6 +44,28 @@ schema:
           period: [year, week]
           provisionalFlag: null
         description: "Condition is the publisher label (no NNDSS event code or ICD-10 code is published in this dataset). Case definitions are not in the data (see openQuestions; https://ndc.services.cdc.gov/). Case status is not a column: counts are published per condition without a confirmed/probable split. Organism is part of the label for Candida auris only; no resistance field. Period is MMWR year and week. Provisional status is by reporting year per the dataset footnote, not a column."
+    quality:
+      - id: rows_raw_to_staging
+        type: custom
+        engine: dbt-expectations
+        implementation: {check: row_count_matches, model: staging, compare: raw}
+        dimension: consistency
+        severity: error
+        description: "Staging has exactly as many rows as the raw load it types: staging drops and adds no row (an exact structural fact of the generated staging model)."
+      - id: rows_staging_to_intermediate
+        type: custom
+        engine: dbt-expectations
+        implementation: {check: row_count_matches, model: intermediate, compare: staging}
+        dimension: consistency
+        severity: error
+        description: "The intermediate model has exactly as many rows as staging: it only adds columns beside each staging row (an exact structural fact). It guards the generated intermediate model, which today is a view with no join, filter or aggregation, so it checks our code, not the publisher's data; it becomes a reconciliation of the data once a mart can change the grain (#131)."
+      - id: load_within_refresh
+        type: custom
+        engine: dbt-expectations
+        implementation: {check: load_within_sla, model: staging, sla: frequency}
+        dimension: timeliness
+        severity: warn
+        description: "The latest load is no older than the weekly cadence in slaProperties frequency. It times our copy, not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold."
     properties:
       - name: states
         physicalType: VARCHAR
@@ -64,7 +86,7 @@ schema:
         physicalType: BIGINT
         logicalType: integer
         required: true
-        description: "MMWR (epidemiological) year of the report. Published as text; cast to integer."
+        description: "MMWR (epidemiological) year of the report."
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: year}
@@ -76,6 +98,14 @@ schema:
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: week}
+        quality:
+          - id: week_in_range
+            type: custom
+            engine: dbt-expectations
+            implementation: {check: values_between, model: staging, min: 1, max: 53}
+            dimension: conformity
+            severity: error
+            description: "The codebook gives the MMWR week as 1-52, or 53 in 53-week years (the column description)."
       - name: label
         physicalType: VARCHAR
         logicalType: string
@@ -85,15 +115,41 @@ schema:
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: label}
+          - property: notIncidence
+            value: {"Candida auris, screening": "people found to carry C. auris on screening swabs (colonisation), not new cases of disease in the population; for C. auris, the clinical cases take a rate"}
+            description: "Labels whose counts are not population incidence, so get_rate, compare_rates and get_trend on rates give no rate per 100,000 people for them; the counts themselves are returned as published. The maintainer's reviewed declaration of 25 Nov 2026 (PR #186). Supporting evidence, from the case-definition site the dataset notes cite (https://ndc.services.cdc.gov/): CDC's Candida auris 2023 case definition (CSTE position statement 22-ID-05, https://ndc.services.cdc.gov/case-definitions/candida-auris-2023/, read 2026-11-25) defines a screening case as a 'Person with confirmatory laboratory evidence from a swab collected for the purpose of screening for C. auris colonization regardless of site swabbed', apart from a clinical case (a specimen 'obtained during the normal course of care for diagnostic or treatment purposes'). The value depends on the exact label 'Candida auris, screening' (see cauris_labels_present)."
+        quality:
+          - id: cauris_labels_present
+            dimension: coverage
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(DISTINCT label) FROM {object} WHERE label IN ('Candida auris, clinical', 'Candida auris, screening')"
+            mustBe: 2
+            description: "Both C. auris labels the review queue flag_cauris_clinical_screening_swap and the notIncidence declaration read by name are still published (they were in the live data on 2026-11-24); if CDC renames one, the queue would go quiet and screening counts would lose their no-rate declaration without this warning."
       - name: m1
         physicalType: BIGINT
         logicalType: integer
         required: false
-        description: "Cases reported for this condition and area in this MMWR week (publisher column 'Current week'). Empty when the flag column m1_flag holds a code; '-' means no reported cases. Published as text such as '31.0' from 2025; cast to integer."
+        description: "Cases reported for this condition and area in this MMWR week (publisher column 'Current week'). Empty only where the flag column m1_flag holds a code; a count flagged '-' (no reported cases) means not reported (maintainer's declaration, see noCasesCode): it has no number and is never counted as 0."
         customProperties:
           - {property: role, value: measure}
           - {property: sourceField, value: m1}
           - {property: unit, value: "1"}
+        quality:
+          - id: total_m1_staging_to_intermediate
+            type: custom
+            engine: dbt-expectations
+            implementation: {check: total_matches, model: intermediate, compare: staging}
+            dimension: consistency
+            severity: error
+            description: "The total of this week's reported cases (m1), summed over every row, the publisher's total-area rows included, is the same in staging and the intermediate model: a checksum between layers, not an answer (it adds any total rows to their parts). It guards the generated intermediate model, which today is a view with no join, filter or aggregation, so it checks our code, not the publisher's data; it becomes a reconciliation of the data once a mart can change the grain (#131)."
+          - id: m1_empty_only_where_flagged
+            dimension: consistency
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE m1 IS NULL AND (m1_flag IS NULL OR trim(m1_flag) = '')"
+            mustBe: 0
+            description: "A count is empty only where the publisher's flag (m1_flag) gives the reason (dataset notes); an empty count with no flag is a read failure, not a gap the publisher left. Checked against the live data on 2026-11-25: no such row (warn until the synthetic test fixtures carry flags; then error). The converse doesn't hold: through 2024 a '-' flag also sits beside a number."
       - name: m1_flag
         physicalType: VARCHAR
         logicalType: string
@@ -104,9 +160,11 @@ schema:
           - {property: sourceField, value: m1_flag}
           - {property: flagFor, value: m1}
           - {property: flagCodes, value: {"-": "no reported cases", "U": "unavailable", "N": "not reportable in this jurisdiction", "NN": "not nationally notifiable", "NP": "nationally notifiable but not published", "NC": "not calculated"}}
-          - {property: noCasesCode, value: "-", description: "Dataset notes (the publisher's codebook, quoted in flagCodes): '-' means no reported cases. An empty count with this flag is read as 0 and labelled no reported cases; it is stored as published (empty, with the flag)."}
+          - {property: noCasesCode, value: "-", description: "Dataset notes (the publisher's codebook, quoted in flagCodes): '-: No reported cases — The reporting jurisdiction did not submit any cases to CDC.' Meaning, by the maintainer's declaration of 25 Nov 2026 (PR #186; it reverses issue #14's reading as a reported zero): '-' means not reported. A count with this flag is stored and returned as published: it has no number, keeps its flag and meaning, and is never counted as 0 or turned into a rate, and a sum that meets it stops."}
         quality:
           - id: m1_flag_codes
+            dimension: conformity
+            severity: error
             type: library
             metric: invalidValues
             arguments: {validValues: ["-", "U", "N", "NN", "NP", "NC"]}
@@ -125,7 +183,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: false
-        description: "Flag for the previous 52-week maximum; same codes as m1_flag."
+        description: "Why the previous 52-week maximum (m2) is empty: the publisher's flag code."
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: m2_flag}
@@ -135,42 +193,58 @@ schema:
         physicalType: BIGINT
         logicalType: integer
         required: false
-        description: "Cumulative cases so far in this MMWR year up to and including this week (year to date). Cumulative: take the latest week, never sum across weeks. Can be incomplete if the condition was reportable for only part of the year (publisher footnote)."
+        description: "Cumulative cases so far in this MMWR year up to and including this week (year to date). Cumulative: take the latest week, never sum across weeks. Can be incomplete if the condition was reportable for only part of the year (publisher footnote). Empty only where the flag column m3_flag holds a code; a count flagged '-' (no reported cases) means not reported (maintainer's declaration, see noCasesCode): it has no number and is never counted as 0."
         customProperties:
           - {property: role, value: measure}
           - {property: sourceField, value: m3}
           - {property: unit, value: "1"}
+        quality:
+          - id: m3_empty_only_where_flagged
+            dimension: consistency
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE m3 IS NULL AND (m3_flag IS NULL OR trim(m3_flag) = '')"
+            mustBe: 0
+            description: "A count is empty only where the publisher's flag (m3_flag) gives the reason (dataset notes); an empty count with no flag is a read failure, not a gap the publisher left. Checked against the live data on 2026-11-25: no such row (warn until the synthetic test fixtures carry flags; then error). The converse doesn't hold: through 2024 a '-' flag also sits beside a number."
       - name: m3_flag
         physicalType: VARCHAR
         logicalType: string
         required: false
-        description: "Flag for the current-year year-to-date count; same codes as m1_flag."
+        description: "Why the current-year year-to-date count (m3) is empty: the publisher's flag code."
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: m3_flag}
           - {property: flagFor, value: m3}
           - {property: flagCodes, value: {"-": "no reported cases", "U": "unavailable", "N": "not reportable in this jurisdiction", "NN": "not nationally notifiable", "NP": "nationally notifiable but not published", "NC": "not calculated"}}
-          - {property: noCasesCode, value: "-", description: "Dataset notes (the publisher's codebook, quoted in flagCodes): '-' means no reported cases. An empty count with this flag is read as 0 and labelled no reported cases; it is stored as published (empty, with the flag)."}
+          - {property: noCasesCode, value: "-", description: "Dataset notes (the publisher's codebook, quoted in flagCodes): '-: No reported cases — The reporting jurisdiction did not submit any cases to CDC.' Meaning, by the maintainer's declaration of 25 Nov 2026 (PR #186; it reverses issue #14's reading as a reported zero): '-' means not reported. A count with this flag is stored and returned as published: it has no number, keeps its flag and meaning, and is never counted as 0 or turned into a rate, and a sum that meets it stops."}
       - name: m4
         physicalType: BIGINT
         logicalType: integer
         required: false
-        description: "Cumulative cases in the previous MMWR year up to the same week, as published in this week's table. The codebook doesn't say whether it counts the same thing as that year's own year-to-date (m3); for some conditions the two differ widely (see openQuestions), so it is shown beside m3, never in its place."
+        description: "Cumulative cases in the previous MMWR year up to the same week, as published in this week's table. The codebook doesn't say whether it counts the same thing as that year's own year-to-date (m3); for some conditions the two differ widely (see openQuestions), so it is shown beside m3, never in its place. Empty only where the flag column m4_flag holds a code; a count flagged '-' (no reported cases) means not reported (maintainer's declaration, see noCasesCode): it has no number and is never counted as 0."
         customProperties:
           - {property: role, value: measure}
           - {property: sourceField, value: m4}
           - {property: unit, value: "1"}
+        quality:
+          - id: m4_empty_only_where_flagged
+            dimension: consistency
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE m4 IS NULL AND (m4_flag IS NULL OR trim(m4_flag) = '')"
+            mustBe: 0
+            description: "A count is empty only where the publisher's flag (m4_flag) gives the reason (dataset notes); an empty count with no flag is a read failure, not a gap the publisher left. Checked against the live data on 2026-11-25: no such row (warn until the synthetic test fixtures carry flags; then error). The converse doesn't hold: through 2024 a '-' flag also sits beside a number."
       - name: m4_flag
         physicalType: VARCHAR
         logicalType: string
         required: false
-        description: "Flag for the previous-year year-to-date count; same codes as m1_flag."
+        description: "Why the previous-year year-to-date count (m4) is empty: the publisher's flag code."
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: m4_flag}
           - {property: flagFor, value: m4}
           - {property: flagCodes, value: {"-": "no reported cases", "U": "unavailable", "N": "not reportable in this jurisdiction", "NN": "not nationally notifiable", "NP": "nationally notifiable but not published", "NC": "not calculated"}}
-          - {property: noCasesCode, value: "-", description: "Dataset notes (the publisher's codebook, quoted in flagCodes): '-' means no reported cases. An empty count with this flag is read as 0 and labelled no reported cases; it is stored as published (empty, with the flag)."}
+          - {property: noCasesCode, value: "-", description: "Dataset notes (the publisher's codebook, quoted in flagCodes): '-: No reported cases — The reporting jurisdiction did not submit any cases to CDC.' Meaning, by the maintainer's declaration of 25 Nov 2026 (PR #186; it reverses issue #14's reading as a reported zero): '-' means not reported. A count with this flag is stored and returned as published: it has no number, keeps its flag and meaning, and is never counted as 0 or turned into a rate, and a sum that meets it stops."}
       - name: location1
         physicalType: VARCHAR
         logicalType: string
@@ -195,20 +269,26 @@ schema:
         customProperties:
           - {property: role, value: attribute}
           - {property: sourceField, value: sort_order}
+slaProperties:
+  - {property: frequency, value: 1, unit: w, driver: analytics}
 customProperties:
   - {property: licence, value: public-domain-us-federal}
   - {property: citation, value: "Centers for Disease Control and Prevention. National Notifiable Diseases Surveillance System (NNDSS). NNDSS Weekly Data. https://data.cdc.gov/d/x9gk-5huc"}
   - {property: refresh, value: weekly}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "Each refresh stores the complete table as a dated, append-only load. Incremental loading (only rows new or changed since the last load) waits for a reviewed row key and the publisher's update field."
   - {property: geographyBasis, value: "patient residence: cases are assigned to the jurisdiction where the patient usually lives (dataset notes)"}
   - {property: unreliableRule, value: {kind: none, description: "None: the publisher marks no counts as unreliable and publishes no rates. Empty counts carry a flag ('-' no reported cases; U, N, NN, NP, NC)."}}
   - property: openQuestions
     value:
+      - "Freshness: the publisher's own last-update time is not stored, so load_within_refresh times our latest load against the weekly cadence (slaProperties frequency), not the publisher's update. The weekly refresh fetches every source into an empty lake, so there the load is minutes old and the check passes; it says something about the data only once it times the publisher's update. Store the publisher's update time (e.g. Socrata rowsUpdatedAt) in the snapshot manifest, then check that instead."
+      - "Freshness grace: how long past the weekly cadence should a load count as stale? Nothing the publisher states sets a grace period, so load_within_refresh warns at exactly the cadence. With the warning at exactly the cadence, one missed weekly refresh warns only if this run reaches the test later in the day than last week's load was stamped, so a single miss is caught only some of the time. Maintainer to decide."
       - "Is next year's prior-year year-to-date (m4) a like-for-like restatement of a year's own year-to-date (m3)? Nothing in the codebook says so, and for Candida auris, clinical they differ widely (m3 at the year's last week vs next year's m4 at its last week, live data 2026-11-24: California 2023 1275 vs 551; Georgia 2023 390 vs 191; Georgia 2024 651 vs 365; Michigan 2023 103 vs 110). Until a domain reviewer answers (semantic resolution_policy: require_domain_review), both are returned as separate observations (year_end_ytd, provisional; subsequent_year_restatement, unverified_restatement) and neither is called final."
       - "Supporting evidence for the reviewer on the m3/m4 question, not a verification: for Michigan 2024, CDC's C. auris tracking page shows 184 clinical cases; NNDSS clinical is 174 at year end (m3) and 184 in the next year's table (m4); NNDSS screening is 643 at year end and 689 restated (spec research, branch claude/cauris-source-contracts, commit 1e4740c, docs/sources/c-auris/; not in this branch, not re-checked here). One matching state-year does not show the two count the same thing, and the California 2023 gap (1275 vs 551) is unexplained, so resolution_policy stays require_domain_review."
-      - "Case definition for Candida auris: the same research reports CSTE position statement 22-ID-05. Add it as an authoritativeDefinitions link once a maintainer confirms the URL from that research file."
+      - "Case definition for Candida auris: CSTE position statement 22-ID-05, CDC's 2023 case definition at https://ndc.services.cdc.gov/case-definitions/candida-auris-2023/ (found 2026-11-25 on the case-definition site the dataset notes cite; it defines the clinical and screening subtypes the notIncidence declaration quotes). Maintainer to confirm and add it as an authoritativeDefinitions link. A note, not a blocker: the notIncidence declaration stands on the maintainer's review."
       - "A year-to-date that had a number and later weeks show only '-' (e.g. Minnesota, Candida auris, clinical, 2025: 1 through week 38, '-' for weeks 39-53): withdrawn, reset or missing? Reported as incomplete until answered."
       - "Licence: the Socrata metadata has no licence field for this dataset; public-domain-us-federal is assumed from its being a CDC work. Maintainer to confirm."
-      - "An empty m1, m3 or m4 with flag '-' stays stored as published (empty, with the flag). At query time it is read as 0 and labelled no reported cases, from the codebook's definition of '-' (noCasesCode); a year whose running total is empty in every week reads as 0 only when every one of those weeks is flagged '-'. Maintainer to confirm on review."
       - "The provisional footnote names reporting years 2024 and 2025; the provisional status of 2026 and the finalization date of earlier years are not stated in the dataset metadata."
       - "Should the adapter normalize the 2025+ title-case reporting-area names to the 2022-2024 upper-case form, or the reverse? Filters on states are case-sensitive today."
       - "Mapping Candida auris screening (colonization) to GBD Candida spp. / Other infectious diseases is a coarse pairing; colonization is not disease. Keep, or map screening to no GBD cause?"

@@ -12,9 +12,14 @@ differences are listed below, so a later run can be compared with it.
 | `numbers.py` | Reads numbers as tokens (value, precision, year or count) and finds the sums the rubric allows |
 | `stats.py` | Wilson 95% interval, McNemar's test for before/after runs, the DEV−TEST gap, per-class tables |
 | `report.py` | Writes aggregate tables; prints per-question rows for DEV only |
+| `drive.py` | Asks each question through the MCP server with the Claude API and writes the transcript and answers |
+| `drive_prompt.md` | The driver's fixed system prompt (versioned; its sha256 is recorded in every run) |
+| `sealed_run.py` | The checks the sealed TEST workflow runs around decrypting, scoring and the use count |
+| `label_check.py` | Lists the items whose labels depend on catalog entries changed between two commits |
 | `dev/dev.jsonl` | The DEV questions: 29 expected records, no answers |
 
-Quick start, on DEV: score a run into `run.jsonl` ([Running a report](#running-a-report)), then
+Quick start, on DEV: drive the questions through the server ([Driving a run](#driving-a-run)), score the run
+into `run.jsonl` ([Running a report](#running-a-report)), then
 
 ```sh
 uv run python -m eval.report --split dev --results run.jsonl --questions
@@ -69,8 +74,21 @@ Each question carries one of six expected classes:
 | `DECLINE_NEAREST` | Say the place isn't served, and name the nearest served place or places |
 | `DECLINE_ELSEWHERE` | Decline the measure or source asked for, and point to the catalogued dataset that fits |
 | `HANDOFF_GBD` | Hand modelled burden to the IHME GBD connector, with no "GBD vs local" verdict |
+| `HANDOFF_CONNECTOR` | Hand off to the connector the record names (`gbd`, `openalex` or `pubmed`), such as a publication follow-up to OpenAlex or PubMed |
 | `DISAMBIGUATE` | Ask which condition or series is meant before giving any number |
 | `OUT_OF_SCOPE` | Say no catalogued source covers it, with no number |
+
+`HANDOFF_CONNECTOR` names its target connectors in `expected_nearest`, with or without `_connector` and joined
+by `|` when more than one will do (`"openalex_connector|pubmed_connector"`); any other item there is a place.
+Only the hand-off itself is scored, never what the other connector returns, so a result doesn't depend on a third
+party being up: Class asks whether the reply hands off to any connector, and Target whether it names one the record
+expects. A connector counts as handed off to only in a sentence with hand-off wording ("ask", "use", "search",
+"connector") and with no negation before it in its clause, so "I can't search PubMed" is not a hand-off. When the
+reply hands off to GBD alone it must show no numbers and no verdict, as for `HANDOFF_GBD`. Beside an OpenAlex or
+PubMed hand-off it may list what this server holds (abstracts, years, DOIs), and naming those datasets is optional:
+a plain hand-off and one that also names an expected dataset both score Target 2. `HANDOFF_GBD` stays as an
+alias: its records keep their class name and score exactly as before, so the frozen DEV and TEST labels need no
+change (rule C1 in `scorer.py`).
 
 Each reply gets three scores from 0 to 2 (Class, Target, Provenance) and a fabrication gate. A question
 passes only when the gate passes and all three scores are 2. A reply that shows no number has provenance
@@ -124,28 +142,105 @@ For what the rules can't judge, pass a `JudgementGrader` to `score_question`. `L
 with one fixed prompt. The grader is off by default and can only lower a score: where two scorers disagree,
 the stricter one stands.
 
+## Driving a run
+
+`drive.py` plays the clinician's Claude. It starts the server once over stdio (`uv run --no-sync
+health-data-registry serve` in `--server-dir`). Then, for each question in file order and one at a time, it
+offers the model the server's tools, runs every tool call the model makes, and stops at the final answer.
+
+It needs three environment variables:
+
+| Variable | What it is |
+|---|---|
+| `ANTHROPIC_API_KEY` | The Claude API key |
+| `EVAL_MODEL` | The model id that answers. There is no default: the driver stops with a message when it's unset |
+| `HDR_LAKE` | The lake the server reads, as for `make serve`. It must be an existing directory; a DEV run needs a filled lake (`make refresh`) |
+
+The server process gets only the `HDR_*` variables (except `HDR_PRIVATE_HF_TOKEN` and `HDR_SIGNING_KEY`) and the
+proxy and CA settings, besides mcp's safe defaults such as `PATH` and `HOME`. It never gets the API key.
+
+`--server-dir` must be a git checkout that has had `uv sync` run in it. The Claude API client lives in the `eval`
+dependency group: a plain `uv sync` installs it through `dev`, and a `--no-dev` environment needs
+`uv sync --locked --no-dev --group eval`, as the sealed workflow runs. On DEV, from the repo root, after
+`make refresh` and with `ANTHROPIC_API_KEY` already set:
+
+```sh
+export EVAL_MODEL=<model id> HDR_LAKE=$PWD/lake
+uv run python -m eval.drive --questions eval/dev/dev.jsonl --server-dir . --out ../run-dev
+uv run python -m eval.drive --questions eval/dev/dev.jsonl --server-dir . --out ../run-dev-b --protocol B
+uv run python -m eval.drive --check --server-dir . --out ../check
+```
+
+`--check` takes the place of `--questions`: it asks the first question of `eval/dev/dev.jsonl` alone and exits 0
+only if that question ends as `answered`; otherwise it exits 1 and names the status. The sealed workflow runs it
+before it decrypts anything.
+
+- **Inputs.** Only each line's `id` and `question` are read; the expected fields are never sent or read.
+- **Prompt.** The system prompt is `drive_prompt.md` followed by the server's own `instructions` (when the
+  server sends any), as an MCP client hands them to the model. Changing the prompt changes its sha256: bump `PROMPT_VERSION` in `drive.py`
+  and pin the new hash in `tests/test_eval_drive.py`.
+- **Protocol B** (`--protocol B`) takes `query_sql` out of the tools offered and refuses it if the model calls
+  it anyway. A refused call never reaches the server, so it is listed in the answer's `refused_calls`, not in
+  the transcript.
+- **Limits.** Per question: 12 turns (a turn is one API request), 25 tool calls, 120 seconds per tool call,
+  300 seconds per API request and 900 seconds for the whole question (`--max-turns`, `--max-calls`,
+  `--tool-timeout`, `--api-timeout`, `--question-timeout`). Each must be above 0, and the turn and call limits
+  whole numbers; the driver refuses any other value before it starts. A question that hits one ends with
+  `status` `turn_cap` or `deadline` and an empty `answer`, so interim text from a tool-use turn is never scored;
+  a tool call over its timeout returns an error to the model and the question goes on. Overload, rate limits,
+  server errors and dropped connections are tried up to 6 times, with backoff (2, 4, 8 ... seconds, up to 60, or
+  the API's `retry-after`, also capped at 60). A request that fails once the question's time is up ends that
+  question as `deadline`. Any other API error, or 6 failed tries, stops the run.
+- **Temperature is not set.** The API rejects sampling parameters, so two runs of the same questions can
+  differ. Compare runs with McNemar's test, not by eye.
+- **Privacy.** Nothing is printed but counts (`12/55 done`) and plain error messages: no question, answer,
+  argument or tool result. Everything goes to `--out`, which must not already hold a run: `transcript.jsonl`,
+  `answers.jsonl`, the server's stderr in `server.log`, and library log records and Python warnings in
+  `drive.log`. The sealed workflow relies on this to run TEST. After a run that stopped partway, start again
+  with a new `--out`: the partial files are not a run to score.
+
+Both files start with one header record, `{"drive_header": {...}}`: the driver's version, the model, the
+prompt's version and sha256, the server's name and its instructions' sha256, the server commit (and whether its
+tree was dirty), the snapshot id each dataset's `LATEST` names in the lake, the protocol, the tools offered, the
+limits, `max_tokens`, the temperature note, the number of questions and the start time. Then:
+
+- `transcript.jsonl`: one object per tool call that reached the server: `id`, `tool`, `args`, `result` (the
+  text the tool returned), `turn`, `is_error` and `seconds`.
+- `answers.jsonl`: one object per question: `id`, `answer` (the final text), `status` (`answered`,
+  `turn_cap`, `deadline`, `refusal`, `max_tokens` or `stopped`), `turns`, `tool_calls`, `refused_calls`,
+  `stop_reason` and `usage` (tokens, for cost). `refusal` means the model declined to answer; it is not the
+  same as a Protocol B refused call, which is listed in `refused_calls`.
+
+### A new baseline
+
+Scores from this driver start a new baseline. The earlier runs (DEV 28/29 and TEST 46/55 at `f8f3625`) were
+produced by an agent acting as the client by hand, not by this driver, with a different prompt and no caps, so
+they are not directly comparable with a driver run. Compare driver runs with driver runs, at the same
+`EVAL_MODEL`, driver version and prompt sha256.
+
 ## Running a report
 
-Transcripts come from the eval workflow's driver (`drive.py`, which runs outside this repo): one JSON object
-per tool call, with `id`, `tool`, `args` and `result`. The final answers are one JSON object per question,
-with `id` and `answer`. To score DEV into `run.jsonl`:
+To score a driver run on DEV into `run.jsonl` (`transcript_by_question` and `answers_by_question` skip the
+header record):
 
 ```python
 import json
 from pathlib import Path
 
-from eval.scorer import load_expected, score_question, transcript_by_question
+from eval.scorer import answers_by_question, load_expected, score_question, transcript_by_question
+
+
+def jsonl(path: str) -> list[dict]:
+    return [json.loads(x) for x in Path(path).read_text().splitlines() if x]
+
 
 expected = load_expected(Path("eval/dev/dev.jsonl"), "dev")
-calls = transcript_by_question(
-    [json.loads(x) for x in Path("transcript.jsonl").read_text().splitlines() if x]
-)
-rows = [json.loads(x) for x in Path("answers.jsonl").read_text().splitlines() if x]
-answers = {r["id"]: r["answer"] for r in rows}
+calls = transcript_by_question(jsonl("../run-dev/transcript.jsonl"))
+answers = answers_by_question(jsonl("../run-dev/answers.jsonl"))
 with Path("run.jsonl").open("w") as out:
     for e in expected:
         c, r = calls.get(e.id, ([], []))
-        out.write(json.dumps(score_question(e, c, r, answers[e.id]).to_row("dev")) + "\n")
+        out.write(json.dumps(score_question(e, c, r, answers.get(e.id, "")).to_row("dev")) + "\n")
 ```
 
 Then:
@@ -165,8 +260,8 @@ The output starts with the DEV table:
 `--before` adds McNemar's test against an earlier run on the same split and labels. `--questions` adds
 per-question scores and works for DEV only.
 
-To score TEST, the plaintext must be decrypted first. The maintainer holds the age key (the eval workflow
-reads it from the `EVAL_TEST_KEY` secret). Decrypt into a folder outside the repo, score with
+To score TEST, the plaintext must be decrypted first. The maintainer holds the age key (the sealed TEST workflow
+reads it from the `EVAL_TEST_KEY` secret; see [Running TEST in CI](#running-test-in-ci)). Decrypt into a folder outside the repo, score with
 `load_expected(path, "test")` and `to_row("test")` as above (a file whose hash differs voids the run), and
 keep the results outside the repo too. Then:
 
@@ -191,3 +286,67 @@ before writing anything.
 
 Any fabrication on TEST blocks a release, whatever the pass rates. The TEST report prints "Release is
 blocked." when it finds one; the DEV report only counts them.
+
+## Running TEST in CI
+
+[`.github/workflows/sealed-test.yml`](../.github/workflows/sealed-test.yml) runs TEST at release milestones only,
+never on a pull request. It is started by hand from main, and its jobs read their secrets from the GitHub
+environment `eval`, which allows main only ([automation.md](../docs/dev/automation.md)).
+
+| Input | What it is |
+|---|---|
+| `mode` | `evaluate` runs and scores TEST; `label-check` lists the items a catalog change touches, with no server run |
+| `ciphertext` | A path in the private ops dataset `<owner>/health-data-registry-ops-eval`, or `release:<tag>/<asset>` for an asset of one of this repository's releases |
+| `commit` | The full sha of the commit on main to evaluate (for `label-check`, the newer catalog) |
+| `base_commit` | `label-check` only: the full sha of the older catalog on main, such as the commit the labels were audited against |
+| `wave` | A short name for the run, logged with it |
+| `reaudited_labels` | Blank for TEST v1 (frozen sha256 above). For a re-audited set, the sha256 of its ciphertext, which must already be listed in `REAUDITED_TEST` in `scorer.py` |
+
+Before any job reads a secret, the workflow checks that the `eval` environment still allows main only, and stops
+with the owner step if it doesn't. That environment setting is what keeps `EVAL_TEST_KEY` off other branches: a
+branch copy of the workflow can drop every check in the file. So anyone who can push a branch is trusted with TEST
+unless the environment allows main only and has a required reviewer; set both.
+
+**evaluate** checks that the commit is on main and the driver is present, builds the server there with locked
+dependencies, fetches the ciphertext and checks its hash, then builds a fresh lake of the public sources. It
+checks that the driver can ask one DEV question through the server, and only then decrypts the labels, so a
+publisher outage, a bad API key or a server that doesn't start costs a re-run, not a use. The driver gets the
+questions alone, and the run is scored. Only the aggregate tables of `report.py --split test` reach the job
+summary, with the server commit, the harness commit (`github.sha`, which decides the scorer), the wave, the two
+sha256s, the age version and the lake's snapshot ids. The plaintext stays in memory or in the runner's temporary directory (mode
+0600), and the last step deletes it. No artifact, cache or log line holds a question, a label, an answer or a
+per-question row. Error messages from parsers are withheld, because they can quote a record.
+
+**The driver** is `eval/drive.py` ([Driving a run](#driving-a-run)). If a commit lacks it, `evaluate` stops
+before it fetches or decrypts anything, so no use of TEST is spent. The workflow calls it twice, with
+`HDR_LAKE`, `ANTHROPIC_API_KEY` and `EVAL_MODEL` set (`EVAL_MODEL` is a variable of the `eval` environment, not a
+secret, and the job summary names it):
+
+```sh
+python -m eval.drive --check --server-dir <server checkout> --out <dir>
+python -m eval.drive --questions <questions.jsonl> --server-dir <server checkout> --out <dir>
+```
+
+`--check` asks the first DEV question through the server and exits 0 only if it was answered; it runs before the
+labels are decrypted. `tests/test_sealed_test_workflow.py` parses both calls with the driver's own flags, so the
+two can't drift apart. `--questions` is a file of `{"id", "question"}` objects, one per line, written by
+`sealed_run.py questions`: the driver never sees a label, so no expected answer can reach the model or its API.
+The second call must write `<dir>/transcript.jsonl` and `<dir>/answers.jsonl` in the formats under
+[Running a report](#running-a-report) and exit 0. Its output goes to a file that is never printed, since it can
+quote the questions.
+
+**label-check** checks that both commits are on main, with `base_commit` before `commit`, then decrypts the
+labels and lists the ids of the items that depend on a catalog entry changed between
+`base_commit` and `commit` (`label_check.py`: L1 an expected dataset's entry changed, L2 it was removed, L3 the
+item's condition is named in an added or changed entry it doesn't expect). Each id comes with a fixed reason
+that never names a dataset, a condition or a class. Nothing from either commit is run. The list of ids and their
+reasons goes to the job summary, which is public on this repository; that is why both commits must be on main,
+so only a reviewed diff can be compared. After a re-audit, list the new ciphertext's sha256 and its plaintext
+sha256 in `REAUDITED_TEST` in `scorer.py` in a reviewed pull request, then run with `reaudited_labels`;
+`load_expected` accepts no other hash in place of the frozen one.
+
+**The use log.** Every run that reached the decrypt step, even one whose decrypt then failed, adds one comment to
+the issue "Sealed TEST use log": date, mode, wave, server and harness commits, actor, the ciphertext and label
+sha256s, and the link to the run attempt. So the count can run high, never low. The use-log job's summary gives
+the number of evaluation runs of those labels, counting the run of TEST v1 before the log existed (`PRIOR_USES`),
+and, apart, the number of label-check decryptions.

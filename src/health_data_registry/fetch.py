@@ -36,7 +36,10 @@ that one) is added to the default trust store. The generic ``HTTPS_PROXY`` and `
 variables are deliberately ignored, so a stray environment variable set by another tool can neither route
 production traffic nor widen the CAs trusted for a publisher (``SSL_CERT_FILE`` is read by OpenSSL itself
 for every TLS context, in or out of proxy mode). Proxy mode logs one
-warning per process saying that the address checks are advisory.
+warning per process saying that the address checks are advisory. Because of that, the hosted server
+(``serve --http``) refuses to start with ``HDR_HTTPS_PROXY`` set unless ``HDR_PROXY_ENFORCES_ALLOWLIST=1``
+declares that the proxy itself allows only the catalogued publisher hosts on public addresses
+(``hosted.check_egress``); the local CLI is unchanged.
 
 Failures raise :class:`FetchRefused` with a short machine ``code`` and a plain sentence.
 """
@@ -57,6 +60,7 @@ import zlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Final
 from urllib.parse import SplitResult, urljoin, urlsplit
 
@@ -75,6 +79,8 @@ PROXY_ENV: Final = "HDR_HTTPS_PROXY"
 USER_AGENT: Final = f"health-data-registry/{__version__} (+https://github.com/jtouley/health-data-registry)"
 
 REDIRECT_STATUSES: Final = frozenset({301, 302, 303, 307, 308})
+# Statuses whose Retry-After header is read (RFC 9110 10.2.3): too many requests, service unavailable.
+RETRY_AFTER_STATUSES: Final = frozenset({429, 503})
 # Headers the fetcher owns: a caller cannot override them.
 _RESERVED_HEADERS: Final = frozenset(
     {"host", "connection", "content-length", "transfer-encoding", "accept-encoding", "te", "upgrade",
@@ -96,11 +102,21 @@ _ALWAYS_BLOCKED: Final = (
 class FetchRefused(Exception):
     """Nothing was fetched (or the response was discarded). ``code`` is for programs."""
 
-    def __init__(self, code: str, message: str, *, status: int | None = None) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        status: int | None = None,
+        location: str | None = None,
+        retry_after: float | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.status = status
+        self.location = location  # where a redirect pointed, when the fetch stopped at one
+        self.retry_after = retry_after  # seconds the publisher asked us to wait (Retry-After on 429 or 503)
 
 
 @dataclass(frozen=True)
@@ -220,8 +236,9 @@ class _Proxy:
     port: int
 
 
-def _proxy_from_env() -> _Proxy | None:
-    value = os.environ.get(PROXY_ENV, "").strip()
+def _proxy_from_env(environ: Mapping[str, str] | None = None) -> _Proxy | None:
+    """The proxy HDR_HTTPS_PROXY names (blank reads as unset), or FetchRefused("proxy_config") on a bad value."""
+    value = (os.environ if environ is None else environ).get(PROXY_ENV, "").strip()
     if not value:
         return None
     try:
@@ -487,6 +504,22 @@ def _read_body(
     return body.finish()
 
 
+def retry_after_seconds(value: str | None, *, now: datetime | None = None) -> float | None:
+    """A Retry-After header in seconds: delay-seconds or an HTTP date (RFC 9110 10.2.3); None if unreadable."""
+    if value is None:
+        return None
+    text = value.strip()
+    if text.isascii() and text.isdigit():  # "²" or "٣" are digits to isdigit() but not to float()
+        return float(text)
+    try:
+        when = parsedate_to_datetime(text)
+    except (TypeError, ValueError, IndexError):
+        return None
+    if when.tzinfo is None:
+        return None
+    return max(0.0, (when - (now or datetime.now(UTC))).total_seconds())
+
+
 # ---------------------------------------------------------------------------
 # Fetch
 # ---------------------------------------------------------------------------
@@ -499,6 +532,7 @@ def fetch(
     max_bytes: int = 50_000_000,
     timeout: float = 60.0,
     headers: Mapping[str, str] | None = None,
+    max_redirects: int = MAX_REDIRECTS,
 ) -> FetchResult:
     """GET ``url`` from a catalogued host over HTTPS, following checked redirects. See the module doc.
 
@@ -508,6 +542,8 @@ def fetch(
         max_bytes: cap on the body, on the wire and after decompression.
         timeout: deadline for the whole fetch, redirects included, in seconds.
         headers: extra request headers (e.g. an API app token), sent only to the original host.
+        max_redirects: redirects to follow (at most ``MAX_REDIRECTS``). A polite crawler passes 0 so one call
+            is exactly one request; a redirect then raises ``too_many_redirects`` with its ``location``.
 
     Raises:
         FetchRefused: with a ``code`` and a plain-language ``message``.
@@ -517,6 +553,8 @@ def fetch(
         raise ValueError(f"max_bytes must be positive, got {max_bytes!r}")
     if not timeout > 0:
         raise ValueError(f"timeout must be positive, got {timeout!r}")
+    if not 0 <= max_redirects <= MAX_REDIRECTS:
+        raise ValueError(f"max_redirects must be between 0 and {MAX_REDIRECTS}, got {max_redirects!r}")
     extra = _check_headers(headers)
     proxy = _proxy_from_env()
     if proxy is not None:
@@ -526,7 +564,9 @@ def fetch(
     original = url.strip()
     origin_host = validate_url(original, allowed_hosts).hostname
     current = original
-    for hop in range(MAX_REDIRECTS + 1):
+    hop = -1
+    while True:  # each pass returns, raises, or follows one redirect; the last allowed hop raises
+        hop += 1
         parts = validate_url(current, allowed_hosts)
         host = (parts.hostname or "").lower()
         addresses = public_addresses(host)
@@ -556,11 +596,23 @@ def fetch(
                         "http_error", f"The publisher answered {status} with nowhere to go.", status=status
                     )
                 current = urljoin(current, location.strip())
+                if hop == max_redirects:
+                    raise FetchRefused(
+                        "too_many_redirects",
+                        f"The link redirected more than {max_redirects} times, so it was stopped.",
+                        status=status,
+                        location=current,
+                    )
                 logger.info("fetch redirect: host=%s status=%d hop=%d", host, status, hop)
                 continue
             if status != 200:
                 raise FetchRefused(
-                    "http_error", f"The publisher answered with status {status}.", status=status
+                    "http_error",
+                    f"The publisher answered with status {status}.",
+                    status=status,
+                    retry_after=retry_after_seconds(response.getheader("Retry-After"))
+                    if status in RETRY_AFTER_STATUSES
+                    else None,
                 )
             content_type = response.getheader("Content-Type")
             content = _read_body(response, connection.live_socket, deadline, max_bytes)
@@ -603,7 +655,3 @@ def fetch(
             sha256=digest,
             retrieved_at=datetime.now(UTC),
         )
-
-    raise FetchRefused(
-        "too_many_redirects", f"The link redirected more than {MAX_REDIRECTS} times, so it was stopped."
-    )

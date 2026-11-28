@@ -24,7 +24,8 @@ from typing import Any
 import duckdb
 
 from health_data_registry.registry import Dataset
-from health_data_registry.store import Manifest, RawFetch, select_list
+from health_data_registry.staging import Staged, raw_fields, stage_checked
+from health_data_registry.store import Manifest, RawFetch
 
 LIVE_TTL_S = 600.0  # how long parsed publisher records stay in memory; never written to disk
 # How long a browser-read dashboard's records stay in memory (never on disk): its read takes minutes, its data
@@ -52,8 +53,9 @@ def kept_note(ds: Dataset, retrieved_at: str) -> str:
 
 
 def is_live(ds: Dataset) -> bool:
-    """A source whose terms forbid redistribution is served live only."""
-    return not ds.entry.licence.redistribution
+    """A source whose terms forbid redistribution is served live, unless it is kept in its own private store
+    (``private_store: true``, read through private.read_rows)."""
+    return ds.entry.tier == "live"
 
 
 def attribution(ds: Dataset) -> str:
@@ -85,14 +87,14 @@ class LiveTable:
 
 def fetch_live(ds: Dataset, get: Any) -> LiveTable:
     """Page through the publisher in memory and describe the result; nothing touches the disk."""
-    from health_data_registry.adapters import pages
+    from health_data_registry.adapters import method_digest, pages
     from health_data_registry.crawl import override_notes
 
     fields = sorted({c.source_field for c in ds.contract.columns})
     records: list[dict[str, Any]] = []
     fetches: list[RawFetch] = []
     layouts: dict[str, str] = {}
-    for page in pages(ds.entry, get, fields=fields):
+    for page in pages(ds.entry, get, fields=fields, live=True):
         fetches.append(page.fetch)
         layouts.update(page.layout)
         records += [{k: (None if v is None else str(v)) for k, v in r.items()} for r in page.records]
@@ -116,22 +118,28 @@ def fetch_live(ds: Dataset, get: Any) -> LiveTable:
         origin="publisher",
         notes=[attribution(ds), kept_note(ds, retrieved.isoformat()), *override_notes(get)],
         layouts=layouts,
+        method={"type": ds.entry.source.kind, "digest": method_digest(ds.entry)},
     )
     return LiveTable(records=records, manifest=m, fetched=time.monotonic(), dashboard=ds.entry.source.browser)
 
 
-def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[str, Any]]) -> None:
-    """Normalise records into an in-memory table named after the dataset.
+def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[str, Any]]) -> Staged:
+    """Stage records into an in-memory silver table named after the dataset (the same step as the lake).
 
     Refuses a file-backed connection: the source's terms forbid keeping a copy (ADR 0009), so this checks the
     connection itself rather than trusting the caller. A table that can't be normalised leaves nothing behind.
+
+    The checks are the lake's, on purpose: an empty required value (a row with no country or year) or a declared
+    field that no record carries refuses the whole source for this session, as it would a stored load. Answering
+    from the other rows would drop rows from totals without saying so (hard rules 1 and 2); the refusal tells the
+    clinician the source is unavailable instead.
     """
     where = con.execute(
         "SELECT path FROM duckdb_databases() WHERE database_name = current_database()"
     ).fetchone()
     if where is None or where[0] is not None:
         raise ValueError(f"{ds.id} is never written to disk: load_live needs an in-memory connection")
-    fields = sorted({c.source_field for c in ds.contract.columns})
+    fields = raw_fields(ds.entry, sorted({c.source_field for c in ds.contract.columns}))
     raw = f"_live_raw_{ds.id}"
     con.execute("SET max_temp_directory_size = '0B'")  # never spill WHO-derived rows to disk
 
@@ -146,6 +154,9 @@ def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[st
                 f"INSERT INTO {q(raw)} VALUES ({marks})",  # noqa: S608 - quoted contract identifiers, bound values
                 [[r.get(f) for f in fields] for r in records],
             )
-        con.execute(f"CREATE TEMP TABLE {q(ds.id)} AS SELECT\n  {select_list(ds.contract)}\nFROM {q(raw)}")  # noqa: S608 - quoted contract identifiers
+        present = {k for r in records for k in r} or None
+        return stage_checked(
+            con, ds.contract, q(raw), table=ds.id, temp=True, present=present, entry=ds.entry
+        )
     finally:
         con.execute(f"DROP TABLE IF EXISTS {q(raw)}")

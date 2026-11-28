@@ -1,0 +1,31 @@
+# The Trusted gate's allowlist (src/health_data_registry/ratchet.py; docs/dev/README.md#the-trusted-gate).
+#
+# A pull request that adds a skip, skipif or xfail mark, a test deselection or pytest -m/-k filter, a no-cover or
+# no-mutate pragma, a mutmut exclusion, a type-ignore or noqa comment, an inline mypy setting, a ruff, mypy,
+# coverage or pytest relaxation, a relaxing command-line flag or a command whose failure is ignored, a new condition
+# on a required job or step, a weakened mutation job, a removed pre-commit hook, or that removes a test, fails the
+# Trusted gate unless its entry is listed here first. The gate's failure message prints the exact entry after
+# "Allowlist entry:"; copy what follows it.
+#
+# This file changes only in a pull request that changes nothing else, and the gate reads it from main: an entry
+# counts only once its own pull request has been through the review round and merged.
+#
+# One entry per line: <path> :: <the line, stripped of leading and trailing spaces>
+# A removed test is listed as: <path at the merge base> :: def <test name>
+# A test with fewer parametrized cases is listed the same way: <path at the merge base> :: def <test name>
+# A new condition on a required job or step is listed as: <workflow path> :: if: <condition, spaces collapsed>
+# A mutation job: <workflow> :: job <id> | needs <job> -> <mutation job> | schedule <cron> | <job>: <command>
+# A removed pre-commit hook: .pre-commit-config.yaml :: hook <id>
+# Say why in a comment above each entry.
+# An entry clears every identical line in its file, any number of times, in every pull request, until it is removed.
+
+# PR #148 (crawler factory): the UNPIVOT of wide_to_long. Its stubs and keys are quoted with _q and _lit, but
+# {relation} goes in unquoted: it is a relation the caller built (store.py builds it from quoted literals), as the
+# existing S608 lines in staging.py and quality.py are. A new caller must build relation the same way.
+src/health_data_registry/adapters/extensions/wide_to_long.py :: f"(SELECT * FROM (SELECT * FROM {relation}) UNPIVOT INCLUDE NULLS "  # noqa: S608 - quoted identifiers
+# PR #148: stage_entry's row-count check; {source} is a relation the caller built, as above.
+src/health_data_registry/staging.py :: row = con.execute(f"SELECT count(*) FROM {source}").fetchone()  # noqa: S608 - a relation built by the caller
+# PR #148: a publisher's PDF or xlsx is untrusted input; pdfminer and defusedxml/expat raise many unrelated
+# exception classes on a broken or hostile file, and each must become a plain refusal, never a traceback.
+src/health_data_registry/adapters/pdf_tables.py :: except Exception as e:  # noqa: BLE001 - a broken or hostile PDF is a refusal, whatever the library raised
+src/health_data_registry/adapters/xlsx.py :: except Exception as e:  # noqa: BLE001 - defusedxml's and expat's errors, whatever their class: a refusal

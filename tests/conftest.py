@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import textwrap
+import time
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -101,15 +103,15 @@ SEMANTIC = """\
 dataset: toy_cases
 version: 0.1.0
 dimensions:
-  - {name: state, column: reporting_area, type: categorical, description: Reporting area}
-  - {name: year, column: year, type: time, description: MMWR year}
-  - {name: condition, column: condition, type: categorical, description: Condition}
+  - {name: state, column: reporting_area, type: categorical, non_additive: false, description: Reporting area}
+  - {name: year, column: year, type: time, non_additive: false, description: MMWR year}
+  - {name: condition, column: condition, type: categorical, non_additive: true, non_additive_reason: "each is a different condition", description: Condition}
 measures:
   - {name: cases, column: cases, kind: count, unit: "1", description: reported cases}
   - {name: rate, column: rate_per_100k, kind: rate, unit: /100000, description: rate per 100k}
 metrics:
   - {name: case_count, description: Reported cases, measure: cases, aggregation: sum, exclude_total_rows: true}
-  - {name: case_rate, description: Published rate per 100k, measure: rate, aggregation: none, exclude_total_rows: false}
+  - {name: case_rate, description: Published rate per 100k, measure: rate, aggregation: none, exclude_total_rows: false, uncertainty: none, uncertainty_reason: "The toy table gives no interval."}
 series:
   - condition: legionellosis
     label: Legionellosis
@@ -174,6 +176,19 @@ def _isolated_read_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("HDR_HUB", "off")  # the default public hub is never read by an offline test
     monkeypatch.delenv("HF_TOKEN", raising=False)
     monkeypatch.setenv("HDR_FETCH_AT_RUN_TIME", "0")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data-home"))  # the default lake: never the user's own
+
+
+@pytest.fixture(autouse=True)
+def _no_straggler_outlives_its_test() -> Iterator[None]:
+    """A helper a test left running past its deadline (a slow fake download) is a straggler, which poisons every
+    hosted guard; wait for it here so it can't fail whichever test runs next (mutmut runs tests in its own order)."""
+    from health_data_registry import deadline
+
+    yield
+    end = time.monotonic() + 10
+    while deadline.stragglers() and time.monotonic() < end:
+        time.sleep(0.02)
 
 
 @pytest.fixture
