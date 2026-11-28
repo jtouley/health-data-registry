@@ -48,6 +48,28 @@ ARGUMENT = {
 CASES = [PAPER, IDWEEK_PRELIM, ARGUMENT, {**PAPER, "priorities": ["speed", "effort"]}]
 
 
+# Most tests check the answer's shape, not its numbers, so they use the shipped rubric with 1,000 draws instead of
+# 10,000: the simulation is pure Python and slow under coverage. A test that takes the `real_rubric` fixture runs
+# on the shipped rubric itself (the golden numbers, the draws and the shipped file's sha256).
+FAST_RUBRIC = parse_rubric(rubric_text().replace("draws: 10000", "draws: 1000", 1))
+
+
+@pytest.fixture
+def real_rubric() -> None:
+    """Marks a test that needs the shipped rubric unchanged."""
+
+
+@pytest.fixture(autouse=True)
+def _fast_draws(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    if "real_rubric" not in request.fixturenames:
+        monkeypatch.setattr(format_choice, "load_rubric", lambda: FAST_RUBRIC)
+
+
+def test_the_fast_copy_differs_from_the_shipped_rubric_only_in_draws() -> None:
+    assert FAST_RUBRIC.draws == 1000 and load_rubric().draws == 10_000
+    assert FAST_RUBRIC.seed == load_rubric().seed and FAST_RUBRIC.criteria == load_rubric().criteria
+
+
 def _json(**kw: Any) -> dict[str, Any]:
     out = choose_output_format(fmt="json", **kw)
     assert isinstance(out, dict)
@@ -62,7 +84,7 @@ def _fresh(**kw: Any) -> dict[str, Any]:
 # ------------------------------------------------------------------------------------------ the answer
 
 
-def test_golden_paper_case_picks_the_manuscript_with_p_below_one() -> None:
+def test_golden_paper_case_picks_the_manuscript_with_p_below_one(real_rubric: None) -> None:
     out = _fresh(**PAPER)
     assert out["type"] == "choice" and out["choice"] == "original_manuscript"
     p = out["probabilities"]
@@ -143,9 +165,9 @@ def test_review_bands(p: float, band: str) -> None:
 
 @pytest.mark.parametrize("kw", CASES)
 def test_rubric_sha256_version_and_fixed_wording_in_every_answer(kw: dict[str, Any]) -> None:
-    sha = hashlib.sha256(rubric_text().encode("utf-8")).hexdigest()
+    sha = format_choice.load_rubric().sha256
     out = _json(**kw)
-    assert out["rubric_sha256"] == sha and out["rubric_version"] == load_rubric().version
+    assert out["rubric_sha256"] == sha and out["rubric_version"] == format_choice.load_rubric().version
     assert out["rubric_status"] == "draft"
     assert NOT_A_PREDICTION in out["notes"]
     text = choose_output_format(**kw)
@@ -420,6 +442,12 @@ def test_a_rubric_without_sources_or_with_contradictions_is_refused(edit: Any, m
         RubricError, match=message.replace("[", r"\[").replace("]", r"\]").replace("(", r"\(")
     ):
         parse_rubric(_rubric_with(edit))
+
+
+def test_the_answer_carries_the_shipped_files_sha256(real_rubric: None) -> None:
+    out = _fresh(**PAPER)
+    assert out["rubric_sha256"] == hashlib.sha256(rubric_text().encode("utf-8")).hexdigest()
+    assert out["draws"] == 10_000
 
 
 def test_the_sha256_changes_with_the_rubric() -> None:
