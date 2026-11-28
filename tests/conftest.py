@@ -176,6 +176,7 @@ def _isolated_read_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("HDR_HUB", "off")  # the default public hub is never read by an offline test
     monkeypatch.delenv("HF_TOKEN", raising=False)
     monkeypatch.setenv("HDR_FETCH_AT_RUN_TIME", "0")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data-home"))  # the default lake: never the user's own
 
 
 @pytest.fixture(autouse=True)

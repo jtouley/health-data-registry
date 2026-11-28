@@ -1,0 +1,59 @@
+dataset: cdc_nssp_lab_positivity
+# 0.1.0: first draft. Every figure is read from its one published cell, for one virus, state and week; nothing is
+# added (a percent never is, and counts are never added across states into a national figure).
+version: 0.1.0
+dimensions:
+  - {name: virus, column: pathogen, type: categorical, non_additive: true, non_additive_reason: "each virus comes from its own laboratories and test panels, so two viruses' figures can't be added", description: "The virus tested for: COVID-19, Influenza or RSV, as CDC labels it."}
+  - {name: week_ending, column: mmwr_week_end, type: time, non_additive: true, non_additive_reason: "a percent for one week can't be added to the next week's", description: "The Saturday that ends the MMWR week the specimens were collected in."}
+  - {name: place, column: geography_value, type: categorical, non_additive: true, non_additive_reason: "the participating laboratories cover each state differently, so state figures are never added into a national one", description: "State or territory, by two-letter postal code (MI, OH, PR)."}
+measures:
+  - {name: test_positivity, column: percent_pos, kind: percent, unit: "% of NAAT tests", description: "Percent of the week's NAAT tests for the virus in the state that were positive, from commercial laboratories."}
+  - {name: tests, column: test_count, kind: count, unit: "tests", description: "NAAT tests classified positive or negative."}
+  - {name: positive_tests, column: positive_count, kind: count, unit: "tests", description: "NAAT tests that were positive."}
+metrics:
+  - name: weekly_percent_tests_positive
+    description: "Weekly commercial laboratory test positivity: the percent of NAAT tests positive for one virus in one state and week, read as published and never added up."
+    measure: test_positivity
+    aggregation: none
+    exclude_total_rows: false
+    uncertainty: none
+    # Structural: the contract has no interval column. The test count is published, but no interval is computed.
+    uncertainty_reason: "CDC publishes no confidence interval for these percents; the number of tests behind each percent is published beside it (test_count), and no interval is computed here."
+  - name: weekly_tests
+    description: "Number of NAAT tests for one virus classified positive or negative in one state and week, as published (empty where suppressed); never added across states, viruses or weeks."
+    measure: tests
+    aggregation: none
+    exclude_total_rows: false
+  - name: weekly_positive_tests
+    description: "Number of positive NAAT tests for one virus in one state and week, as published (empty where suppressed); never added across states, viruses or weeks."
+    measure: positive_tests
+    aggregation: none
+    exclude_total_rows: false
+series:
+  - condition: "COVID-19"
+    label: "COVID-19 percent of tests positive (NSSP commercial laboratories, by state)"
+    metric: weekly_percent_tests_positive
+    measure: percent
+    filters: {virus: "COVID-19"}
+    location_dimension: place
+    time_dimension: week_ending
+  - condition: "Influenza"
+    label: "Influenza percent of tests positive (NSSP commercial laboratories, by state)"
+    metric: weekly_percent_tests_positive
+    measure: percent
+    filters: {virus: "Influenza"}
+    location_dimension: place
+    time_dimension: week_ending
+  - condition: "RSV"
+    label: "RSV percent of tests positive (NSSP commercial laboratories, by state)"
+    metric: weekly_percent_tests_positive
+    measure: percent
+    filters: {virus: "RSV"}
+    location_dimension: place
+    time_dimension: week_ending
+# Any virus in the catalog (conditions.labels): the weekly percent by state, as published, never added.
+generic_series:
+  - metric: weekly_percent_tests_positive
+    measure: percent
+    location_dimension: place
+    time_dimension: week_ending

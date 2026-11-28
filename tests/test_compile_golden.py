@@ -20,7 +20,7 @@ from health_data_registry.adapters import method_digest
 from health_data_registry.query import Engine, QueryRefused, compile_metric, envelope
 from health_data_registry.registry import Registry, load_registry
 from health_data_registry.staging import PublisherDataRefused
-from health_data_registry.store import Manifest, build_snapshot, latest_snapshot, write_ndjson
+from health_data_registry.store import Manifest, build_snapshot, latest_snapshot, sha256_file, write_ndjson
 from tests.conftest import CATALOG, raw_fetch, write_registry
 
 EST_CATALOG = CATALOG.replace("shape: surveillance_series", "shape: estimate_table").replace(
@@ -325,6 +325,7 @@ def test_build_snapshot_manifest_and_pointer(est: tuple[Registry, Engine, Path],
     assert found is not None
     path, read = found
     assert read == m
+    assert read.files == {name: sha256_file(path / name) for name in ("data.duckdb", "data.parquet")}
     written = json.loads((path / "manifest.json").read_text())
     quality = written.pop("quality")
     # The volume check, then a fill-rate check per optional column that is not a flag column (a flag is empty
@@ -339,6 +340,7 @@ def test_build_snapshot_manifest_and_pointer(est: tuple[Registry, Engine, Path],
         },
     }
     assert written == {
+        "files": read.files,
         "dataset": "toy_cases",
         "snapshot_id": m.snapshot_id,
         "contract_version": "0.2.0",

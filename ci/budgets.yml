@@ -9,8 +9,18 @@
 # job, or the run, went over, and lists them. On the merge queue, main and nightly it only warns: runner speed is
 # not a reason to block a merge. Mutation tests are not in CI: they run nightly (.github/workflows/mutation.yml).
 #
-# Ratchet: a budget may only tighten. To loosen one, change this file alone, in a pull request of its own, so the
-# maintainer sees and approves just that (scripts/ci_budget.py ratchet; run in the Checks job).
+# Ratchet: a budget may only tighten. CI's own ratchet (scripts/ci_budget.py ratchet, in the Checks job) lets a
+# loosening through only in a pull request that changes this file alone, so the maintainer sees and approves just
+# that. The Trusted gate (ratchet.py rule 8) still fails any loosening and can't be allowlisted: the maintainer
+# records the approval on the pull request and accepts the red gate (#292 settles the path before #138).
+#
+# full, 28 Nov 2026 (#287): 108 run attempts on main, pre-pr and pull requests (25-28 Nov), every test passing,
+# every one a full run (main has no merge queue, so pre-pr and pull requests run everything, on 3.12 and 3.13).
+# Tests (Python 3.12) ran p50 222 s, p90 305 s, p99 323 s, max 347 s; 3.13 p50 216 s, p99 306 s, max 310 s; the
+# critical path p50 260 s, p99 332 s, max 360 s. Tests: 420 s, about p99 + 30% (max + 20%). Run: 480 s, the sum
+# Changes + Tests + CI result = 30 + 420 + 30 that tests/test_ci_probes.py requires. The check measures the path
+# without CI result (Changes plus the longest job after it), so 450 s of it is Changes + Tests and the last 30 s
+# is headroom (#293).
 {
   "pr": {
     "run": 180,
@@ -22,11 +32,11 @@
     }
   },
   "full": {
-    "run": 360,
+    "run": 480,
     "jobs": {
       "Changes": 30,
       "Checks": 240,
-      "Tests (Python *)": 300,
+      "Tests (Python *)": 420,
       "CI result": 30
     }
   }
