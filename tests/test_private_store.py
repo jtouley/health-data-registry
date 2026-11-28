@@ -316,6 +316,42 @@ def test_the_read_path_serves_private_sources_from_their_store(reg: Registry, tm
     assert eng.provenance(ds.id)["data_from"].startswith("the source's private store, version private-")
 
 
+def test_a_private_table_whose_checks_did_not_all_run_is_refused(
+    reg: Registry, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #222, the private tier: a check that could not run leaves the table unanswered, in words that don't
+    blame a publisher, and the next question reads the store again."""
+    from health_data_registry import staging
+
+    ds = reg.get("idweek_abstracts")
+    lake = tmp_path / "lake"
+    private.write_rows(lake, ds, "year=2025", [a_row(DOI_A)])
+    real = staging.run_rules
+    runs: list[int] = []
+
+    def flaky(con: Any, table: str, rules: Any) -> Any:
+        runs.append(1)
+        report = real(con, table, rules)
+        if len(runs) > 1:
+            return report
+        first = report.results[0]
+        return type(report)(
+            report.results[1:], ({"test": first["test"], "error": "boom"},), report.expected_checks
+        )
+
+    monkeypatch.setattr(staging, "run_rules", flaky)
+    eng = Engine(registry=reg, lake=lake, hub=None, fetch_at_run_time=False)
+    with pytest.raises(QueryRefused) as e:
+        eng.manifest(ds.id)
+    assert e.value.code == "quality_not_run"
+    assert str(e.value) == (
+        f"The table for {ds.id} was read, but not all of its data checks could run, so no numbers are shown for "
+        "it. Other sources are not affected."
+    )
+    assert ds.id not in eng.manifests and ds.id not in eng._private
+    assert eng.manifest(ds.id).origin == "private" and ds.id not in eng._unchecked
+
+
 def test_the_read_path_refuses_an_unsafe_store_in_plain_words(
     reg: Registry, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
