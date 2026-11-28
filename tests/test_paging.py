@@ -1239,3 +1239,16 @@ def test_the_room_reserves_the_widest_page_number_and_no_more() -> None:
     """The empty-page estimate is rendered as page len(rows) + 1, the most pages a plan can have."""
     _, rooms, _ = _synthetic(20, 9, lambda r: 0, 300, per_page=5)
     assert rooms[0] == 300 // 2 - (20 + 5 * 21)
+
+
+@pytest.mark.parametrize("fmt", ["csv", "json"])
+def test_a_page_of_exactly_the_budget_is_sent(registry: Registry, eng: Engine, fmt: str) -> None:
+    """The cap is "at most": a page that fills the budget to the character goes out, it isn't refused."""
+    rows = [[f"r{i}", "x" * (13 + i % 5), i] for i in range(40)]
+    for budget in range(1_500, 4_000, 2):
+        out = _wide(registry, eng, rows, fmt, 1, budget)
+        if paging.wire_size(out) == budget:
+            assert not (isinstance(out, dict) and "refused" in out)
+            assert "too long to send" not in (out if isinstance(out, str) else json.dumps(out))
+            return
+    pytest.fail("no budget gave a page of exactly its size")
