@@ -36,8 +36,8 @@ what it leaves out.
 - **A copy of the data whose checks never ran is never used.** The tool won't let a number look checked when it
   wasn't.
 
-Every empty cell, NNDSS's `-` included, comes back empty with its flag, never as 0, and the sums, rates and checks
-below are worked out with their notes.
+Every empty cell, NNDSS's `-` included, comes back empty with its flag and never as 0. The sums, the rates and the
+checks below are worked out with their notes.
 
 **Where today's tools still differ, and this is changing:**
 
