@@ -17,7 +17,7 @@ Nothing changes in how you connect: keep using the same connector or plugin.
 
 #### New data you can ask about
 
-Four new CDC sources. Each one is a draft: a maintainer has not yet reviewed its data contract (see Known limits).
+Six new CDC sources. Each one is a draft: a maintainer has not yet reviewed its data contract (see Known limits).
 
 - **Invasive *Staphylococcus aureus* (CDC HAICViz, iSA).** Case and death rates since 2005 from CDC's Emerging
   Infections Program. Every rate covers the program's surveillance sites combined. It is never a state figure. CDC
@@ -32,6 +32,14 @@ Four new CDC sources. Each one is a draft: a maintainer has not yet reviewed its
   vaccinated, or with an exemption, by vaccine and dose (or exemption type), state and school year, as each state
   reported it. CDC publishes no confidence intervals for these figures. Answers show the published text beside
   each number, and a state's "NA" or "NR" comes back as no value, never as 0.
+- **Respiratory test positivity by state (CDC NSSP).** Weekly commercial laboratory tests, positives and percent
+  positive for COVID-19, influenza and RSV, by state. A count or percent CDC suppressed (fewer than 10 tests or
+  10 positives) comes back as no value, never 0. If you ask about the nation or a county, the answer tells you the
+  table is by state only.
+- **Percent of deaths from respiratory viruses (NCHS).** The provisional weekly percent of all deaths among US
+  residents that involved COVID-19, influenza, RSV or the three combined, by age group, sex, and race and Hispanic
+  origin. A suppressed count (1 to 9) comes back as no value, never 0. It answers only a question about deaths
+  ("COVID-19 mortality", "deaths from RSV"), not a plain "COVID-19" question.
 
 Try: "How has CRE incidence changed since 2015?" or "What share of kindergartners in Michigan had an MMR
 exemption last school year?"
