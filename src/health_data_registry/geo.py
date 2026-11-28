@@ -6,6 +6,7 @@ GBD location names for US states are the plain state names, and "United States" 
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 from collections.abc import Mapping
@@ -28,14 +29,18 @@ PLACE_CONTRACT = Path("contracts") / "models" / "dim_place.odcs.yaml"
 
 
 def _place_contract() -> Path:
-    """dim_place's contract: under HDR_REGISTRY when it has one, else the repo checkout, else the wheel's copy."""
+    """dim_place's contract: under HDR_REGISTRY when it has one, else the repo checkout, else the copy the wheel
+    carries (pyproject force-includes contracts/ as health_data_registry/_registry/contracts, the same place
+    registry.default_root reads every other contract from)."""
     here = Path(__file__).resolve()
     env = os.environ.get("HDR_REGISTRY")
     roots = ([Path(env)] if env else []) + [here.parents[2], here.parent / "_registry"]
     for root in roots:
         if (root / PLACE_CONTRACT).is_file():
             return root / PLACE_CONTRACT
-    raise RuntimeError(f"no {PLACE_CONTRACT} found: the place keys are defined there")
+    raise RuntimeError(
+        f"no {PLACE_CONTRACT} found: the place keys are defined there, and the package carries it under _registry/"
+    )
 
 
 def _declared_places() -> Mapping[str, Any]:
@@ -47,23 +52,9 @@ def _declared_places() -> Mapping[str, Any]:
     raise RuntimeError(f"{PLACE_CONTRACT} declares no places")
 
 
-_DECLARED = _declared_places()
-_NATION = _DECLARED["nation"]
-_STATES = [(str(n), str(p), str(f)) for n, p, f in _DECLARED["states"]]
-
-PLACES: tuple[Place, ...] = (
-    Place(str(_NATION["name"]), str(_NATION["postal"]), str(_NATION["fips"]), "nation"),
-    *(Place(n, p, f, "state") for n, p, f in _STATES),
-)
-
 # No "total": a publisher's TOTAL row (NNDSS) also counts territories and non-US residents, so it isn't the US.
 _ALIASES = {"usa": "US", "us": "US", "u.s.": "US", "united states": "US", "us residents": "US", "u.s. residents": "US",
             "national": "US", "nation": "US", "new york state": "NY"}  # fmt: skip
-
-_BY_KEY: dict[str, Place] = {}
-for _p in PLACES:
-    for _k in (_p.name, _p.postal, _p.fips):
-        _BY_KEY[_k.lower()] = _p
 
 
 def place(text: str) -> Place | None:
@@ -71,7 +62,7 @@ def place(text: str) -> Place | None:
     key = " ".join(str(text).strip().lower().replace("_", " ").split())
     if key in _ALIASES:
         key = _ALIASES[key].lower()
-    return _BY_KEY.get(key)
+    return _load().by_key.get(key)
 
 
 def containing_state(text: str) -> Place | None:
@@ -98,9 +89,11 @@ def containing_state(text: str) -> Place | None:
 
 # Conformed place keys: USA for the nation, US-<state FIPS> for a state, US-<state FIPS><county FIPS> for a county,
 # <bigger place's key>/<name> for a declared part of one, an ISO 3166-1 alpha-3 code for any other country, and
-# WHO-<region code> for a WHO region. The fixed keys are declared once, in dim_place's contract (read above); county
-# keys follow the grammar, and dim_place lists the ones the Census file has.
-NATION_KEY = str(_NATION["key"])
+# WHO-<region code> for a WHO region. The fixed keys are declared once, in dim_place's contract, read on first use
+# (never at import, so a module that imports this one runs without the contract until it asks for a place); county
+# keys follow the grammar, and dim_place lists the ones the Census file has. The nation's key is the grammar's own
+# USA, and the contract must say the same.
+NATION_KEY = "USA"
 KEY_GRAMMAR = re.compile(r"^(?:USA|US-\d{2}(?:\d{3})?(?:/[a-z0-9-]+)?|[A-Z]{3}|WHO-[A-Z]{3,4})$")
 
 
@@ -111,17 +104,81 @@ class City:
     aliases: tuple[str, ...] = ()
 
 
-# Only the cities a catalogued source reports apart from its state (dim_place's contract says why each key is so).
-CITIES: tuple[City, ...] = tuple(
-    City(str(c["name"]), str(c["key"]), tuple(str(a) for a in c.get("aliases") or ()))
-    for c in _DECLARED["cities"]
-)
-WHO_REGIONS: tuple[tuple[str, str], ...] = tuple(
-    (str(r["key"]), str(r["name"])) for r in _DECLARED["whoRegions"]
-)
-COUNTRIES: tuple[tuple[str, str], ...] = tuple((str(k), str(n)) for k, n in _DECLARED["countries"])
-# Territories other than Puerto Rico: keys only, never read from a question's words (their GBD names aren't confirmed).
-TERRITORIES: tuple[tuple[str, str], ...] = tuple((f"US-{f}", str(n)) for n, _p, f in _DECLARED["territories"])
+@dataclass(frozen=True)
+class _Places:
+    places: tuple[Place, ...]
+    cities: tuple[City, ...]
+    who_regions: tuple[tuple[str, str], ...]
+    countries: tuple[tuple[str, str], ...]
+    territories: tuple[tuple[str, str], ...]
+    by_key: Mapping[str, Place]
+    named: tuple[tuple[str, str, str], ...]
+    names: Mapping[str, str]
+
+
+@functools.cache
+def _load() -> _Places:
+    """Read dim_place's contract once, on first use."""
+    d = _declared_places()
+    n = d["nation"]
+    if str(n["key"]) != NATION_KEY:
+        raise RuntimeError(f"{PLACE_CONTRACT}: the nation's key must be {NATION_KEY}")
+    places = (
+        Place(str(n["name"]), str(n["postal"]), str(n["fips"]), "nation"),
+        *(Place(str(a), str(b), str(c), "state") for a, b, c in d["states"]),
+    )
+    # Only the cities a catalogued source reports apart from its state (the contract says why each key is so).
+    cities = tuple(
+        City(str(c["name"]), str(c["key"]), tuple(str(a) for a in c.get("aliases") or ()))
+        for c in d["cities"]
+    )
+    who = tuple((str(r["key"]), str(r["name"])) for r in d["whoRegions"])
+    countries = tuple((str(k), str(v)) for k, v in d["countries"])
+    # Territories other than Puerto Rico: keys only, never read from a question's words (GBD names unconfirmed).
+    territories = tuple((f"US-{f}", str(v)) for v, _p, f in d["territories"])
+    by_key = {k.lower(): p for p in places for k in (p.name, p.postal, p.fips)}
+    # Names written out in full, matched as whole words in any case; postal codes only as written ("US", "U.S.").
+    named = tuple(
+        sorted(
+            [(p.name.lower(), p.name, key_of(p)) for p in places]
+            + [("usa", "United States", NATION_KEY), ("new york state", "New York", "US-36")]
+            + [
+                ("washington dc", "District of Columbia", "US-11"),
+                ("washington, dc", "District of Columbia", "US-11"),
+            ]
+            + [(x.lower(), c.name, c.key) for c in cities for x in (c.name, *c.aliases)],
+            key=lambda t: -len(t[0]),
+        )
+    )
+    names = {
+        **{key_of(p): p.name for p in places},
+        **{c.key: c.name for c in cities},
+        **dict(who),
+        **dict(countries),
+        **dict(territories),
+    }
+    return _Places(places, cities, who, countries, territories, by_key, named, names)
+
+
+def places() -> tuple[Place, ...]:
+    """The nation, then each state, DC and Puerto Rico (the places a question can name)."""
+    return _load().places
+
+
+def cities() -> tuple[City, ...]:
+    """The cities a catalogued source reports apart from their states."""
+    return _load().cities
+
+
+_LAZY = {"PLACES": "places", "CITIES": "cities", "WHO_REGIONS": "who_regions", "COUNTRIES": "countries",
+         "TERRITORIES": "territories"}  # fmt: skip
+
+
+def __getattr__(name: str) -> Any:
+    """PLACES, CITIES, WHO_REGIONS, COUNTRIES and TERRITORIES, read from dim_place's contract on first use."""
+    if name in _LAZY:
+        return getattr(_load(), _LAZY[name])
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def key_of(p: Place) -> str:
@@ -171,16 +228,17 @@ def within(outer: str, inner: str) -> bool:
 
 def fixed_keys() -> frozenset[str]:
     """Every key dim_place's contract lists itself: the nation, states, cities, countries and WHO regions."""
-    return _FIXED
+    return frozenset(_load().names)
 
 
 def is_place_key(key: str) -> bool:
     """Is `key` a conformed place key: one dim_place's contract lists, or a county key inside a listed state?
 
     A county's own existence is checked in dbt, against the Census file dim_place reads (its relationships test)."""
-    if key in _FIXED:
+    fixed = _load().names
+    if key in fixed:
         return True
-    return bool(re.fullmatch(r"US-\d{5}", key)) and key[:5] in _FIXED
+    return bool(re.fullmatch(r"US-\d{5}", key)) and key[:5] in fixed
 
 
 def level_of(key: str) -> str:
@@ -198,22 +256,9 @@ def level_of(key: str) -> str:
 
 def name_of(key: str) -> str:
     """A conformed key's place name, or the key itself when it names no listed place (a county)."""
-    return _NAMES.get(key, key)
+    return _load().names.get(key, key)
 
 
-# Names written out in full, matched as whole words in any case; postal codes only as written ("US", "U.S.").
-_NAMED: tuple[tuple[str, str, str], ...] = tuple(
-    sorted(
-        [(p.name.lower(), p.name, key_of(p)) for p in PLACES]
-        + [("usa", "United States", NATION_KEY), ("new york state", "New York", "US-36")]
-        + [
-            ("washington dc", "District of Columbia", "US-11"),
-            ("washington, dc", "District of Columbia", "US-11"),
-        ]
-        + [(n.lower(), c.name, c.key) for c in CITIES for n in (c.name, *c.aliases)],
-        key=lambda t: -len(t[0]),
-    )
-)
 _NATION_MARKS = re.compile(r"(?<![\w.])(?:US|U\.S\.|USA|U\.S\.A\.)(?![\w])")
 
 
@@ -224,7 +269,7 @@ def places_named(text: str) -> tuple[list[tuple[str, str]], str]:
     """
     found: list[tuple[str, str]] = []
     rest = text
-    for low, name, key in _NAMED:
+    for low, name, key in _load().named:
         pat = re.compile(rf"(?<![\w-]){re.escape(low)}(?![\w-])", re.IGNORECASE)
         if pat.search(rest):
             found.append((name, key))
@@ -242,18 +287,8 @@ def key_for(text: str) -> str | None:
     if p is not None:
         return key_of(p)
     low = " ".join(str(text).strip().lower().split())
-    for c in CITIES:
+    for c in _load().cities:
         if low in (c.name.lower(), *c.aliases):
             return c.key
     st = containing_state(text)
     return key_of(st) if st is not None else None
-
-
-_NAMES: dict[str, str] = {
-    **{key_of(p): p.name for p in PLACES},
-    **{c.key: c.name for c in CITIES},
-    **dict(WHO_REGIONS),
-    **dict(COUNTRIES),
-    **dict(TERRITORIES),
-}
-_FIXED: frozenset[str] = frozenset(_NAMES)
