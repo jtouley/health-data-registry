@@ -124,6 +124,20 @@ All notable changes to this project are documented here. The format follows
   death rates for carbapenem-resistant Enterobacterales (CRE) and Acinetobacter baumannii (CRAB) since 2012
   (HAICViz MuGSI, data.cdc.gov v4tm-h8pe), on the existing Socrata adapter. Every rate is for the EIP sites
   combined, never called a state figure, and nothing is added.
+- New source, draft (contract not yet reviewed): `cdc_heptracker`, the data behind CDC's HepTracker dashboard
+  (data.cdc.gov jkcx-ndu8): hepatitis A, B and C cases reported to NNDSS and viral hepatitis deaths from NVSS,
+  2011 onward, nationwide and by state, with counts and rates per 100,000. Every row is shown with CDC's code where
+  no number was published (— not reported, U unavailable, N not reportable, S suppressed, UR unreliable); a code is
+  never a zero, and nothing is added.
+- New source, draft (contract not yet reviewed): `cdc_nhanes_id_prevalence`, NHANES herpes simplex virus type 1
+  and 2 antibody seroprevalence for US adults aged 20-49, 1999-2000 to 2017-2018 (data.cdc.gov v7tk-n6v3), with
+  NCHS's 95% confidence intervals and reliability flags returned on every row.
+- Staging reads a publisher field that holds either a number or a code in its place (HepTracker's counts and
+  rates), when the contract declares it (`inlineCodes` on the flag column): the number accepts only a plain
+  decimal number, and the flag keeps every other text, trimmed, so a new code (or text such as "NaN") is kept and
+  reported instead of stopping the load or vanishing. A contract can declare a numeric field's digit grouping
+  (`thousandsSeparator`), and only a value written as whole groups of three loses it ("1,232" is 1232; "1,5" is
+  kept as published).
 - The crawler factory's core (ADR 0016, step 1 and the types step 2 names). Every source is read by one generic
   adapter type chosen in its catalog entry (`type:`; the older `portal:` is read for one more release and `validate`
   warns about it), configured by that type's strict block, plus named extensions it opts in to. New types:

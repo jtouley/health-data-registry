@@ -276,6 +276,166 @@ sources:
       data_type: varchar
       description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
         the exact bytes the publisher sent.'
+  - name: cdc_heptracker
+    description: 'Raw records of HepTracker Dashboard as the adapter hands them on, every value as text: the publisher''s
+      own fields, or for a wide table the adapter''s structural reshaping of them (see the staging model). Only
+      the full load the dataset''s LATEST pointer names is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_heptracker.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - character
+      - count
+      - event
+      - rate
+      - type
+      - value
+      - year
+    columns:
+    - name: character
+      data_type: varchar
+      description: 'Publisher field character, as text; read into grouping (The grouping category (Character): Area
+        (nationwide Total or a state), AgeGroups, Sex, SexAgeGroups, RaceEth, HHS region, or a risk exposure such
+        as Injection Drug Use, MSM or Household Contact.)'
+    - name: count
+      data_type: varchar
+      description: Publisher field count, as text; read into reported_count (Number of cases or deaths as CDC published
+        it, its digit grouping removed (1,232 reads as 1232). Empty where CDC wrote a code instead (see count_flag),
+        and never a zero.); count_flag (CDC's code where it published no count, as written (surrounding spaces trimmed);
+        empty beside a published count. Any text in the Count field that isn't a plain number is kept here, so a
+        new code is reported, never lost.)
+    - name: event
+      data_type: varchar
+      description: 'Publisher field event, as text; read into condition (The viral hepatitis condition as CDC names
+        it (Viral Hepatitis Condition): Hepatitis A, Acute, Chronic or Perinatal Hepatitis B or C for cases; Hepatitis
+        A, Hepatitis B or Hepatitis C for deaths.)'
+    - name: rate
+      data_type: varchar
+      description: 'Publisher field rate, as text; read into rate (Cases or deaths per 100,000 population as CDC
+        published it (Rate: ''Rates calculated per 100,000 population''). Empty where CDC wrote a code instead (see
+        rate_flag) or gave no rate (risk groups, sex-and-age groups, perinatal infection), and never a zero.); rate_flag
+        (CDC''s code where it published no rate, as written (surrounding spaces trimmed); empty beside a published
+        rate or where the publisher sent no rate at all. Any text in the Rate field that isn''t a plain number is
+        kept here, so a new code is reported, never lost.)'
+    - name: type
+      data_type: varchar
+      description: 'Publisher field type, as text; read into case_or_death (Case (reported to NNDSS) or Death (from
+        NVSS death certificates) (Type: ''Indicates Whether Case Surveillance or Death Data'').)'
+    - name: value
+      data_type: varchar
+      description: 'Publisher field value, as text; read into stratum (The value of the grouping (Value): for Area,
+        Total (nationwide) or a state or DC; an age group in years; Female or Male; a race and ethnicity group;
+        an HHS region number (1 to 10); or Yes, No or Missing/Unknown for a risk exposure.)'
+    - name: year
+      data_type: varchar
+      description: Publisher field year, as text; read into year (Year (2011 to 2023 on 2026-11-25; perinatal hepatitis
+        C from 2018).)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
+  - name: cdc_nhanes_id_prevalence
+    description: 'Raw records of DQS NHANES Select Infectious Diseases Prevalence Estimates as the adapter hands
+      them on, every value as text: the publisher''s own fields, or for a wide table the adapter''s structural reshaping
+      of them (see the staging model). Only the full load the dataset''s LATEST pointer names is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_nhanes_id_prevalence.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - classification
+      - estimate
+      - estimate_lci
+      - estimate_type
+      - estimate_uci
+      - flag
+      - footnote_id_list
+      - group
+      - nesting_label
+      - standard_error
+      - subgroup
+      - taxonomy
+      - time_period
+      - topic
+    columns:
+    - name: classification
+      data_type: varchar
+      description: 'Publisher field classification, as text; read into classification (The kind of breakdown (CLASSIFICATION):
+        Total, Demographic Characteristic, or Multiple Characteristics (sex and age together).)'
+    - name: estimate
+      data_type: varchar
+      description: Publisher field estimate, as text; read into estimate (Crude percent of the group with antibody
+        to the virus (ESTIMATE), as NCHS published it. Empty where NCHS flags the estimate as not available (- -
+        -), never a zero.)
+    - name: estimate_lci
+      data_type: varchar
+      description: Publisher field estimate_lci, as text; read into estimate_lci (Lower bound of the 95% confidence
+        interval for the estimate (ESTIMATE_LCI), in percent; empty where the estimate is.)
+    - name: estimate_type
+      data_type: varchar
+      description: 'Publisher field estimate_type, as text; read into estimate_type (The kind of estimate (ESTIMATE_TYPE):
+        Percent of population, crude. Part of the key, so a second kind of estimate for the same cell (an age-adjusted
+        percent, say) is its own row, reported by estimates_are_crude_percents, never a repeated key.)'
+    - name: estimate_uci
+      data_type: varchar
+      description: Publisher field estimate_uci, as text; read into estimate_uci (Upper bound of the 95% confidence
+        interval for the estimate (ESTIMATE_UCI), in percent; empty where the estimate is.)
+    - name: flag
+      data_type: varchar
+      description: Publisher field flag, as text; read into flag (NCHS's flag on the estimate (FLAG), exactly as
+        published; empty when the estimate carries none.)
+    - name: footnote_id_list
+      data_type: varchar
+      description: Publisher field footnote_id_list, as text; read into footnote_id_list (The ids of NCHS's footnotes
+        for the row, comma-separated (FOOTNOTE_ID_LIST), each defined in https://data.cdc.gov/d/iqm3-hbev.)
+    - name: group
+      data_type: varchar
+      description: 'Publisher field group, as text; read into population_group (The population grouping (GROUP):
+        Total, Age group, Sex, Race and Hispanic origin, or Sex and age group.)'
+    - name: nesting_label
+      data_type: varchar
+      description: 'Publisher field nesting_label, as text; read into nesting_label (Sex the subgroup is nested
+        in, for the sex-and-age rows only (NESTING_LABEL: Female or Male); empty elsewhere.)'
+    - name: standard_error
+      data_type: varchar
+      description: Publisher field standard_error, as text; read into standard_error (Standard error of the estimate
+        (STANDARD_ERROR), in percentage points; empty where the estimate is.)
+    - name: subgroup
+      data_type: varchar
+      description: 'Publisher field subgroup, as text; read into subgroup (The subgroup within the grouping (SUBGROUP):
+        20-49 years for Total, an age band, Female or Male, a race and Hispanic origin group, or a sex and age band
+        such as Female: 20-29 years.)'
+    - name: taxonomy
+      data_type: varchar
+      description: 'Publisher field taxonomy, as text; read into taxonomy (NCHS''s subject area for the row: Infectious
+        diseases (TAXONOMY).)'
+    - name: time_period
+      data_type: varchar
+      description: Publisher field time_period, as text; read into time_period (The two-year NHANES survey cycle
+        the estimate is for (TIME_PERIOD), from 1999-2000 to 2017-2018.)
+    - name: topic
+      data_type: varchar
+      description: 'Publisher field topic, as text; read into infection (The infection the antibody is to: Herpes
+        simplex virus type 1 or Herpes simplex virus type 2 (TOPIC).)'
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
   - name: cdc_nhsn_ar_hai
     description: 'Raw records of National Healthcare Safety Network - Antimicrobial Resistance (2011-2025) as the
       adapter hands them on, every value as text: the publisher''s own fields, or for a wide table the adapter''s

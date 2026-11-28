@@ -1,0 +1,121 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: fct_cdc_heptracker
+name: Fact - HepTracker
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "One row per published cell of cdc_heptracker (hepatitis A, B and C cases and viral hepatitis deaths), every row kept and qualified: the count and rate as CDC published them, CDC's code in place of any number it did not publish with what the code means, and whether the row is CDC's nationwide Total."
+  usage: "Read one cell, or follow one condition, grouping and group over the years. A code is never a zero. Never add rates, and never add a state to the Total. Built by transform/models/marts/fct_cdc_heptracker.sql from int_cdc_heptracker."
+  limitations: "The same limits as the source contract: reported cases, not all infections; case definitions, denominators and code thresholds are open questions there."
+schema:
+  - name: fct_cdc_heptracker
+    physicalName: fct_cdc_heptracker
+    physicalType: table
+    logicalType: object
+    description: "One row per published cell of cdc_heptracker: every row of the latest load, none removed, none added. Grain: condition x year x grouping x stratum x case_or_death, unique on the full table. Each grouping (Area, age, sex, race and ethnicity, HHS region, each risk exposure) counts the same cases or deaths again, so never add across groupings, and never add the states to the Total."
+    customProperties:
+      - {property: layer, value: marts}
+      - {property: totalRows, value: "is_total_row"}
+      - {property: tableShape, value: rate_table}
+    properties:
+      - name: condition
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "The viral hepatitis condition as CDC names it: Hepatitis A, Acute, Chronic or Perinatal Hepatitis B or C for cases; Hepatitis A, Hepatitis B or Hepatitis C for deaths."
+        customProperties: [{property: role, value: dimension}]
+      - name: year
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "Year (2011 to 2023 on 2026-11-25; perinatal hepatitis C from 2018). Whether it is the year of report or of death is an open question in the source contract."
+        customProperties: [{property: role, value: dimension}]
+      - name: grouping
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 3
+        description: "The grouping category: Area (nationwide Total or a state), AgeGroups, Sex, SexAgeGroups, RaceEth, HHS region, or a risk exposure such as Injection Drug Use, MSM or Household Contact. Each grouping counts the same cases or deaths again: never add across groupings."
+        customProperties: [{property: role, value: dimension}]
+      - name: stratum
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 4
+        description: "The value of the grouping: for Area, Total (nationwide) or a state or DC; an age group in years; Female or Male; a sex and age group; a race and ethnicity group; an HHS region number (1 to 10); or Yes, No or Missing/Unknown for a risk exposure."
+        customProperties: [{property: role, value: dimension}]
+      - name: case_or_death
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 5
+        description: "Case (reported to NNDSS) or Death (from NVSS death certificates)."
+        customProperties: [{property: role, value: dimension}]
+      - name: reported_count
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Number of cases or deaths as CDC published it, its digit grouping removed; empty where CDC wrote a code instead, never a zero."
+        customProperties: [{property: role, value: measure}, {property: unit, value: "cases or deaths"}]
+      - name: count_flag
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "CDC's code in place of the count, as written (surrounding spaces trimmed); empty beside a published count."
+        customProperties: [{property: role, value: attribute}]
+      - name: count_status
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Whether the count was published: 'published'; 'not published: ' and what CDC's code means; 'not published: CDC wrote' the code and that its column description does not list it; or 'not published: the publisher's cell is empty'."
+        customProperties: [{property: role, value: attribute}]
+      - name: rate
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Cases or deaths per 100,000 population as CDC published it; empty where CDC wrote a code or gave no rate (risk groups, sex-and-age groups, perinatal infection), never a zero. Whether it is crude or age-adjusted, and from which population estimates, is an open question in the source contract: never compare it with an age-standardised rate until that is confirmed."
+        customProperties: [{property: role, value: measure}, {property: unit, value: "/100000"}]
+      - name: rate_flag
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "CDC's code in place of the rate, as written (surrounding spaces trimmed); empty beside a published rate or where CDC sent no rate."
+        customProperties: [{property: role, value: attribute}]
+      - name: rate_status
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Whether the rate was published: 'published'; 'not published: ' and what CDC's code means; 'not published: CDC wrote' the code and that its column description does not list it; or 'not published: CDC gives no rate for this row' (risk groups, sex-and-age groups, perinatal infection)."
+        customProperties: [{property: role, value: attribute}]
+      - name: is_total_row
+        physicalType: BOOLEAN
+        logicalType: boolean
+        required: true
+        description: "True for CDC's nationwide 'Total' area row (the contract's totalRows), which sits beside the states; never added to them."
+        customProperties: [{property: role, value: attribute}]
+      - name: snapshot_id
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The lake load (snapshot id) every value in the row came from (hard rule 8)."
+        customProperties: [{property: role, value: attribute}]
+      - name: raw_sha256
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order: the exact bytes the publisher sent (hard rule 8)."
+        customProperties: [{property: role, value: attribute}]
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "The publisher's own codes and flags are carried on every row (see contracts/cdc_heptracker.odcs.yaml)."}}
+  - property: openQuestions
+    value:
+      - "Every open question of contracts/cdc_heptracker.odcs.yaml applies here: this fact only re-keys and qualifies the published cells."
