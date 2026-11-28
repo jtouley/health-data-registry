@@ -2,8 +2,8 @@
 
 - **Status:** Accepted
 - **Date:** 2026-11-27
-- **Decision:** the maintainer's, 27 Nov 2026, on issue
-  [#227](https://github.com/jtouley/health-data-registry/issues/227)
+- **Decision:** the maintainer's, 27 Nov 2026, recorded on issue
+  [#227](https://github.com/jtouley/health-data-registry/issues/227#issuecomment-7230524215)
 - **Widens:** hard rule 11 in [CLAUDE.md](../../CLAUDE.md#hard-rules) ("Infectious disease only for now ...
   Population denominators (Census) are allowed")
 - **Related:** [ADR 0002](0002-primary-sources-only.md) (primary sources only),
@@ -42,15 +42,17 @@ The guard on covariates:
 
 - **Only alongside an infectious-disease answer.** A covariate is never a topic of its own. It is never offered as
   a condition, a series or a rate, and `suggest_datasets` offers it only beside an infectious-disease source that
-  fits the same question. A question about a covariate alone ("What is this county's SVI?") is told that it
-  needs an infectious disease to sit beside. A covariate is read by place, next to an infectious-disease figure:
-  through a mart keyed to the same places, or `query_sql`, which can read any loaded table.
-- **Never a denominator.** A covariate's own population column (SVI's `E_TOTPOP`) is never used to compute a rate.
-  Rates keep the Census denominators.
-- **No new disease areas.** Covariates don't open the door to other fields' outcome data (cancer, cardiology,
+  fits the same question. When someone asks about a covariate alone ("What is this county's SVI?"), the answer
+  says it can be shown only beside an infectious disease and asks which one. A covariate is read by place, next to
+  an infectious-disease figure: through a mart keyed to the same places, or `query_sql`, which can read any loaded
+  table.
+- **Never a denominator.** The rate tools (`get_rate`, `compare_rates`, `get_trend`, `age_adjust`) divide only by
+  the Census denominators, never by a covariate's own population column (SVI's `E_TOTPOP`). `query_sql` can still
+  read that column, as it can any loaded table; the covariate's caveats say it is not a denominator.
+- **No new fields of medicine.** Covariates don't open the door to other fields' outcome data (cancer, cardiology,
   mental health). Those stay out until infectious disease passes its evaluation bar.
 - **Area-level only.** Hard rule 4 still applies: a covariate describes a place (a county, a state), never a
-  person. Record-level files are never joined to anything.
+  person, and a record-level public-use file is never joined to anything that could re-identify a person.
 
 Every other rule applies to a covariate exactly as to any other source: a catalog entry, an ODCS contract that a
 maintainer reviews, provenance on every result, the publisher's own primary source on a catalogued HTTPS host, and
@@ -59,10 +61,17 @@ its licence checked before anything is mirrored.
 ## Consequences
 
 - A covariate's catalog entry names its research area `covariate`, not `infectious_disease` or `denominator`, so
-  `search_datasets` and `list_sources` can tell the three apart.
+  `search_datasets(id_area="covariate")` can tell covariates from infectious-disease and denominator sources.
 - A covariate has no conditions and no named series, so `get_series`, `get_rate`, `compare_rates`, `get_trend`,
-  `age_adjust` and `check_signal` never return its values as an answer. The registry refuses a covariate that
-  declares a series, a condition, a GBD cause or a disease area.
+  `age_adjust` and `check_signal` never return its values as an answer.
+- The code that keeps this guard ships with the first covariate, `cdc_svi_county`
+  ([#282](https://github.com/jtouley/health-data-registry/pull/282)), and no covariate merges without it:
+  `health-data-registry validate` refuses a covariate whose research areas include anything but `covariate`, or
+  that declares `id_areas`, conditions, a GBD cause or a series; `suggest_datasets` marks a covariate as an answer
+  only beside an infectious-disease source that fits; and `describe_dataset` says it is a covariate. Still to come
+  ([#284](https://github.com/jtouley/health-data-registry/issues/284)): a research-area column in
+  `list_sources` and `search_datasets`, keeping a covariate from ranking alone in `search_datasets`, and the same
+  check in `export-public`'s pre-publish checks.
 - A covariate's measures follow the publisher's own rules. SVI's percentile ranks are estimates: they are never
   summed, and an average of them is qualified rather than refused (hard rule 2,
   [ADR 0018](0018-show-everything-qualify-dont-decide.md)), with the publisher's warning that ranks from different

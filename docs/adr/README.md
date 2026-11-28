@@ -24,7 +24,7 @@ records are not rewritten.
 | [0016](0016-crawler-factory.md) | Crawler factory: a closed set of generic adapter types, per-source config in the catalog, named pure extensions, one shared fetch core ([audit](../dev/crawler-audit.md)) | Accepted |
 | [0017](0017-immutable-raw-reproducible-builds.md) | Immutable raw, reproducible builds: one raw writer, a build manifest pinning every input, outputs keyed by build id, determinism rules, a rebuild-from-raw test, and data-quality gates on `LATEST` and publishing | Proposed |
 | [0018](0018-show-everything-qualify-dont-decide.md) | Show everything; qualify, don't decide: every row the publisher sent comes back with its flag; any figure is computed when asked and qualified, citing the qualification's source, with the figure without the problem beside it where there is one; gaps are data; only a data check that never ran blocks. Replaces hard rule 2 | Accepted |
-| [0019](0019-covariates-for-infectious-disease-rates.md) | Hard rule 11 widens to covariates that explain infectious-disease rates (e.g. SVI): area-level only, beside an infectious-disease answer and never a topic of their own, never a denominator, no new disease areas | Accepted |
+| [0019](0019-covariates-for-infectious-disease-rates.md) | Hard rule 11 widens to covariates that explain infectious-disease rates (e.g. SVI): area-level only, beside an infectious-disease answer and never a topic of their own, never a denominator, no new fields of medicine | Accepted |
 
 The spec's current positioning (three layers: crawler and lake, an open health data hub on Hugging Face, and the MCP
 server with analysis tools; datasets hosted on the hub wherever the licence allows; restricted sources "listed, not
