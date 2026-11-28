@@ -115,6 +115,15 @@ def test_get_rate_refusal_is_plain(pop: tuple[Registry, Engine], tmp_path: Path)
     assert out["refused"] == "no_snapshot" and "has reading data turned off" in out["message"]
 
 
+def _snapshot_id(lake: Path) -> str:
+    """The toy snapshot's id: it hashes the method digest (ADR 0016) as well as the raw bytes and versions."""
+    from health_data_registry.store import latest_snapshot
+
+    found = latest_snapshot(lake, "toy_cases")
+    assert found is not None
+    return found[1].snapshot_id
+
+
 def test_list_sources_exact(registry: Registry, lake: Path) -> None:
     eng = Engine(registry=registry, lake=lake)
     out = _json(tools.list_sources(registry, eng, fmt="json"))
@@ -125,7 +134,7 @@ def test_list_sources_exact(registry: Registry, lake: Path) -> None:
                   "Centers for Disease Control and Prevention", "2022-2024", "nation state", "weekly", "2026-11-24",
                   "draft", "0.1.0", "the local lake (a maintainer's copy)", "https://data.cdc.gov/d/toy0-toy0",
                   "2026-11-24T12:00:00", "227232863363b7f6d297ffab7de67fbf91f8890d5c439fd8f6baa52464a41c9d",
-                  "snapshot 20261124T120000Z-c1d38a70c53f; contract 0.1.0",
+                  f"snapshot {_snapshot_id(lake)}; contract 0.1.0",
                   "public-domain-us-federal (https://www.cdc.gov/other/agencymaterials.html)",
                   "CDC. Toy table. https://data.cdc.gov/d/toy0-toy0", "draft"]],
         "notes": ["review = draft means no maintainer has checked this source's contract yet."],
@@ -249,13 +258,20 @@ def test_provenance_and_caveats_exact(registry: Registry, lake: Path) -> None:
     assert len(_json(tools.get_provenance(registry, eng, source_id="toy_cases", fmt="json"))["notes"]) == 6
     cav = _json(tools.list_caveats(registry, source_id="toy_cases", fmt="json"))
     assert cav["columns"] == ["source_id", "kind", "caveat"]
-    assert cav["rows"][:4] == [
+    assert cav["rows"][:5] == [
         ["toy_cases", "caveat", "Counts for the latest year are provisional."],
         ["toy_cases", "not yet confirmed", "Is 'N' a true zero or not notifiable?"],
         ["toy_cases", "unreliable values", "None stated (toy)."],
+        [
+            "toy_cases",
+            "data checks",
+            "This source's contract sets no checks of its own on these numbers. Only the general checks run: "
+            "that the table has rows, and a warning when an optional column is empty in every row. Compare with "
+            "the publisher's page before relying on them.",
+        ],
         ["toy_cases", "review", "Contract is a draft; no maintainer has reviewed it yet."],
     ]
-    assert [r[:2] for r in cav["rows"][4:]] == [["all", "geography"]] * len(tools.GEOGRAPHY_TRAPS)
+    assert [r[:2] for r in cav["rows"][5:]] == [["all", "geography"]] * len(tools.GEOGRAPHY_TRAPS)
     other = _json(tools.list_caveats(registry, source_id="nope", fmt="json"))
     assert all(r[0] == "all" for r in other["rows"])
     assert all(

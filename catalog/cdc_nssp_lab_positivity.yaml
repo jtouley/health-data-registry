@@ -1,0 +1,60 @@
+id: cdc_nssp_lab_positivity
+title: NSSP Commercial Laboratory Data for COVID, FLU and RSV
+agency: CDC
+publisher: "Centers for Disease Control and Prevention, National Syndromic Surveillance Program (NSSP), with test results from five commercial laboratory companies"
+level: federal
+country: US
+research_areas: [infectious_disease]
+id_areas: [respiratory]
+years: {start: 2024, end: null}
+# State only: every row has geography_type 'state' (the dataset description: "aggregated across the commercial
+# laboratories and reported at the state level"); there is no national or regional row
+# (https://data.cdc.gov/api/views/jqxy-cyu2.json and the whole table, read 2026-11-25).
+geography: [state]
+shape: surveillance_series
+grain: "One row is one virus (COVID-19, influenza or RSV), one MMWR week (Sunday to Saturday) and one state or territory, holding the number of NAAT tests classified positive or negative, the number positive, and the percent positive, from participating commercial laboratories. Small counts are suppressed."
+refresh: weekly
+licence:
+  # No licence field in the dataset's Socrata metadata (checked 2026-11-25). A CDC dataset on data.cdc.gov is a
+  # US federal work (17 USC 105); a maintainer confirms the wording on review (see the contract's open questions).
+  id: public-domain-us-federal
+  redistribution: true
+  terms_url: https://www.usa.gov/government-works
+citation: "Centers for Disease Control and Prevention, National Syndromic Surveillance Program. NSSP Commercial Laboratory Data for COVID, FLU and RSV. https://data.cdc.gov/d/jqxy-cyu2 (accessed <retrieved_at>)."
+source:
+  portal: socrata
+  host: data.cdc.gov
+  dataset: jqxy-cyu2
+  landing_url: https://data.cdc.gov/d/jqxy-cyu2
+  api_url: https://data.cdc.gov/resource/jqxy-cyu2.json
+codebook_url: https://data.cdc.gov/d/jqxy-cyu2
+caveats:
+  - "By state only: there is no national or regional figure here, and states are never added up to make one (the laboratories' coverage differs by state)."
+  - "Commercial laboratories only (Labcorp, Quest Diagnostics, Aegis Sciences, ARUP Laboratories and Perimeter): not a representative sample of US testing, and CDC says the counts are not a measure of disease burden or of all testing in a state."
+  - "Counts tests (specimens or accessions), not people: one patient can have more than one specimen tested."
+  - "CDC suppresses the counts and the percent when fewer than 10 tests, or fewer than 10 positive tests, are reported; zeros are not suppressed. A suppressed value is shown as no value, never as zero."
+  - "Weeks are by specimen collection date, and CDC says values for earlier weeks may change as more results arrive."
+  - "COVID-19, influenza and RSV come from different laboratories and test panels: CDC says the three are not directly comparable, and they are never added or pooled."
+  - "State is the patient's ZIP code of residence or, where that is missing, the ordering provider's ZIP code."
+gbd:
+  # Proposed GBD keys, not reviewed (hard rules 1 and 3): a test positivity percent is not a GBD measure, so these
+  # key a row to a cause only. A maintainer confirms them on review.
+  location_column: geography_value
+  causes:
+    - {condition: "COVID-19", cause: "COVID-19", pathogen: null}
+    - {condition: "Influenza", cause: "Lower respiratory infections", pathogen: "Influenza"}
+    - {condition: "RSV", cause: "Lower respiratory infections", pathogen: "Respiratory syncytial virus"}
+conditions:
+  dimension: virus
+  # Provenance: the dataset description names the three viruses (SARS-CoV-2, influenza and RSV); the labels are
+  # every distinct value of pathogen at https://data.cdc.gov/resource/jqxy-cyu2.json on 2026-11-25.
+  source: "CDC's three viruses in this dataset (dataset description on data.cdc.gov, checked 25 Nov 2026): SARS-CoV-2, the virus that causes COVID-19 (published as 'COVID-19'), influenza ('Influenza') and respiratory syncytial virus ('RSV'), each by NAAT only."
+  labels:
+    - "COVID-19"
+    - "Influenza"
+    - "RSV"
+  aliases: []
+contract: contracts/cdc_nssp_lab_positivity.odcs.yaml
+semantic_model: semantic/cdc_nssp_lab_positivity.yaml
+status: draft
+hosting: public

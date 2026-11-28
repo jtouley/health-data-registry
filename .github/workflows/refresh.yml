@@ -8,8 +8,11 @@
 #            to a maintainer-only PRIVATE dataset (vars.HDR_RAW_DATASET), never to the public release
 #   transform  dbt builds staging, intermediate and the review queues from this run's raw records and runs every
 #            contract rule as a test. It holds no secret and runs outside the hub-publish environment, so
-#            third-party code (dbt and its dependencies) never shares a job with the publish token; its only
-#            output is dbt's run record (run_results.json, manifest.json), as an artifact.
+#            third-party code never shares a job with the publish token: dbt and its dependencies (uv.lock), and
+#            the dbt packages `dbt deps` fetches at run time from hub.getdbt.com and codeload.github.com, outside
+#            PyPI and uv.lock (pinned in transform/package-lock.yml and checked against the reviewed sha256s in
+#            transform/package-digests.yml before the build). Its only output is dbt's run record
+#            (run_results.json, manifest.json), as an artifact.
 #   publish  runs only when every fetch job passed: it checks each planned source has a snapshot, merges the
 #            per-source lakes, re-checks every contract, runs the release gate on the transform job's run record,
 #            then `export-public` publishes a new immutable release-<run date> tag to the hub, and the gate
@@ -214,6 +217,17 @@ jobs:
           pattern: lake-*
           path: lake/
           merge-multiple: true
+      # The dbt packages the generated tests use, at the exact versions in transform/package-lock.yml
+      # (metaplane/dbt_expectations 0.10.10, godatadriven/dbt_date 0.21.0). The job fails if `dbt deps` would
+      # change the lock (re-resolved versions) or the installed files are not the reviewed ones (a moved tag), so
+      # the build never runs without its data-quality tests or on unreviewed macro code.
+      - name: dbt deps (pinned and checked packages)
+        env:
+          DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
+        run: |
+          uv run --no-sync --directory transform dbt deps --profiles-dir . --project-dir .
+          git diff --exit-code transform/package-lock.yml
+          uv run --no-sync python scripts/dbt_packages.py
       # dbt's own exit status is not used: the gate in the publish job reads its run record, and a missing or
       # empty record holds the release.
       - name: dbt build (models, tests and unit tests)

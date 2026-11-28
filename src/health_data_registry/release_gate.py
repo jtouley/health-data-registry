@@ -17,8 +17,9 @@ for each node's resource type, severity and dimension) and sorts every result in
 The gate fails closed. Any result type it does not know, with any status but success, holds the build. So does a
 run record and manifest from different dbt runs (their invocation_id must match), and so does a missing model or
 test: the expected set comes from the contracts (expected_from: every staging, intermediate and model-contract
-model, and one named test per contract quality rule), and each expected test must pass, or warn when its rule is
-warn-severity. A missing or unreadable artifact holds it too.
+model, one named test per contract quality rule, and each generated dbt-expectations check), and each expected
+test must pass, or warn when its rule is warn-severity. A missing or unreadable artifact holds it too. Every pass
+is kept too (Build.passed), by test and rule, so the build record says which rules qualified the data.
 
 The build id is a content hash of the build's inputs (build_inputs: each stored dataset's sorted raw sha256s,
 each contract's version and file hash, the dbt vars and the code commit), never of a snapshot id, dbt's run id,
@@ -59,6 +60,11 @@ NOT_EVALUATED = "not evaluated:"  # odcs_check's error for a value rule with not
 RELEASE_TAG = re.compile(r"release-\d{4}-\d{2}-\d{2}(\.[2-9]|\.[1-9]\d+)?")
 
 
+# An expected test missing from the run: not evaluated. Its item carries "reason": "no_result", which reason()
+# reads, so rewording this text never moves a test under another label.
+NO_RESULT = "expected by the contracts, no result"
+
+
 class GateInputMissing(FileNotFoundError):
     """dbt's run record is missing or unreadable, so there is nothing to judge (the gate holds)."""
 
@@ -78,11 +84,14 @@ class Expected:
 def expected_from(registry: Any) -> Expected:
     """The models and named tests the contracts say a build must have (transform_gen names them)."""
     from health_data_registry.quality import rules_for
-    from health_data_registry.transform_gen import generate, model_contracts, stored
+    from health_data_registry.transform_gen import dq_test_severities, generate, model_contracts, stored
 
     models = {p.stem for p in generate(registry) if p.suffix == ".sql"}
     models |= {c.id for _path, c in model_contracts(registry.root)}
     tests = {f"{ds.id}_{r.id}": r.severity for ds in stored(registry) for r in rules_for(ds.contract)}
+    # The generated dbt-expectations checks: reconciliation, freshness and value ranges.
+    for ds in stored(registry):
+        tests |= dq_test_severities(ds)
     return Expected(frozenset(models), tests)
 
 
@@ -145,6 +154,9 @@ class Build:
     warnings: list[dict[str, Any]] = field(default_factory=list)
     incomplete: list[str] = field(default_factory=list)
     tests_passed: int = 0
+    # Every check that passed, by test name with its rule, dimension and severity (dbt's run_results.json), so an
+    # answer can cite the rule that qualified it, not only the ones that failed.
+    passed: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def servable(self) -> bool:
@@ -168,11 +180,14 @@ class Build:
             )
         if self.rule_errors:
             parts.append(f"{len(self.rule_errors)} check(s) could not run")
-        if self.not_evaluated:
-            names = ", ".join(f["test"] for f in self.not_evaluated)
+        empty = [f["test"] for f in self.not_evaluated if f.get("reason") != "no_result"]
+        if empty:
             parts.append(
-                f"{len(self.not_evaluated)} check(s) could not be judged, having no values to check ({names})"
+                f"{len(empty)} check(s) could not be judged, having no values to check ({', '.join(empty)})"
             )
+        absent = [f["test"] for f in self.not_evaluated if f.get("reason") == "no_result"]
+        if absent:
+            parts.append(f"{len(absent)} check(s) the contracts expect have no result ({', '.join(absent)})")
         if self.data_failures:
             names = ", ".join(f["test"] for f in self.data_failures)
             parts.append(f"{len(self.data_failures)} error-severity check(s) failed ({names})")
@@ -214,6 +229,7 @@ def read_build(
     unjudged: list[dict[str, str]] = []
     failures: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
+    passes: list[dict[str, Any]] = []
     built = passed = 0
     seen: set[str] = set()
     rows = results.get("results") or []
@@ -233,17 +249,21 @@ def read_build(
                 model_errors.append({"model": name, "type": kind, "error": message or status})
         elif kind in TEST_TYPES:
             config = node.get("config") or {}
+            test_meta = config.get("meta") or node.get("meta") or {}
             item = {
                 "test": name,
                 "type": kind,
                 "severity": "error"
                 if kind == "unit_test"
                 else str(config.get("severity") or "error").lower(),
-                "dimension": (config.get("meta") or node.get("meta") or {}).get("dimension"),
+                "dimension": test_meta.get("dimension"),
+                # Every result names its contract rule, so a pass, a warning and a failure join to it alike.
+                "rule": test_meta.get("rule"),
                 "failures": r.get("failures"),
             }
             if status == "pass":
                 passed += 1
+                passes.append({k: v for k, v in item.items() if k != "failures"})
             elif status == "warn":
                 warnings.append(item)
             elif status == "fail":
@@ -286,7 +306,7 @@ def read_build(
             "one build"
         )
     if expected is not None:
-        _check_expected(expected, rows, nodes, model_errors, rule_errors, failures)
+        _check_expected(expected, rows, nodes, model_errors, unjudged, failures)
     generated = str(meta.get("generated_at") or "")
     if inputs is not None:
         build_id = build_id_of(inputs)
@@ -306,6 +326,7 @@ def read_build(
         warnings=warnings,
         incomplete=incomplete,
         tests_passed=passed,
+        passed=passes,
     )
 
 
@@ -314,10 +335,12 @@ def _check_expected(
     rows: list[Any],
     nodes: Mapping[str, Any],
     model_errors: list[dict[str, str]],
-    rule_errors: list[dict[str, str]],
+    unjudged: list[dict[str, str]],
     failures: list[dict[str, Any]],
 ) -> None:
-    """Every model and test the contracts expect must be in the run record with an acceptable status."""
+    """Every model and test the contracts expect must be in the run record with an acceptable status. An expected
+    test with no result was never evaluated (issue #222): it holds the release under that label, apart from a
+    rule that ran and errored and from a data failure."""
     status: dict[str, str] = {}
     for r in rows:
         uid = str(r.get("unique_id", ""))
@@ -330,9 +353,7 @@ def _check_expected(
     for name, severity in sorted(expected.tests.items()):
         got = status.get(name)
         if got is None:
-            rule_errors.append(
-                {"test": name, "type": "test", "error": "expected by the contracts, did not run"}
-            )
+            unjudged.append({"test": name, "type": "test", "error": NO_RESULT, "reason": "no_result"})
         elif got == "warn" and severity != "warn":  # the run downgraded an error-severity rule
             failures.append(
                 {"test": name, "type": "test", "severity": severity, "dimension": None, "failures": None}
