@@ -319,6 +319,9 @@ def test_local_mode_applies_the_same_rule(mc: ModuleType, monkeypatch: pytest.Mo
     # A changed module with nothing to mutate passes locally, as its shard does in CI.
     monkeypatch.setattr(mc, "changed_modules", lambda base: ["health_data_registry.tools"])
     monkeypatch.setattr(mc, "set_scope", lambda mods, base: None)  # unscoped: the module's one whole shard
+    # One shard whatever tools.py holds: inside mutmut's mutants/ tree this test reads the mutated tools.py, whose
+    # trampolines would otherwise split into more shards than one CI matrix runs.
+    monkeypatch.setattr(mc, "SHARD_TARGET_BY_MODULE", {"health_data_registry.tools": 10**9})
     monkeypatch.setattr(mc, "run_mutmut", lambda mods, *_: mc.ShardResult(modules=mods))
     assert mc.main([]) == 0
     monkeypatch.setattr(mc, "run_mutmut", lambda mods, *_: mc.ShardResult(modules=mods, baseline_ok=False))
