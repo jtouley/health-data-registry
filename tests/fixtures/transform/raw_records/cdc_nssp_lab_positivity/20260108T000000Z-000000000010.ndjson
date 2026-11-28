@@ -1,0 +1,6 @@
+{"pathogen": "COVID-19", "mmwr_week_start": "2024-10-27T00:00:00.000", "mmwr_week_end": "2024-11-02T00:00:00.000", "geography_type": "state", "geography_value": "MI", "test_count": "250.0", "positive_count": "20.0", "percent_pos": "8.0"}
+{"pathogen": "Influenza", "mmwr_week_start": "2024-10-27T00:00:00.000", "mmwr_week_end": "2024-11-02T00:00:00.000", "geography_type": "state", "geography_value": "MI", "test_count": "120.0"}
+{"pathogen": "RSV", "mmwr_week_start": "2024-10-27T00:00:00.000", "mmwr_week_end": "2024-11-02T00:00:00.000", "geography_type": "state", "geography_value": "MI", "positive_count": "0.0"}
+{"pathogen": "COVID-19", "mmwr_week_start": "2024-11-03T00:00:00.000", "mmwr_week_end": "2024-11-09T00:00:00.000", "geography_type": "state", "geography_value": "OH", "test_count": "0.0", "positive_count": "0.0"}
+{"pathogen": "Influenza", "mmwr_week_start": "2024-11-03T00:00:00.000", "mmwr_week_end": "2024-11-09T00:00:00.000", "geography_type": "state", "geography_value": "OH", "test_count": "80.0", "positive_count": "12.0", "percent_pos": "15.0"}
+{"pathogen": "RSV", "mmwr_week_start": "2024-11-03T00:00:00.000", "mmwr_week_end": "2024-11-09T00:00:00.000", "geography_type": "state", "geography_value": "OH", "test_count": "40.0", "positive_count": "0.0", "percent_pos": "0.0"}
