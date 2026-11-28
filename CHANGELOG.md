@@ -61,8 +61,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
-- ADR 0020 (proposed, for maintainer review): contracted layers, one ontology, one quality engine and a router.
-  Every answer reads one gate-passed build and names its layer and its checks; facts span all the data and data
+- ADR 0020 (proposed, for maintainer review): answer with what we hold, through contracted layers, one ontology,
+  one quality engine and a router. The router falls back layer by layer and says "no answer" only when no
+  catalogued data touches the question, and the evaluation tracks that share. Every answer reads one gate-passed build and names its layer and its checks; facts span all the data and data
   products are curated views; checks at every layer come from one factory; `dim_place` and declared coverage are
   the only place keys; routing comes from each layer's declared question kinds. No code changes (#283).
 - New source, draft (contract not yet reviewed): `cdc_haicviz_isa`, CDC's Emerging Infections Program case and

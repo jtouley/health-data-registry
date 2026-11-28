@@ -1,8 +1,9 @@
 # Architecture
 
-> **Proposed: see [ADR 0020](adr/0020-contracted-layers-ontology-router.md).** It moves answers onto the models of one
-> gate-passed dbt build, with every layer named and checked, one quality engine, one ontology with conformed
-> dimensions, and a router. This page describes what ships today.
+> **Proposed: see [ADR 0020](adr/0020-contracted-layers-ontology-router.md).** It answers with the closest data
+> held instead of refusing, and moves answers onto the models of one gate-passed dbt build, with every layer named
+> and checked, one quality engine, one ontology with conformed dimensions, and a router. This page describes what
+> ships today.
 
 The client only ever sees the tools and the helper prompts. Everything that decides what a number means lives in
 reviewed contracts and metrics. Data comes from snapshots built outside the chat. Sources whose terms forbid

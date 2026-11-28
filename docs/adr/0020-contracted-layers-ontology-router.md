@@ -22,17 +22,37 @@
 and intermediate models together. File pointers are to `main` at the time of writing unless a pull request is
 named.
 
+## Decision 0. Product principle: answer with what we hold
+
+The maintainer's words: "We are product driven. Physicians need to use this. We don't know how all the data may
+be useful to them, and they can't get 'I don't have an answer to that' when we have all kinds of data pulled in,
+categorized, with contracts, context layers and semantics."
+
+- **Fall back, don't refuse.** When no data product or fact fits a question, the router drops to silver, then
+  raw. It uses the contracts, the ontology and the semantic models to find whatever related data exists. It
+  answers with the closest data held, qualified: its layer and checks, what is missing, and how it differs from
+  what was asked. It then suggests the next question.
+- **"No answer" only when nothing exists:** no catalogued data touches the condition, the place or the time.
+  Even then the answer says what is held nearby and hands off to the PubMed or IHME GBD connector (ADR 0004).
+- **Qualify, don't decide** (ADR 0018). A fallback answer never claims to be what was asked. It says what it is.
+- **The measure of success** is the share of evaluation questions that get "no answer". It should fall release
+  over release, while answer correctness holds the release bar (decision 4 says where it is tracked).
+
+Everything below serves this principle. The router (decision 4) is where it is enforced.
+
 ## The architecture
 
 The server holds all the data it serves, categorized, with a contract at every layer. Each layer carries its own
 context, its own semantic model and its own quality checks, and every layer refers to one ontology. A router knows
-which kinds of question each layer's models answer, and sends each question to one of them. Every layer an answer
-reads comes from one build that the release gate passed.
+which kinds of question each layer's models answer. It sends each question to the highest layer that can answer it
+and falls back layer by layer (decision 0). Every layer an answer reads comes from one build that the release gate
+passed.
 
 ```mermaid
 flowchart TB
     q["Clinician's question, structured by the client:<br/>question kind, condition, measure, places, years"]
-    router["Router<br/>reads each layer's declared question kinds<br/>and the coverage fact"]
+    router["Router<br/>reads each layer's declared question kinds and the coverage fact;<br/>falls back: data product, fact, silver, raw, then hand-off"]
+    handoff["Hand-off<br/>PubMed, IHME GBD connector,<br/>with what is held nearby"]
     subgraph build["One gate-passed build (ADR 0017)"]
         products["Data products<br/>ODPS output ports: curated views<br/>grow with usage"]
         marts["Marts: conformed dims and facts<br/>place, time, condition, measure, population group, source<br/>every row and attribute a source publishes"]
@@ -47,6 +67,7 @@ flowchart TB
     router --> marts
     router --> silver
     router --> raw
+    router -.->|nothing touches the question| handoff
     raw --> silver --> marts --> products
     ontology -.-> products
     ontology -.-> marts
@@ -64,8 +85,8 @@ flowchart TB
 | Marts | Conformed dims and one fact per published dataset, spanning every row and attribute | Each `dim_*` and `fct_*` model's ODCS contract | Counts, rates, trends, comparisons, signals, coverage, exploration | Everything silver has, plus product tests: business-logic unit tests and accepted values |
 | Data products | Curated views over the facts, one per ODPS output port | The port's ODPS entry and the view's ODCS contract | The question kinds the port is curated for | The mart's checks, plus the port's own product tests |
 
-The four decisions below are the parts of this architecture: the layered read path, one quality engine, one
-ontology with conformed dimensions, and the router.
+Decisions 1 to 4 are the parts of this architecture: the layered read path, one quality engine, one ontology with
+conformed dimensions, and the router.
 
 ## Context
 
@@ -335,12 +356,60 @@ snapshots stay raw inputs that builds read by hash (hard rule 15).
 - **One router classifies and sends.** It resolves the terms through the ontology, finds the models whose
   semantic model declares that kind for that condition and measure, checks the coverage fact for the places and
   years, and picks the highest layer that fits: a data product, a fact, silver, then raw. A literature question
-  goes to the literature hand-off (`find_prior_work`, and the PubMed connector). A question no layer declares is
-  declined in plain words with a next step, such as the IHME GBD connector for modelled burden (ADR 0004).
-- **Every answer names its layer, its checks and its qualifications** (decision 1).
+  goes to the literature hand-off (`find_prior_work`, and the PubMed connector).
+- **It falls back instead of refusing** (decision 0). When nothing fits exactly, it widens one term at a time
+  through the ontology and the coverage fact: the nearest condition label held, the containing or nearest covered
+  place, the years held, an unsplit group, the counts without a rate. It answers from the highest layer that holds
+  that, says what was widened and why, and suggests the next question.
+- **"No answer" is for nothing held.** Only when no catalogued data touches the condition, place or time does it
+  answer "no data here". It still lists what is held nearby and hands off to the PubMed or IHME GBD connector.
+- **Every answer names its layer, its checks and its qualifications** (decision 1), and, for a fallback, what was
+  widened.
 - **The string heuristics go:** `_STOP`, `STOP_WORDS`, `_GEO_WORDS` and `_haystack` in routing, `catalogued_labels`'
   word matching, `coverage.ABBREVIATIONS`, `coverage.GENERIC_WORDS`, `tools._unplaced` and `Series.asked_with`.
   `search_datasets` may still rank by words, since it searches rather than decides fit.
+
+### Today's refusals, and who answers instead
+
+Read from `tools.py`, `query.py` and `analysis.py` on main, and from #185's `tools.py` where marked. "Fact" and
+"silver" mean the source's mart fact and its staging or intermediate model.
+
+| Today's refusal (where) | What the router does instead | Layer |
+|---|---|---|
+| `unknown_condition` (`tools.unknown_condition`) | Resolves the words through `dim_condition` aliases and the crosswalk. If a related label is held (today's `nearest_served`), answers with its rows, qualified "not the condition asked; the nearest held". Only if nothing touches it: "no data here", what is held nearby, and the GBD hand-off | Fact, else silver |
+| `no_dataset_matched` (`search_datasets`) | Lists the sources nearest by condition, place or time, each with what it lacks | Ontology and coverage fact |
+| `place_not_covered` (#185) | Answers for the nearest covered place (the containing state, the nation, the catchment), qualified with its coverage status | Fact |
+| Coverage "unknown" fits (#185, `suggest_datasets`) | Answers with the rows held, qualified "coverage not declared; these are the places in the rows" | Fact, else silver |
+| `source_has_no_series` (#185) | Reads the source's rows directly | Silver |
+| `filter_matched_nothing` (`tools.matched_nothing`) | Shows the values held for that dimension, and the rows for the nearest ones | Fact, else silver |
+| `no_sex_split`, `no_place_breakdown` | Answers without the split, and names the sources that have it (`dim_population_group`, coverage fact) | Fact |
+| `ambiguous_condition` (`analysis.py`) | Answers each matching series side by side, each labelled | Fact or product |
+| `no_denominator`, `no_rate` (`analysis.py`) | Returns the counts, and any rate the publisher gives; says no matching population is held | Fact |
+| `no_trend`, `too_few_points` (`analysis.py`) | Returns the years held as rows, and says how many more a trend needs | Fact |
+| `no_weekly_series`, `no_signal`, `incomplete_history`, `week_out_of_range` (`analysis.py`) | Returns the weeks or years held, and says what the signal method needs | Fact, else silver |
+| `no_age_groups`, `age_groups_mismatch`, `suppressed_age_group` (`analysis.py`) | Returns the crude rate and the age rows held, flagged | Fact |
+| `no_rows` (`analysis.py`) | Reads the request's rows at the next layer down | Silver, else raw |
+| `unknown_column`, `empty_filter`, `no_time_dimension` (`query.compile_metric`) | Answers from the model that has the column, or from raw where silver lacks the field | Silver, else raw |
+| `weekly_sum`, `non_additive`, `would_combine_rates`, `needs_single_value`, `empty_in_sum`, `not_incidence`, `not_a_human_count` (`query.py`, `sql_guard.py`, `analysis.py`) | The figure, qualified, with the figure without the problem beside it (ADR 0018, #226) | Same layer |
+| `index_not_built` (`find_prior_work`) | Returns the abstract sources held, and hands off to PubMed | Silver (private tier) |
+| `nothing_to_compare`, `bad_fit_on`, `unknown_dataset`, `question_too_long` | Not missing data: asks for the one missing or wrong argument, and suggests one | None |
+
+These stay refusals, because they are about the system, not the data: `quality_not_run` (only a check that never
+ran blocks, ADR 0018), `publisher_unreachable`, `publisher_bad_table`, `no_snapshot`, `too_slow`, `busy`,
+`too_large`, `too_much_memory`, `too_many_rows` and the paging codes (`bad_page`, `no_such_page`, `bad_pin`,
+`page_data_changed`, `page_rows_changed`). Each already gives a next step.
+
+### The measure of success
+
+- **"No answer" share:** the share of questions whose reply shows no data at all, not even the nearest held,
+  among questions where catalogued data touches the condition, place or time. It should fall release over
+  release.
+- **Where it is tracked:** the behaviour evaluation (`eval/report.py`) adds it to its per-class and overall
+  tables for DEV and, as aggregates only, TEST. The `DECLINE_NEAREST` class already expects the nearest data.
+  The sealed numeric set (`evaluation.score`, `make eval`) adds the declined share among answerable questions
+  beside `right_among_answerable`.
+- **Correctness still gates:** the release bar stays at most 2% wrong among answered and at least 80% right among
+  answerable. A fallback answer that presents the nearest data as the data asked for counts as wrong.
 
 ### What changes from today
 
@@ -349,7 +418,9 @@ snapshots stay raw inputs that builds read by hash (hard rule 15).
 | `registry.py` | Question kinds per semantic model; `Series.answers` and `Metric.answers`, validated against the ontology |
 | `semantic/*.yaml` | Declared kinds per layer; an `answers` block per series and metric |
 | `tools.py` | `suggest_datasets` and `get_series` (`series_for`, `catalogued_labels`, `_match_places`) call the router; the word lists go |
-| `server.py`, `helpers.py` | Tool text names the structured arguments; `make docs` regenerates the docs |
+| `server.py`, `helpers.py` | Tool text names the structured arguments and how a fallback answer reads; `make docs` regenerates the docs |
+| `tools.py`, `analysis.py`, `query.py` | The refusals above become fallback answers, each with what was widened and a next question |
+| `eval/report.py`, `evaluation.py` | The "no answer" share beside correctness |
 
 ### Migration order
 
@@ -358,7 +429,10 @@ snapshots stay raw inputs that builds read by hash (hard rule 15).
 2. The router, plus a test that it gives the same fit or no-fit verdicts as today's routing on the existing
    routing tests and the `make smoke` journey. Any verdict that changes is listed in the pull request.
 3. `suggest_datasets` and `get_series` switch to the router; the structured arguments are added.
-4. The word lists and heuristics are deleted. Open pull requests that add `asked_with` (#180, #244, #245, #246)
+4. The "no answer" share is added to the evaluation reports, measured once on today's server as the baseline.
+5. The refusals in the table become fallback answers, one tool per pull request, each showing the DEV share
+   before and after.
+6. The word lists and heuristics are deleted. Open pull requests that add `asked_with` (#180, #244, #245, #246)
    declare kinds and `answers` instead.
 
 ### What it closes or supersedes
@@ -373,6 +447,10 @@ snapshots stay raw inputs that builds read by hash (hard rule 15).
 1. Should `suggest_datasets` keep free text at all, or take only structured arguments?
 2. Is the list of question kinds complete, and does each analysis tool (`get_rate`, `compare_rates`,
    `get_trend`, `age_adjust`, `check_signal`) map to exactly one kind?
+3. How far may a fallback widen before it stops being useful: one term (place, or condition, or years), or
+   several at once?
+4. The "no answer" share needs to know which questions have data nearby. Is that a new label on DEV only, since
+   TEST's labels are frozen (hard rule 14), with TEST measured through its existing classes?
 
 ## Consequences
 
