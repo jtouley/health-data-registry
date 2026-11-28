@@ -92,10 +92,27 @@ All notable changes to this project are documented here. The format follows
 
 - ADR 0020 (proposed, for maintainer review): answer with what we hold, through contracted layers, one ontology,
   one quality engine and a router. The router falls back layer by layer and says "no answer" only when no
-  catalogued data touches the question, and the evaluation tracks that share. Every answer reads one gate-passed build and names its layer and its checks; facts span all the data and data
-  products are curated views; checks at every layer come from one factory; `dim_place` and declared coverage are
-  the only place keys; routing comes from each layer's declared question kinds; sources a session finds that
-  we don't hold are logged, and an agent session drafts their pull requests through the factory (#285). No code changes (#283).
+  catalogued data touches the question, and the evaluation tracks that share. Every answer reads one gate-passed
+  build and names its layer and its checks. Facts span all the data, and data products are curated views. Checks
+  at every layer come from one factory. `dim_place` and declared coverage are the only place keys. Routing comes
+  from each layer's declared question kinds. Sources a session finds that we don't hold are logged, and an agent
+  session drafts their pull requests through the factory (#285). No code changes (#283).
+- New source, draft: `nchs_resp_deaths_pct`, NCHS's provisional weekly percent of all deaths among US residents
+  involving COVID-19, influenza, RSV or the three combined, by age group, sex and race and Hispanic origin
+  (data.cdc.gov 53g5-jf7x). Read as published and never added; a suppressed count (1 to 9) is no value, never zero,
+  and keeps NCHS's note. It answers only a question about deaths, however it's worded ("COVID-19 mortality",
+  "deaths from RSV"): a plain "COVID-19" question doesn't get it, from `get_series` or `suggest_datasets`.
+- Semantic series can list `asked_with` words: a series that names a disease but isn't a measure of it (a percent
+  of deaths, vaccination coverage) answers only a question that uses one of them and also names the disease. A
+  bare "vaccination" question gets none of them, and an empty entry is refused.
+- Marts `fct_cdc_nssp_lab_positivity` and `fct_nchs_resp_deaths_pct`, one fact per source with every
+  row kept, the publisher's own notes as published, and a `value_status` that says why a value is empty
+  ("suppressed" only where a count is empty too; else "not published").
+- New source, draft (contract not yet reviewed): `cdc_nssp_lab_positivity`, CDC's weekly NSSP commercial
+  laboratory NAAT tests, positives and percent positive for COVID-19, influenza and RSV by state (data.cdc.gov
+  jqxy-cyu2), on the existing Socrata adapter. Read as published and never added; a count or percent CDC
+  suppressed (under 10 tests or 10 positives) is no value, never zero. A national or county question is told the
+  table is by state only.
 - New source, draft (contract not yet reviewed): `cdc_haicviz_isa`, CDC's Emerging Infections Program case and
   death rates for invasive Staphylococcus aureus since 2005 (HAICViz iSA, data.cdc.gov ssz5-s49e), on the existing
   Socrata adapter. Every rate is for the EIP sites combined, never called a state figure, and nothing is added;

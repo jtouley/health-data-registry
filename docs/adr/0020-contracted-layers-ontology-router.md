@@ -111,8 +111,8 @@ The maintainer flagged four things that are drifting apart:
    `conformedDimensions` read untyped from `contract.raw` (#223, #247).
 4. **Routing.** `suggest_datasets` and `get_series` decide fit by string matching: `tools._tokens`, `_STOP`,
    `STOP_WORDS`, `_GEO_WORDS`, `_haystack` and `catalogued_labels` on main; `coverage.ABBREVIATIONS`,
-   `coverage.GENERIC_WORDS` and the capitalised-word reader `tools._unplaced` in #185; `Series.asked_with` in
-   #244 and the coverage source PRs (#180, #245, #246). Each new source adds words to these lists.
+   `coverage.GENERIC_WORDS` and the capitalised-word reader `tools._unplaced` in #185; `Series.asked_with`, on
+   main since #244 and in the coverage source PRs (#180, #245, #246). Each new source adds words to these lists.
 
 ## Decision 1. A layered read path from one gate-passed build
 
@@ -488,8 +488,8 @@ ran blocks, ADR 0018), `publisher_unreachable`, `publisher_bad_table`, `no_snaps
 4. The "no answer" share is added to the evaluation reports, measured once on today's server as the baseline.
 5. The refusals in the table become fallback answers, one tool per pull request, each showing the DEV share
    before and after.
-6. The word lists and heuristics are deleted. Open pull requests that add `asked_with` (#180, #244, #245, #246)
-   declare kinds and `answers` instead.
+6. The word lists and heuristics are deleted, `asked_with` (from #244) among them. Open pull requests that add
+   `asked_with` (#180, #245, #246) declare kinds and `answers` instead.
 
 ### What it closes or supersedes
 
