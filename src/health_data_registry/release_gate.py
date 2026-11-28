@@ -17,8 +17,9 @@ for each node's resource type, severity and dimension) and sorts every result in
 The gate fails closed. Any result type it does not know, with any status but success, holds the build. So does a
 run record and manifest from different dbt runs (their invocation_id must match), and so does a missing model or
 test: the expected set comes from the contracts (expected_from: every staging, intermediate and model-contract
-model, and one named test per contract quality rule), and each expected test must pass, or warn when its rule is
-warn-severity. A missing or unreadable artifact holds it too.
+model, one named test per contract quality rule, and each generated dbt-expectations check), and each expected
+test must pass, or warn when its rule is warn-severity. A missing or unreadable artifact holds it too. Every pass
+is kept too (Build.passed), by test and rule, so the build record says which rules qualified the data.
 
 The build id is a content hash of the build's inputs (build_inputs: each stored dataset's sorted raw sha256s,
 each contract's version and file hash, the dbt vars and the code commit), never of a snapshot id, dbt's run id,
@@ -83,11 +84,14 @@ class Expected:
 def expected_from(registry: Any) -> Expected:
     """The models and named tests the contracts say a build must have (transform_gen names them)."""
     from health_data_registry.quality import rules_for
-    from health_data_registry.transform_gen import generate, model_contracts, stored
+    from health_data_registry.transform_gen import dq_test_severities, generate, model_contracts, stored
 
     models = {p.stem for p in generate(registry) if p.suffix == ".sql"}
     models |= {c.id for _path, c in model_contracts(registry.root)}
     tests = {f"{ds.id}_{r.id}": r.severity for ds in stored(registry) for r in rules_for(ds.contract)}
+    # The generated dbt-expectations checks: reconciliation, freshness and value ranges.
+    for ds in stored(registry):
+        tests |= dq_test_severities(ds)
     return Expected(frozenset(models), tests)
 
 
@@ -150,6 +154,9 @@ class Build:
     warnings: list[dict[str, Any]] = field(default_factory=list)
     incomplete: list[str] = field(default_factory=list)
     tests_passed: int = 0
+    # Every check that passed, by test name with its rule, dimension and severity (dbt's run_results.json), so an
+    # answer can cite the rule that qualified it, not only the ones that failed.
+    passed: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def servable(self) -> bool:
@@ -222,6 +229,7 @@ def read_build(
     unjudged: list[dict[str, str]] = []
     failures: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
+    passes: list[dict[str, Any]] = []
     built = passed = 0
     seen: set[str] = set()
     rows = results.get("results") or []
@@ -241,17 +249,21 @@ def read_build(
                 model_errors.append({"model": name, "type": kind, "error": message or status})
         elif kind in TEST_TYPES:
             config = node.get("config") or {}
+            test_meta = config.get("meta") or node.get("meta") or {}
             item = {
                 "test": name,
                 "type": kind,
                 "severity": "error"
                 if kind == "unit_test"
                 else str(config.get("severity") or "error").lower(),
-                "dimension": (config.get("meta") or node.get("meta") or {}).get("dimension"),
+                "dimension": test_meta.get("dimension"),
+                # Every result names its contract rule, so a pass, a warning and a failure join to it alike.
+                "rule": test_meta.get("rule"),
                 "failures": r.get("failures"),
             }
             if status == "pass":
                 passed += 1
+                passes.append({k: v for k, v in item.items() if k != "failures"})
             elif status == "warn":
                 warnings.append(item)
             elif status == "fail":
@@ -314,6 +326,7 @@ def read_build(
         warnings=warnings,
         incomplete=incomplete,
         tests_passed=passed,
+        passed=passes,
     )
 
 
