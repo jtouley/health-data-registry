@@ -333,6 +333,8 @@ def test_bad_inputs_are_refused_in_plain_words(change: dict[str, Any], expect: s
     [
         ({"contribution": "Methods/Standard"}, {}),
         ({"contribution": "methods"}, {}),
+        ({"contribution": "methods or standard"}, {}),
+        ({"data_maturity": "frozen dataset"}, {}),
         ({"data_maturity": "Frozen dataset"}, {}),
         ({"worked_examples": 7.0}, {}),
         ({"priorities": []}, {}),

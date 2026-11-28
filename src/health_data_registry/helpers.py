@@ -337,11 +337,11 @@ WORKFLOWS: tuple[Workflow, ...] = (
         steps=(
             Step(
                 "Ask what kind of work it is, and offer exactly these answers: empirical (new numbers from data), "
-                "methods_standard (a method or standard others can reuse), argument (a position, not new data) or "
-                "case (one case or a small series)."
+                "methods or standard (a method or standard others can reuse), argument (a position, not new data) "
+                "or case (one case or a small series)."
             ),
             Step(
-                "Ask how far along the data is: idea, preliminary_counts, frozen_dataset or adjudicated (frozen, "
+                "Ask how far along the data is: idea, preliminary counts, frozen dataset or adjudicated (frozen, "
                 "with clinician adjudication done)."
             ),
             Step(
@@ -350,7 +350,7 @@ WORKFLOWS: tuple[Workflow, ...] = (
             ),
             Step(
                 "Ask whether I have a target conference and how many weeks remain before its deadline, and which "
-                "matters most to me, in order, from: speed, citable_record, reach, effort. Both are optional."
+                "matters most to me, in order, from: speed, citable record, reach, effort. Both are optional."
             ),
             Step(
                 "Run choose_output_format with my answers. Show the chosen format, each format's probability of "

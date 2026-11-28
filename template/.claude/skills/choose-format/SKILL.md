@@ -12,10 +12,10 @@ Help me decide which output to aim for with this project: $ARGUMENTS
 Don't guess my answers from that sentence: ask me each question below, one at a time, and wait for my answer.
 (If nothing was typed after the command, ask me for it in one short question first.)
 
-1. Ask what kind of work it is, and offer exactly these answers: empirical (new numbers from data), methods_standard (a method or standard others can reuse), argument (a position, not new data) or case (one case or a small series).
-2. Ask how far along the data is: idea, preliminary_counts, frozen_dataset or adjudicated (frozen, with clinician adjudication done).
+1. Ask what kind of work it is, and offer exactly these answers: empirical (new numbers from data), methods or standard (a method or standard others can reuse), argument (a position, not new data) or case (one case or a small series).
+2. Ask how far along the data is: idea, preliminary counts, frozen dataset or adjudicated (frozen, with clinician adjudication done).
 3. Ask how many worked examples the piece needs to show in full, and whether a reader needs a methods section to trust the numbers (yes or no).
-4. Ask whether I have a target conference and how many weeks remain before its deadline, and which matters most to me, in order, from: speed, citable_record, reach, effort. Both are optional.
+4. Ask whether I have a target conference and how many weeks remain before its deadline, and which matters most to me, in order, from: speed, citable record, reach, effort. Both are optional.
 5. Run choose_output_format with my answers. Show the chosen format, each format's probability of ranking first, the confidence and the review advice. Say that confidence means how settled the choice is, not whether it is right, and that this is a decision under my stated priorities, not a prediction that the work will be published. If it says too close to call, show what would change it first.
 6. List the criteria it couldn't use and why, and the rules still awaiting the maintainer's review. If I named a conference, run get_publication_outlook for it and show how often its abstracts became full papers.
 7. Never use this to rank ideas, fellows or projects. Suggest I take the result to my mentor, especially if the advice says to discuss it.

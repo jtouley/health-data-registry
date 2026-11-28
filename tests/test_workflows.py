@@ -50,7 +50,7 @@ def test_generated_files_match_the_workflows() -> None:
 def test_the_six_story_skills_and_the_kept_helpers() -> None:
     assert [w.name for w in helpers.SKILLS] == [
         "start-here", "research-story", "scope-an-area", "find-opportunities", "refine-hypothesis",
-        "build-story", "help-me-fix-it",
+        "build-story", "choose-format", "help-me-fix-it",
     ]  # fmt: skip
     assert {w.name for w in helpers.WORKFLOWS} - {w.name for w in helpers.SKILLS} == {
         "walk-me-through-install",

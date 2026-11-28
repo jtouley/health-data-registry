@@ -396,7 +396,7 @@ def _norm(value: str) -> str:
     return "_".join(value.strip().lower().replace("/", " ").replace("-", " ").split())
 
 
-ALIASES = {"methods": "methods_standard", "standard": "methods_standard", "preliminary": "preliminary_counts",
+ALIASES = {"methods": "methods_standard", "methods_or_standard": "methods_standard", "standard": "methods_standard", "preliminary": "preliminary_counts",
            "frozen": "frozen_dataset", "case_report": "case", "case_series": "case"}  # fmt: skip
 
 
