@@ -844,9 +844,17 @@ def _counts_rows(node: exp.Expr) -> bool:
     """Is this sum a count of rows, as count_if is: SUM(CASE WHEN ... THEN 1 ELSE 0 END) or SUM(IF(..., 1, 0))?
 
     Every row adds 1 or 0, never a value from the table, so no published value is added to another: it counts rows,
-    as count(*) and count_if already do on every table, and is checked no more strictly than they are (#166).
+    as count(*) and count_if already do, and the non-additive check (_check_sums) passes it as it passes them (#166).
+    It is still a sum, so a table's SumRules still apply to it (_apply_sum_rules): on a table with total rows it
+    leaves them out and says so, where count_if counts them. _added is the per-column sibling of this test: it
+    tells a column only tested inside a sum from one added up.
     """
-    arg = node.this
+    if isinstance(node, exp.Anonymous):  # fsum, kahan_sum ...: the argument is in expressions, not this
+        if len(node.expressions) != 1:
+            return False
+        arg = node.expressions[0]
+    else:
+        arg = node.this
     while isinstance(arg, exp.Paren):
         arg = arg.this
     if isinstance(arg, exp.Case):  # CASE x WHEN ... too: only the branches' results are added
@@ -975,11 +983,16 @@ def _sum_columns(node: exp.Expr, alias: str, owners: Mapping[str, str]) -> list[
 
 def _added(column: exp.Column, top: exp.Expr) -> bool:
     """True when a sum adds the column's value up; False when the column is only tested (IS NULL, a comparison,
-    IN, BETWEEN, LIKE) between it and the sum `top`, as in sum(CASE WHEN m1 IS NULL THEN 1 ELSE 0 END)."""
+    IN, BETWEEN, LIKE) between it and the sum `top`, as in sum(CASE WHEN m1 IS NULL THEN 1 ELSE 0 END). The
+    operand of a simple CASE (CASE m1 WHEN 0 THEN 1 ... END) is only compared with each WHEN, so it is tested too."""
+    child: exp.Expr = column
     node = column.parent
     while node is not None and node is not top:
         if isinstance(node, exp.Predicate):
             return False
+        if isinstance(node, exp.Case) and node.args.get("this") is child:
+            return False
+        child = node
         node = node.parent
     return True
 

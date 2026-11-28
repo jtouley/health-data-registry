@@ -34,7 +34,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from health_data_registry import __version__, naming
 from health_data_registry.registry import Dataset
@@ -381,6 +381,10 @@ def contract_terms(ds: Dataset) -> dict[str, Any]:
     return out
 
 
+# How notes() carries each catalog caveat; query._caveats_not_in_notes reads it back so a caveat is printed once.
+CAVEAT_NOTE: Final = "Note: "
+
+
 def notes(ds: Dataset) -> list[str]:
     """What every answer from a private-tier source carries: attribution, licence, footnotes, suppression, citation."""
     terms = contract_terms(ds)
@@ -392,7 +396,7 @@ def notes(ds: Dataset) -> list[str]:
     if terms.get("licenceNote"):
         licence += f": {terms['licenceNote']}"
     lines.append(licence)
-    lines += [f"Note: {c}" for c in e.caveats]
+    lines += [f"{CAVEAT_NOTE}{c}" for c in e.caveats]
     lines.append(
         "Suppression: "
         + (

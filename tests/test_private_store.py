@@ -337,24 +337,37 @@ def test_a_sum_of_ones_and_count_if_give_the_same_count_on_an_abstract_table(
     assert by_count_if["rows"] == by_sum["rows"] == [[2]]
 
 
-def test_each_caveat_line_is_printed_once(reg: Registry, tmp_path: Path) -> None:
-    """A private source's notes already carry the catalog's caveats; the answer never repeats them (#166)."""
+def test_each_caveat_line_is_printed_once_and_names_its_source(reg: Registry, tmp_path: Path) -> None:
+    """A private source's notes already carry the catalog's caveats; the answer never repeats them (#166). When an
+    answer combines sources, each line says which source it is about, so two conferences' caveats stay apart."""
     lake = tmp_path / "lake"
     eng = _store(reg, lake)
     _store(reg, lake, "shea_abstracts")
     # A query across two sources needs a declared join (#82); declared here to reach the multi-source caveats.
     eng.declared_joins = frozenset({frozenset({"idweek_abstracts", "shea_abstracts"})})
-    for sql in (
-        "SELECT doi FROM idweek_abstracts",
-        "SELECT doi FROM idweek_abstracts UNION ALL SELECT doi FROM shea_abstracts",
-    ):
-        text = tools.query_sql(eng, sql)
-        assert isinstance(text, str)
-        lines = [x.removeprefix("# ") for x in text.splitlines() if x.startswith("# ")]
-        for source in ("idweek_abstracts", "shea_abstracts")[: 1 + ("shea" in sql)]:
-            for caveat in reg.get(source).entry.caveats:
-                said = [x for x in lines if x.endswith(caveat)]
-                assert len(said) == 1, (caveat, said)
+    one = "SELECT doi FROM idweek_abstracts"
+    lines = [x.removeprefix("# ") for x in str(tools.query_sql(eng, one)).splitlines() if x.startswith("# ")]
+    for caveat in reg.get("idweek_abstracts").entry.caveats:
+        assert [x for x in lines if caveat in x] == [f"{private.CAVEAT_NOTE}{caveat}"]
+    both = eng.query_sql(f"{one} UNION ALL SELECT doi FROM shea_abstracts")["caveats"]
+    for source in ("idweek_abstracts", "shea_abstracts"):
+        assert f"{source}: Licence: " in "\n".join(both)  # the licence names its source too (hard rule 10)
+        for caveat in reg.get(source).entry.caveats:
+            said = [x for x in both if x.endswith(caveat) and x.startswith(f"{source}: ")]
+            assert said == [f"{source}: {private.CAVEAT_NOTE}{caveat}"], (caveat, said)
+    assert all(x.startswith(("idweek_abstracts: ", "shea_abstracts: ")) for x in both), both
+
+
+def test_a_caveat_is_kept_unless_a_printed_note_already_says_it(reg: Registry) -> None:
+    """Only the notes an answer prints stand in for a catalog caveat: with none printed, every caveat is listed."""
+    from health_data_registry.query import _caveats_not_in_notes
+
+    ds = reg.get("idweek_abstracts")
+    caveats = list(ds.entry.caveats)
+    assert len(caveats) >= 2
+    assert _caveats_not_in_notes(ds, []) == caveats
+    assert _caveats_not_in_notes(ds, ["Licence: x"]) == caveats
+    assert _caveats_not_in_notes(ds, [f"{private.CAVEAT_NOTE}{caveats[0]}"]) == caveats[1:]
 
 
 class _Counting:
@@ -398,6 +411,63 @@ def test_loading_a_private_store_takes_the_same_statements_for_ten_rows_or_a_tho
         assert con.execute(f"SELECT count(DISTINCT doi), count(*) FROM {ds.id}").fetchone() == (n, n)
         counts.append(con.statements)
     assert counts[0] == counts[1]
+
+
+def _raw_after_load(
+    monkeypatch: pytest.MonkeyPatch, ds: Any, records: list[dict[str, Any]], chunk: int | None = None
+) -> tuple[list[str], list[tuple[Any, ...]], int]:
+    """The raw table load_live fills, read before staging, and the statements it took to fill it."""
+    import duckdb
+
+    from health_data_registry import live
+
+    seen: dict[str, Any] = {}
+
+    def capture(con: Any, _contract: Any, raw: str, **_kw: Any) -> None:
+        cur = con.execute(f"SELECT * FROM {raw}")  # noqa: S608 - the loader's own quoted temp table
+        seen["cols"] = [d[0] for d in cur.description]
+        seen["rows"] = cur.fetchall()
+        seen["statements"] = con.statements
+
+    monkeypatch.setattr(live, "stage_checked", capture)
+    if chunk is not None:
+        monkeypatch.setattr(live, "LOAD_CHUNK", chunk)
+    con: Any = _Counting(duckdb.connect(":memory:"))
+    live.load_live(con, ds, records)
+    return seen["cols"], seen["rows"], seen["statements"]
+
+
+def test_the_bulk_load_keeps_each_value_as_sent_and_beside_its_own_row(
+    reg: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hard rule 15 at the load: '' stays '', NULL stays NULL, quotes, commas and accents stay as sent, a field no
+    record carries is NULL in every row, and field k of row i sits beside field j of row i, across chunks too."""
+    ds = reg.get("idweek_abstracts")
+    odd = ["", None, 'it\'s "quoted", [x]', "Sjögren, São Paulo", " 01 "]
+    records = [
+        {"doi": f"10.1/{i}", "title": odd[i % len(odd)], "conference": None if i % 2 else ""}
+        for i in range(7)
+    ]
+    taken = []
+    for chunk in (None, 3):  # one INSERT, then three chunks of up to 3 rows
+        cols, rows, statements = _raw_after_load(monkeypatch, ds, records, chunk)
+        taken.append(statements)
+        got = [dict(zip(cols, r, strict=True)) for r in rows]
+        assert [{k: g[k] for k in ("doi", "title", "conference")} for g in got] == records
+        absent = [c for c in cols if c not in ("doi", "title", "conference")]
+        assert absent and all(g[c] is None for g in got for c in absent)
+    assert taken[1] == taken[0] + 2  # 7 rows in chunks of 3: two more INSERTs than one
+
+
+def test_the_bulk_load_takes_text_or_null_only(reg: Registry) -> None:
+    """A VARCHAR list would recast any other value (2 beside 1.5 becomes '2.0'), so load_live refuses it."""
+    import duckdb
+
+    from health_data_registry.live import load_live
+
+    ds = reg.get("idweek_abstracts")
+    with pytest.raises(ValueError, match="text or NULL"):
+        load_live(duckdb.connect(":memory:"), ds, [{"doi": "10.1/a", "year": 2025}])
 
 
 def test_a_private_table_whose_checks_did_not_all_run_is_refused(

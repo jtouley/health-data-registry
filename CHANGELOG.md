@@ -30,11 +30,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
-- Abstract questions (#166): `query_sql` now allows `SUM(CASE WHEN ... THEN 1 ELSE 0 END)` wherever it allows
-  `count_if`, since both count rows and add up no published value. The
-  first question in a session no longer takes about a minute: a private or live table now loads into memory in
-  one statement instead of one per row (a 4,000-row conference year: 10 s to under half a second). Each caveat
-  line is printed once; a private source's caveats were printed twice.
+- Abstract questions (#166): `query_sql` now allows `SUM(CASE WHEN ... THEN 1 ELSE 0 END)` (and `IF(..., 1, 0)`,
+  in `sum` or the other summing functions) wherever it allows `count_if`, since both count rows and add up no
+  published value. It is still a sum, so on a table with total rows it leaves them out and says so, where
+  `count_if` counts them. The first question in a session no longer takes about a minute: a private or live
+  table now loads into memory in a few statements instead of one per row (a 4,000-row conference year: 10 s to
+  under half a second). Each caveat line is printed once; a private source's caveats were printed twice. In an
+  answer that combines sources, each caveat and licence line now names the source it is about.
 - The hosted server (`serve --http`) refuses to start while `HDR_HTTPS_PROXY` is set, because behind a proxy
   the check against private or loopback addresses is advisory (#270). An operator whose proxy itself allows only
   the catalogued publisher hosts on public addresses opts in with `HDR_PROXY_ENFORCES_ALLOWLIST=1`
