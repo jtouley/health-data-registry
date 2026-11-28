@@ -1386,6 +1386,7 @@ def get_series(
     notes: list[str] = []
     ran: list[tuple[Dataset, Series, list[str]]] = []
     failed: set[str] = set()
+    refused = False  # any series refused, its own source's other series included
     not_read: dict[str, str] = {}
     for ds, s in matches:
         if ds.id in failed or ds.id in not_read:
@@ -1400,7 +1401,9 @@ def get_series(
             raise  # out of time: no partial answer, whose pages could not be matched up later
         except Exception as e:  # noqa: BLE001 - one source failing must not hide the others' rows
             notes.append(f"{ds.id}: {plain(e)}")
-            failed.add(ds.id)
+            refused = True
+            if not _series_only(e):
+                failed.add(ds.id)
             continue
         ran.append((ds, s, unmatched))
         for r in got:
@@ -1413,11 +1416,11 @@ def get_series(
             notes.append(f"{ds.id}: '{place}' here is {note}.")
         notes += _dataset_notes(ds, m, method, got)
     notes += not_read.values()
-    if not rows and ran and not failed:
+    if not rows and ran and not refused:
         return matched_nothing(
             engine, ran, condition, locations, year_start, year_end, fmt, list(not_read.values())
         )
-    if not rows and not ran and not failed:
+    if not rows and not ran and not refused:
         return place_not_covered(condition, locations, not_read, fmt)
     # Counted over the rows returned, never over series that matched but gave none (#112).
     if len({r[columns.index("measure")] for r in rows}) > 1:
@@ -1438,6 +1441,13 @@ def get_series(
         "have none. An empty value is never a zero: where the publisher gives a reason, it is in the flag column."
     )
     return Result(columns, rows, notes)
+
+
+def _series_only(e: Exception) -> bool:
+    """Is a refusal about one series alone (a nationwide figure asked for by place), so the same source's other
+    series (its by-state table) are still read? Any other failure is the source's, and its other series are skipped.
+    """
+    return isinstance(e, QueryRefused) and e.code == "no_place_breakdown"
 
 
 def source_without_series(registry: Registry, source_id: str, fmt: Fmt) -> Out | None:
@@ -1607,7 +1617,8 @@ def get_aligned_with_gbd(
             raise  # out of time: no partial answer, whose pages could not be matched up later
         except Exception as e:  # noqa: BLE001 - one source failing must not hide the others' rows
             notes.append(f"{ds.id}: {plain(e)}")
-            skipped.add(ds.id)
+            if not _series_only(e):
+                skipped.add(ds.id)
             continue
         # Only a whole US state or the nation has a GBD location; a partial area, the publisher's pooled sites, or
         # places whose basis (facility or residence) is unresolved are left unkeyed with the reason.
