@@ -424,7 +424,7 @@ def _raw_after_load(
     seen: dict[str, Any] = {}
 
     def capture(con: Any, _contract: Any, raw: str, **_kw: Any) -> None:
-        cur = con.execute(f"SELECT * FROM {raw}")  # noqa: S608 - the loader's own quoted temp table
+        cur = con.execute(f"SELECT * FROM {raw}")
         seen["cols"] = [d[0] for d in cur.description]
         seen["rows"] = cur.fetchall()
         seen["statements"] = con.statements
