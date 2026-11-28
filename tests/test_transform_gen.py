@@ -513,13 +513,14 @@ def test_stage_refuses_a_declared_field_no_record_carries(tmp_path: Path) -> Non
     assert "data_tests" not in {c["name"]: c for c in m["columns"]}["rate_per_100k"]  # no fill-rate floor
 
 
-@pytest.mark.parametrize("field", ["m{1}", "m'1", 'm"1', "m\\1", "m\n1"])
+@pytest.mark.parametrize("field", ["m{1}", "m'1", 'm"1', "m\\1", "m\n1", "m`1"])
 def test_registry_refuses_field_names_generated_sql_cant_carry(tmp_path: Path, field: str) -> None:
     bad = CONTRACT.replace(
         "{property: sourceField, value: m2}", "{property: sourceField, value: " + json.dumps(field) + "}"
     )
     with pytest.raises(
-        RegistryError, match="rate_per_100k: sourceField .* has a brace, quote, backslash or control"
+        RegistryError,
+        match="rate_per_100k: sourceField .* has a brace, quote, backtick, backslash or control",
     ):
         load_registry(write_registry(tmp_path / "reg", contract=bad))
 
