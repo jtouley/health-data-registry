@@ -136,7 +136,7 @@ schema:
           - {property: role, value: measure}
           - {property: sourceField, value: cell_text}
           - {property: missingCodes, value: ["*"]}
-          - {property: groupSeparator, value: ","}
+          - {property: thousandsSeparator, value: ","}
           - {property: unit, value: "cases"}
       - name: failed_checks
         physicalType: VARCHAR

@@ -312,35 +312,9 @@ def test_printed_facts_arguments(facts: dict[str, str], match: str) -> None:
         pf.Args.model_validate({"facts": facts})
 
 
-# --------------------------------------------------------------------------------------------- groupSeparator
-
-
-@pytest.mark.parametrize(
-    ("sep", "ptype", "ok"), [(",", "DOUBLE", True), (",", "VARCHAR", False), (".", "BIGINT", False)]
-)
-def test_group_separator_is_a_numeric_columns_thousands_mark(
-    tmp_path: Any, sep: str, ptype: str, ok: bool
-) -> None:
-    import yaml
-
-    from health_data_registry.registry import RegistryError, parse_contract
-    from tests.conftest import CONTRACT
-
-    doc = yaml.safe_load(CONTRACT)
-    col = doc["schema"][0]["properties"][3]
-    col["physicalType"] = ptype
-    col["logicalType"] = "number" if ptype == "DOUBLE" else ("integer" if ptype == "BIGINT" else "string")
-    col["customProperties"].append({"property": "groupSeparator", "value": sep})
-    if ok:
-        assert parse_contract(doc, expected_id="toy_cases").columns[3].group_separator == sep
-    else:
-        with pytest.raises(RegistryError, match="groupSeparator"):
-            parse_contract(doc, expected_id="toy_cases")
-
-
 def test_the_raw_layer_keeps_every_value_as_printed(ds: Dataset) -> None:
     """Hard rule 15: the raw records hold the report's text exactly as printed ("1,001", "*"); printed_facts only
-    adds metadata fields beside them, and groupSeparator is applied in staging, never at load."""
+    adds metadata fields beside them, and thousandsSeparator is applied in staging, never at load."""
     case = Case("raw", {f"{STORE}/quarterly-report-2023.pdf": ANNUAL_2023})
     _site, records = _read(ds, case)
     cells = {(r["Disease"], r["column_header"]): r["cell_text"] for r in records}

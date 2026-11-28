@@ -45,7 +45,7 @@ and a grand-total line under the table.
 | Raw metadata | The facts each report prints once: its title year, its area statement, its retrieval date, as printed | `printed_facts` (hook `parse`) |
 | Raw metadata | Each printed total checked against its parts (subtotals, the grand-total line, YTD against its quarters); a failed check is kept on the cell as `failed_checks`, and more than two failing rows refuse the report as misread. No value changes | `pdf_table.reconcile` |
 | Staging | Each printed header becomes the period it names (`period_kind`, `period_year`, `period_quarter`, `period_year_end`) by ordered rules in the catalog; a header no rule reads stays empty and the contract's `every_header_read` rule reports it | `period_header_parser` (hook `staging`) |
-| Staging | `printed_number`: the cell's number, its thousands comma removed (`groupSeparator`), `*` as no number | the contract |
+| Staging | `printed_number`: the cell's number, its thousands comma removed (`thousandsSeparator`), `*` as no number | the contract |
 | Contract | Total rows by their printed label, the grain, suppression only where `*` is printed, and the reconciliation as quality rules | `contracts/wayne_cd_reports.odcs.yaml` |
 
 The source is live-only (`redistribution: false`): the server reads the newest three reports per question
