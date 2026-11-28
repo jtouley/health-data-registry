@@ -1,0 +1,54 @@
+id: nchs_resp_deaths_pct
+title: Provisional Percent of Deaths for COVID-19, Influenza, and RSV by Select Characteristics
+agency: CDC
+publisher: "Centers for Disease Control and Prevention, National Center for Health Statistics (NCHS), National Vital Statistics System"
+level: federal
+country: US
+research_areas: [infectious_disease]
+id_areas: [respiratory]
+years: {start: 2018, end: null}
+# National only: every row has state 'United States' (metadata 'Geographic Unit of Analysis': Nation;
+# https://data.cdc.gov/api/views/53g5-jf7x.json and the whole table, read 2026-11-25).
+geography: [nation]
+shape: surveillance_series
+grain: "One row is one week (MMWR week, by its ending Saturday), one cause (COVID-19, influenza, RSV, or the three combined) and one demographic group (an age group, a race and Hispanic origin group, or a sex), for US residents, holding the deaths involving that cause, deaths from all causes in the group, and the percent of all deaths involving the cause. There is no all-ages, all-people row."
+refresh: weekly
+licence:
+  id: public-domain-us-federal
+  redistribution: true
+  terms_url: https://www.usa.gov/government-works
+citation: "National Center for Health Statistics. Provisional Percent of Deaths for COVID-19, Influenza, and RSV by Select Characteristics. https://data.cdc.gov/d/53g5-jf7x (accessed <retrieved_at>)."
+source:
+  portal: socrata
+  host: data.cdc.gov
+  dataset: 53g5-jf7x
+  landing_url: https://data.cdc.gov/d/53g5-jf7x
+  api_url: https://data.cdc.gov/resource/53g5-jf7x.json
+codebook_url: https://data.cdc.gov/d/53g5-jf7x
+caveats:
+  - "A percent of all deaths, not a death rate: deaths involving the virus divided by deaths from all causes in the same week and group. It rises when the virus kills more people or when other deaths fall."
+  - "Deaths 'involving' a virus (column description): the virus is on the death certificate, not necessarily as the underlying cause. A death can involve more than one virus."
+  - "One figure for US residents as a whole each week: there is no state or regional breakdown, and no all-ages or all-people row, only age groups, race and Hispanic origin groups and sexes, which are never added together."
+  - "NCHS suppresses death counts from 1 to 9 for confidentiality; the deaths and percent are then empty, never zero, and the row keeps NCHS's suppression note."
+  - "Provisional: counts are not final and later loads can revise any recent week; NCHS marks the provisional years in the row."
+  - "Combined is a separate cause row for the three viruses together; what it counts (any of the three, each death once) is not stated, and it is never added to the single-virus rows."
+gbd:
+  # No GBD keys: a percent of all deaths is not a GBD measure, and the cause mapping waits for a maintainer
+  # (contract openQuestions, hard rules 1 and 3).
+  location_column: null
+  causes: []
+conditions:
+  dimension: cause
+  # Provenance: the column description of pathogen lists [COVID-19, Flu, RSV, Combined]; the table writes
+  # 'Influenza' for 'Flu' (every distinct value at https://data.cdc.gov/resource/53g5-jf7x.json on 2026-11-25).
+  source: "NCHS's causes in this table (pathogen column on data.cdc.gov, checked 25 Nov 2026): COVID-19, Influenza (written 'Flu' in the column description), RSV (respiratory syncytial virus), and Combined for the three together."
+  labels:
+    - "COVID-19"
+    - "Influenza"
+    - "RSV"
+    - "Combined"
+  aliases: []
+contract: contracts/nchs_resp_deaths_pct.odcs.yaml
+semantic_model: semantic/nchs_resp_deaths_pct.yaml
+status: draft
+hosting: public
