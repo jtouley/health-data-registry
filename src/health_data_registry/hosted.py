@@ -29,6 +29,10 @@ The same tools as the stdio server (server.build_server), with these rules on to
 - Rate limits per MCP session and overall (HDR_RATE_PER_SESSION, HDR_RATE_GLOBAL, tool calls per minute),
   never per IP address: every claude.ai user arrives from the same Anthropic address range. Over the limit,
   HTTP 429 with a plain-words JSON-RPC error and Retry-After.
+- Fails closed under an egress proxy: with HDR_HTTPS_PROXY set, fetch.py's check against private or loopback
+  addresses is advisory (the proxy does its own DNS lookup), so the server refuses to start unless
+  HDR_PROXY_ENFORCES_ALLOWLIST=1 declares that the proxy itself allows only the catalogued publisher hosts on
+  public addresses (check_egress). Local CLI use is unchanged.
 - Privacy: no request body, tool argument, query string, prompt, session id or IP address is ever logged.
   uvicorn's access log is off; every other library's log record is reduced to its logger name, level and
   exception type. The only log lines with content are aggregate counters (tool name, status, latency bucket).
@@ -49,7 +53,7 @@ import sys
 import threading
 import time
 from collections import Counter, OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextvars import copy_context
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -62,6 +66,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from health_data_registry import __version__, tools
 from health_data_registry.deadline import DeadlineExceeded, call_deadline, stragglers
+from health_data_registry.fetch import EXTRA_CA_ENV, PROXY_ENV, FetchRefused, _proxy_from_env
 from health_data_registry.isolation import POISONED
 from health_data_registry.paging import MIN_PAGE_CHARS, page_budget, sign, wire_size
 from health_data_registry.server import Fmt, Out
@@ -122,6 +127,76 @@ def check_limits(cfg: HostedConfig) -> None:
             f"HDR_PAGE_CHARS ({budget:,}) is above HDR_MAX_RESULT_CHARS ({cfg.max_result_chars:,}), so long "
             "answers would be refused instead of paged. Set HDR_PAGE_CHARS below the cap, or unset both."
         )
+
+
+PROXY_OPT_IN_ENV = "HDR_PROXY_ENFORCES_ALLOWLIST"
+PROXY_OPT_IN_VALUE = "1"
+
+
+class StartRefused(ValueError):
+    """The hosted server will not start as configured; the message says why and what to do, in plain words."""
+
+
+def check_egress(environ: Mapping[str, str] | None = None) -> None:
+    """Refuse to start when fetches would go through an egress proxy nobody has vouched for.
+
+    Under HDR_HTTPS_PROXY the proxy resolves the publisher's host itself, so fetch.py's refusal of private and
+    loopback addresses is advisory: the TCP target is no longer the address that was checked. A hosted server
+    fetches live on behalf of anyone, so it fails closed unless the operator declares, with
+    HDR_PROXY_ENFORCES_ALLOWLIST=1 and nothing else, that the proxy itself allows only the catalogued publisher
+    hosts on public addresses. Any other value of the opt-in is refused too, so a "0", "false" or "no" never
+    reads as yes. With the opt-in, the proxy address is checked here as fetch.py would check it, so a bad one
+    stops the server now instead of failing every live fetch later. The local CLI never calls this; its
+    behaviour is unchanged.
+
+    The decision is taken once, at start-up (main and build_hosted both call it): code must never set
+    HDR_HTTPS_PROXY at run time, because a proxy set after start-up is not covered by this check.
+    """
+    env = os.environ if environ is None else environ
+    proxy = env.get(PROXY_ENV, "").strip()
+    opt_in = env.get(PROXY_OPT_IN_ENV, "")
+    if not proxy:
+        if opt_in:
+            log.warning(
+                "%s is set but %s is not, so the opt-in has nothing to vouch for; unset it so a proxy added "
+                "later is not taken as vouched for",
+                PROXY_OPT_IN_ENV,
+                PROXY_ENV,
+            )
+        return
+    if opt_in == PROXY_OPT_IN_VALUE:
+        try:
+            parsed = _proxy_from_env(env)
+        except FetchRefused as e:  # the address is never echoed: fetch.py's sentence doesn't contain it
+            raise StartRefused(
+                f"The hosted server did not start: {e} Next step: set {PROXY_ENV} to http://host:port, with no "
+                f"credentials, or unset it (see docs/dev/hosting.md)."
+            ) from e
+        where = f"{parsed.host}:{parsed.port}" if parsed else "?"  # non-blank, so the parser returned one
+        log.warning(
+            "%s is set and %s=1 declares that the proxy at %s allows only the catalogued publisher hosts on "
+            "public addresses; the server's own check against private or loopback addresses is advisory behind "
+            "it, and %s (if set) is trusted for every publisher",
+            PROXY_ENV,
+            PROXY_OPT_IN_ENV,
+            where,
+            EXTRA_CA_ENV,
+        )
+        return
+    if opt_in:
+        raise StartRefused(
+            f"The hosted server did not start: {PROXY_ENV} is set, and {PROXY_OPT_IN_ENV} is {opt_in!r}, which "
+            f"isn't a yes (only '{PROXY_OPT_IN_VALUE}' is). Behind that proxy the server can't stop a fetch from "
+            f"reaching a private or loopback address. Next step: unset {PROXY_ENV}, or set "
+            f"{PROXY_OPT_IN_ENV}={PROXY_OPT_IN_VALUE} only if that proxy allows nothing but the catalogued "
+            "publisher hosts on public addresses (see docs/dev/hosting.md)."
+        )
+    raise StartRefused(
+        f"The hosted server did not start: {PROXY_ENV} is set. That proxy looks up addresses itself, so the "
+        "server can't stop a fetch from reaching a private or loopback address. Next step: unset "
+        f"{PROXY_ENV}. If the proxy allows only the catalogued publisher hosts on public addresses, set "
+        f"{PROXY_OPT_IN_ENV}={PROXY_OPT_IN_VALUE} instead (see docs/dev/hosting.md)."
+    )
 
 
 def default_cache_dir() -> Path:
@@ -624,11 +699,16 @@ def build_hosted(
     *,
     clock: Callable[[], float] = time.monotonic,
     host: str = "127.0.0.1",
+    egress_checked: bool = False,
 ) -> tuple[Any, Hosted]:
     """The ASGI app and its state. Pass `registry` and `engine` in tests; the defaults read the hub release.
 
     `host` is the address the server binds to: Host and Origin are checked unless it is explicitly public.
+    Without an `engine`, the app fetches live, so it gets the egress check (check_egress) whatever its entry
+    point; `egress_checked` only says the caller (main) has already run it, so its warning isn't logged twice.
     """
+    if engine is None and not egress_checked:
+        check_egress()
     from health_data_registry.hub import Hub
     from health_data_registry.isolation import Isolation
     from health_data_registry.query import Engine
@@ -727,10 +807,14 @@ def uvicorn_config(app: Any, host: str, port: int) -> Any:
 def main(host: str = "127.0.0.1", port: int = 7860) -> None:
     import uvicorn
 
-    configure_logging()
-    cfg = HostedConfig()
-    check_limits(cfg)
-    app, state = build_hosted(cfg, host=host)
+    configure_logging()  # first, so check_egress's warning goes through the privacy-filtered handler
+    check_egress()
+    try:
+        cfg = HostedConfig()
+        check_limits(cfg)
+    except ValueError as e:  # a bad limit: the same plain refusal, never a traceback
+        raise StartRefused(f"The hosted server did not start: {e}") from e
+    app, state = build_hosted(cfg, host=host, egress_checked=True)
     configure_logging()  # the SDK set up its own handler while the server was built; take it back
     threading.Thread(target=state.warm_up, daemon=True, name="warm-up").start()
     log.info("serving %s on port %d", MCP_PATH, port)

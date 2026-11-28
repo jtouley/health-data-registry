@@ -6,12 +6,40 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- `query_sql` refuses queries that could build values too large to answer safely (#74): `lpad`/`rpad` lengths
+  over 1,000, `string_agg`/`list`/`array_agg` and the other ways to gather a whole column into one value
+  (`ARRAY(SELECT ...)`, `max`/`min`/`arg_max`/`arg_min` with a count), `levenshtein`, recursive `WITH`,
+  non-literal `replace` replacements and `strftime` formats, and any one value that `||`, `concat`, `replace`,
+  splitting, lists or structs could grow more than 256-fold. Growth is counted per value, through CTEs and
+  subqueries, so separate columns and conditions don't add up against each other. Each refusal says what to ask
+  instead, and `query_sql` passes that next step on.
+- `query_sql` refuses any query that reaches two sources with no declared join in any part of it, including each
+  branch of a `UNION`, `INTERSECT` or `EXCEPT`, every subquery and every CTE (#74).
+- The lake is never read from the working folder: it is `$HDR_LAKE` (a full path) or a per-user data folder.
+  Each time the server connects, it checks each lake snapshot's dataset id, snapshot id, contract version and
+  review status, that its folder and files belong to the current user and can't be changed by others (on Unix),
+  and that `data.duckdb` is a regular file with the sha256 in its manifest. A snapshot that fails, or can't be
+  read, is refused in plain words; the others still answer. DuckDB then reads the file by its path, so a change
+  made after that check is read until the next reconnect. The manifest sits beside the data, so these hashes
+  catch damage, not tampering. A file is hashed once per server process and again only when its size, times or
+  inode change. `export-public` checks `data.duckdb` and `data.parquet` the same way before publishing, and
+  compares the copy it publishes. Cached hub files are checked again each time the server reconnects (#74).
+  Snapshots built before this change have no file fingerprints and must be rebuilt with `refresh`.
+
 ### Fixed
 
 - NNDSS caveat on case status (#174, item 1): it said case status isn't published, but 30 of CDC's own
   condition names carry it (14 end in Confirmed, 11 in Probable, 5 in Total). The caveat and the contract now
   say which names carry a status, that a sum of a Total and its parts counts the same cases twice, and that
   every other name doesn't say which statuses its count includes. No number changes; the contract version stays 0.1.0.
+- The hosted server (`serve --http`) refuses to start while `HDR_HTTPS_PROXY` is set, because behind a proxy
+  the check against private or loopback addresses is advisory (#270). An operator whose proxy itself allows only
+  the catalogued publisher hosts on public addresses opts in with `HDR_PROXY_ENFORCES_ALLOWLIST=1`
+  (docs/dev/hosting.md). Its other startup refusals (a bad limit such as `HDR_PAGE_CHARS`) now print a plain
+  message instead of a traceback too. Nothing changes for clinicians, local use is unchanged, and the Space sets
+  no proxy.
 - Release blockers from #173, where the served path returned wrong numbers:
   - NNDSS's `-` (no reported cases) is read as not reported (the maintainer's declaration of 25 Nov 2026). It
     comes back empty with its flag, never as 0 and never as a rate: `get_rate` gives no rate, `compare_rates`
@@ -51,6 +79,7 @@ All notable changes to this project are documented here. The format follows
   now checks that every entry is well-formed instead: it parses, its path is a plain path under an existing
   top-level directory of this repository (a file a later pull request adds counts), and it has a comment above it
   saying why.
+
 ### Changed
 
 - The README is rewritten for clinicians: five setup steps that each say what you'll see (the Start here

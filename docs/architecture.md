@@ -76,8 +76,11 @@ flowchart LR
    and into staging and the dbt models; until [#104](https://github.com/jtouley/health-data-registry/issues/104)
    lands, this step still changes some values on load.
 4. **Parquet snapshot and manifest.** Each run writes a new dataset version under
-   `datasets/<id>/<snapshot_id>/`: `data.parquet`, `data.duckdb` and a `manifest.json` that lists the raw hashes, source URLs, `retrieved_at`, and the contract and semantic model versions. Snapshots live
-   in the lake (`$HDR_LAKE`, default `./lake`, ignored by git) and, for redistributable sources, may be published to a public
+   `datasets/<id>/<snapshot_id>/`: `data.parquet`, `data.duckdb` and a `manifest.json` that lists the raw hashes, source URLs, `retrieved_at`, the contract and semantic model versions, and the sha256 of `data.duckdb` and `data.parquet`.
+   Each time the server connects, it checks the dataset id, snapshot id, contract version, owner and the sha256 of
+   `data.duckdb` (the file it attaches); `export-public` checks both files before publishing. The manifest sits
+   beside the data, so the hashes catch damage, not tampering. Snapshots live
+   in the lake (`$HDR_LAKE` as a full path, else a per-user data folder, never the working folder) and, for redistributable sources, may be published to a public
    Hugging Face dataset ([ADR 0009](adr/0009-licences-decide-mirroring.md)).
    The typed projection lives in one place (`staging.py`). The same checks refuse a load on the lake path and
    the live path alike: an empty required value or a count with a fraction (a publisher data failure), or a
