@@ -1,0 +1,105 @@
+dataset: cdc_nssp_ed_trajectories
+# 0.1.0: first draft. Every figure is read from its one published cell; nothing is added (a percent never is).
+# State and national answers read CDC's own state and United States rows (trend_source State or United States),
+# never their counties; county rows carry their Health Service Area's figures and have metrics of their own.
+# Only the three single-virus state and national metrics feed a series (get_series). The combined metric and the
+# four *_hsa metrics are defined for the analysis path (Engine.query_metric) and for search; no tool serves them
+# yet, and query_sql reaches the same rows. Each is tested in tests/test_source_cdc_nssp_ed_trajectories.py.
+version: 0.1.0
+dimensions:
+  - {name: week_ending, column: week_end, type: time, non_additive: true, non_additive_reason: "a percent for one week can't be added to the next week's", description: "The Saturday that ends the week the emergency department visits are counted in."}
+  - {name: place, column: geography, type: categorical, non_additive: true, non_additive_reason: "the United States row sits beside its states, and each state's own row beside its county rows", description: "The state (or District of Columbia) the row belongs to, or United States for the national row."}
+  - {name: area_basis, column: trend_source, type: categorical, non_additive: true, non_additive_reason: "national, state and Health Service Area figures cover overlapping visits", description: "Which area the figures were computed for: State, United States, or HSA (the county's Health Service Area)."}
+  - {name: county, column: county, type: categorical, non_additive: true, non_additive_reason: "counties of one Health Service Area carry the same shared figure, and All is the whole state", description: "The county the row is reported for, by name, or All on the state and national rows."}
+  - {name: county_fips, column: fips, type: categorical, non_additive: true, non_additive_reason: "counties of one Health Service Area carry the same shared figure", description: "The county's FIPS code as CDC writes it (leading zeros dropped), the state code followed by 000 on a state row, or 0 for the United States."}
+  - {name: health_service_area, column: hsa, type: categorical, non_additive: true, non_additive_reason: "every county row of one Health Service Area repeats the same figure", description: "The Health Service Area's name, or All on the state and national rows."}
+measures:
+  - {name: covid_ed_percent, column: percent_visits_covid, kind: percent, unit: "% of all ED visits", description: "Percent of all emergency department visits in the week that were for COVID-19, as observed."}
+  - {name: influenza_ed_percent, column: percent_visits_influenza, kind: percent, unit: "% of all ED visits", description: "Percent of all emergency department visits in the week that were for influenza, as observed."}
+  - {name: rsv_ed_percent, column: percent_visits_rsv, kind: percent, unit: "% of all ED visits", description: "Percent of all emergency department visits in the week that were for RSV, as observed."}
+  - {name: combined_ed_percent, column: percent_visits_combined, kind: percent, unit: "% of all ED visits", description: "Percent of all emergency department visits in the week that were for COVID-19, influenza or RSV: CDC's published combined figure, never the sum of the three virus columns."}
+metrics:
+  - name: covid_percent_of_ed_visits
+    description: "Percent of emergency department visits for COVID-19 in one week, for a state or the United States, from CDC's own state or national row; never added."
+    measure: covid_ed_percent
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["trend_source IN ('State', 'United States')"]
+    uncertainty: none
+    # Structural: the contract has no interval column and no visit counts to compute one from.
+    uncertainty_reason: "CDC's NSSP table gives no confidence interval for these percents and does not publish the visit counts behind them."
+  - name: influenza_percent_of_ed_visits
+    description: "Percent of emergency department visits for influenza in one week, for a state or the United States, from CDC's own state or national row; never added."
+    measure: influenza_ed_percent
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["trend_source IN ('State', 'United States')"]
+    uncertainty: none
+    uncertainty_reason: "CDC's NSSP table gives no confidence interval for these percents and does not publish the visit counts behind them."
+  - name: rsv_percent_of_ed_visits
+    description: "Percent of emergency department visits for RSV in one week, for a state or the United States, from CDC's own state or national row; never added."
+    measure: rsv_ed_percent
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["trend_source IN ('State', 'United States')"]
+    uncertainty: none
+    uncertainty_reason: "CDC's NSSP table gives no confidence interval for these percents and does not publish the visit counts behind them."
+  - name: combined_percent_of_ed_visits
+    description: "Percent of emergency department visits for COVID-19, influenza or RSV combined in one week, for a state or the United States: CDC's published combined figure, read as published and never the sum of the three."
+    measure: combined_ed_percent
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["trend_source IN ('State', 'United States')"]
+    uncertainty: none
+    uncertainty_reason: "CDC's NSSP table gives no confidence interval for these percents and does not publish the visit counts behind them."
+  - name: covid_percent_of_ed_visits_hsa
+    description: "Percent of emergency department visits for COVID-19 in one week in a county's Health Service Area (the HSA's figure, shared by every county in it); never added across counties."
+    measure: covid_ed_percent
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["trend_source = 'HSA'"]
+    uncertainty: none
+    uncertainty_reason: "CDC's NSSP table gives no confidence interval for these percents and does not publish the visit counts behind them."
+  - name: influenza_percent_of_ed_visits_hsa
+    description: "Percent of emergency department visits for influenza in one week in a county's Health Service Area (the HSA's figure, shared by every county in it); never added across counties."
+    measure: influenza_ed_percent
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["trend_source = 'HSA'"]
+    uncertainty: none
+    uncertainty_reason: "CDC's NSSP table gives no confidence interval for these percents and does not publish the visit counts behind them."
+  - name: rsv_percent_of_ed_visits_hsa
+    description: "Percent of emergency department visits for RSV in one week in a county's Health Service Area (the HSA's figure, shared by every county in it); never added across counties."
+    measure: rsv_ed_percent
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["trend_source = 'HSA'"]
+    uncertainty: none
+    uncertainty_reason: "CDC's NSSP table gives no confidence interval for these percents and does not publish the visit counts behind them."
+  - name: combined_percent_of_ed_visits_hsa
+    description: "Percent of emergency department visits for COVID-19, influenza or RSV combined in one week in a county's Health Service Area (the HSA's figure, shared by every county in it); never added across counties and never the sum of the three viruses."
+    measure: combined_ed_percent
+    aggregation: none
+    exclude_total_rows: false
+    filters: ["trend_source = 'HSA'"]
+    uncertainty: none
+    uncertainty_reason: "CDC's NSSP table gives no confidence interval for these percents and does not publish the visit counts behind them."
+series:
+  - condition: "COVID-19"
+    label: "COVID-19 percent of emergency department visits (NSSP)"
+    metric: covid_percent_of_ed_visits
+    measure: percent
+    location_dimension: place
+    time_dimension: week_ending
+  - condition: "Influenza"
+    label: "Influenza percent of emergency department visits (NSSP)"
+    metric: influenza_percent_of_ed_visits
+    measure: percent
+    location_dimension: place
+    time_dimension: week_ending
+  - condition: "RSV"
+    label: "RSV percent of emergency department visits (NSSP)"
+    metric: rsv_percent_of_ed_visits
+    measure: percent
+    location_dimension: place
+    time_dimension: week_ending

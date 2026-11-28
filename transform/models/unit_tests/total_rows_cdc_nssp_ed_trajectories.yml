@@ -1,0 +1,20 @@
+# Hand-written dbt unit test of the generated is_total_row in int_cdc_nssp_ed_trajectories (the contract's
+# totalRows, county = 'All'). Here both the United States row and every state row are total rows, and a county row,
+# which carries its Health Service Area's figure, is not. A county left empty is never read as a total row.
+version: 2
+unit_tests:
+- name: int_cdc_nssp_ed_trajectories_marks_state_and_national_rows_as_total_rows
+  model: int_cdc_nssp_ed_trajectories
+  given:
+  - input: ref('stg_cdc_nssp_ed_trajectories')
+    rows:
+    - {fips: '0', county: All, trend_source: United States}
+    - {fips: '26000', county: All, trend_source: State}
+    - {fips: '26081', county: Kent, trend_source: HSA}
+    - {fips: '26067', county: null, trend_source: HSA}
+  expect:
+    rows:
+    - {fips: '0', is_total_row: true}
+    - {fips: '26000', is_total_row: true}
+    - {fips: '26081', is_total_row: false}
+    - {fips: '26067', is_total_row: false}

@@ -90,6 +90,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- New source, draft (contract not yet reviewed): `cdc_nssp_ed_trajectories`, CDC's weekly percent of emergency department
+  visits for COVID-19, influenza and RSV with CDC's trend and activity level (NSSP, data.cdc.gov rdmq-nq56), on
+  the existing Socrata adapter. State and national answers read CDC's own state and United States rows; county rows
+  carry their Health Service Area's shared figure and are never added up.
 - New source, draft: `nchs_resp_deaths_pct`, NCHS's provisional weekly percent of all deaths among US residents
   involving COVID-19, influenza, RSV or the three combined, by age group, sex and race and Hispanic origin
   (data.cdc.gov 53g5-jf7x). Read as published and never added; a suppressed count (1 to 9) is no value, never zero,

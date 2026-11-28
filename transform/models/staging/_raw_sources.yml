@@ -596,6 +596,168 @@ sources:
       data_type: varchar
       description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
         the exact bytes the publisher sent.'
+  - name: cdc_nssp_ed_trajectories
+    description: 'Raw records of NSSP Emergency Department Visit Trajectories by State and Sub-State Regions (COVID-19,
+      Influenza, RSV, Combined) as the adapter hands them on, every value as text: the publisher''s own fields,
+      or for a wide table the adapter''s structural reshaping of them (see the staging model). Only the full load
+      the dataset''s LATEST pointer names is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_nssp_ed_trajectories.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - buildnumber
+      - county
+      - ed_covid_level
+      - ed_flu_level
+      - ed_rsv_level
+      - ed_trends_covid
+      - ed_trends_influenza
+      - ed_trends_rsv
+      - fips
+      - geography
+      - hsa
+      - hsa_counties
+      - hsa_nci_id
+      - percent_visits_combined
+      - percent_visits_covid
+      - percent_visits_influenza
+      - percent_visits_rsv
+      - percent_visits_smoothed
+      - percent_visits_smoothed_1
+      - percent_visits_smoothed_covid
+      - percent_visits_smoothed_rsv
+      - trend_source
+      - week_end
+    columns:
+    - name: buildnumber
+      data_type: varchar
+      description: Publisher field buildnumber, as text; read into buildnumber (The weekly build of the whole table
+        this row came from, as CDC labels it (BuildNumber; 2026-11-25 on every row on 2026-11-25). Each rebuild
+        can change earlier weeks, so each load keeps it. Kept as text exactly as sent.)
+    - name: county
+      data_type: varchar
+      description: Publisher field county, as text; read into county (The county the row is reported for, by name
+        without 'County', such as Wayne, or All on the state and national rows. A county row carries its Health
+        Service Area's figures, not the county's own.)
+    - name: ed_covid_level
+      data_type: varchar
+      description: 'Publisher field ed_covid_level, as text; read into ed_covid_level (CDC''s activity level for
+        COVID-19 emergency department visits, exactly as written: Very Low, Low, Moderate, High, Very High, Limited
+        Data or Data Unavailable. The cut-points are CDC''s and are not in the data; they are never worked out here.)'
+    - name: ed_flu_level
+      data_type: varchar
+      description: Publisher field ed_flu_level, as text; read into ed_flu_level (CDC's activity level for influenza
+        emergency department visits, exactly as written (same categories as the COVID-19 level).)
+    - name: ed_rsv_level
+      data_type: varchar
+      description: Publisher field ed_rsv_level, as text; read into ed_rsv_level (CDC's activity level for RSV emergency
+        department visits, exactly as written (same categories as the COVID-19 level).)
+    - name: ed_trends_covid
+      data_type: varchar
+      description: 'Publisher field ed_trends_covid, as text; read into ed_trends_covid (CDC''s trend for COVID-19
+        emergency department visits in the week, exactly as written: Increasing, Decreasing, No Change, Sparse,
+        Limited Data or Data Unavailable, or empty (see openQuestions). For Health Service Area (county) rows, the
+        dataset description says a week is increasing or decreasing when the 95% interval of the smoothed slope
+        excludes zero, stable (written No Change) when it includes zero, and sparse when too many weeks are 0% to
+        fit a model. How the state and national trends are set is not stated (see openQuestions).)'
+    - name: ed_trends_influenza
+      data_type: varchar
+      description: Publisher field ed_trends_influenza, as text; read into ed_trends_influenza (CDC's trend for
+        influenza emergency department visits in the week, exactly as written (same categories as the COVID-19 trend),
+        or empty (see openQuestions).)
+    - name: ed_trends_rsv
+      data_type: varchar
+      description: Publisher field ed_trends_rsv, as text; read into ed_trends_rsv (CDC's trend for RSV emergency
+        department visits in the week, exactly as written (same categories as the COVID-19 trend), or empty (see
+        openQuestions).)
+    - name: fips
+      data_type: varchar
+      description: 'Publisher field fips, as text; read into fips (The county''s FIPS code, as CDC publishes it:
+        a number, so leading zeros are dropped (Autauga County, Alabama is 1001, not 01001). State rows carry the
+        state code followed by 000 (Michigan is 26000) and the national row carries 0. Kept as text exactly as sent;
+        padding to five digits belongs to a later model.)'
+    - name: geography
+      data_type: varchar
+      description: Publisher field geography, as text; read into geography (The state (or District of Columbia)
+        the row belongs to, or United States for the national row.)
+    - name: hsa
+      data_type: varchar
+      description: Publisher field hsa, as text; read into hsa (The Health Service Area's name, such as 'Calhoun
+        (Battle Creek), MI - Barry, MI', or All on the state and national rows. Every county of one Health Service
+        Area has the same figures.)
+    - name: hsa_counties
+      data_type: varchar
+      description: Publisher field hsa_counties, as text; read into hsa_counties (The counties that make up the
+        Health Service Area, as a comma-separated list such as 'Barry, Calhoun', or All on the state and national
+        rows.)
+    - name: hsa_nci_id
+      data_type: varchar
+      description: Publisher field hsa_nci_id, as text; read into hsa_nci_id (The Health Service Area's code in
+        the National Cancer Institute's SEER list, such as 381, or All on the state and national rows.)
+    - name: percent_visits_combined
+      data_type: varchar
+      description: 'Publisher field percent_visits_combined, as text; read into percent_visits_combined (Percent
+        of all emergency department visits in the week that were for COVID-19, influenza or RSV combined: CDC''s
+        published combined figure. How CDC builds it is in the NSSP Companion Guide, not in the data (see openQuestions);
+        it is never computed here by adding the three virus columns. Empty in more rows than the single-virus columns
+        (245,165 of 692,881 rows filled on 2026-11-25; see openQuestions).)'
+    - name: percent_visits_covid
+      data_type: varchar
+      description: Publisher field percent_visits_covid, as text; read into percent_visits_covid (Percent of all
+        emergency department visits in the week that were for COVID-19, as observed. Empty where CDC has no figure
+        for the area and week.)
+    - name: percent_visits_influenza
+      data_type: varchar
+      description: Publisher field percent_visits_influenza, as text; read into percent_visits_influenza (Percent
+        of all emergency department visits in the week that were for influenza, as observed. Empty where CDC has
+        no figure for the area and week.)
+    - name: percent_visits_rsv
+      data_type: varchar
+      description: Publisher field percent_visits_rsv, as text; read into percent_visits_rsv (Percent of all emergency
+        department visits in the week that were for RSV, as observed. Empty where CDC has no figure for the area
+        and week.)
+    - name: percent_visits_smoothed
+      data_type: varchar
+      description: Publisher field percent_visits_smoothed, as text; read into percent_visits_smoothed_combined
+        (The smoothed percent of emergency department visits for COVID-19, influenza and RSV combined. What the
+        smoothing averages over is not in the data (see openQuestions). Published under the field name percent_visits_smoothed;
+        CDC's column label is percent_visits_smoothed_combined.)
+    - name: percent_visits_smoothed_1
+      data_type: varchar
+      description: Publisher field percent_visits_smoothed_1, as text; read into percent_visits_smoothed_influenza
+        (The smoothed percent of emergency department visits for influenza. What the smoothing averages over is
+        not in the data (see openQuestions). Published under the field name percent_visits_smoothed_1; CDC's column
+        label is percent_visits_smoothed_influenza.)
+    - name: percent_visits_smoothed_covid
+      data_type: varchar
+      description: Publisher field percent_visits_smoothed_covid, as text; read into percent_visits_smoothed_covid
+        (The smoothed percent of emergency department visits for COVID-19. What the smoothing averages over is not
+        in the data (see openQuestions).)
+    - name: percent_visits_smoothed_rsv
+      data_type: varchar
+      description: Publisher field percent_visits_smoothed_rsv, as text; read into percent_visits_smoothed_rsv (The
+        smoothed percent of emergency department visits for RSV. What the smoothing averages over is not in the
+        data (see openQuestions).)
+    - name: trend_source
+      data_type: varchar
+      description: 'Publisher field trend_source, as text; read into trend_source (Which area the row''s figures
+        were computed for: HSA (the county''s Health Service Area), State, or United States.)'
+    - name: week_end
+      data_type: varchar
+      description: Publisher field week_end, as text; read into week_end (The last day of the week the emergency
+        department visits are counted in (a Saturday; 2022-10-01 to 2026-11-21 on 2026-11-25).)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
   - name: cdc_nssp_lab_positivity
     description: 'Raw records of NSSP Commercial Laboratory Data for COVID, FLU and RSV as the adapter hands them
       on, every value as text: the publisher''s own fields, or for a wide table the adapter''s structural reshaping
