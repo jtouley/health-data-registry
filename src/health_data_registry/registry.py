@@ -1076,6 +1076,17 @@ class Metric(_Strict):
     single_value_of: list[str] = Field(default_factory=list)
 
 
+def _check_asked_with(words: list[str]) -> list[str]:
+    """Each asked_with entry must hold a word: an empty or punctuation-only entry would match every question
+    and so turn the gate off."""
+    empty = [w for w in words if not norm_label(w)]
+    if empty:
+        raise ValueError(
+            f"asked_with entries {empty!r} hold no word, so they would let every question through"
+        )
+    return words
+
+
 SeriesMeasure = Literal["cases", "deaths", "rate", "percent", "estimate", "population"]
 
 
@@ -1102,6 +1113,16 @@ class Series(_Strict):
     week_dimension: str | None = None
     # An age-specific series (age_adjust): counts or populations split by this age-group dimension.
     age_dimension: str | None = None
+    # Words of which a question must use at least one for this series to answer it, e.g. "vaccination" and
+    # "coverage" for a vaccination coverage series, or "deaths" for a percent of deaths. Such a figure names a
+    # disease but is not a measure of the disease itself, so a plain disease question ("COVID-19 in Ohio") never
+    # gets it unasked. Empty: any question that names the series' condition.
+    asked_with: list[str] = Field(default_factory=list)
+
+    @field_validator("asked_with")
+    @classmethod
+    def _asked_with_words(cls, v: list[str]) -> list[str]:
+        return _check_asked_with(v)
 
     def held_dimensions(self) -> list[str]:
         """The dimensions each answer row of this series holds at one value: filtered to one value
@@ -1135,6 +1156,12 @@ class GenericSeries(_Strict):
     case_definition: str | None = None
     week_dimension: str | None = None
     age_dimension: str | None = None
+    asked_with: list[str] = Field(default_factory=list)  # as on Series
+
+    @field_validator("asked_with")
+    @classmethod
+    def _asked_with_words(cls, v: list[str]) -> list[str]:
+        return _check_asked_with(v)
 
     def bind(self, label: str, dimension: str | None) -> Series:
         """The series for one publisher label: the template with `dimension` filtered to exactly that label."""
