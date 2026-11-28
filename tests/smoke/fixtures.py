@@ -14,7 +14,6 @@ The lake is built in a temporary directory at test time and deleted with it; not
 from __future__ import annotations
 
 import asyncio
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -143,21 +142,3 @@ def build_journey(tmp_path: Path) -> Journey:
         raw[ds_id] = raw_fetch(url, rows)
         build_snapshot(lake, reg.get(ds_id), [raw[ds_id]], [records])
     return Journey(reg, Engine(registry=reg, lake=lake, hub=None, fetch_at_run_time=False), raw)
-
-
-def pinned_to_label_catalog(journey: Journey, catalog_ref: str) -> Journey:
-    """The same server and lake, with only the sources a DEV label was made against (its catalog_ref).
-
-    DEV labels are pinned to the catalog at their baseline commit (eval/README.md): an out-of-scope label stays
-    true for that catalog, not for sources catalogued later. A source added since then is the label re-audit's
-    concern, so a check scored against the label runs on the catalog the label names.
-    """
-    found = re.search(r"catalog/:\s*([^)]*)\)", catalog_ref)
-    assert found, f"the DEV label's catalog_ref names no catalog list ('catalog/: a, b)'): {catalog_ref!r}"
-    ids = [x.strip() for x in found.group(1).split(",") if x.strip()]
-    missing = [i for i in ids if i not in {ds.id for ds in journey.registry}]
-    assert not missing, f"the DEV label's catalog_ref names sources this journey doesn't load: {missing}"
-    reg = Registry(journey.registry.root, {i: journey.registry.get(i) for i in ids})
-    return Journey(
-        reg, Engine(registry=reg, lake=journey.engine.lake, hub=None, fetch_at_run_time=False), journey.raw
-    )

@@ -106,8 +106,27 @@ def test_a_plain_disease_question_never_gets_vaccination_coverage() -> None:
 
 def test_a_vaccination_question_gets_the_coverage_series() -> None:
     reg = load_registry(ROOT)
-    labels = [s.label for d, s in series_for(reg, "COVID-19 vaccination") if d.id == DS]
-    assert len(labels) == 2 and all("vaccination coverage" in x for x in labels)
+    for question in ("COVID-19 vaccination", "COVID-19 vaccine", "COVID-19 coverage"):
+        labels = [s.label for d, s in series_for(reg, question) if d.id == DS]
+        assert len(labels) == 2 and all("vaccination coverage" in x for x in labels), question
+
+
+ASKED_WITH = load_registry(ROOT).get(DS).semantic.series[0].asked_with
+
+
+@pytest.mark.parametrize("word", ASKED_WITH)
+def test_each_asked_with_word_beside_the_disease_reaches_both_series(word: str) -> None:
+    """Every declared gate word, before or after the disease (#256), gets this source's two series."""
+    reg = load_registry(ROOT)
+    for question in (f"COVID-19 {word}", f"{word} for COVID-19"):
+        assert len([s for d, s in series_for(reg, question) if d.id == DS]) == 2, question
+
+
+@pytest.mark.parametrize("question", ["vaccination", "childhood vaccination coverage", *ASKED_WITH])
+def test_a_bare_vaccination_question_gets_no_adult_coverage(question: str) -> None:
+    """Gate words alone name no vaccine (#256), so the out-of-scope childhood vaccination trial gets nothing here."""
+    reg = load_registry(ROOT)
+    assert [s.label for d, s in series_for(reg, question) if d.id == DS] == [], question
 
 
 def test_a_county_question_is_declined() -> None:
