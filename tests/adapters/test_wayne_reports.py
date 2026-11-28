@@ -336,3 +336,27 @@ def test_group_separator_is_a_numeric_columns_thousands_mark(
     else:
         with pytest.raises(RegistryError, match="groupSeparator"):
             parse_contract(doc, expected_id="toy_cases")
+
+
+def test_the_raw_layer_keeps_every_value_as_printed(ds: Dataset) -> None:
+    """Hard rule 15: the raw records hold the report's text exactly as printed ("1,001", "*"); printed_facts only
+    adds metadata fields beside them, and groupSeparator is applied in staging, never at load."""
+    case = Case("raw", {f"{STORE}/quarterly-report-2023.pdf": ANNUAL_2023})
+    _site, records = _read(ds, case)
+    cells = {(r["Disease"], r["column_header"]): r["cell_text"] for r in records}
+    assert cells[("Chlamydia (Genital)", "Q1 (1/1-3/31)")] == "1,001"
+    assert cells[("Subtotal", "Totals")] == "5,200"
+    printed = {v for _d, _g, vals in ANNUAL_2023.rows for v in vals}
+    assert set(cells.values()) == printed  # nothing rewritten, nothing added to a value
+    facts = {"report_year", "area_statement", "data_retrieved_on"}
+    assert all(facts <= set(r) for r in records)
+    assert {r["report_year"] for r in records} == {"2023"}  # the fact as printed: text, not a number
+    assert {r["area_statement"] for r in records} == {"excluding Detroit"}
+    # Only staging reads the number without its comma.
+    con = duckdb.connect()
+    load_live(con, ds, records)
+    got = con.execute(
+        "SELECT cell_text, printed_number FROM wayne_cd_reports WHERE disease = 'Chlamydia (Genital)' "
+        "AND column_header = 'Q1 (1/1-3/31)'"
+    ).fetchall()
+    assert got == [("1,001", 1001.0)]
