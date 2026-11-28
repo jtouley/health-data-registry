@@ -33,7 +33,8 @@ categorized, with contracts, context layers and semantics."
   answers with the closest data held, qualified: its layer and checks, what is missing, and how it differs from
   what was asked. It then suggests the next question.
 - **"No answer" only when nothing exists:** no catalogued data touches the condition, the place or the time.
-  Even then the answer says what is held nearby and hands off to the PubMed or IHME GBD connector (ADR 0004).
+  Even then the answer says what is held nearby and hands off: the IHME GBD connector or its pathogen route
+  (ADR 0004), PubMed, and `propose_source` (decision 5).
 - **Qualify, don't decide** (ADR 0018). A fallback answer never claims to be what was asked. It says what it is.
 - **The measure of success** is the share of evaluation questions that get "no answer". It should fall release
   over release, while answer correctness holds the release bar (decision 4 says where it is tracked).
@@ -360,17 +361,62 @@ snapshots stay raw inputs that builds read by hash (hard rule 15).
   semantic model declares that kind for that condition and measure, checks the coverage fact for the places and
   years, and picks the highest layer that fits: a data product, a fact, silver, then raw. A literature question
   goes to the literature hand-off (`find_prior_work`, and the PubMed connector).
-- **It falls back instead of refusing** (decision 0). When nothing fits exactly, it widens one term at a time
-  through the ontology and the coverage fact: the nearest condition label held, the containing or nearest covered
-  place, the years held, an unsplit group, the counts without a rate. It answers from the highest layer that holds
-  that, says what was widened and why, and suggests the next question.
+- **It falls back instead of refusing** (decision 0). When nothing fits exactly, it widens one term at a time,
+  only through the ontology (crosswalk parents, pathogen and syndrome, place containment) and the coverage fact:
+  the nearest condition held, the containing or nearest covered place, the years held, an unsplit group, the
+  counts without a rate. It never widens on a spelling match: `did_you_mean` stays a labelled spelling aid. It
+  answers from the highest layer that holds the widened question, says what was widened and why, and suggests the
+  next question.
+- **A missing grain is named as a grain:** "NNDSS reports by state and year; the nearest held is Michigan,
+  2023", from `dim_place`'s levels and the coverage fact, never as a misspelt name. A hospital or facility is never
+  a place we serve (hard rule 4): the answer says so and offers the containing county or state.
+- **An ambiguous term gets options, a stated default, and a question first.** For "STDs", "hepatitis" or "flu"
+  the router returns the options and its default. Where the client supports elicitation (form mode, an enum, and
+  never patient information), it asks before choosing. Otherwise it answers every option side by side, each
+  labelled, and says which one a single figure would use.
 - **"No answer" is for nothing held.** Only when no catalogued data touches the condition, place or time does it
-  answer "no data here". It still lists what is held nearby and hands off to the PubMed or IHME GBD connector.
-- **Every answer names its layer, its checks and its qualifications** (decision 1), and, for a fallback, what was
-  widened.
+  answer "no data here". That answer lists what is held for the condition, the place and the time separately, then
+  ends with the routes onward: the exact IHME GBD connector call where the crosswalk names a cause (or the
+  pathogen route, such as `get_etiology(pathogen_name='Legionella spp')`), PubMed for the literature, and
+  `propose_source` for a public primary source the clinician names (decision 5).
+- **One typed fallback envelope on every answer.** Each result carries `asked`, `answered_as`, `widened` (a list,
+  each with its reason), `why` and `next_question`, beside the layer, model, build id, checks and qualifications
+  (decision 1). It goes in the MCP result's `structuredContent` with a declared `outputSchema`, and is mirrored in
+  the CSV and text heading. When `answered_as` differs from `asked`, that content block is marked
+  `audience: ["user"]`, so the client shows it.
+- **`isError` follows the MCP specification.** A decline the model can fix (a bad or missing argument, a label
+  that does not exist) is `isError: true`, with the fix. A qualified fallback answer and "no data here" are
+  answers, `isError: false`. System refusals stay `isError: true` with their next step.
+- **A `resolve_terms` tool** reads the ontology (`dim_condition`, `dim_place`, `dim_measure`). For the words given
+  it returns every candidate across conditions, pathogens, places and measures, with its type, level, how it
+  matched (alias, crosswalk, abbreviation), its coverage, and the exact next call. "Legionnaires disease" finds the
+  condition label and the pathogen; "Valley fever" finds coccidioidomycosis. The client can confirm a reading
+  before it asks for numbers.
+- **Annotations are honest.** Tools that can read a live source (WHO GHO) or fetch at question time carry
+  `openWorldHint: true`; every tool keeps `readOnlyHint: true`.
 - **The string heuristics go:** `_STOP`, `STOP_WORDS`, `_GEO_WORDS` and `_haystack` in routing, `catalogued_labels`'
   word matching, `coverage.ABBREVIATIONS`, `coverage.GENERIC_WORDS`, `tools._unplaced` and `Series.asked_with`.
   `search_datasets` may still rank by words, since it searches rather than decides fit.
+
+### Evidence: the MCP routing study
+
+An MCP routing study (28 Nov 2026; in the pull request description) probed the IHME GBD connector 27 times and
+read the [MCP 2025-11-25 tools specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools),
+its [elicitation](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation) section and
+Anthropic's [tool-design guidance](https://www.anthropic.com/engineering/writing-tools-for-agents). The bullets
+above adopt its top recommendations. What it found:
+
+- GBD's `lookup_term` resolves every kind of term with an exact next call, and its `vague_term` block gives
+  options, a default and "ask the user; do not choose for them". These are the patterns behind `resolve_terms`
+  and the ambiguity rule.
+- Spelling matches mislead: "Valley fever" suggested Yellow fever, and "Lyme disease" suggested NCDs. So the
+  router never widens on spelling.
+- Grain gaps looked like misspellings: a county or a hospital came back as "did you mean Michigan?". So the
+  router names a missing grain.
+- GBD's best "no" lists what it does model for the entity asked about. That is the pattern for "what is held".
+- The specification asks for `isError: true` on errors the model can correct, and gives `structuredContent` with
+  an `outputSchema` for typed results. Our server marks no result as an error, and `openWorldHint` is false even
+  on live-read tools.
 
 ### Today's refusals, and who answers instead
 
@@ -386,7 +432,7 @@ Read from `tools.py`, `query.py` and `analysis.py` on main, and from #185's `too
 | `source_has_no_series` (#185) | Reads the source's rows directly | Silver |
 | `filter_matched_nothing` (`tools.matched_nothing`) | Shows the values held for that dimension, and the rows for the nearest ones | Fact, else silver |
 | `no_sex_split`, `no_place_breakdown` | Answers without the split, and names the sources that have it (`dim_population_group`, coverage fact) | Fact |
-| `ambiguous_condition` (`analysis.py`) | Answers each matching series side by side, each labelled | Fact or product |
+| `ambiguous_condition` (`analysis.py`) | Returns the options and a stated default, and asks first where the client supports elicitation; otherwise answers each option side by side, each labelled | Fact or product |
 | `no_denominator`, `no_rate` (`analysis.py`) | Returns the counts, and any rate the publisher gives; says no matching population is held | Fact |
 | `no_trend`, `too_few_points` (`analysis.py`) | Returns the years held as rows, and says how many more a trend needs | Fact |
 | `no_weekly_series`, `no_signal`, `incomplete_history`, `week_out_of_range` (`analysis.py`) | Returns the weeks or years held, and says what the signal method needs | Fact, else silver |
@@ -413,6 +459,10 @@ ran blocks, ADR 0018), `publisher_unreachable`, `publisher_bad_table`, `no_snaps
   beside `right_among_answerable`.
 - **Correctness still gates:** the release bar stays at most 2% wrong among answered and at least 80% right among
   answerable. A fallback answer that presents the nearest data as the data asked for counts as wrong.
+  The typed `answered_as` field lets the scorer check that automatically.
+- **New DEV questions** follow the routing study's probes (Valley fever, flesh-eating bacteria, Legionnaires
+  disease, *C. auris*, a county, a hospital, a week, "STDs"), each labelled with the nearest held data and the
+  right hand-off. They are written for DEV and never drawn from `eval/sealed/` (hard rule 14).
 
 ### What changes from today
 
@@ -421,7 +471,8 @@ ran blocks, ADR 0018), `publisher_unreachable`, `publisher_bad_table`, `no_snaps
 | `registry.py` | Question kinds per semantic model; `Series.answers` and `Metric.answers`, validated against the ontology |
 | `semantic/*.yaml` | Declared kinds per layer; an `answers` block per series and metric |
 | `tools.py` | `suggest_datasets` and `get_series` (`series_for`, `catalogued_labels`, `_match_places`) call the router; the word lists go |
-| `server.py`, `helpers.py` | Tool text names the structured arguments and how a fallback answer reads; `make docs` regenerates the docs |
+| `server.py`, `helpers.py` | Tool text names the structured arguments and how a fallback answer reads; each tool declares its `outputSchema`; results set `structuredContent` and `isError` as above; live-read tools get `openWorldHint: true` (today `READ_ONLY` sets it false on every tool); `make docs` regenerates the docs |
+| `tools.py`, `server.py` | A `resolve_terms` tool over the ontology |
 | `tools.py`, `analysis.py`, `query.py` | The refusals above become fallback answers, each with what was widened and a next question |
 | `eval/report.py`, `evaluation.py` | The "no answer" share beside correctness |
 
@@ -431,7 +482,9 @@ ran blocks, ADR 0018), `publisher_unreachable`, `publisher_bad_table`, `no_snaps
    validation. No routing change.
 2. The router, plus a test that it gives the same fit or no-fit verdicts as today's routing on the existing
    routing tests and the `make smoke` journey. Any verdict that changes is listed in the pull request.
-3. `suggest_datasets` and `get_series` switch to the router; the structured arguments are added.
+3. `suggest_datasets` and `get_series` switch to the router; the structured arguments are added. The typed
+   envelope, `isError` and `openWorldHint` land with it, and `resolve_terms` after `dim_condition` (decision 3,
+   step 4).
 4. The "no answer" share is added to the evaluation reports, measured once on today's server as the baseline.
 5. The refusals in the table become fallback answers, one tool per pull request, each showing the DEV share
    before and after.
@@ -471,8 +524,13 @@ router answers from the fallback meanwhile.
 - **An append-only request log in the ops control plane.** Each request is a series of events: `proposed`,
   `triaged`, `accepted` or `rejected` (with a plain reason), `connected`, `drafted`, `ingested`. Events are never
   rewritten, the same pattern as #277. A repeat proposal adds weight to the open request, never a duplicate.
-- **An agent session drains the log, never the hosted server.** The server only appends `proposed`. A scheduled
-  agent session, in its own sandbox, does everything else:
+- **Hosted and local proposals count the same** (maintainer, 28 Nov 2026).
+- **An agent session picks it up at once, never the hosted server.** The server only appends `proposed` and
+  raises a wake signal; it never fetches or builds. A proposal relevant to infectious disease or to our base
+  statistics (denominators and covariates) is picked up straight away, with no demand threshold (maintainer,
+  28 Nov 2026). Scheduled tasks run at most hourly, so "at once" needs an event path: the ops log writer sends a
+  wake event (a GitHub `repository_dispatch`, or a watched URL) that starts an agent session. An hourly scheduled
+  drain stays as the fallback for any wake that was lost. The agent session, in its own sandbox, does the rest:
   1. **Triage**, before any fetch, against the hard rules: rule 2 (ADR 0018: rows, flags and uncertainty ranges
      can be kept as sent), rule 3 (contracts stay drafts until a maintainer reviews them), rule 4 (no
      record-level data that could re-identify anyone), rule 6 (a primary publisher, ADR 0002, over HTTPS), rule
@@ -489,6 +547,9 @@ router answers from the fallback meanwhile.
      rules and fill rates, and mart product tests; the ODPS port; the semantic model with its question kinds;
      the generated dbt models, plus a mart where a data product needs one; data quality checks from the contract
      (#240), dbt unit tests, synthetic fixtures, offline tests and a live `network` test.
+- **Drafts wait for an active orchestration session.** An agent-drafted pull request stays in draft until an
+  active orchestration session, the current one or any later one, reviews it and starts the review round
+  (maintainer, 28 Nov 2026). Nothing self-merges.
 - **The pull request lands like any other.** "How changes land" applies: pre-pr green, then one review round and
   one fix round by fresh agents. The contracts stay drafts until a maintainer reviews them (hard rule 3).
   Merging adds `ingested`, and the router can use the source from the next build.
@@ -505,7 +566,8 @@ router answers from the fallback meanwhile.
 | `tools.py`, `server.py` | A `propose_source` tool; `list_sources` shows open requests |
 | `hosted.py` | Rate limits for `propose_source`; its arguments stay out of every log |
 | New ops module (beside `release_gate.py`) | The append-only request log: append events, read state, merge repeats |
-| A scheduled agent workflow, and a repo skill for it | Drains the log: triage, profile, connect, draft the pull request |
+| The ops log writer | Sends the wake event after each `proposed` append |
+| An event-started agent session, an hourly scheduled drain, and a repo skill for both | Triage, profile, connect, draft the pull request |
 | `helpers.py` | A helper step for "this source isn't held yet: propose it" |
 
 ### Migration order
@@ -514,7 +576,9 @@ router answers from the fallback meanwhile.
 2. `propose_source` on stdio, appending to the local lake's ops log.
 3. The hosted server appends to the private ops log (open question 1).
 4. The router names open requests in its fallback answers.
-5. The agent session: triage and the connect issue first, then the drafted pull request.
+5. The agent session, started by the hourly drain: triage and the connect issue first, then the drafted pull
+   request.
+6. The wake event, so a relevant proposal is picked up at once; the hourly drain stays.
 
 ### What it closes or supersedes
 
@@ -522,12 +586,10 @@ router answers from the fallback meanwhile.
 
 ### Open questions for the maintainer
 
-1. The server is read-only today. Is an append-only write to the request log, and nothing else, acceptable for
-   the hosted server?
-2. How often does the agent drain the log (hourly, daily), and does a demand threshold apply?
-3. Do agent-drafted pull requests wait as drafts for the maintainer to start review, or go straight into the
-   review round?
-4. Does a proposal from the hosted server count the same as one from a local session?
+1. The server is read-only today. Is an append-only write to the request log, plus the wake event, and nothing
+   else, acceptable for the hosted server?
+2. Which wake path: a `repository_dispatch` (the writer then holds a token scoped to that one event) or a watched
+   URL with no repository token?
 
 ## Consequences
 
