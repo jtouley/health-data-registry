@@ -61,6 +61,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- ADR 0020 (proposed, for maintainer review): contracted layers, one ontology, one quality engine and a router.
+  Every answer reads one gate-passed build and names its layer and its checks; facts span all the data and data
+  products are curated views; checks at every layer come from one factory; `dim_place` and declared coverage are
+  the only place keys; routing comes from each layer's declared question kinds. No code changes (#283).
 - New source, draft (contract not yet reviewed): `cdc_haicviz_isa`, CDC's Emerging Infections Program case and
   death rates for invasive Staphylococcus aureus since 2005 (HAICViz iSA, data.cdc.gov ssz5-s49e), on the existing
   Socrata adapter. Every rate is for the EIP sites combined, never called a state figure, and nothing is added;
