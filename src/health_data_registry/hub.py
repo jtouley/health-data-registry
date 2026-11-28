@@ -77,9 +77,13 @@ RELEASE_TAG = re.compile(r"^release-\d{4}-\d{2}-\d{2}(\.\d+)?$")
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
 # Releases whose contract version an installed contract can read safely, by dataset:
-# {dataset_id: {release_contract_version: {installed_contract_versions}}}. Empty on purpose: until a maintainer
-# reviews a pair and adds it here, any mismatch fails closed.
-COMPATIBLE_CONTRACTS: dict[str, dict[str, set[str]]] = {}
+# {dataset_id: {release_contract_version: {installed_contract_versions}}}. A pair not listed fails closed; each pair
+# is declared with its reason and stands only once a maintainer has reviewed it (the PR that adds it lists it).
+COMPATIBLE_CONTRACTS: dict[str, dict[str, set[str]]] = {
+    # 0.1.1 (#301) changes only the server's ODCS type metadata (https to custom, with its format and encoding);
+    # no field, type, value, key or quality rule changed, so a 0.1.0 release has the same columns and meanings.
+    "census_county_pop": {"0.1.0": {"0.1.1"}},
+}
 
 DEFAULT_CACHE_MAX_BYTES = 5 * 1024**3
 MIN_CACHE_GB = 0.5

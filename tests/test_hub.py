@@ -129,11 +129,10 @@ def test_contract_version_mismatch_fails_closed(tmp_path: Path, reg: Registry, r
     assert "No numbers were read" in str(e.value)
     assert not list((tmp_path / "cache").rglob("*.parquet"))  # nothing was even downloaded
     # Only a reviewed entry in the compatibility table lets a different version through.
-    hub.COMPATIBLE_CONTRACTS["toy_cases"] = {"9.9.9": {"0.1.0"}}
-    try:
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setitem(hub.COMPATIBLE_CONTRACTS, "toy_cases", {"9.9.9": {"0.1.0"}})
         assert engine(reg, tmp_path, released).manifest("toy_cases").release_contract_version == "9.9.9"
-    finally:
-        hub.COMPATIBLE_CONTRACTS.clear()
+    assert "toy_cases" not in hub.COMPATIBLE_CONTRACTS
     assert hub.contract_compatible("x", "1.0.0", "1.0.0")
     assert not hub.contract_compatible("x", "1.0.0", "1.1.0")
 
@@ -920,3 +919,44 @@ def test_bounded_and_check_outside_and_inside_a_deadline(monkeypatch: Any) -> No
         time.sleep(0.06)
         with pytest.raises(deadline.DeadlineExceeded):
             Engine(registry=Registry(root=Path("."), datasets={}), lake=Path("x"), hub=None).connect()
+
+
+def _one_source_release(root: Path, ds_id: str, contract_version: str) -> Path:
+    """A hub release in a local directory holding one source, built with `contract_version` of its contract."""
+    out = root / "release"
+    data = out / ds_id / "data" / f"{ds_id}.parquet"
+    data.parent.mkdir(parents=True)
+    duckdb.connect().execute(f"COPY (SELECT 1 AS x) TO '{data}' (FORMAT parquet)")
+    digest = hashlib.sha256(data.read_bytes()).hexdigest()
+    snap = {
+        "dataset": ds_id, "snapshot_id": "2026-11-23T00-00-00Z", "contract_version": contract_version,
+        "semantic_version": "0.1.0", "catalog_status": "draft", "retrieved_at": "2026-11-23T00:00:00Z",
+        "source_urls": [], "raw_sha256": [], "row_count": 1, "licence": "public-domain-us-federal",
+        "redistribution": True, "partial": False,
+    }  # fmt: skip
+    manifest = {
+        "tag": "release-2026-11-23", "release_id": "release-2026-11-23", "run_date": "2026-11-23",
+        "sources": {ds_id: {"hosted": True, "snapshot": snap, "contract": {"version": contract_version}}},
+        "files": {f"{ds_id}/data/{ds_id}.parquet": {"sha256": digest}},
+    }  # fmt: skip
+    (out / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return out
+
+
+@pytest.mark.parametrize(("ds_id", "release_version"), [("census_county_pop", "0.1.0")])
+def test_hosted_read_accepts_the_declared_older_release(
+    tmp_path: Path, ds_id: str, release_version: str
+) -> None:
+    """The weekly hub release built before a metadata-only contract bump stays readable: without it every rate
+    (census is the denominator) or every NNDSS answer would be refused until the next export."""
+    ds = load_registry().get(ds_id)
+    assert ds.contract.version != release_version, "the declaration is only needed while the versions differ"
+    assert ds.contract.version in hub.COMPATIBLE_CONTRACTS[ds_id][release_version]
+    h = Hub(url=str(_one_source_release(tmp_path, ds_id, release_version)), cache=tmp_path / "cache")
+    _, m = h.snapshot(ds)
+    assert m.release_contract_version == release_version and m.origin == "hub"
+    # Any other older version still fails closed.
+    other = Hub(url=str(_one_source_release(tmp_path / "b", ds_id, "0.0.9")), cache=tmp_path / "cache-b")
+    with pytest.raises(HubError) as e:
+        other.snapshot(ds)
+    assert e.value.code == "contract_mismatch"
