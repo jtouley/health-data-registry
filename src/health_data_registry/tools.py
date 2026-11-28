@@ -14,6 +14,7 @@ import io
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal, NamedTuple
 
 import duckdb
@@ -1359,16 +1360,46 @@ def find_prior_work(
     geography: str | None = None,
     years: str | None = None,
     dataset: str | None = None,
+    lake: Path | None = None,
     fmt: Fmt = "csv",
 ) -> Out:
-    where = f" in {geography}" if geography else ""
-    return message(
-        "The index of conference abstracts, case reports and health department reports isn't built yet, so "
-        f"nothing is shown rather than a partial list. For now, search PubMed (and OpenEvidence if you use it) "
-        f"for '{condition}'{where}, and check IDWeek abstracts in the Open Forum Infectious Diseases supplements.",
-        fmt,
-        refused="index_not_built",
-    )
+    """Conference abstracts on a condition from the research index, each with its link and provenance, and the
+    index's coverage for every year asked (prior_work.py): never "no match" for a year not fully indexed."""
+    from health_data_registry import prior_work
+    from health_data_registry.store import lake_root
+
+    index = prior_work.research_index(registry)
+    if dataset is not None and dataset not in {d.id for d in index}:
+        return message(
+            f"{dataset} is not part of the research index, so it was not searched.",
+            fmt,
+            refused="not_in_research_index",
+            available=[d.id for d in index],
+            next_step="Ask again without dataset, or with one of the research index's sources listed here.",
+        )
+    try:
+        rows, coverage, notes = prior_work.search(
+            registry,
+            lake or lake_root(),
+            condition=condition,
+            geography=geography,
+            years=years,
+            dataset=dataset,
+        )
+    except ValueError as e:
+        return message(
+            f"{e}.",
+            fmt,
+            refused="bad_years",
+            next_step="Ask again with one year (2023) or a range (2020-2024).",
+        )
+    covered = [f"{c[1]} {c[2]}: {c[3]}, {c[4]} abstracts held ({c[5]})" for c in coverage]
+    return Result(
+        prior_work.COLUMNS,
+        rows,
+        prior_work.summary_notes(condition, rows, coverage) + notes,
+        extra={"coverage": covered},
+    ).render(fmt)
 
 
 def unlisted_condition_labels(registry: Registry, engine: Engine) -> dict[str, list[str] | str | None]:

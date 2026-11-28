@@ -345,6 +345,25 @@ def _swap_in(lake: Path, ds: Dataset, repo: str, token: str, downloader: Downloa
     _hub_revision[repo] = revision
 
 
+def held_rows(lake: Path, ds: Dataset) -> list[dict[str, Any]]:
+    """Every row of the source held on this machine: its local area, its hub cache, and the records its own
+    listing crawl keeps between runs (crawl_state/listing/<id>/), read as files. Nothing is downloaded and the hub
+    cache's freshness is not touched (for the pre-publish leak check)."""
+    require_private(ds)
+    rows: list[dict[str, Any]] = []
+    for folder in (area(lake, ds.id), hub_cache(lake, ds.id)):
+        if folder.is_dir():
+            rows += _read_folder(folder)[0]
+    crawl = lake / "crawl_state" / "listing" / ds.id
+    for item in sorted(crawl.glob("*/items/*.json")) if crawl.is_dir() else []:
+        try:
+            doc = json.loads(item.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        rows += [dict(r) for r in doc.get("records") or [] if isinstance(r, dict)]
+    return rows
+
+
 def read_rows(lake: Path, ds: Dataset, *, downloader: Downloader | None = None) -> PrivateRows | None:
     """The source's private rows: local area first, then its private hub dataset; None when neither exists.
 

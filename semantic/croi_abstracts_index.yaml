@@ -1,0 +1,19 @@
+dataset: croi_abstracts_index
+version: 0.1.0
+entities:
+  - name: croi_abstract
+    type: primary
+    columns: [abstract_number, year]
+    description: "One CROI abstract in one meeting: its number plus the meeting year. croi_abstracts_text shares it; find_prior_work joins the two on it."
+dimensions:
+  - {name: abstract_number, column: abstract_number, type: categorical, description: "The number CROI gives the abstract (e.g. 957); numbers restart each meeting, so read it with the year."}
+  - {name: year, column: year, type: time, description: "The year of the CROI meeting where the work was presented, not the year it was later published."}
+  - {name: session_type, column: session_type, type: categorical, description: "How the work was presented, e.g. a poster or an oral abstract."}
+  - {name: category, column: category, type: categorical, description: "The topic CROI filed the abstract under."}
+  - {name: condition, column: condition_tags, type: categorical, separator: "; ", description: "Conditions the heading or text names (e.g. hiv; tuberculosis), by our fixed word rules, not a model. One abstract can name several and counts under each; a missing tag doesn't mean the condition is absent."}
+  - {name: design, column: design_tags, type: categorical, separator: "; ", description: "Study designs the heading or text names, by our fixed word rules. One abstract can name several."}
+  - {name: data_source, column: data_source_tags, type: categorical, separator: "; ", description: "Kinds of data the heading or text names, by our fixed word rules. One abstract can name several."}
+  - {name: geography, column: geography_tags, type: categorical, separator: "; ", description: "Countries and regions the heading or text names, by our fixed word rules. One abstract can name several."}
+measures: []
+metrics: []
+series: []

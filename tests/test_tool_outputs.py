@@ -313,10 +313,6 @@ def test_plain_and_refusal_shapes(registry: Registry, tmp_path: Path) -> None:
     assert tools.refusal(ValueError("x"), "json")["refused"] == "error"  # type: ignore[index]
     assert tools.message("hi", "json", a=1) == {"message": "hi", "a": 1}
     assert tools.message("hi") == "hi"
-    assert tools.find_prior_work(registry, condition="C. auris", geography="Michigan", fmt="json") == {
-        "message": "The index of conference abstracts, case reports and health department reports isn't built yet, "
-        "so nothing is shown rather than a partial list. For now, search PubMed (and OpenEvidence if you use it) "
-        "for 'C. auris' in Michigan, and check IDWeek abstracts in the Open Forum Infectious Diseases supplements.",
-        "refused": "index_not_built",
-        "next_step": "Search PubMed for the condition and place in the meantime.",
-    }
+    prior = tools.find_prior_work(registry, condition="C. auris", geography="Michigan", fmt="json")
+    assert isinstance(prior, dict) and prior["rows"] == [] and prior["coverage"] == []
+    assert prior["notes"][0].startswith("This setup has no conference-abstract source in its research index")

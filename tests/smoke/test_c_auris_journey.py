@@ -232,7 +232,7 @@ def test_step8_provenance_names_the_exact_fetch(journey: Journey) -> None:
     (row,) = client.table_rows(out)
     assert row["url"] == NNDSS_URL
     assert row["content_sha256"] == journey.raw[NNDSS].sha256
-    assert row["retrieved_at"].startswith("2026-11-24") and row["contract_version"] == "0.1.0"
+    assert row["retrieved_at"].startswith("2026-11-24") and row["contract_version"] == "0.1.1"
     assert row["snapshot_id"]
 
 

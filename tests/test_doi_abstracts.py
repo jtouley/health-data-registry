@@ -1044,3 +1044,33 @@ def test_every_abstract_contract_checks_its_retrieval_times(dataset: str) -> Non
 def test_retrieval_time_rules(rows: list[tuple[str | None, ...]], failing: set[str]) -> None:
     for dataset in ABSTRACT_CONTRACTS:
         assert _failing(_when_rules(dataset), rows) == failing
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "State of the art in bowel prep before colonoscopy",
+        "A pep talk for the infection prevention team",
+        "Tb as a unit; Sti as a misprint of stimulus",
+        "The art of hand hygiene audits",
+    ],
+)
+def test_everyday_words_are_not_read_as_acronyms(title: str) -> None:
+    # Issue #53: ART, PrEP, PEP, TB and STI tag only when written in capitals.
+    assert research_tags.tag_record(title, None)["condition_tags"] == ""
+
+
+@pytest.mark.parametrize(
+    ("title", "tag"),
+    [
+        ("Same-day ART start in Kenya", "hiv"),
+        ("PrEP uptake among adolescents", "hiv_prevention"),
+        ("PREP persistence in clinics", "hiv_prevention"),
+        ("Time to PEP after exposure", "hiv_prevention"),
+        ("TB preventive therapy completion", "tuberculosis"),
+        ("STIs among PrEP users", "stis"),
+        ("antiretroviral therapy and pre-exposure prophylaxis", "hiv"),  # the spelled-out words, any case
+    ],
+)
+def test_acronyms_in_capitals_are_tagged(title: str, tag: str) -> None:
+    assert tag in research_tags.tag_record(title, None)["condition_tags"].split("; ")

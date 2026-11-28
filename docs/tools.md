@@ -48,7 +48,7 @@ The same list, as the server itself describes each tool to Claude:
 | `check_signal` | Is this week unusual? The last 4 weeks' cases against the same, preceding and following 4 weeks of the past 5 years, in the style of CDC's historical limits for notifiable diseases. |
 | `get_provenance` | Where a source's numbers came from: the exact URLs, when they were fetched, content hashes, case definitions and how to cite them. |
 | `list_caveats` | What the data can't tell you: geography traps, suppression, provisional years, unreviewed contracts and facts not yet confirmed with the publisher. |
-| `find_prior_work` | Conference abstracts, case reports and health department reports on a condition, with the datasets each used. (The index is not built yet; the tool says so rather than guessing.) |
+| `find_prior_work` | Conference abstracts on a condition (CROI, IDWeek, SHEA, APIC, ICID), each with its link and where it was read from, plus how fully each year is indexed. |
 | `get_publication_outlook` | How often presented abstracts at a conference (e.g. "IDWeek", "CROI") became full papers: one row per stage from idea to paper, each with its source, n and 95% interval, or "unknown". |
 | `query_sql` | Escape hatch for questions the other tools don't cover: one read-only SELECT over loaded sources (tables are named by source_id). |
 
@@ -288,16 +288,21 @@ the contract is still a draft, and the place traps that apply everywhere.
 
 ### `find_prior_work`
 
-**Conference abstracts, case reports and health department reports** on a condition, with the datasets each used.
+**Conference abstracts on a condition**, from the research index: CROI, IDWeek, SHEA Spring, APIC and ICID.
 
 | Parameter | Required | What it does |
 |---|---|---|
-| `condition` | yes | The condition |
-| `geography`, `years`, `dataset` | no | Narrow the search |
+| `condition` | yes | The condition, in your own words ("C. auris", "PrEP", "tb"): matched to our rule-based condition tags, or, when it names none, to the words of each title and text |
+| `geography` | no | A place the abstract names (its place tags or its words) |
+| `years` | no | One meeting year (`2023`) or a range (`2020-2024`) |
+| `dataset` | no | One source of the index (e.g. `croi_abstracts_index`) |
 
-Coming: the index isn't built yet. Today the tool says so, returns nothing rather than a partial list, and suggests
-searching PubMed (and OpenEvidence if you use it) and the IDWeek abstracts in the Open Forum Infectious Diseases
-supplements.
+Each row is one abstract: its conference, year, number, title, authors, session, its link (and poster link) on the
+publisher's site, how it matched, its tags, and where it was read from (the page or DOI record, when, and the
+sha256 of those bytes). Beside the rows, `coverage` gives every source and year asked: `complete`,
+`index_incomplete` (still being read), `not_indexed` or `not_reachable`. A year that isn't complete is never "no
+match": the answer says so. Abstract text is used only to match and is never shown; open the link to read it.
+Abstracts are not peer-reviewed papers, so search PubMed too.
 
 ### `get_publication_outlook`
 
@@ -456,7 +461,7 @@ The common ones:
 | "Population counts (Census) aren't loaded yet …" | `get_rate` has no denominator on this setup | Use `get_series`, or a published rate |
 | "… could not be reached to download …" | A restricted source (WHO) is fetched from the publisher, and the publisher's site didn't answer | Try again in a few minutes |
 | "The hub release … has no file …" or "… does not list …" | The hub release the server reads from is incomplete | Try again later, or [open an issue](https://github.com/jtouley/health-data-registry/issues) |
-| "The index … isn't built yet" | `find_prior_work` is coming | Search PubMed |
+| "This setup has no conference-abstract source in its research index …" | `find_prior_work` has no private store connected on this setup | Search PubMed |
 | "The open data hub … could not be reached …" | The hub didn't answer just then (a passing outage or no internet) | Check the connection and try again in a few minutes |
 | "The open data hub … has no published release yet" | The hub this setup reads has never published a data release, so retrying won't help | Run the [Something's wrong](helpers.md#somethings-wrong) helper; nothing was guessed |
 | "This setup has reading data turned off for …" | This installation reads neither the hub (`HDR_HUB=off`) nor the publisher live (`HDR_FETCH_AT_RUN_TIME=0`), and has no local copy | Run the [Something's wrong](helpers.md#somethings-wrong) helper; whoever installed it removes whichever of the two settings is there |

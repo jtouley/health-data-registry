@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- `export-public` refuses a release that holds any private-tier text, whole or in part (any 64 characters from a
+  word start, whitespace ignored), read from the local private stores, their hub cache and the crawls' own
+  records without a download, or a link into the private area (#300).
 - `query_sql` refuses queries that could build values too large to answer safely (#74): `lpad`/`rpad` lengths
   over 1,000, `string_agg`/`list`/`array_agg` and the other ways to gather a whole column into one value
   (`ARRAY(SELECT ...)`, `max`/`min`/`arg_max`/`arg_min` with a count), `levenshtein`, recursive `WITH`,
@@ -30,6 +33,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Research tags: ART, PrEP, PEP, TB and STI tag only when written in capitals, so "state of the art", "bowel prep"
+  or "a pep talk" no longer tag an abstract as HIV (#53). A clinician's own search words still match in any case.
 - The hosted server (`serve --http`) refuses to start while `HDR_HTTPS_PROXY` is set, because behind a proxy
   the check against private or loopback addresses is advisory (#270). An operator whose proxy itself allows only
   the catalogued publisher hosts on public addresses opts in with `HDR_PROXY_ENFORCES_ALLOWLIST=1`
@@ -89,6 +94,21 @@ All notable changes to this project are documented here. The format follows
   differ from what the generator draws.
 
 ### Added
+
+- `find_prior_work` answers from the research index (#300): the CROI, IDWeek, SHEA Spring, APIC and ICID
+  abstracts in their private stores, matched by our rule-based condition tags (or the question's words in the
+  title or text), each with its link, poster link and provenance (the page or DOI record, when, its sha256).
+  Beside the rows, the coverage of every source and year asked: complete, `index_incomplete`, not indexed or not
+  reachable; a year not fully indexed is never "no match". Abstract text is used to match and never shown. It
+  replaces the `index_not_built` stub.
+- New sources, draft, private tier: `croi_abstracts_index` and `croi_abstracts_text`, CROI as `html_table`
+  listing config (ADR 0016 row 10) with a new named extension, `page_fields` (heading-and-value blocks, link
+  targets and class slugs, as printed). `crawl-private <source> --max-requests N` crawls one resumable slice at
+  CROI's 120 s pace and writes each year to both private stores (the text store says `storedFrom`), complete only
+  at the listing's own total. `crawl-croi.yml` runs it. Posters are linked, never fetched.
+- Semantic models declare multi-valued dimensions (`separator`, the research index's tag columns: a filter
+  matches any value a row holds) and `entities` (the `croi_abstract` key shared by the two CROI stores), checked
+  when the registry loads.
 
 - New source, draft, private tier: `wayne_cd_reports`, Wayne County's (Out-Wayne) select communicable disease case
   counts from its quarterly, annual and 5-year PDF reports (#299). It is configuration on the generic `pdf_table`

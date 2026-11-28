@@ -56,7 +56,8 @@ NEXT_STEPS: dict[str, str] = {
     "no_place_breakdown": "Ask again without places, or ask which sources report by state.",
     "too_many_rows": "Ask again for fewer places or a shorter span of years.",
     "no_sex_split": "Ask again without sex.",
-    "index_not_built": "Search PubMed for the condition and place in the meantime.",
+    "not_in_research_index": "Ask again without dataset, or with a source of the research index.",
+    "bad_years": "Ask again with one year (2023) or a range (2020-2024).",
     "no_denominator": "Use get_series for the counts, or a rate the source publishes (describe_dataset says).",
     "ambiguous_condition": "Ask again with the full label of one series as the condition.",
     "nothing_to_compare": "Ask again with other_location or other_year.",
@@ -206,6 +207,16 @@ def compile_metric(
         where.append(f"NOT coalesce(({ds.contract.total_rows}), false)")
     for name, value in (filters or {}).items():
         col = _q(dim(name))
+        sep = dims[name].separator
+        if sep is not None:
+            # A multi-valued dimension ("hiv; tuberculosis"): a row matches when any of its values is one asked for.
+            asked = list(value) if isinstance(value, list | tuple) else [value]
+            if not asked:
+                raise QueryRefused("empty_filter", f"filter {name} has no values")
+            split = f"list_transform(string_split(coalesce({col}, ''), {_lit(sep)}), lambda x: trim(x))"
+            where.append(f"list_has_any({split}, [{', '.join('?' for _ in asked)}])")
+            params.extend(str(v) for v in asked)
+            continue
         if isinstance(value, list | tuple):
             if not value:
                 raise QueryRefused("empty_filter", f"filter {name} has no values")

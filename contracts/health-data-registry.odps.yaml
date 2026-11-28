@@ -118,7 +118,7 @@ outputPorts:
   - name: cdc_nndss_weekly
     description: NNDSS weekly provisional counts of notifiable infectious diseases.
     type: tables
-    version: 0.1.0
+    version: 0.1.1
     contractId: cdc_nndss_weekly
     customProperties:
       - {property: hosted, value: true}
@@ -160,7 +160,7 @@ outputPorts:
   - name: census_county_pop
     description: Census Bureau county and state resident population estimates, the denominator for rates.
     type: tables
-    version: 0.1.0
+    version: 0.1.1
     contractId: census_county_pop
     customProperties:
       - {property: hosted, value: true}
@@ -182,7 +182,7 @@ outputPorts:
   - name: detroit_dhd_resp_ed_weekly
     description: Detroit Health Department Respiratory Virus Dashboard, weekly share of ED visits for COVID-19, influenza and RSV. Private tier, not hosted (no terms of reuse stated).
     type: tables
-    version: 0.1.0
+    version: 0.1.1
     contractId: detroit_dhd_resp_ed_weekly
     customProperties:
       - {property: hosted, value: false}
@@ -190,7 +190,7 @@ outputPorts:
   - name: detroit_dhd_covid_archive_daily
     description: Detroit Health Department COVID-19 Archived Dashboard, daily cases by disease date, 2020-2026. Private tier, not hosted (no terms of reuse stated).
     type: tables
-    version: 0.1.0
+    version: 0.1.1
     contractId: detroit_dhd_covid_archive_daily
     customProperties:
       - {property: hosted, value: false}
@@ -198,7 +198,7 @@ outputPorts:
   - name: mdhhs_measles_county
     description: MDHHS Measles Tracking Dashboard, measles cases by Michigan county. Private tier, not hosted (no terms of reuse stated).
     type: tables
-    version: 0.1.0
+    version: 0.1.1
     contractId: mdhhs_measles_county
     customProperties:
       - {property: hosted, value: false}

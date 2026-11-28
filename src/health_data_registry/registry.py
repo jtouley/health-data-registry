@@ -1033,6 +1033,20 @@ class Dimension(_Strict):
     non_additive: bool | None = None
     # Why the values can't be added, in plain clinical words: refusals and describe_dataset show it to clinicians.
     non_additive_reason: str | None = None
+    # A multi-valued dimension: one row holds several values joined by this separator ("hiv; tuberculosis", our
+    # own rule-based tags). A filter matches a row holding any value asked for; a row counts under each of its
+    # values, so the values overlap and are never added across.
+    separator: str | None = Field(default=None, min_length=1, max_length=4)
+
+    @model_validator(mode="after")
+    def _multi_valued(self) -> Dimension:
+        if self.separator is not None and self.type != "categorical":
+            raise ValueError(f"dimension {self.name}: only a categorical dimension can hold several values")
+        if self.separator is not None and self.non_additive is False:
+            raise ValueError(
+                f"dimension {self.name}: a row counts under each of its values, so they overlap (non_additive)"
+            )
+        return self
 
     @model_validator(mode="after")
     def _reason_goes_with_flag(self) -> Dimension:
@@ -1194,6 +1208,13 @@ class GenericSeries(_Strict):
         return Series(condition=label, label=label, **fields)
 
 
+class Entity(_Strict):
+    name: str = Field(pattern=r"^[a-z][a-z0-9_]{1,62}$")
+    type: Literal["primary", "foreign"]
+    columns: list[str] = Field(min_length=1, max_length=8)
+    description: str = Field(min_length=1)
+
+
 class SemanticModel(_Strict):
     dataset: str
     version: str
@@ -1203,6 +1224,9 @@ class SemanticModel(_Strict):
     series: list[Series] = Field(default_factory=list)
     # Templates for any catalogued condition label (catalog conditions.labels), pinned on conditions.dimension.
     generic_series: list[GenericSeries] = Field(default_factory=list)
+    # The things a row stands for, by key columns (dbt semantic-layer entities): a primary entity is unique per row,
+    # and a foreign one names a primary entity of another model, so two models join only on a declared key.
+    entities: list[Entity] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _rules(self) -> SemanticModel:
@@ -1732,7 +1756,52 @@ def load_registry(root: Path | None = None) -> Registry:
         ds = load_dataset(root, path)
         datasets[ds.id] = ds
     _check_hosts_agree(datasets.values())
+    _check_entities(datasets.values())
     return Registry(root=root, datasets=datasets)
+
+
+def _check_entities(datasets: Iterable[Dataset]) -> None:
+    """Every entity's columns are contract columns; a primary entity is the contract's primary key, declared once
+    across the registry; a foreign entity names a primary entity of another model, on the same number of columns.
+    A join between two models is then only ever on a declared key."""
+    primary: dict[str, tuple[str, int]] = {}
+    datasets = list(datasets)
+    for ds in datasets:
+        keys = [
+            str(p["name"])
+            for obj in ds.contract.raw.get("schema") or []
+            for p in obj.get("properties") or []
+            if p.get("primaryKey")
+        ]
+        for ent in ds.semantic.entities:
+            missing = [c for c in ent.columns if c not in ds.contract.column_names]
+            if missing:
+                raise RegistryError(
+                    f"{ds.id}: entity {ent.name} names {', '.join(missing)}, not contract columns"
+                )
+            if ent.type == "primary":
+                if sorted(ent.columns) != sorted(keys):
+                    raise RegistryError(
+                        f"{ds.id}: primary entity {ent.name} must be the contract's primary key ({', '.join(keys)})"
+                    )
+                if ent.name in primary:
+                    raise RegistryError(
+                        f"entity {ent.name} is primary in both {primary[ent.name][0]} and {ds.id}; one model owns it"
+                    )
+                primary[ent.name] = (ds.id, len(ent.columns))
+    for ds in datasets:
+        for ent in ds.semantic.entities:
+            if ent.type != "foreign":
+                continue
+            owner = primary.get(ent.name)
+            if owner is None or owner[0] == ds.id:
+                raise RegistryError(
+                    f"{ds.id}: foreign entity {ent.name} names no other model's primary entity"
+                )
+            if owner[1] != len(ent.columns):
+                raise RegistryError(
+                    f"{ds.id}: foreign entity {ent.name} has {len(ent.columns)} columns, {owner[0]}'s has {owner[1]}"
+                )
 
 
 def _check_hosts_agree(datasets: Iterable[Dataset]) -> None:

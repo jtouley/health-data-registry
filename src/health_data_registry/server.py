@@ -358,12 +358,13 @@ def build_server(
         dataset: str | None = None,
         fmt: Fmt = "csv",
     ) -> Out:
-        """Conference abstracts, case reports and health department reports on a condition, with the datasets
-        each used. (The index is not built yet; the tool says so rather than guessing.)"""
+        """Conference abstracts on a condition (CROI, IDWeek, SHEA, APIC, ICID), each with its link and where it
+        was read from, plus how fully each year is indexed. A year not fully indexed is never reported as no match.
+        years: "2023" or "2020-2024"."""
         return safe(
             "find_prior_work",
             lambda: tools.find_prior_work(reg, condition=condition, geography=geography, years=years,
-                                          dataset=dataset, fmt=fmt),
+                                          dataset=dataset, lake=eng.lake, fmt=fmt),
             fmt,
         )  # fmt: skip
 

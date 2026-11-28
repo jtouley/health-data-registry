@@ -485,7 +485,9 @@ def test_changed_models_carry_a_new_version() -> None:
     reg = load_registry(ROOT)
     for ds_id in ("cdc_haicviz_cdi", "cdc_respnet"):
         assert reg.get(ds_id).semantic.version == "0.2.0", ds_id
-    assert reg.get("cdc_nndss_weekly").semantic.version == "0.3.0"  # weeks non-additive, '-' never 0 (#173)
+    assert (
+        reg.get("cdc_nndss_weekly").semantic.version == "0.3.1"
+    )  # 0.3.0: weeks non-additive (#173); 0.3.1: C. auris case status (#299)
     for ds_id in ("detroit_dhd_epi_annual", "detroit_dhd_resp_ed_weekly"):
         assert reg.get(ds_id).semantic.version == "0.1.1", ds_id
 

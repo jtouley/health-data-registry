@@ -32,7 +32,7 @@ layer because it checks the same catalog and semantic layer the tools use.
 | Module | Role |
 |---|---|
 | `server.py` | The MCP server over stdio; registers the tools and helper prompts; turns any failure into a plain-words refusal |
-| `tools.py` | `list_sources`, `search_datasets`, `describe_dataset`, `suggest_datasets`, `get_series`, `get_aligned_with_gbd`, `get_rate`, `get_provenance`, `list_caveats`, `find_prior_work` ("index not built yet"), `query_sql`; CSV by default |
+| `tools.py` | `list_sources`, `search_datasets`, `describe_dataset`, `suggest_datasets`, `get_series`, `get_aligned_with_gbd`, `get_rate`, `get_provenance`, `list_caveats`, `find_prior_work` (prior_work.py: the research index, with per-year coverage), `query_sql`; CSV by default |
 | `helpers.py` | The clinician helpers, one per step from setup to pitch, served as MCP prompts; [helpers.md](helpers.md) is generated from it |
 | `registry.py` | Loads and cross-checks `catalog/<id>.yaml`, `contracts/<id>.odcs.yaml` (ODCS v3.2.0) and `semantic/<id>.yaml` |
 | `query.py` | The read path: attaches snapshots read-only, compiles semantic-model metrics to SQL, runs guarded SQL, wraps every answer with its provenance |

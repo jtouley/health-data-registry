@@ -1,0 +1,113 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: croi_abstracts_text
+name: CROI conference abstracts (abstract text)
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "The text of every abstract in croi_abstracts_index, kept only in the private store so find_prior_work can match a search against it; it is never shown, and the link opens it on CROI's site."
+  usage: "Read only by the server, joined to croi_abstracts_index on the croi_abstract entity (abstract number and year). Never published, never in git."
+  limitations: "(c) CROI Foundation, personal non-commercial use: private tier only. Poster PDFs and figures are never copied."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://www.croiconference.org/search-abstracts/", description: "CROI's abstract search (read 2026-11-24)"}
+servers:
+  - id: croiconference_org
+    server: www.croiconference.org
+    type: custom
+    format: html
+    location: https://www.croiconference.org/search-abstracts/
+    description: "Server-rendered search listing (10 results a page, with its own total) and one page per abstract, crawled by the html_table listing shape at CROI's own pace (at least 120 s between requests), resumable, complete only at the listing's total."
+schema:
+  - name: croi_abstracts_text
+    physicalName: croi_abstracts_text
+    physicalType: table
+    logicalType: object
+    description: "One row per CROI abstract per meeting year."
+    dataGranularityDescription: "abstract number x meeting year"
+    customProperties:
+      - {property: totalRows, value: none, description: "A list of abstracts: no total rows."}
+      - {property: tableShape, value: registry}
+      - property: idDimensions
+        value: {condition: null, caseDefinition: null, caseStatus: null, organismResistance: null, period: [year], provisionalFlag: null}
+        description: "Abstracts, not case counts: no condition label, case definition or status. Period is the meeting year."
+    quality:
+      - id: one_row_per_abstract
+        type: sql
+        dimension: uniqueness
+        severity: error
+        description: "The key: one row per abstract number and meeting year (numbers restart each year)."
+        query: "SELECT COUNT(*) FROM (SELECT abstract_number, year FROM {object} GROUP BY abstract_number, year HAVING COUNT(*) > 1)"
+        mustBe: 0
+      - id: one_page_per_abstract
+        type: sql
+        dimension: uniqueness
+        severity: error
+        description: "Each abstract page is read once: two rows from one page would be one abstract counted twice."
+        query: "SELECT COUNT(*) FROM (SELECT page_url FROM {object} GROUP BY page_url HAVING COUNT(*) > 1)"
+        mustBe: 0
+    properties:
+      - name: abstract_number
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "The number CROI gives the abstract or electronic poster in its programme (e.g. 957), from the page's sidebar; numbers restart each meeting, so read it with the year."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: abstract_number}
+      - name: year
+        physicalType: INTEGER
+        logicalType: integer
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "The year of the CROI meeting where the work was presented, from the listing year the crawl read it under (the page's own link carries the same year, which the crawl checks); not the year it was later published."
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: year}
+          - {property: mayBeEmpty, value: true}
+      - name: abstract_text
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The abstract's text as CROI's page shows it. (c) CROI Foundation, personal non-commercial use: private tier only, used to match a search and never shown."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: abstract_text}
+      - name: page_url
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The abstract's page on CROI's site: read the abstract and its poster there."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: document_url}
+      - name: page_sha256
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Fingerprint (sha256) of the exact page bytes this row was read from (hard rule 8)."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: document_sha256}
+      - name: retrieved_at
+        physicalType: TIMESTAMP
+        logicalType: timestamp
+        required: true
+        description: "When the page was read from CROI's site (UTC)."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: document_retrieved_at}
+customProperties:
+  - {property: tier, value: private}
+  - {property: redistribution, value: false}
+  - {property: citation, value: "Conference on Retroviruses and Opportunistic Infections (CROI) <year>, abstract <abstract_number>. <page_url>"}
+  - {property: refresh, value: annual}
+  - {property: geographyBasis, value: "not applicable: abstracts, not counts by place"}
+  - {property: unreliableRule, value: {kind: none, description: "Not applicable: no counts or rates."}}
+  - {property: storedFrom, value: croi_abstracts_index, description: "Filled by croi_abstracts_index's crawl (crawl-private croi_abstracts_index): each page is read once and its text projected here, its metadata there."}
+  - property: openQuestions
+    value:
+      - "Whether a short excerpt may be shown to a clinician with the link: CROI allows personal, non-commercial use, and the hosted server answers many people, so none is shown until the maintainer decides."

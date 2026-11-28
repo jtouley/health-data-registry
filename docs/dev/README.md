@@ -290,8 +290,8 @@ bytes, hash-addressed → contract-driven normalise → snapshot + manifest → 
 The MCP surface (`server.py`):
 
 - **Tools** (all read-only): `list_sources`, `search_datasets`, `describe_dataset`, `suggest_datasets`,
-  `get_series`, `get_aligned_with_gbd`, `get_rate`, `get_provenance`, `list_caveats`, `find_prior_work` (returns
-  "index not built yet") and `query_sql`, the guarded escape hatch. Results are CSV by default; `fmt="json"` gives
+  `get_series`, `get_aligned_with_gbd`, `get_rate`, `get_provenance`, `list_caveats`, `find_prior_work` (the research
+  index's private stores, with per-year coverage) and `query_sql`, the guarded escape hatch. Results are CSV by default; `fmt="json"` gives
   structured output.
 - **Helpers** (MCP prompts): `start_here`, `research_story`, `scope_an_area`, `find_opportunities`,
   `refine_hypothesis`, `build_story`, `help_me_fix_it`, `walk_me_through_install`, `set_up_my_project`; the same

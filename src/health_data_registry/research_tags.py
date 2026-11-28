@@ -12,16 +12,25 @@ from __future__ import annotations
 
 import re
 
+# Acronyms that are also everyday words ("state of the art", "bowel prep", "a pep talk", "STI" in prose) tag only
+# when written in capitals, as abstracts print them: `(?-i:...)` turns off the case-blind match for that one
+# pattern (issue #53). Everything else matches in any case.
 CONDITION_RULES: dict[str, tuple[str, ...]] = {
-    "hiv": (r"\bhiv\b", r"\bpwh\b", r"\bplwh\b", r"antiretroviral", r"\bart\b"),
-    "hiv_prevention": (r"\bprep\b", r"pre-exposure prophylaxis", r"\bpep\b", r"lenacapavir", r"cab-la"),
+    "hiv": (r"\bhiv\b", r"\bpwh\b", r"\bplwh\b", r"antiretroviral", r"(?-i:\bART\b)"),
+    "hiv_prevention": (
+        r"(?-i:\bP[Rr][Ee]P\b)",
+        r"pre-exposure prophylaxis",
+        r"(?-i:\bPEP\b)",
+        r"lenacapavir",
+        r"cab-la",
+    ),
     "hepatitis_b": (r"hepatitis b", r"\bhbv\b"),
     "hepatitis_c": (r"hepatitis c", r"\bhcv\b"),
-    "tuberculosis": (r"tuberculosis", r"\btb\b", r"mycobacterium"),
+    "tuberculosis": (r"tuberculosis", r"(?-i:\bTB\b)", r"mycobacterium"),
     "covid19": (r"covid", r"sars-cov-2"),
     "mpox": (r"\bmpox\b", r"monkeypox"),
     "syphilis": (r"syphilis",),
-    "stis": (r"gonorr", r"chlamydia", r"sexually transmitted", r"\bsti\b"),
+    "stis": (r"gonorr", r"chlamydia", r"sexually transmitted", r"(?-i:\bSTIs?\b)"),
     "cryptococcal": (r"cryptococ",),
     "hpv": (r"\bhpv\b", r"papillomavirus", r"anal cancer", r"cervical cancer"),
     "cmv": (r"\bcmv\b", r"cytomegalovirus"),
@@ -101,3 +110,14 @@ def tag_record(title: str, text: str | None) -> dict[str, str]:
         "data_source_tags": tags(DATA_SOURCE_RULES, words),
         "geography_tags": tags(GEOGRAPHY_RULES, words, case_sensitive=_CASE_SENSITIVE_PLACES),
     }
+
+
+def query_tags(rules: dict[str, tuple[str, ...]], text: str) -> list[str]:
+    """The tags a clinician's own search words name, in any case: the capitals-only acronym rules (``(?-i:...)``)
+    are read case-blind here, so "prep" or "tb" typed in a question still finds PrEP and TB abstracts."""
+    hits = []
+    for tag, patterns in rules.items():
+        loose = [re.sub(r"^\(\?-i:(.*)\)$", r"\1", p) for p in patterns]
+        if any(re.search(p, text, re.I) for p in loose):
+            hits.append(tag)
+    return sorted(hits)

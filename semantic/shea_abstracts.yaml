@@ -1,5 +1,5 @@
 dataset: shea_abstracts
-version: 0.1.0
+version: 0.1.1
 dimensions:
 - name: doi
   column: doi
@@ -16,18 +16,22 @@ dimensions:
 - name: condition
   column: condition_tags
   type: categorical
+  separator: '; '
   description: Conditions named, by our word rules.
 - name: design
   column: design_tags
   type: categorical
+  separator: '; '
   description: Study designs named, by our word rules.
 - name: data_source
   column: data_source_tags
   type: categorical
+  separator: '; '
   description: Kinds of data named, by our word rules.
 - name: geography
   column: geography_tags
   type: categorical
+  separator: '; '
   description: Countries and regions named, by our word rules.
 measures: []
 metrics: []

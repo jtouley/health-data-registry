@@ -272,7 +272,8 @@ WORKFLOWS: tuple[Workflow, ...] = (
                 "Check it's new: search PubMed (and OpenEvidence if I have it), then this public health data "
                 "tool's find_prior_work for abstracts, case reports and health department reports PubMed misses. "
                 "List what has been done (title, year, venue, link) and say where the gap is. If a tool isn't "
-                "connected or its index isn't built yet, say so plainly instead of guessing.",
+                "connected, say so plainly instead of guessing. find_prior_work says how fully each conference year is "
+                "indexed: a year still being indexed is not 'no match'; say so.",
                 ("find_prior_work",),
             ),
             Step(

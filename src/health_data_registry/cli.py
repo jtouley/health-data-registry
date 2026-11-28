@@ -122,6 +122,27 @@ def gate(a: Any) -> int:
     return 0 if ok else 1
 
 
+def crawl_private_cli(registry: Registry, dataset: str, *, max_requests: int | None, lake: Path) -> int:
+    """One slice of a private-tier listing crawl; 0 when it ran (complete or not), 1 when it was refused."""
+    from health_data_registry.private_crawl import NotCrawlable, crawl_private
+    from health_data_registry.registry import UnknownDataset
+
+    if max_requests is not None and max_requests < 1:
+        print("FAIL --max-requests is at least 1", file=sys.stderr)
+        return 1
+    try:
+        ds = registry.get(dataset)
+        summary = crawl_private(
+            registry, dataset, lake, _fetcher(registry, FetchLog(lake, ds.id)), max_requests=max_requests
+        )
+    except (NotCrawlable, UnknownDataset) as e:
+        print(f"FAIL {dataset}: {e}", file=sys.stderr)
+        return 1
+    for line in summary.lines():
+        print(line)
+    return 0
+
+
 def validate_schemas(root: Path) -> int:
     """Every product and contract against Bitol's vendored ODPS and ODCS schemas; prints each problem, returns how
     many there were."""
@@ -375,6 +396,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     ev.add_argument("--sealed", type=Path, default=Path("eval/sealed"))
     ev.add_argument("--run", type=Path, default=None, help="JSON lines of a client's answers")
     _add_analysis_commands(sub)
+    cp = sub.add_parser(
+        "crawl-private",
+        help="crawl one slice of a private-tier listing source (e.g. croi_abstracts_index) into its private store",
+    )
+    cp.add_argument("dataset")
+    cp.add_argument(
+        "--max-requests", type=int, default=None, help="new item pages this slice (default: until complete)"
+    )
     hd = sub.add_parser(
         "harvest-doi",
         help="harvest one conference year's abstracts by DOI (Crossref, OpenAlex, Europe PMC) into its private store",
@@ -458,6 +487,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_analysis(registry, a)
     if a.cmd == "check-contracts":
         return check_contracts(registry)
+    if a.cmd == "crawl-private":
+        return crawl_private_cli(registry, a.dataset, max_requests=a.max_requests, lake=lake_root())
     if a.cmd == "harvest-doi":
         return harvest_doi(
             registry, a.conference, year=a.year, max_records=a.max_records, enrich=not a.no_enrich,

@@ -140,6 +140,7 @@ def _load() -> None:
     """Import every extension module once, so each registers itself."""
     from health_data_registry.adapters.extensions import (
         header_row_finder,
+        page_fields,
         period_header_parser,
         printed_facts,
         wide_to_long,
@@ -147,6 +148,7 @@ def _load() -> None:
 
     del (
         header_row_finder,
+        page_fields,
         period_header_parser,
         printed_facts,
         wide_to_long,

@@ -1,0 +1,78 @@
+id: croi_abstracts_index
+title: CROI conference abstracts (metadata index)
+agency: CROI Foundation
+publisher: "Conference on Retroviruses and Opportunistic Infections (CROI Foundation; organised with IAS-USA)"
+level: international
+country: null
+research_areas: [infectious_disease, research_landscape]
+id_areas: [hiv, stis, hepatitis, tb]
+years: {start: 2022, end: null}
+geography: [world]
+shape: registry
+grain: "One row is one CROI abstract in one conference year (abstract number plus year): its heading, authors and session as CROI prints them, links to its page and poster on CROI's site, and our own rule-based tags. No abstract text."
+refresh: annual
+licence:
+  # Abstract text is (c) CROI Foundation, for personal, non-commercial use. Whether the metadata may be shared is
+  # not stated: private tier until the maintainer confirms (ADR 0009). Never in a public release.
+  id: croi-metadata-index
+  redistribution: false
+  terms_url: https://www.croiconference.org/
+hosting: private
+private_store: true
+citation: "Conference on Retroviruses and Opportunistic Infections (CROI) <year>, abstract <abstract_number>: <heading>. <page_url> (accessed <retrieved_at>)."
+source:
+  type: html_table
+  host: www.croiconference.org
+  dataset: search-abstracts
+  landing_url: https://www.croiconference.org/search-abstracts/
+  api_url: https://www.croiconference.org/search-abstracts/
+  # CROI's robots.txt asks for 120 s between requests (read 24 Nov 2026); the floor here can only slow the crawl,
+  # and a longer Crawl-delay there wins. About 47 hours for a year of ~1,400 abstracts, resumed across runs.
+  min_interval_s: 120
+  scope_paths:
+    - '/search-abstracts/(?:page/[0-9]+/)?'
+    - '/abstract/[a-z0-9][a-z0-9-]*-20[0-9]{2}(?:-[a-z]+)?/'
+  html_table:
+    shape: listing
+    listing:
+      url_template: 'https://{host}/search-abstracts/page/{page}/?aa=&at=&an=&sn=&kw=&yr={year}&st=&q=1'
+      years: {first: 2022, last: 2026}
+      page_size: 10
+      first_page: 1
+      max_pages: 300
+      item_link_selector: 'h3.entry-title > a'
+      item_path_pattern: '/abstract/[a-z0-9][a-z0-9-]*-(20[0-9]{2})(?:-[a-z]+)?/'
+      item_year_group: 1
+      results_count_selector: 'p.abstract-search-results-count'
+      results_count_pattern: '\s*([0-9][0-9,]*)\s+Results?\s*'
+      item_number:
+        link_text_pattern: '\s*([A-Za-z0-9][A-Za-z0-9.-]*)\s+[–—-]\s+.+'
+        field: abstract_number
+        field_pattern: '\s*([A-Za-z0-9][A-Za-z0-9.-]*)\s*'
+      fields:
+        heading: 'h1.entry-title'
+        abstract_text: 'article.abstract div.entry-content'
+  extensions:
+    - name: page_fields
+      hook: parse
+      args:
+        labelled:
+          block_selector: 'div.abstract-sidebar-content'
+          heading_selector: 'h4'
+          value_selector: 'div.abstract-sidebar-text'
+          fields: {abstract_number: Abstract Number, session_title: Session Title, authors: Authors}
+        links:
+          poster_url: {selector: 'a[href]', title: Download Poster}
+        class_slugs:
+          session_type: {selector: 'article.abstract', prefix: 'abstract-session-type-'}
+          category: {selector: 'article.abstract', prefix: 'abstract-category-'}
+codebook_url: https://www.croiconference.org/search-abstracts/
+caveats:
+  - "A metadata index: abstract text is (c) CROI Foundation, for personal, non-commercial use, and posters are linked, never copied. Read each abstract and poster on CROI's site through its link."
+  - "Kept in this source's private store only, until the maintainer confirms the metadata may be shared; never in a public release."
+  - "Condition, design, data-source and geography tags come from fixed word rules over the heading and text, not from a model; a missing tag doesn't mean the topic is absent."
+  - "An abstract is not a peer-reviewed paper; many are never published in full."
+  - "Crawled at CROI's own pace (at least 120 s between requests). A year counts as indexed only when every abstract CROI's listing counts has been read; until then find_prior_work names the year as incomplete and never reports 'no match' for it."
+contract: contracts/croi_abstracts_index.odcs.yaml
+semantic_model: semantic/croi_abstracts_index.yaml
+status: draft
