@@ -290,6 +290,12 @@ snapshots stay raw inputs that builds read by hash (hard rule 15).
 - **`dim_condition` holds every condition label and alias** a source uses, tied to its GBD cause and crosswalk
   concept, including clinical abbreviations (TB, HCV, MRSA). Aliases route questions only; they never change a
   number.
+- **Synonyms and label crosswalks are declared in the contracts and translated in dbt.** Each source's contract
+  maps its labels to the shared ontology terms, quoting the publisher's own label text, as `renamedLabels` already
+  does for a label the publisher renamed. `make contracts` (`transform_gen.derived_columns`) generates the
+  translation into the intermediate renamed-labels models, and dbt tests it: every label maps, and every target is
+  an ontology term. The semantic models, the router and `resolve_terms` read only the translated terms from the
+  dbt-built ontology. No synonym list lives in routing code.
 - **Coverage is declared in each contract** as a typed `coverage` block (#223): kind, places with `valid_from` and
   `valid_to`, the denominator, and the publisher page that states it. It replaces `geographyBasis` prose and
   #185's untyped `conformedDimensions`. `registry.py` validates it and fails the load on a bad key. dbt builds it
@@ -310,7 +316,8 @@ snapshots stay raw inputs that builds read by hash (hard rule 15).
 |---|---|
 | `geo.py` | Reads `dim_place`; Puerto Rico becomes a territory |
 | `registry.py` | `CatalogEntry.geography` is removed; `Contract.geography_basis` gives way to a typed `coverage` block |
-| `catalog/*.yaml` | `geography` is dropped; condition labels and aliases feed `dim_condition` |
+| `catalog/*.yaml` | `geography` is dropped; condition labels and aliases move into the contracts' label mappings |
+| `transform_gen.py` | Generates each source's label translation into its intermediate model, with its dbt tests |
 | `contracts/*.odcs.yaml`, `contracts/models/` | Each source gains `coverage`; each conformed dimension and coverage model gets a contract |
 | `transform/models/marts/` | The six conformed dimensions, `dim_dataset_coverage`, `fct_dataset_place_year_coverage` |
 | `tools.py`, `analysis.py` | Read the coverage fact instead of `e.geography` |
@@ -323,7 +330,8 @@ snapshots stay raw inputs that builds read by hash (hard rule 15).
 2. `dim_place` and its contract, and the test that every `geo` key exists in it. `geo.py` reads it.
 3. Territories become their own level. This changes what some answers call Puerto Rico, so the pull request
    lists every answer that changes.
-4. `dim_condition`, `dim_measure`, `dim_population_group` and `dim_source`, with the crosswalk export.
+4. Label mappings in the contracts, generated into the intermediate models with their tests; then
+   `dim_condition`, `dim_measure`, `dim_population_group` and `dim_source`, with the crosswalk export.
 5. Coverage blocks per source, each citing its publisher page. A place not stated there is `unknown` and an open
    question (hard rule 1).
 6. The coverage models (#223), and the readers move onto them. The live gate moves into `Engine._obtain` (#248).
@@ -387,7 +395,8 @@ snapshots stay raw inputs that builds read by hash (hard rule 15).
 - **`isError` follows the MCP specification.** A decline the model can fix (a bad or missing argument, a label
   that does not exist) is `isError: true`, with the fix. A qualified fallback answer and "no data here" are
   answers, `isError: false`. System refusals stay `isError: true` with their next step.
-- **A `resolve_terms` tool** reads the ontology (`dim_condition`, `dim_place`, `dim_measure`). For the words given
+- **A `resolve_terms` tool** reads the dbt-built ontology (`dim_condition`, `dim_place`, `dim_measure`), the same
+  translated terms the router reads. For the words given
   it returns every candidate across conditions, pathogens, places and measures, with its type, level, how it
   matched (alias, crosswalk, abbreviation), its coverage, and the exact next call. "Legionnaires disease" finds the
   condition label and the pathogen; "Valley fever" finds coccidioidomycosis. The client can confirm a reading
