@@ -21,7 +21,14 @@ import duckdb
 from health_data_registry import coverage, geo
 from health_data_registry.deadline import DeadlineExceeded
 from health_data_registry.paging import paged, respond
-from health_data_registry.query import Engine, QueryRefused, next_step_for
+from health_data_registry.query import (
+    DEFAULT_NEXT_STEP,
+    SQL_NEXT_STEP,
+    SQL_NEXT_STEPS,
+    Engine,
+    QueryRefused,
+    next_step_for,
+)
 from health_data_registry.registry import Dataset, Registry, Series, UnknownDataset, norm_label, spelling_key
 
 Fmt = Literal["csv", "json"]
@@ -1725,8 +1732,9 @@ def unlisted_condition_labels(registry: Registry, engine: Engine) -> dict[str, l
             continue
         try:
             values = engine.distinct_values(ds.id, ds.semantic.dimension(dim).column)
-        except QueryRefused:
-            out[ds.id] = None
+        except QueryRefused as e:
+            # A local copy that failed its checks is reported (validate must not pass over it); no copy is None.
+            out[ds.id] = f"its local snapshot could not be read: {e}" if e.code == "lake_unverified" else None
             continue
         except (duckdb.Error, OSError) as e:
             out[ds.id] = (
@@ -1735,6 +1743,9 @@ def unlisted_condition_labels(registry: Registry, engine: Engine) -> dict[str, l
             continue
         out[ds.id] = sorted({str(v) for v in values} - set(ds.condition_labels))
     return out
+
+
+SQL_OTHER_TOOLS = "The other tools (get_series, describe_dataset) can usually answer the same question."
 
 
 def query_sql(
@@ -1773,16 +1784,16 @@ def _query_sql(engine: Engine, sql: str, fmt: Fmt) -> Result | Out:
                 + _listed([ds.entry.source.landing_url for ds in private], "or")
                 + f". For published papers, {SEARCH_PUBMED}.",
             )
-        return message(
-            f"That query can't run: {e} The other tools (get_series, describe_dataset) can usually answer the "
-            "same question.",
-            fmt,
-            refused=code,
-            # A sum rule's refusal gives only the reason; its own next step says what to ask instead.
-            next_step=next_step_for(code)
-            if code in _SUM_RULE_CODES
-            else "Use get_series, get_rate or describe_dataset, which answer most questions without SQL.",
-        )
+        # A refusal with a next step of its own (too_large, too_slow, lake_unverified, a sum rule's, ...) keeps
+        # it; the others point to the tools that answer most questions without SQL.
+        if code in _SUM_RULE_CODES:
+            step = next_step_for(code)
+        elif isinstance(e, SqlRefused):
+            step = SQL_NEXT_STEPS.get(code, SQL_NEXT_STEP)
+        else:
+            step = SQL_NEXT_STEP if e.next_step == DEFAULT_NEXT_STEP else e.next_step
+        tail = "" if code == "lake_unverified" else " " + SQL_OTHER_TOOLS
+        return message(f"That query can't run: {e}{tail}", fmt, refused=code, next_step=step)
     sources = [out["source"]] if out.get("source") else list(out.get("sources") or [])
     notes = [f"SQL run: {out['sql']}", f"Method: {out['method']}"]
     for src in sources:  # every table the query read, never only the first

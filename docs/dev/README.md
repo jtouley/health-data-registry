@@ -54,7 +54,10 @@ whose licence allows redistribution to the open data hub (cards, licence text, P
 `HF_TOKEN` only for an `hf://` target. `validate` loads and cross-checks every catalog entry, contract and
 semantic model.
 
-The lake lives at `$HDR_LAKE` (default `./lake`, ignored by git), partitioned by source and run date
+The lake lives at `$HDR_LAKE` when it is set to a full path, else in a per-user data folder (Linux
+`$XDG_DATA_HOME` or `~/.local/share`, macOS `~/Library/Application Support`, Windows `%LOCALAPPDATA%`, then
+`health-data-registry/lake`); never in the folder the tool is started from. Set `HDR_LAKE=$PWD/lake` to keep a
+repo-local lake (`lake/` is ignored by git). It is partitioned by source and run date
 (`datasets/<id>/run_date=<date>/<snapshot>/`), with raw bytes under `raw/<sha256>` and one fetch-log row per
 attempt under `fetch_log/source=<id>/`. `refresh --max-rows N` takes a development sample and marks the snapshot
 partial. The lake is for maintainers and CI: the server reads a hosted source from the hub release in `$HDR_HUB`
