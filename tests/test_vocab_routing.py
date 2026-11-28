@@ -131,9 +131,16 @@ def test_real_catalogs_list_every_named_series_condition() -> None:
         if ds.entry.conditions.dimension is None:
             continue
         assert ds.entry.conditions.source.strip()
-        missing = {s.condition for s in ds.semantic.series} - set(ds.condition_labels)
+        # A series that answers only when asked with its words (asked_with: vaccination coverage, a percent of
+        # deaths) is reached by its own condition and label, never by the bare disease label, so it names itself.
+        plain = [s for s in ds.semantic.series if not s.asked_with]
+        missing = {s.condition for s in plain} - set(ds.condition_labels)
         assert not missing, (ds.id, missing)
-        assert ds.semantic.generic_series, ds.id
+        assert ds.semantic.generic_series or not plain, ds.id
+        for s in ds.semantic.series:
+            if s.asked_with:
+                words = set(norm_label(s.condition).split())
+                assert any(set(norm_label(w).split()) <= words for w in s.asked_with), (ds.id, s.condition)
 
 
 def test_every_real_catalogued_label_compiles_with_its_aggregation_rule() -> None:
@@ -142,8 +149,12 @@ def test_every_real_catalogued_label_compiles_with_its_aggregation_rule() -> Non
     reg = load_registry(ROOT)
     checked = 0
     for ds in reg:
+        gated = [s for s in ds.semantic.series if s.asked_with]
         for label in ds.condition_labels:
             found = tools.series_for(reg, label, source_id=ds.id)
+            if not found and gated and not ds.semantic.generic_series:
+                # Only gated series: the bare label gets nothing (by design); each series' own condition does.
+                found = [x for s in gated for x in tools.series_for(reg, s.condition, source_id=ds.id)]
             assert found, (ds.id, label)
             for _, s in found:
                 metric = ds.semantic.metric(s.metric)
@@ -245,6 +256,8 @@ def test_real_nndss_generic_label_reads_running_total_at_one_week(tmp_path: Path
         nndss("KANSAS", "2", m3="9", week=51, label="Tularemia"),
         nndss("KANSAS", "1", m3="10", week=52, label="Tularemia"),
         nndss("US RESIDENTS", "1", summary=True, m3="10", week=52, label="Tularemia"),
+        # A full load has flag codes; with none, the codebook rule would have nothing to judge and block LATEST.
+        nndss("DISTRICT OF COLUMBIA", None, flag="-", week=52),
     ]
     reg = load_registry(ROOT)
     lake = tmp_path / "lake"
@@ -573,6 +586,9 @@ def test_nearest_served_skips_a_state_row_that_leaves_out_part_of_the_state(tmp_
     rows = [
         nndss("NEW YORK", "2", m3="9", label="Tularemia"),
         nndss("KANSAS", "1", m3="5", label="Tularemia"),
+        nndss(
+            "DISTRICT OF COLUMBIA", None, flag="-"
+        ),  # a flag code, so the codebook rule has a value to judge
     ]
     reg = load_registry(ROOT)
     lake = tmp_path / "lake"

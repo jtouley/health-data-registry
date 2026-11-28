@@ -20,6 +20,14 @@ vars:
   # The MMWR years the calendar covers (contracts/models/mmwr_calendar.odcs.yaml).
   mmwr_first_year: 2015
   mmwr_last_year: 2030
+  # What the near-zero review queue looks at (contracts/models/flag_near_zero_running_totals.odcs.yaml): never a
+  # number in an answer.
+  near_zero_ytd_max: 1
+  near_zero_prior_year_min: 10
+  # dbt_date's clock, which dbt-expectations' freshness test reads (expect_row_values_to_have_recent_data): UTC,
+  # the zone every snapshot id's retrieval time is written in (store.py). It is project-wide: any later dbt_date
+  # use (an MMWR calendar, say) inherits UTC, so set a local zone there explicitly if one is meant.
+  "dbt_date:time_zone": "UTC"
 
 models:
   health_data_registry:
@@ -28,13 +36,17 @@ models:
     staging:
       +materialized: table
       +schema: staging
+    # Intermediate models only add columns beside staging, so they are views: no second copy of every source.
+    intermediate:
+      +materialized: view
+      +schema: intermediate
     reference:
       +materialized: table
       +schema: reference
-    # Business rules (total rows, renamed labels, partial places, conformed keys) and review queues.
-    intermediate:
+    # Review queues: each flag_* model lists rows a maintainer should look at and removes nothing.
+    flag:
       +materialized: table
-      +schema: intermediate
+      +schema: flag
     # Dimensions and one fact per source; metrics read them.
     marts:
       +materialized: table

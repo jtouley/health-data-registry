@@ -41,6 +41,28 @@ schema:
           period: [season, date]
           provisionalFlag: null
         description: "Condition is the virus network (COVID-NET, FluSurv-NET, RSV-NET, Combined). The dataset description says all counted hospitalizations are laboratory-confirmed, so there is one case status and no status column. No organism subtype or resistance field. Period is season plus week-ending date. No provisional column."
+    quality:
+      - id: rows_raw_to_staging
+        type: custom
+        engine: dbt-expectations
+        implementation: {check: row_count_matches, model: staging, compare: raw}
+        dimension: consistency
+        severity: error
+        description: "Staging has exactly as many rows as the raw load it types: staging drops and adds no row (an exact structural fact of the generated staging model)."
+      - id: rows_staging_to_intermediate
+        type: custom
+        engine: dbt-expectations
+        implementation: {check: row_count_matches, model: intermediate, compare: staging}
+        dimension: consistency
+        severity: error
+        description: "The intermediate model has exactly as many rows as staging: it only adds columns beside each staging row (an exact structural fact). It guards the generated intermediate model, which today is a view with no join, filter or aggregation, so it checks our code, not the publisher's data; it becomes a reconciliation of the data once a mart can change the grain (#131)."
+      - id: load_within_refresh
+        type: custom
+        engine: dbt-expectations
+        implementation: {check: load_within_sla, model: staging, sla: frequency}
+        dimension: timeliness
+        severity: warn
+        description: "The latest load is no older than the weekly cadence in slaProperties frequency. It times our copy, not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold."
     properties:
       - name: surveillance_network
         physicalType: VARCHAR
@@ -146,16 +168,23 @@ schema:
           - {property: role, value: measure}
           - {property: sourceField, value: estimate}
           - {property: unit, value: "see estimate_type: /100000 or %"}
+slaProperties:
+  - {property: frequency, value: 1, unit: w, driver: analytics}
 customProperties:
   - {property: licence, value: public-domain-us-federal}
   - {property: licenceSource, value: "Socrata metadata licence 'Public Domain U.S. Government', https://www.usa.gov/government-works"}
   - {property: citation, value: "RESP-NET: Respiratory Virus Hospitalization Surveillance Network, Centers for Disease Control and Prevention. https://data.cdc.gov/d/kvib-3txy. Accessed on <date>."}
   - {property: refresh, value: weekly}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "Each refresh stores the complete table as a dated, append-only load. Incremental loading (only rows new or changed since the last load) waits for a reviewed row key and the publisher's update field."
   - {property: geographyBasis, value: "RESP-NET site catchment areas (dataset geographic coverage: RESP-NET Sites); the counties in each site are not listed in the dataset"}
   - {property: rateDenominator, value: "the catchment-area population of each site per 100,000; which census estimates and vintage are not stated (see openQuestions)"}
   - {property: unreliableRule, value: {kind: none, description: "None stated in the dataset metadata: no rate is marked unreliable or suppressed for small numbers."}}
   - property: openQuestions
     value:
+      - "Freshness: the publisher's own last-update time is not stored, so load_within_refresh times our latest load against the weekly cadence (slaProperties frequency), not the publisher's update. The weekly refresh fetches every source into an empty lake, so there the load is minutes old and the check passes; it says something about the data only once it times the publisher's update. Store the publisher's update time (e.g. Socrata rowsUpdatedAt) in the snapshot manifest, then check that instead."
+      - "Freshness grace: how long past the weekly cadence should a load count as stale? Nothing the publisher states sets a grace period, so load_within_refresh warns at exactly the cadence. With the warning at exactly the cadence, one missed weekly refresh warns only if this run reaches the test later in the day than last week's load was stamped, so a single miss is caught only some of the time. Maintainer to decide."
       - "Which counties make up each state's catchment area, and how have they changed by season? The RESP-NET methods pages (www.cdc.gov) were not fetched."
       - "What populations are the denominators (which census estimates, which vintage)?"
       - "Age-adjusted rates: which standard population? Needed before any comparison with GBD (GBD world standard)."

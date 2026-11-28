@@ -16,7 +16,24 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
+
+from health_data_registry.source_config import (
+    BLOCK_REQUIRED,
+    CONFIG_MODELS,
+    LEGACY_FIELDS,
+    PORTAL_TYPES,
+    REQUIRED_LEGACY,
+    ExtensionUse,
+    HtmlTableConfig,
+    HttpsFileConfig,
+    ODataConfig,
+    PdfTableConfig,
+    SocrataConfig,
+    Strict,
+    TypeName,
+    safe_pattern,
+)
 
 _ID = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
 _SQL_IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
@@ -48,8 +65,8 @@ class UnknownDataset(KeyError):
         return str(self.args[0]) if self.args else "unknown dataset"
 
 
-class _Strict(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+# Every catalog model is strict (unknown keys refused, frozen): one base, shared with the adapter config blocks.
+_Strict = Strict
 
 
 # --------------------------------------------------------------------------------------------- catalog
@@ -60,15 +77,47 @@ class Years(_Strict):
     end: int | None = None
 
 
+# Creative Commons Attribution (any version) and CC0 text may be shared publicly (owner decision, 24 Nov 2026),
+# but only with full attribution on every record and every result: who wrote it, what it is called, where it was
+# published, the DOI link and the licence. ATTRIBUTION_FIELDS names those five, in that order.
+ATTRIBUTION_LICENCES = frozenset({"cc-by", "cc0"})
+ATTRIBUTION_FIELDS: tuple[str, ...] = ("authors", "title", "journal", "doi_url", "licence")
 # Licence ids a maintainer has reviewed as allowing a public mirror (ADR 0009). Any other id with
 # redistribution: true is refused, so one boolean can never put restricted data on the public hub.
-REDISTRIBUTABLE_LICENCES = frozenset({"public-domain-us-federal"})
+REDISTRIBUTABLE_LICENCES = frozenset({"public-domain-us-federal"}) | ATTRIBUTION_LICENCES
+
+
+class AttributionMissing(ValueError):
+    """A CC BY or CC0 record lacks a field its attribution needs, so it may not be shared publicly."""
+
+
+class Attribution(_Strict):
+    """Which column holds each attribution field, for a source whose licence requires attribution."""
+
+    authors: str
+    title: str
+    journal: str
+    doi_url: str
+    licence: str
+
+
+def require_attribution(record: Mapping[str, Any], columns: Attribution) -> None:
+    """Refuse (AttributionMissing) a record that lacks any attribution field; a blank value is missing."""
+    missing = [f for f in ATTRIBUTION_FIELDS if not str(record.get(getattr(columns, f)) or "").strip()]
+    if missing:
+        raise AttributionMissing(
+            "this record can't be shared publicly: its licence requires attribution and it has no "
+            + ", ".join(m.replace("_", " ") for m in missing)
+        )
 
 
 class Licence(_Strict):
     id: str
     redistribution: bool
     terms_url: str
+    # Required when redistribution is true under an attribution licence (cc-by, cc0): the columns that carry
+    # each attribution field on every record.
+    attribution: Attribution | None = None
 
     @model_validator(mode="after")
     def _reviewed(self) -> Licence:
@@ -76,6 +125,11 @@ class Licence(_Strict):
             raise ValueError(
                 f"licence {self.id} is not on the reviewed list of licences that allow a public copy "
                 f"({', '.join(sorted(REDISTRIBUTABLE_LICENCES))}); set redistribution: false"
+            )
+        if self.redistribution and self.id in ATTRIBUTION_LICENCES and self.attribution is None:
+            raise ValueError(
+                f"licence {self.id} allows a public copy only with attribution on every record: name the "
+                f"columns for {', '.join(ATTRIBUTION_FIELDS)} under licence.attribution"
             )
         return self
 
@@ -99,6 +153,78 @@ class WideToLong(_Strict):
 
 class Reshape(_Strict):
     wide_to_long: WideToLong
+
+
+_DOI = re.compile(r"^10\.\d{4,9}/\S+$")
+_ISSN = re.compile(r"^\d{4}-\d{3}[\dX]$")
+
+
+class Supplement(_Strict):
+    """One conference year's abstracts in a journal, as Crossref lists them (doi portal only; doi_abstracts.py).
+
+    Every field is an exact structural fact read from Crossref's own metadata for the journal (volume, issue,
+    page prefix, DOI prefix, publication month), each a filter a record must pass to belong to the year.
+    Which conference year a supplement holds is a maintainer's declaration, cited in ``evidence``.
+    """
+
+    year: int  # the conference year, not the publication year
+    issn: str
+    volume: str
+    issue: str | None = None  # Crossref's issue value, e.g. Supplement_1 or S1; None when Crossref gives none
+    page_prefix: str | None = None  # e.g. "S": supplement pages, when the issue is shared with regular papers
+    doi_prefix: str | None = None  # e.g. 10.1093/ofid/ofaf695.
+    # A regular expression the whole lower-case DOI must match, when one prefix can't say it: e.g. a year whose
+    # abstracts sit under several article DOIs, beside the section DOIs ("Oral abstracts") that aren't abstracts.
+    doi_pattern: str | None = None
+    exclude_dois: list[str] = Field(
+        default_factory=list
+    )  # items of the same supplement that are not abstracts
+    from_pub_date: str  # Crossref from-pub-date filter, YYYY-MM-DD
+    until_pub_date: str
+    evidence: str  # where the supplement-to-conference mapping comes from
+    # abstract: one DOI per abstract. congress: one DOI for the whole abstract book (one record per year).
+    granularity: Literal["abstract", "congress"] = "abstract"
+    # by_licence: keep text where the article licence allows (doi_abstracts.abstract_tier). link_only: never keep
+    # text, whatever an API says (e.g. a subscriber-only supplement): metadata and the DOI link only.
+    text_policy: Literal["by_licence", "link_only"] = "by_licence"
+    # False until a real sample harvest has shown the route (ISSN, filters, licences) answers as catalogued; an
+    # unverified year harvests one record at most (a route check), never a full year. Which conference year a
+    # supplement holds stays the maintainer's to confirm (an open question in the contract) either way.
+    verified: bool = False
+
+    @field_validator("issn")
+    @classmethod
+    def _issn(cls, v: str) -> str:
+        if not _ISSN.fullmatch(v):
+            raise ValueError("issn must look like 1234-567X")
+        return v
+
+    @field_validator("from_pub_date", "until_pub_date")
+    @classmethod
+    def _date(cls, v: str) -> str:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+            raise ValueError("publication dates are YYYY-MM-DD")
+        return v
+
+    @field_validator("doi_pattern")
+    @classmethod
+    def _pattern(cls, v: str | None) -> str | None:
+        if v is not None:
+            try:
+                re.compile(v)
+            except re.error as e:
+                raise ValueError(f"doi_pattern is not a regular expression: {e}") from e
+            if v != v.lower():
+                raise ValueError("doi_pattern matches lower-case DOIs, so write it in lower case")
+        return v
+
+    @field_validator("exclude_dois")
+    @classmethod
+    def _dois(cls, v: list[str]) -> list[str]:
+        bad = [d for d in v if not _DOI.fullmatch(d) or d != d.lower()]
+        if bad:
+            raise ValueError(f"not lower-case DOIs: {', '.join(bad)}")
+        return v
 
 
 class TableauView(_Strict):
@@ -171,7 +297,16 @@ def is_government_host(host: str) -> bool:
 
 
 class Source(_Strict):
-    portal: Literal["socrata", "who_gho", "https_csv", "tableau"]
+    """Where and how a source is read: its adapter type, that type's config block, and the shared settings.
+
+    ``type`` names one adapter type (source_config.TYPE_NAMES); ``portal`` is its older name, read for one release
+    (``who_gho`` means ``odata``). An entry gives one of the two, never both. A type's own settings go in a block
+    named after it (``https_file: {...}``), checked by that type's strict config model; a block or a legacy field
+    of another type is refused, so each setting has one place.
+    """
+
+    portal: Literal["socrata", "who_gho", "https_csv", "tableau", "doi"] | None = None
+    type: TypeName | None = None
     host: str
     dataset: str
     landing_url: str
@@ -180,17 +315,61 @@ class Source(_Strict):
     reshape: Reshape | None = None  # https_csv only
     tableau: Tableau | None = None  # tableau only: the views and worksheets read
     # A government host (only a host on the reviewed list GOVERNMENT_HOST_SUFFIXES / GOVERNMENT_DOMAINS): by the
-    # maintainer's access policy a robots.txt disallow there does not stop the crawler (the pacing, the honest
-    # user agent and every other rule still apply). Default false: robots.txt is honoured in full.
+    # maintainer's access policy a robots.txt disallow there does not stop the crawler, nor (owner decision,
+    # 25 Nov 2026) does a 401, 403 or 429 on its robots.txt: the crawl goes on with the honest user agent and at
+    # least 10 s between requests, and the override is recorded. Default false: robots.txt is honoured in full,
+    # and a 401/403/429 on it blocks the host for the run. A 401/403/429 on a data page blocks every host.
     government_host: bool = False
     # The host answers only a real browser (browser_fetch.py): Tableau Server views, michigan.gov behind Akamai.
     browser: bool = False
+    # doi only: the conference years, and the other bibliographic APIs read for the same DOIs (OpenAlex, Europe
+    # PMC). Every host fetched is named here, so the fetcher's allowlist stays the catalog's.
+    supplements: list[Supplement] = Field(default_factory=list)
+    enrich_hosts: list[str] = Field(default_factory=list)
+    # doi only: the conference's short key (``harvest-doi <conference>``) and its name on every row.
+    conference: str | None = None
+    conference_name: str | None = None
+    # The type blocks (ADR 0016): at most one, the one named by the source's type.
+    socrata: SocrataConfig | None = None
+    odata: ODataConfig | None = None
+    https_file: HttpsFileConfig | None = None
+    html_table: HtmlTableConfig | None = None
+    pdf_table: PdfTableConfig | None = None
+    # Named extensions this source opts in to (adapters.extensions.EXTENSIONS), in the order they run.
+    extensions: list[ExtensionUse] = Field(default_factory=list)
+    # A slower pace for this source than the access policy's own (e.g. a site whose terms ask for 120 s). It can
+    # only slow the crawl: the core waits the longest of this, 10 s on paced hosts, robots.txt's Crawl-delay or
+    # Request-rate, and an API's published rate.
+    min_interval_s: float | None = Field(default=None, gt=0, le=3_600, allow_inf_nan=False)
+    # Paths on this source's own host it may fetch beyond its catalogued URLs (index links, listing items), each
+    # matched whole against the normalised path. Empty: only the catalogued URLs and paths under them.
+    scope_paths: list[str] = Field(default_factory=list)
 
     @field_validator("host")
     @classmethod
     def _lower_host(cls, v: str) -> str:
         if not re.fullmatch(r"[a-z0-9.-]+", v):
             raise ValueError("host must be a bare lower-case DNS name")
+        return v
+
+    @property
+    def kind(self) -> str:
+        """The adapter type this source is read by (``type``, or the type its older ``portal`` name means)."""
+        if self.type is not None:
+            return self.type
+        return PORTAL_TYPES[str(self.portal)]
+
+    @property
+    def hosts(self) -> frozenset[str]:
+        """The hosts this one source is fetched from: its publisher host and, for a doi source, its enrich hosts."""
+        return frozenset((self.host, *self.enrich_hosts))
+
+    @field_validator("enrich_hosts")
+    @classmethod
+    def _lower_hosts(cls, v: list[str]) -> list[str]:
+        for h in v:
+            if not re.fullmatch(r"[a-z0-9.-]+", h):
+                raise ValueError("enrich_hosts must be bare lower-case DNS names")
         return v
 
     @field_validator("api_url", "landing_url")
@@ -200,14 +379,50 @@ class Source(_Strict):
             raise ValueError("publisher URLs must be https")
         return v
 
+    @field_validator("scope_paths")
+    @classmethod
+    def _scope(cls, v: list[str]) -> list[str]:
+        return [safe_pattern(p) for p in v]
+
+    @field_validator("conference")
+    @classmethod
+    def _conference(cls, v: str | None) -> str | None:
+        if v is not None and not re.fullmatch(r"[a-z][a-z0-9_]{1,30}", v):
+            raise ValueError("a doi source names its conference key (lower case, e.g. idweek)")
+        return v
+
+    @field_validator("supplements")
+    @classmethod
+    def _years_once(cls, v: list[Supplement]) -> list[Supplement]:
+        years = [s.year for s in v]
+        if len(set(years)) != len(years):
+            raise ValueError("a doi source lists each conference year once")
+        return v
+
+    def config(self) -> Strict:
+        """This source's type config: its block, or the type's defaults when it gives none."""
+        block = getattr(self, self.kind) if self.kind in TYPE_BLOCKS else None
+        return block if isinstance(block, Strict) else CONFIG_MODELS[self.kind]()
+
     @model_validator(mode="after")
-    def _csv_only(self) -> Source:
-        if self.portal != "https_csv" and (self.reshape is not None or self.encoding != "utf-8"):
-            raise ValueError("encoding and reshape apply only to the https_csv portal")
-        if (self.portal == "tableau") != (self.tableau is not None):
+    def _type_settings(self) -> Source:
+        if (self.portal is None) == (self.type is None):
             raise ValueError(
-                "a tableau source lists its views (tableau.views), and only a tableau source does"
+                "a source names its adapter type once: type (or, for one more release, portal), not both or neither"
             )
+        kind = self.kind
+        for name in TYPE_BLOCKS:
+            if name != kind and getattr(self, name) is not None:
+                raise ValueError(f"the {name} block applies only to type {name}; this source is type {kind}")
+        if kind in BLOCK_REQUIRED and getattr(self, kind) is None:
+            raise ValueError(f"a {kind} source gives its settings in a {kind} block")
+        for name, owner in LEGACY_FIELDS.items():
+            default = Source.model_fields[name].get_default(call_default_factory=True)
+            if owner != kind and getattr(self, name) != default:
+                raise ValueError(f"{name} applies only to type {owner}; this source is type {kind}")
+        missing = [name for name in REQUIRED_LEGACY.get(kind, ()) if not getattr(self, name)]
+        if missing:
+            raise ValueError(f"a {kind} source gives {', '.join(missing)}")
         if self.government_host and not is_government_host(self.host):
             raise ValueError(
                 f"government_host is accepted only for hosts on the reviewed list of government suffixes and "
@@ -218,7 +433,18 @@ class Source(_Strict):
                 re.compile(self.reshape.wide_to_long.key_pattern)
             except re.error as e:
                 raise ValueError(f"reshape key_pattern is not a valid pattern: {e}") from e
+        from health_data_registry.adapters.extensions import check_uses
+
+        check_uses(kind, self.extensions)
+        if self.reshape is not None and any(u.hook == "staging" for u in self.extensions):
+            raise ValueError(
+                "a source reshapes its file once: the older reshape block (on load) or a staging extension, not both"
+            )
         return self
+
+
+# The type blocks on Source: one per adapter type with settings of its own.
+TYPE_BLOCKS: tuple[str, ...] = ("socrata", "odata", "https_file", "html_table", "pdf_table")
 
 
 class GbdCause(_Strict):
@@ -241,6 +467,15 @@ Shape = Literal[
     "registry",
     "wide_indicators",
 ]
+
+
+# Where a source's rows may live (ADR 0009, licences decide mirroring); CatalogEntry.tier. Whether the open data
+# release carries a public-tier source's files is a separate, reviewed choice (CatalogEntry.hosting).
+#   public   redistribution allowed: snapshotted in the lake (published only when `hosting: public`)
+#   live     redistribution forbidden: read from the publisher per question, in memory only, never stored
+#   private  redistribution forbidden, `private_store: true`: kept only in that source's own private store
+#            (lake/private/<id>/ locally, one private Hugging Face dataset per source for the hosted server)
+Tier = Literal["public", "live", "private"]
 
 
 # The hub's infectious-disease areas: one Hugging Face collection per area, and a tag on each dataset card.
@@ -344,6 +579,25 @@ class CatalogEntry(_Strict):
     # Whether the open data release may carry this source's data files. Private unless a maintainer's reviewed
     # catalog change says public; only `hosting: public` is planned by the weekly refresh or published.
     hosting: Literal["public", "private"] = "private"
+    # Where the rows live when the licence forbids redistribution: unset, they are read live from the publisher
+    # per question (live.py); true, they are kept only in the source's own private store (private.py), never in
+    # the public lake or a release. Needs `hosting: private` and a licence that forbids redistribution.
+    private_store: bool = False
+
+    @property
+    def tier(self) -> Tier:
+        """Where the rows may live (Tier)."""
+        if self.private_store:
+            return "private"
+        return "public" if self.licence.redistribution else "live"
+
+    @model_validator(mode="after")
+    def _private_store_is_restricted(self) -> CatalogEntry:
+        if self.private_store and (self.licence.redistribution or self.hosting == "public"):
+            raise ValueError(
+                "private_store is for sources whose licence forbids redistribution (and hosting: private)"
+            )
+        return self
 
     @field_validator("id")
     @classmethod
@@ -389,11 +643,16 @@ class Column:
     partial_places: tuple[tuple[str, str], ...] = ()
     # Labels the publisher renamed between years: (later label, the earlier label it continues).
     renamed_labels: tuple[tuple[str, str], ...] = ()
-    # The flag code the publisher's codebook defines as "no reported cases" (NNDSS: '-'): an empty count with it
-    # is read as zero, labelled so; it is never stored as a number (hard rule 1).
+    # The flag code the publisher's codebook defines as "no reported cases" (NNDSS: '-'). An empty count with it
+    # has no number and keeps that meaning: never counted as 0, added up or turned into a rate (issue #173).
     no_cases_code: str | None = None
+    # Condition labels whose counts are not new cases of disease in the population (NNDSS: C. auris screening,
+    # which counts colonisation found by screening), each with the reason in plain words: (label, why). Declared
+    # on the condition column; get_rate, compare_rates and get_trend on rates give no rate per 100,000 for them.
+    not_incidence: tuple[tuple[str, str], ...] = ()
     # customProperties.mayBeEmpty: true when the contract says this field can be absent or empty in a whole
-    # load (e.g. a field the publisher leaves empty in every row). Every other declared field must appear.
+    # load (e.g. a field the publisher leaves empty in every row). Every other declared field must appear, and
+    # it gets no fill-rate check (quality.fill_rate_rules).
     may_be_empty: bool = False
 
     def partial_note(self, label: str) -> str | None:
@@ -413,9 +672,20 @@ class Column:
         return names.get(label_key(label), str(label))
 
 
+# The edge characters label_key trims, in Python and in SQL alike: space, tab, newline, vertical tab, form feed,
+# carriage return. str.strip() with no argument also trims other Unicode spaces, which DuckDB's trim() does not.
+LABEL_EDGE = " \t\n\v\f\r"
+
+
 def label_key(text: str) -> str:
-    """A publisher label compared ignoring case, edge spaces and dots (U.S. RESIDENTS = US RESIDENTS)."""
-    return str(text).strip().upper().replace(".", "")
+    """A publisher label compared ignoring case, edge whitespace and dots (U.S. RESIDENTS = US RESIDENTS)."""
+    return str(text).strip(LABEL_EDGE).upper().replace(".", "")
+
+
+def label_key_sql(expr: str) -> str:
+    """DuckDB SQL computing label_key of `expr` (an SQL expression): the same edge characters, case and dots."""
+    edge = " || ".join(["' '", *(f"chr({ord(c)})" for c in LABEL_EDGE[1:])])
+    return f"regexp_replace(upper(trim(CAST({expr} AS VARCHAR), {edge})), '[.]', '', 'g')"
 
 
 UNRELIABLE_KINDS = ("none", "min_count", "max_relative_ci_width", "publisher_suppressed")
@@ -464,6 +734,59 @@ def _unreliable(value: Any, where: str) -> UnreliableSpec:
     return UnreliableSpec(kind, desc, t)
 
 
+LOAD_MODES = ("snapshot", "incremental")
+
+
+@dataclass(frozen=True)
+class RawLoad:
+    """How a source lands in raw (contract property rawLoad). Raw is append-only either way.
+
+    snapshot: every fetch stores the complete table, dated (sources with no update keys: dashboards, files).
+    incremental: planned, not supported yet. A fetch would store only rows new or changed since the last load,
+    found by the publisher's own update field (e.g. Socrata's :updated_at), and staging would keep the latest
+    version of each row by `key` (required contract columns). Staging keeps only the newest load today, so a
+    contract declaring it is refused when the registry loads rather than serving only the last delta.
+    """
+
+    mode: str = "snapshot"
+    key: tuple[str, ...] = ()
+    updated_field: str | None = None
+    declared: bool = False
+
+
+def _raw_load(value: Any, where: str, columns: frozenset[str], required: frozenset[str]) -> RawLoad:
+    if value is None:
+        return RawLoad()
+    if not isinstance(value, Mapping) or value.get("mode") not in LOAD_MODES:
+        raise RegistryError(f"{where}: rawLoad needs mode: snapshot or incremental")
+    if value["mode"] == "snapshot":
+        if value.get("key") or value.get("updatedField"):
+            raise RegistryError(f"{where}: a snapshot load takes no key or updatedField")
+        return RawLoad(declared=True)
+    key = tuple(str(k) for k in value.get("key") or ())
+    updated = str(value.get("updatedField") or "").strip()
+    if not key or not updated:
+        raise RegistryError(
+            f"{where}: an incremental load needs key (the reviewed row identity, contract columns) and updatedField "
+            "(the publisher's own update field)"
+        )
+    unknown = [k for k in key if k not in columns]
+    if unknown:
+        raise RegistryError(f"{where}: rawLoad key names unknown column {unknown[0]}")
+    optional = [k for k in key if k not in required]
+    if optional:
+        raise RegistryError(
+            f"{where}: rawLoad key column {optional[0]} must be required: a row with no key can't be matched "
+            "to its earlier version"
+        )
+    # Staging keeps only the newest load, so an incremental load would serve just the last delta: refused until
+    # staging keeps the latest version of each row by key.
+    raise RegistryError(
+        f"{where}: rawLoad mode incremental is declared but not supported yet (staging keeps only the newest "
+        "load); declare mode: snapshot"
+    )
+
+
 @dataclass(frozen=True)
 class Contract:
     """The subset of an ODCS v3 contract the server relies on. `raw` keeps the whole document."""
@@ -482,6 +805,12 @@ class Contract:
     geography_basis: str | None = None
     # The population a published rate divides by, in plain words.
     rate_denominator: str | None = None
+    # The contract's quality rules (quality.Rule), run on every snapshot and live read and as named dbt tests.
+    quality: tuple[Any, ...] = ()
+    # The contract's dbt-expectations checks (dq_checks.Check): reconciliation, freshness and value ranges, run as
+    # named dbt tests in the transform build only.
+    checks: tuple[Any, ...] = ()
+    raw_load: RawLoad = field(default_factory=RawLoad)
 
     @property
     def unreliable_rule(self) -> str:
@@ -516,7 +845,7 @@ def _custom(props: Any) -> dict[str, Any]:
     return out
 
 
-_PAIR_PROPS = ("flagCodes", "partialPlaces", "renamedLabels")
+_PAIR_PROPS = ("flagCodes", "partialPlaces", "renamedLabels", "notIncidence")
 
 
 def _pairs(value: Any, where: str) -> tuple[tuple[str, str], ...]:
@@ -614,6 +943,7 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
                 flag_codes=pairs["flagCodes"],
                 partial_places=pairs["partialPlaces"],
                 renamed_labels=pairs["renamedLabels"],
+                not_incidence=pairs["notIncidence"],
                 no_cases_code=None if zero is None else str(zero),
                 may_be_empty=may_be_empty,
             )
@@ -638,7 +968,33 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
         unreliable=_unreliable(top_custom.get("unreliableRule"), expected_id),
         geography_basis=_text(top_custom.get("geographyBasis")),
         rate_denominator=_text(top_custom.get("rateDenominator")),
+        quality=_quality(doc, expected_id),
+        checks=_checks(doc, expected_id),
+        raw_load=_raw_load(
+            top_custom.get("rawLoad"),
+            expected_id,
+            frozenset(names),
+            frozenset(c.name for c in cols if c.required),
+        ),
     )
+
+
+def _quality(doc: Mapping[str, Any], where: str) -> tuple[Any, ...]:
+    from health_data_registry.quality import QualityRuleInvalid, parse_rules
+
+    try:
+        return parse_rules(doc, where)
+    except QualityRuleInvalid as e:
+        raise RegistryError(str(e)) from e
+
+
+def _checks(doc: Mapping[str, Any], where: str) -> tuple[Any, ...]:
+    from health_data_registry.dq_checks import CheckInvalid, parse_checks
+
+    try:
+        return parse_checks(doc, where)
+    except CheckInvalid as e:
+        raise RegistryError(str(e)) from e
 
 
 def _text(value: Any) -> str | None:
@@ -733,6 +1089,17 @@ class Metric(_Strict):
     single_value_of: list[str] = Field(default_factory=list)
 
 
+def _check_asked_with(words: list[str]) -> list[str]:
+    """Each asked_with entry must hold a word: an empty or punctuation-only entry would match every question
+    and so turn the gate off."""
+    empty = [w for w in words if not norm_label(w)]
+    if empty:
+        raise ValueError(
+            f"asked_with entries {empty!r} hold no word, so they would let every question through"
+        )
+    return words
+
+
 SeriesMeasure = Literal["cases", "deaths", "rate", "percent", "estimate", "population"]
 
 
@@ -759,6 +1126,16 @@ class Series(_Strict):
     week_dimension: str | None = None
     # An age-specific series (age_adjust): counts or populations split by this age-group dimension.
     age_dimension: str | None = None
+    # Words of which a question must use at least one for this series to answer it, e.g. "vaccination" and
+    # "coverage" for a vaccination coverage series, or "deaths" for a percent of deaths. Such a figure names a
+    # disease but is not a measure of the disease itself, so a plain disease question ("COVID-19 in Ohio") never
+    # gets it unasked. Empty: any question that names the series' condition.
+    asked_with: list[str] = Field(default_factory=list)
+
+    @field_validator("asked_with")
+    @classmethod
+    def _asked_with_words(cls, v: list[str]) -> list[str]:
+        return _check_asked_with(v)
 
     def held_dimensions(self) -> list[str]:
         """The dimensions each answer row of this series holds at one value: filtered to one value
@@ -792,6 +1169,12 @@ class GenericSeries(_Strict):
     case_definition: str | None = None
     week_dimension: str | None = None
     age_dimension: str | None = None
+    asked_with: list[str] = Field(default_factory=list)  # as on Series
+
+    @field_validator("asked_with")
+    @classmethod
+    def _asked_with_words(cls, v: list[str]) -> list[str]:
+        return _check_asked_with(v)
 
     def bind(self, label: str, dimension: str | None) -> Series:
         """The series for one publisher label: the template with `dimension` filtered to exactly that label."""
@@ -849,6 +1232,23 @@ class SemanticModel(_Strict):
                 )
             _check_uncertainty(metric, m, measures)
         dims = {d.name: d for d in self.dimensions}
+        # A running total kept within each period (cumulative_latest's order_by) makes that dimension one whose
+        # per-period counts never add up to the period (late reports reach only the running total): the model
+        # declares it non_additive, and every such metric names the same one (query.within_period reads it).
+        within = {
+            str(m.order_by) for m in self.metrics if m.aggregation == "cumulative_latest" and m.order_by
+        }
+        if len({dims[w].column for w in within}) > 1:
+            raise ValueError(
+                "cumulative_latest metrics keep running totals along different columns "
+                f"({', '.join(sorted(within))}); order them all by one"
+            )
+        for w in within:
+            if not dims[w].non_additive:
+                raise ValueError(
+                    f"dimension {w}: a cumulative_latest metric keeps a running total along it, so counts never "
+                    "add up across it; declare non_additive: true with a non_additive_reason"
+                )
         summed = [m.name for m in self.metrics if m.aggregation == "sum"]
         undeclared = [d.name for d in self.dimensions if d.non_additive is None]
         declared = len(undeclared) < len(self.dimensions)
@@ -1020,6 +1420,17 @@ class Dataset:
         """Why this label's counts are not cases in people (so no rate per 100,000 people), or None."""
         return self.entry.conditions.not_a_human_case_count.get(label)
 
+    def not_incidence(self, label: str) -> str | None:
+        """Why this publisher label's counts are not new cases of disease (so no rate per 100,000 people), or None.
+
+        Read only from the contract's notIncidence on the condition column, never guessed from the label's words.
+        """
+        dim = self.entry.conditions.dimension
+        if dim is None:
+            return None
+        column = self.contract.column(self.semantic.dimension(dim).column)
+        return dict(column.not_incidence).get(label)
+
     def condition_series(self, label: str) -> list[Series]:
         """Series for one catalogued label: the generic templates pinned to it, or, for a dataset that is one
         condition throughout (no condition dimension), its own named series."""
@@ -1061,6 +1472,8 @@ class Registry:
 
     @property
     def hosts(self) -> frozenset[str]:
+        """Every source's own publisher host: the allowlist of every fetcher but a DOI harvest's. A doi source's
+        enrich_hosts are left out, so they are reachable only from that harvest's fetcher (Source.hosts)."""
         return frozenset(d.entry.source.host for d in self.datasets.values())
 
 
@@ -1097,6 +1510,14 @@ def load_dataset(root: Path, entry_path: Path) -> Dataset:
         if not p.is_file():
             raise RegistryError(f"{entry.id}: missing {p.relative_to(root)}")
     contract = parse_contract(_yaml(contract_path), expected_id=entry.id)
+    if contract.checks and not entry.licence.redistribution:
+        # dbt-expectations checks run only in the dbt build, which reads stored sources (transform_gen.stored):
+        # on a live or restricted source such a check would be accepted and never run.
+        raise RegistryError(
+            f"{entry.id}: dbt-expectations checks run only in the dbt build, which reads stored sources, and "
+            f"{entry.licence.id} keeps this source out of the lake; declare a library or sql quality rule, "
+            "which runs on every live read"
+        )
     try:
         semantic = SemanticModel.model_validate(_yaml(semantic_path))
     except ValidationError as e:
@@ -1175,6 +1596,15 @@ def check_predicate(sql: str, columns: frozenset[str], *, where: str) -> None:
 def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticModel) -> None:
     if semantic.dataset != entry.id:
         raise RegistryError(f"{entry.id}: semantic model names dataset {semantic.dataset!r}")
+    top = _custom(contract.raw.get("customProperties"))
+    if "redistribution" in top and bool(top["redistribution"]) != entry.licence.redistribution:
+        raise RegistryError(f"{entry.id}: the contract and the catalog disagree on redistribution")
+    if "tier" in top and top["tier"] != entry.tier:
+        raise RegistryError(
+            f"{entry.id}: the contract says tier {top['tier']!r} but the catalog says {entry.tier!r}"
+        )
+    if entry.tier == "private" and top.get("tier") != "private":
+        raise RegistryError(f"{entry.id}: a private-store source's contract must say tier: private too")
     cols = contract.column_names
     if contract.total_rows:
         check_predicate(contract.total_rows, cols, where=f"{entry.id}: totalRows")
@@ -1222,11 +1652,64 @@ def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticMode
                 "overlap or count different things; filter each to one value"
             )
     _check_additive_needs_totals_excluded(entry.id, contract, semantic)
+    _check_load_metadata(entry, contract)
     for c in contract.columns:
         if c.flag_for is not None and c.flag_for not in cols:
             raise RegistryError(f"{entry.id}: {c.name} flags unknown column {c.flag_for}")
         if c.flag_codes and c.flag_for is None:
             raise RegistryError(f"{entry.id}: {c.name} lists flagCodes but flags no column (flagFor)")
+        if c.not_incidence:
+            label_col = dims[cond.dimension].column if cond.dimension in dims else None
+            if c.name != label_col:
+                raise RegistryError(
+                    f"{entry.id}: {c.name} declares notIncidence, which belongs on the condition column "
+                    f"({label_col or 'none: the catalog names no conditions.dimension'})"
+                )
+            unknown = [label for label, _ in c.not_incidence if label not in cond.labels]
+            if unknown:
+                raise RegistryError(
+                    f"{entry.id}: notIncidence names {unknown[0]!r}, which is not in the catalog's conditions.labels"
+                )
+
+
+def _check_load_metadata(entry: CatalogEntry, contract: Contract) -> None:
+    """What the adapter adds to each row, and the grain a staging step makes, are declared in the contract up front
+    (hard rule 15, ADR 0016): a type that adds per-row metadata (a document's provenance; ``failed_checks`` when
+    the source reconciles) needs a contract column reading each, typed; and a staging step that adds to the grain
+    (wide_to_long's ``key_field``) needs the contract's primary key to include it, so the staged model's
+    one-row-per-key test checks the grain the step makes instead of failing on good data."""
+    from health_data_registry.adapters import TYPES
+    from health_data_registry.adapters.extensions import resolved
+
+    by_field: dict[str, list[Column]] = {}
+    for c in contract.columns:
+        by_field.setdefault(c.source_field, []).append(c)
+    t = TYPES.get(entry.source.kind)
+    added = list(t.adds_fields) if t is not None else []
+    if getattr(entry.source.config(), "reconcile", None) is not None:
+        added.append("failed_checks")
+    missing = [f for f in added if f not in by_field]
+    if missing:
+        raise RegistryError(
+            f"{entry.id}: a {entry.source.kind} source adds {', '.join(missing)} to every row; its contract declares "
+            "a column reading each (sourceField), with its type, so the metadata is kept and typed in staging"
+        )
+    for c in by_field.get("document_retrieved_at", []) if "document_retrieved_at" in added else []:
+        if c.physical_type.upper() != "TIMESTAMP":
+            raise RegistryError(
+                f"{entry.id}: {c.name} reads document_retrieved_at, a time (UTC), so its physicalType is TIMESTAMP"
+            )
+    schema = (contract.raw.get("schema") or [{}])[0]
+    keyed = {str(p.get("name")) for p in schema.get("properties") or [] if p.get("primaryKey") is True}
+    for ext, args in resolved(entry.source.extensions, "staging"):
+        reads = list(ext.input_fields(args)) if ext.input_fields is not None else []
+        step = ext.run(args, "raw", reads)
+        for f in step.key_fields:
+            if not any(c.name in keyed for c in by_field.get(f, [])):
+                raise RegistryError(
+                    f"{entry.id}: staging extension {ext.name} makes one row per {f}, so the contract's primary key "
+                    f"includes the column reading {f}"
+                )
 
 
 def load_registry(root: Path | None = None) -> Registry:

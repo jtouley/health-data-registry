@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -12,7 +13,7 @@ from typing import Any
 import duckdb
 import pytest
 
-from health_data_registry import crawl, hub
+from health_data_registry import crawl, hub, quality
 from health_data_registry.hub import Hub, HubError
 from health_data_registry.publish import export_public
 from health_data_registry.query import Engine, QueryRefused
@@ -220,6 +221,9 @@ def test_cache_is_bounded(tmp_path: Path, reg: Registry, released: Path) -> None
     h = Hub(url=str(released), cache=cache, max_bytes=8_000)
     local, _ = h.snapshot(reg.get("toy_cases"))
     assert local.is_file() and not stale.exists()
+    assert local.stat().st_mode & 0o222 == 0  # verified copies are read-only: no query child can truncate one
+    again, _ = Hub(url=str(released), cache=cache, max_bytes=8_000).snapshot(reg.get("toy_cases"))
+    assert again == local and again.is_file()  # a fresh copy replaces a read-only one
     total = sum(p.stat().st_size for p in (cache / "hub").rglob("*") if p.is_file())
     assert total <= 8_000 or [p for p in (cache / "hub").rglob("*") if p.is_file()] == [local]
     assert hub.evict(tmp_path / "missing", 0, set()) == []
@@ -262,7 +266,11 @@ def test_remote_hub_uses_hf_download(tmp_path: Path, reg: Registry, released: Pa
         calls.append((repo, filename, kw))
         target = Path(kw["local_dir"]) / filename
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(released / filename, target)
+        part = target.with_name(
+            target.name + ".incomplete"
+        )  # as huggingface_hub does: a temp file, then a move
+        shutil.copyfile(released / filename, part)
+        part.replace(target)
         return str(target)
 
     import huggingface_hub
@@ -610,6 +618,79 @@ def test_a_bad_live_table_is_refused_for_that_source_only(
     assert eng.manifest("toy_listed").origin == "publisher" and len(calls) == 2
 
 
+def _no_result(real: Any) -> Any:
+    """The report with its first result gone, its expected list kept: that check never ran."""
+    return replace(real, results=real.results[1:])
+
+
+def _rule_error(real: Any) -> Any:
+    """The report with its first result turned into a rule error: that check could not run."""
+    return replace(
+        real, results=real.results[1:], rule_errors=({"test": real.results[0]["test"], "error": "boom"},)
+    )
+
+
+@pytest.mark.parametrize(
+    "spoil",
+    [lambda real: quality.QualityReport((), ()), _no_result, _rule_error],
+    ids=["no-result-at-all", "one-check-with-no-result", "a-check-that-could-not-run"],
+)
+def test_a_live_table_whose_checks_did_not_all_run_is_refused(
+    tmp_path: Path, reg: Registry, released: Path, monkeypatch: pytest.MonkeyPatch, spoil: Any
+) -> None:
+    """Issue #222: a live table answers with a caveat when a check fails, but never when its checks did not all
+    run, as the lake and publish paths judge the same record."""
+    from health_data_registry import staging
+
+    real = staging.run_rules
+    runs: list[int] = []
+
+    def flaky(con: Any, table: str, rules: Any) -> quality.QualityReport:
+        runs.append(1)
+        report = real(con, table, rules)
+        return spoil(report) if len(runs) == 1 else report
+
+    monkeypatch.setattr(staging, "run_rules", flaky)
+    eng = engine(reg, tmp_path, released, fetch_at_run_time=True, getter=lambda url: raw_fetch(url, RECORDS))
+    with pytest.raises(QueryRefused) as e:
+        eng.manifest("toy_listed")
+    assert e.value.code == "quality_not_run"
+    assert str(e.value) == (
+        f"{reg.get('toy_listed').entry.publisher} sent a table for toy_listed, but not all of its data checks "
+        "could run, so no numbers are shown for it. Other sources are not affected."
+    )
+    # One next step, said once: the code's own, not the generic one.
+    assert e.value.next_step == "Try again later; if it keeps happening, run the Something's wrong helper."
+    tables = {r[0] for r in eng.connect().execute("SELECT table_name FROM duckdb_tables()").fetchall()}
+    assert "toy_listed" not in tables and "toy_listed" not in eng.manifests  # dropped, not just unlisted
+    # The hub source still answers, and the next question reads the publisher afresh.
+    assert eng.manifest("toy_cases").origin == "hub"
+    assert eng.manifest("toy_listed").origin == "publisher"
+
+
+def test_a_clean_reload_clears_an_older_unchecked_refusal(
+    tmp_path: Path, reg: Registry, released: Path
+) -> None:
+    """A refusal recorded for a table that later loads cleanly never answers a later, different failure."""
+    bad = [{**RECORDS[0], "year": "not a year"}]
+    calls: list[str] = []
+
+    def get(url: str) -> Any:
+        calls.append(url)
+        return raw_fetch(url, bad if len(calls) == 2 else RECORDS)
+
+    eng = engine(reg, tmp_path, released, fetch_at_run_time=True, getter=get)
+    eng._unchecked["toy_listed"] = "an older refusal"
+    assert eng.manifest("toy_listed").origin == "publisher"
+    assert "toy_listed" not in eng._unchecked
+    eng._unchecked["toy_listed"] = "an older refusal"
+    eng.manifests.pop("toy_listed")
+    eng._live.pop("toy_listed")
+    with pytest.raises(QueryRefused) as e:  # the table that could not be read is refused for that reason
+        eng.manifest("toy_listed")
+    assert e.value.code == "publisher_bad_table" and "toy_listed" not in eng._unchecked
+
+
 def test_cache_never_evicts_a_file_a_view_reads(tmp_path: Path, reg: Registry, released: Path) -> None:
     eng = engine(reg, tmp_path, released)
     eng.manifest("toy_cases")
@@ -691,7 +772,11 @@ def test_query_sql_across_sources_keeps_every_source(tmp_path: Path, reg: Regist
     from health_data_registry import tools
 
     eng = engine(reg, tmp_path, released, fetch_at_run_time=True, getter=lambda u: raw_fetch(u, RECORDS))
-    out = tools.query_sql(eng, "SELECT year FROM toy_cases UNION ALL SELECT year FROM toy_listed", fmt="json")
+    sql = "SELECT year FROM toy_cases UNION ALL SELECT year FROM toy_listed"
+    undeclared = tools.query_sql(eng, sql, fmt="json")  # no join declared between them: refused (#74)
+    assert isinstance(undeclared, dict) and undeclared.get("refused") == "undeclared_join", undeclared
+    eng.declared_joins = frozenset({frozenset({"toy_cases", "toy_listed"})})  # as a reviewed join would be
+    out = tools.query_sql(eng, sql, fmt="json")
     assert isinstance(out, dict) and "rows" in out, out
     prov = [n for n in out["notes"] if n.startswith("Provenance for ")]
     assert [p.split(":")[0] for p in prov] == ["Provenance for toy_cases", "Provenance for toy_listed"]
@@ -791,6 +876,26 @@ def test_a_slow_release_lookup_ends_by_the_call_deadline(tmp_path: Path) -> None
     with deadline.call_deadline(0.2), pytest.raises(deadline.DeadlineExceeded):
         h.revision()
     assert time.monotonic() - start < 1.5 and h._rev is None
+
+
+def test_a_helper_that_outlives_its_call_is_a_straggler_until_it_ends() -> None:
+    """A late hub download may still write the cache: the hosted guard takes no question while one runs."""
+    import threading
+    import time
+
+    from health_data_registry import deadline
+
+    done = threading.Event()
+    base = deadline.stragglers()
+    with deadline.call_deadline(0.05), pytest.raises(deadline.DeadlineExceeded):
+        deadline.bounded(lambda: done.wait(5))
+    assert deadline.stragglers() == base + 1
+    done.set()
+    for _ in range(100):
+        if deadline.stragglers() == base:
+            break
+        time.sleep(0.01)
+    assert deadline.stragglers() == base
 
 
 def test_bounded_and_check_outside_and_inside_a_deadline(monkeypatch: Any) -> None:

@@ -1,0 +1,304 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: nchs_resp_deaths_pct
+name: Provisional Percent of Deaths for COVID-19, Influenza, and RSV by Select Characteristics
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "The provisional weekly percent of all deaths among US residents that involved COVID-19, influenza or RSV, by sex, age group and race and Hispanic origin, from the National Vital Statistics System (dataset description, https://data.cdc.gov/api/views/53g5-jf7x.json)."
+  usage: "Read one cause, week and demographic group as published, or follow one over the weeks. Never add percents; never add deaths across causes (a death can involve more than one), across demographic groups of different kinds, or into a total the table doesn't publish."
+  limitations: "National only; no all-ages or all-people row; provisional counts; counts from 1 to 9 suppressed; deaths involving a virus, not only those it caused."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://data.cdc.gov/d/53g5-jf7x", description: "Publisher dataset page"}
+    - {type: businessDefinition, url: "https://data.cdc.gov/api/views/53g5-jf7x.json", description: "Socrata metadata: dataset description, column descriptions, suggested citation and geographic unit (Nation), read 2026-11-25"}
+servers:
+  - id: data_cdc_gov
+    server: data.cdc.gov
+    type: api
+    location: https://data.cdc.gov/resource/53g5-jf7x.json
+    description: "Socrata SODA API; the adapter keeps only the columns listed in the schema."
+schema:
+  - name: nchs_resp_deaths_pct
+    physicalName: nchs_resp_deaths_pct
+    physicalType: table
+    logicalType: object
+    description: "Long table: one row per week, cause and demographic group, for US residents."
+    dataGranularityDescription: "MMWR week (its ending Saturday) x cause x demographic type x demographic group, United States"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://data.cdc.gov/api/views/53g5-jf7x.json"}
+    customProperties:
+      - property: totalRows
+        value: none
+        description: "No all-ages or all-people row: every row is one demographic group (22,176 rows on 2026-11-25: 462 weeks x 4 causes x 12 groups). The Combined cause row sits beside the single-virus rows; nothing is ever added, so no row is excluded as a total."
+      - {property: tableShape, value: surveillance_series}
+      - property: idDimensions
+        value:
+          condition: pathogen
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: null
+          period: weekending_date
+          provisionalFlag: provisional
+        description: "Condition is the cause in pathogen. These are deaths on death certificates, not cases, so there is no case definition or case status. Period is the week by its ending date. The provisional column marks provisional rows."
+    properties:
+      - name: data_as_of
+        physicalType: DATE
+        logicalType: date
+        required: true
+        description: "The date NCHS's counts were drawn (column 'Data as of'); the same in every row of a load."
+        examples: ["2026-11-18"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: data_as_of}
+      - name: start_date
+        physicalType: DATE
+        logicalType: date
+        required: true
+        description: "The first day of the week (column 'First date of data period')."
+        examples: ["2026-11-08"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: start_date}
+      - name: end_date
+        physicalType: DATE
+        logicalType: date
+        required: true
+        description: "The last day of the week (column 'Last date of data period')."
+        examples: ["2026-11-14"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: end_date}
+      - name: year
+        physicalType: INTEGER
+        logicalType: integer
+        required: true
+        description: "The MMWR year of reporting (column 'Year of reporting')."
+        examples: [2026]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: year}
+      - name: month
+        physicalType: INTEGER
+        logicalType: integer
+        required: true
+        description: "The month of reporting (column 'Month of reporting')."
+        examples: [11]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: month}
+      - name: mmwr_week
+        physicalType: INTEGER
+        logicalType: integer
+        required: true
+        description: "The MMWR week of reporting, 1 to 53 (column 'MMWR week of reporting')."
+        examples: [46]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: mmwr_week}
+      - name: weekending_date
+        physicalType: DATE
+        logicalType: date
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "The Saturday that ends the week of reporting (column 'Week-ending date for the week of reporting')."
+        examples: ["2026-11-14"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: weekending_date}
+        quality:
+          - id: week_ends_on_a_saturday
+            dimension: conformity
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE dayofweek(weekending_date) <> 6 OR weekending_date <> end_date OR date_diff('day', start_date, end_date) <> 6"
+            mustBe: 0
+            description: "The week is an MMWR week (column 'MMWR week of reporting'), which runs Sunday to Saturday: its ending date is a Saturday, the last date of the data period, six days after the first."
+      - name: state
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The jurisdiction of residence, as published: 'United States' in every row (column 'Jurisdiction of residence'; metadata geographic unit: Nation)."
+        examples: ["United States"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: state}
+        quality:
+          - id: national_rows_only
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["United States"]}
+            mustBe: 0
+            description: "The metadata gives the geographic unit of analysis as the nation. A row for a state would be a new breakdown this contract does not read."
+      - name: demographic_type
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 3
+        description: "The kind of demographic group: Age Group, Race/Ethnicity or Sex (column description '[Age, Race/Ethnicity, Sex]', published as 'Age Group' for Age)."
+        examples: ["Age Group", "Race/Ethnicity", "Sex"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: demographic_type}
+        quality:
+          - id: demographic_types
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["Age Group", "Race/Ethnicity", "Sex"]}
+            mustBe: 0
+            description: "The column description lists Age, Race/Ethnicity and Sex; Age is published as 'Age Group'. A new kind of group is a new breakdown to review."
+      - name: demographic_values
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 4
+        description: "The demographic group, as NCHS labels it: an age group ('0-17 years', '18-64 years', '65+ years'), a race and Hispanic origin group ('Hispanic', 'White, NH', 'Not Available'), or a sex ('Female', 'Male')."
+        examples: ["65+ years", "Black, NH", "Female", "Not Available"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: demographic_values}
+        quality:
+          - id: demographic_groups
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["0-17 years", "18-64 years", "65+ years", "AI/AN, NH", "Asian/NHOPI, NH", "Black, NH", "Hispanic", "Multiple/Other, NH", "Not Available", "White, NH", "Female", "Male"]}
+            mustBe: 0
+            description: "The twelve groups as published on 2026-11-27 (1,852 rows each). Every series filters on an age group's exact label, so a renamed or new group is a breakdown to review before a series silently returns nothing."
+          - id: every_age_series_has_a_percent
+            dimension: completeness
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(DISTINCT pathogen || '|' || demographic_values) FROM {object} WHERE demographic_type = 'Age Group' AND percent_deaths IS NOT NULL AND pathogen IN ('COVID-19', 'Influenza', 'RSV', 'Combined') AND demographic_values IN ('0-17 years', '18-64 years', '65+ years')"
+            mustBe: 12
+            description: "Fill rate by series: each of the four causes in each of the three age groups the series read has at least one row with a percent (all twelve on 2026-11-27). A relabelled age group would leave its series empty while every column-level check still passes."
+      - name: pathogen
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "The cause the deaths involve: COVID-19, Influenza, RSV, or Combined for the three together (column 'Cause of death (pathogen)'; the description writes 'Flu', the rows 'Influenza')."
+        examples: ["COVID-19", "Influenza", "RSV", "Combined"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: pathogen}
+        quality:
+          - id: pathogen_codes
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["COVID-19", "Influenza", "RSV", "Combined"]}
+            mustBe: 0
+            description: "The column description lists COVID-19, Flu, RSV and Combined; every row writes Influenza for Flu. A new label is a new cause to catalogue, and it also shows in the flag_unmapped_labels review queue; it is a warning so that queue still builds."
+      - name: deaths
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Number of deaths involving the cause in the week and group (column description); empty where NCHS suppressed a count from 1 to 9 (a suppressed count is never shown as 0; a published 0 is a real 0)."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: deaths}
+          - {property: unit, value: "deaths"}
+        quality:
+          - id: small_counts_suppressed
+            dimension: conformity
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE deaths BETWEEN 1 AND 9"
+            mustBe: 0
+            description: "The suppressed column's description says values based on death counts from 1 to 9 are suppressed, so a published count from 1 to 9 would mean the rule changed."
+          - id: deaths_within_all_deaths
+            dimension: consistency
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE deaths > total_deaths"
+            mustBe: 0
+            description: "The deaths involving a cause are part of the deaths from all causes in the same week and group (column descriptions), so they can't outnumber them."
+      - name: total_deaths
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "Number of deaths from all causes in the week and group (column description): the denominator of the percent."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: total_deaths}
+          - {property: unit, value: "deaths"}
+      - name: percent_deaths
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Percent of all deaths in the week and group that involved the cause (column 'Percent of deaths due to pathogen'); empty where NCHS suppressed it, or where no death was recorded (an empty value is never shown as 0)."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: percent_deaths}
+          - {property: unit, value: "%"}
+        quality:
+          - id: percent_between_0_and_100
+            dimension: conformity
+            severity: error
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE percent_deaths < 0 OR percent_deaths > 100"
+            mustBe: 0
+            description: "The column is a percent of all deaths (column description), so it lies between 0 and 100."
+      - name: provisional
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "NCHS's provisional mark, as published: '(provisional)' on provisional rows, empty on the others (column 'Is this data provisional')."
+        examples: ["(provisional)"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: provisional}
+      - name: suppressed
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "NCHS's suppression note, exactly as published: when it is not empty, deaths and percent_deaths are suppressed for confidentiality (column description)."
+        examples: ["One or more data cells have counts between 1-9 and have been suppressed in accordance with NCHS confidentiality standards."]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: suppressed}
+          - {property: flagFor, value: percent_deaths}
+        quality:
+          - id: suppressed_rows_carry_no_value
+            dimension: consistency
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE suppressed IS NOT NULL AND (deaths IS NOT NULL OR percent_deaths IS NOT NULL)"
+            mustBe: 0
+            description: "The column description says that when this field is not empty, deaths and percent_deaths are suppressed, so a row with the note and a value would mean the rule changed."
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: licenceSource, value: "Socrata metadata licence: Public Domain U.S. Government (https://www.usa.gov/government-works), read 2026-11-25."}
+  - {property: citation, value: "National Center for Health Statistics. Provisional Percent of Deaths for COVID-19, Influenza, and RSV by Select Characteristics. Available from https://data.cdc.gov/d/53g5-jf7x"}
+  - {property: refresh, value: weekly}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "Provisional counts change as death certificates arrive, so each refresh stores the complete table as a dated, append-only load; older loads are never overwritten."
+  - {property: geographyBasis, value: "residence: deaths among residents of the United States (dataset description; column 'Jurisdiction of residence')"}
+  - property: unreliableRule
+    value:
+      kind: publisher_suppressed
+      threshold: 10
+      description: "Column 'suppressed': 'Values based death counts between 1-9 are suppressed. If this field is not null, then the deaths and percent_deaths fields are suppressed for privacy protection.' A suppressed cell is empty, never zero, and keeps NCHS's note."
+  - property: openQuestions
+    value:
+      - "Combined: what does the Combined cause count: deaths involving any of the three viruses, each death once? Not stated; on 2026-11-25 no Combined count was larger than the three single-virus counts added together. It is shown as its own cause and never added to them."
+      - "Involving: the deaths column counts deaths 'involving' the pathogen, while the percent column says 'due to' it. Which ICD-10 codes, and any position on the death certificate (multiple cause) or only the underlying cause? The technical notes were not read."
+      - "Flu or Influenza: the column description lists 'Flu', every row says 'Influenza'. Kept as published."
+      - "No death recorded: 1,848 rows on 2026-11-25 have deaths 0, total_deaths 0 and no percent (nothing to divide by), mostly small groups. Kept as published."
+      - "Provisional years: rows for 2025 and 2026 are marked provisional, earlier years are not. Are unmarked rows final, and can a later load still change them? Each load is kept so an answer can name the load it came from (#191 for a dataset-wide status)."
+      - "Not read: the column 'group' (time period of reporting, 'By Week' in every row on 2026-11-25) is a reserved word in Socrata's query language, so the adapter's column list can't name it without quoting. It is left out of the load; every row is a weekly row (start and end six days apart), which week_ends_on_a_saturday checks."
+      - "Temporal applicability: the metadata says 2020-12-06/2024-02-04, while the rows run from the week ending 2018-01-06 to November 2026. Which is current is for NCHS to say."
+      - "No all-people row: the table has no figure for all ages or all people. Each series here pins one age group; a maintainer decides whether an all-ages figure belongs elsewhere (another NCHS table), never added up here."
+      - "GBD mapping: COVID-19 deaths to the GBD cause COVID-19; influenza and RSV to Lower respiratory infections with pathogens Influenza and Respiratory syncytial virus. A percent of all deaths is not a GBD measure, so no key is set until a maintainer reviews it."

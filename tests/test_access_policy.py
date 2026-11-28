@@ -128,17 +128,18 @@ def test_robots_status_raised_by_the_fetcher(
     assert OTHER in rb.rules
 
 
-@pytest.mark.parametrize("host", [GOV, OTHER])
-@pytest.mark.parametrize("status", [401, 403, 429])
-def test_a_block_on_robots_txt_is_final_on_every_host(
+@pytest.mark.parametrize("host", [OTHER])
+@pytest.mark.parametrize("status", [401, 403])  # a 429 is backed off first (tests/test_robots_owner_rule.py)
+def test_a_block_on_robots_txt_is_final_on_a_host_that_is_not_a_government_host(
     monkeypatch: pytest.MonkeyPatch, host: str, status: int
 ) -> None:
+    # On a government host the owner's rule of 25 Nov 2026 overrides it instead (tests/test_robots_owner_rule.py).
     seen = fake(monkeypatch, {host: fetch_mod.FetchRefused("http_error", "x", status=status)})
     rb = crawl.Robots(HOSTS, government_hosts=frozenset({GOV}), sleep=lambda s: None)
     with pytest.raises(fetch_mod.FetchRefused) as e:
         rb.wait_turn(f"https://{host}/x")
     assert e.value.code == "blocked" and e.value.status == status and "not worked around" in e.value.message
-    assert host in rb.blocked and rb.overridden == []  # a government host's block is never overridden
+    assert host in rb.blocked and rb.overridden == []
     with pytest.raises(fetch_mod.FetchRefused, match="earlier in this run"):
         rb.wait_turn(f"https://{host}/y")  # remembered: robots.txt is not asked again, nor the page
     assert not rb.allowed(f"https://{host}/z")
@@ -243,7 +244,8 @@ def test_tableau_view_returns_its_bootstrap_session(tmp_path: Path) -> None:
     # Hard rule 8: the source URL is the catalogued view, never the one-time session URL; that is kept beside it.
     assert got.content == b"2;{}" and got.url == VIEW and got.capture_url == data.url
     url, kw = browser.calls[0]
-    assert url == VIEW and kw["capture"] == [crawl.TABLEAU_DATA] and kw["allowed_hosts"] == reg.hosts
+    # every hop stays on this source's own hosts, never another catalogued source's
+    assert url == VIEW and kw["capture"] == [crawl.TABLEAU_DATA] and kw["allowed_hosts"] == frozenset({GOV})
     assert kw["allow"] is None  # robots=False: no policy to apply to the page's own requests
     (row,) = read_fetch_log(tmp_path, "toy_dash")
     assert row["status"] == "ok" and row["url"] == VIEW and row["capture_url"] == data.url
@@ -305,7 +307,7 @@ def test_the_browser_gets_the_policys_robots_check(tmp_path: Path, monkeypatch: 
     assert browser.calls[0][1]["allow"] == policy.allowed
 
 
-@pytest.mark.parametrize("status", [401, 403, 429])
+@pytest.mark.parametrize("status", [401, 403])  # a 429 is backed off first (tests/test_robots_owner_rule.py)
 def test_a_plain_http_error_403_is_a_block_and_is_remembered(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: int
 ) -> None:

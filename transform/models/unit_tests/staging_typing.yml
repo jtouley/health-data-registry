@@ -1,6 +1,9 @@
 # Hand-written dbt unit tests of the generated staging models' typing: what `dbt build` itself proves about the
 # projection in staging.typed_select. The inputs are SQL so they don't need the raw source loaded first. The
-# plugin that picks the LATEST load is tested in tests/test_dbt_raw.py.
+# plugin that picks the LATEST load is tested in tests/test_dbt_raw.py. A source added later keeps its own typing
+# tests in staging_typing_<dataset id>.yml beside this file, so source pull requests don't edit one shared file; a
+# source whose unit tests cover more than staging (its intermediate model or its fact too) keeps all of them in one
+# <dataset id>.yml instead.
 version: 2
 unit_tests:
 - name: stg_cdc_nndss_weekly_counts_become_whole_numbers_and_flags_stay_as_published
@@ -59,3 +62,58 @@ unit_tests:
     - geography: C
       suppressed: null
       percent_resistant: null
+- name: stg_cdc_schoolvaxview_kindergarten_estimate_codes_are_no_value_and_kept_as_sent
+  model: stg_cdc_schoolvaxview_kindergarten
+  given:
+  - input: source('raw', 'cdc_schoolvaxview_kindergarten')
+    format: sql
+    rows: |
+      select 'MMR' as "vaccine", '' as "dose", 'States' as "geography_type", 'A' as "geography", '2024-25' as "year_season", '92.1' as "coverage_estimate", '1000' as "population_sample_size", '100' as "percent_surveyed", cast(null as varchar) as "foot_notes", cast(null as varchar) as "number_of_exemptions", 'Census' as "survey_type", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select 'MMR' as "vaccine", '' as "dose", 'States' as "geography_type", 'B' as "geography", '2024-25' as "year_season", 'NA' as "coverage_estimate", cast(null as varchar) as "population_sample_size", cast(null as varchar) as "percent_surveyed", cast(null as varchar) as "foot_notes", cast(null as varchar) as "number_of_exemptions", cast(null as varchar) as "survey_type", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select 'Hepatitis B' as "vaccine", '' as "dose", 'States' as "geography_type", 'C' as "geography", '2024-25' as "year_season", ' NReq ' as "coverage_estimate", cast(null as varchar) as "population_sample_size", cast(null as varchar) as "percent_surveyed", cast(null as varchar) as "foot_notes", cast(null as varchar) as "number_of_exemptions", cast(null as varchar) as "survey_type", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select 'Hepatitis B' as "vaccine", '' as "dose", 'States' as "geography_type", 'D' as "geography", '2024-25' as "year_season", 'Nreq' as "coverage_estimate", cast(null as varchar) as "population_sample_size", cast(null as varchar) as "percent_surveyed", cast(null as varchar) as "foot_notes", cast(null as varchar) as "number_of_exemptions", cast(null as varchar) as "survey_type", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select 'MMR' as "vaccine", '' as "dose", 'States' as "geography_type", 'E' as "geography", '2024-25' as "year_season", 'NR' as "coverage_estimate", cast(null as varchar) as "population_sample_size", cast(null as varchar) as "percent_surveyed", cast(null as varchar) as "foot_notes", cast(null as varchar) as "number_of_exemptions", cast(null as varchar) as "survey_type", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+      union all
+      select 'Exemption' as "vaccine", 'Any Exemption' as "dose", 'States' as "geography_type", 'F' as "geography", '2024-25' as "year_season", '6.8' as "coverage_estimate", cast(null as varchar) as "population_sample_size", cast(null as varchar) as "percent_surveyed", cast(null as varchar) as "foot_notes", '7500.0' as "number_of_exemptions", cast(null as varchar) as "survey_type", 's1' as "_snapshot_id", 'h1' as "_raw_sha256"
+  expect:
+    rows:
+    - geography: A
+      coverage_estimate: 92.1
+      estimate_as_published: '92.1'
+      population_sample_size: 1000
+      percent_surveyed: 100.0
+      number_of_exemptions: null
+    - geography: B
+      coverage_estimate: null
+      estimate_as_published: NA
+      population_sample_size: null
+      percent_surveyed: null
+      number_of_exemptions: null
+    - geography: C
+      coverage_estimate: null
+      estimate_as_published: ' NReq '
+      population_sample_size: null
+      percent_surveyed: null
+      number_of_exemptions: null
+    - geography: D
+      coverage_estimate: null
+      estimate_as_published: Nreq
+      population_sample_size: null
+      percent_surveyed: null
+      number_of_exemptions: null
+    - geography: E
+      coverage_estimate: null
+      estimate_as_published: NR
+      population_sample_size: null
+      percent_surveyed: null
+      number_of_exemptions: null
+    - geography: F
+      coverage_estimate: 6.8
+      estimate_as_published: '6.8'
+      population_sample_size: null
+      percent_surveyed: null
+      number_of_exemptions: 7500

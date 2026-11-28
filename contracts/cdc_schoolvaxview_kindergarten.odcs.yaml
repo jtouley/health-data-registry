@@ -1,0 +1,267 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: cdc_schoolvaxview_kindergarten
+name: Vaccination Coverage and Exemptions among Kindergartners
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Vaccination coverage and exemptions among US kindergartners as reported by state and local school vaccination assessments to CDC (SchoolVaxView), by vaccine and dose or exemption type, state or local area and school year (2009-10 onward), with a United States row and a U.S. Median row."
+  usage: "Read one state's percent for one vaccine or exemption type and school year, with its survey type and footnotes. Never add percentages across vaccines, exemption types, states or years; the U.S. Median row is a median, not a national estimate."
+  limitations: "State-reported assessments with different methods (census, sample, voluntary response); no confidence intervals; some states don't require some vaccines; exemption definitions vary by state."
+  authoritativeDefinitions:
+    - {type: canonicalUrl, url: "https://data.cdc.gov/d/ijqb-a7ye", description: "Publisher dataset page"}
+    - {type: businessDefinition, url: "https://data.cdc.gov/api/views/ijqb-a7ye.json", description: "Socrata metadata: column descriptions and the footnote key (metadata.custom_fields 'Data Quality' 'Footnotes'), read 2026-11-25"}
+    - {type: businessDefinition, url: "https://www.cdc.gov/vaccines/imz-managers/coverage/schoolvaxview/pubs-resources.html", description: "SchoolVaxView publications and resources, cited by the survey_type column description (not yet read for this contract)"}
+    - {type: businessDefinition, url: "https://www.cdc.gov/vaccines/imz-managers/coverage/schoolvaxview/index.html", description: "SchoolVaxView home page, cited by the dataset description"}
+servers:
+  - id: data_cdc_gov
+    server: data.cdc.gov
+    type: api
+    location: https://data.cdc.gov/resource/ijqb-a7ye.json
+    description: "Socrata SODA API; the adapter keeps only the columns listed in the schema."
+schema:
+  - name: cdc_schoolvaxview_kindergarten
+    physicalName: cdc_schoolvaxview_kindergarten
+    physicalType: table
+    logicalType: object
+    description: "One row per vaccine and dose (or exemption type), place and school year (unique over the whole table on 2026-11-25; not yet declared as a key, open question 'Grain')."
+    dataGranularityDescription: "vaccine x dose x geography x school year"
+    authoritativeDefinitions:
+      - {type: businessDefinition, url: "https://data.cdc.gov/api/views/ijqb-a7ye.json"}
+    customProperties:
+      - property: totalRows
+        value: none
+        description: "Nothing in this table is ever added up: every metric reads one published percent or count (aggregation none), so no row is excluded as a total. The two national rows ('United States', 'U.S. Median') sit beside the states; what the United States row is (pooled or something else) is an open question ('National row')."
+      - {property: tableShape, value: estimate_table}
+      - property: idDimensions
+        value:
+          condition: vaccine
+          caseDefinition: null
+          caseStatus: null
+          organismResistance: null
+          period: year_season
+          provisionalFlag: null
+        description: "The vaccine column names the vaccine, or 'Exemption' for exemption rows; the dose column gives the dose or the exemption type. No case definitions or case status: these are coverage and exemption percents, not cases. Period is the school year. No provisional flag is published."
+      - property: footnoteKey
+        value: "For Kindergartner Vaccination Coverage:  * The percentage of kindergartners surveyed may be <100%; shown as 100% based on available information on current enrollment among schools for which awardees had information. † Kindergarten coverage data collected from a sample and exemption data collected from a census of kindergartners. ‡ For 2014-15 through 2019-20, included some or all vaccine doses received regardless of ACIP recommended age and time interval; for all other years, included vaccine doses received regardless of ACIP recommended age and time interval. Vaccination coverage rates shown may be higher than those for valid doses. § Does not include some special types of schools. || Pertussis was not required in PA until 2017-18; coverage for DT was 90.8% in 2009-10, 91.1% in 2011-12, 90.7% in 2012-13, 88.3% in 2013-14, 93.9% in 2014-15, 96.3% in 2015-16, and 94.8% in 2016-17. ¶ Public school data only. ** May include preschool and pre-kindergarten students. †† HepB vaccine was not required in SD but 3-dose coverage was reported. Coverage rate shown may be an underestimate. ‡‡ Estimates represent coverage among children in kindergarten and 1st grade.  For Kindergartner Vaccination Exemptions: * Included both temporary and permanent medical exemptions. † Exemptions for philosophical reasons were not allowed. ‡ Exemptions for religious reasons were not allowed. § State did not report the number of children with exemptions but reported the number of exemptions for each vaccine, which would count some children more than once. Estimates shown represent the lower bounds of the percent of children with exemptions, estimated using individual vaccines with the highest number of exemptions. || Religious and philosophic exemptions were not reported separately. ¶ May include preschool and pre-kindergarten students. ** Exemptions due to medical reasons were allowed but not reported separately from other exemptions. †† Exemptions due to medical reasons were allowed but not reported. ‡‡ Public school data only. §§ Estimates represent coverage among children in kindergarten and 1st grade. < Indicates the number of children with an exemption is less than 0.1%."
+        description: "CDC's footnote key, copied verbatim from the dataset metadata (custom_fields, Data Quality, Footnotes) on 2026-11-25. The same symbol means different things on coverage rows and exemption rows, and some published symbols (≥, >=, the replacement character �) are not in the key (open question 'Footnote symbols'). Rows keep their symbols as published; nothing here reads them into a number."
+    quality:
+      - id: rows_raw_to_staging
+        type: custom
+        engine: dbt-expectations
+        implementation: {check: row_count_matches, model: staging, compare: raw}
+        dimension: consistency
+        severity: error
+        description: "Staging has exactly as many rows as the raw load it types: staging drops and adds no row (an exact structural fact of the generated staging model)."
+      - id: rows_staging_to_intermediate
+        type: custom
+        engine: dbt-expectations
+        implementation: {check: row_count_matches, model: intermediate, compare: staging}
+        dimension: consistency
+        severity: error
+        description: "The intermediate model has exactly as many rows as staging: it only adds columns beside each staging row (an exact structural fact). It guards the generated intermediate model, which today is a view with no join, filter or aggregation, so it checks our code, not the publisher's data; it becomes a reconciliation of the data once a mart can change the grain (#131)."
+      - id: load_within_refresh
+        type: custom
+        engine: dbt-expectations
+        implementation: {check: load_within_sla, model: staging, sla: frequency}
+        dimension: timeliness
+        severity: warn
+        description: "The latest load is no older than the annual cadence in slaProperties frequency. It times our copy, not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold."
+    properties:
+      - name: vaccine
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The vaccine the row is for, as CDC names it, or 'Exemption' for exemption rows (column 'Vaccine/Exemption'). 'MMR (PAC)' is a separate MMR measure whose meaning is an open question ('MMR (PAC)')."
+        examples: ["MMR", "DTP, DTaP, or DT", "Varicella", "Polio", "Hepatitis B", "Exemption", "MMR (PAC)"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: vaccine}
+        quality:
+          - id: vaccine_labels
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["DTP, DTaP, or DT", "Exemption", "Hepatitis B", "MMR", "MMR (PAC)", "Polio", "Varicella"]}
+            mustBe: 0
+            description: "Every vaccine label published on 2026-11-25. A new label is a new series to review (catalog conditions), not an error in the data."
+      - name: dose
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "The varicella dose counted ('1 Dose (or disease history)', '2 Doses (or disease history)', 'UTD (or disease history)'), the exemption type on exemption rows ('Any Exemption', 'Medical Exemption', 'Non-Medical Exemption'), or 'MMR (PAC)' on MMR (PAC) rows. Empty for MMR, DTaP, polio and hepatitis B, whose doses follow each state's school-entry requirement (open question 'Empty dose'). CDC's column description says this column holds the dose (≥1 to ≥4) and applies only to coverage rows; what is published differs (no ≥n values, exemption types here), so the description follows what is published."
+        examples: ["", "2 Doses (or disease history)", "Any Exemption", "Non-Medical Exemption", "MMR (PAC)"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: dose}
+      - name: geography_type
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The kind of place: 'National' (the United States row and the U.S. Median row) or 'States' (each state, DC, and the cities or parts of a state that report separately). CDC's column description names the two classes as 'National, State'; the published value is 'States'."
+        enum: [{value: "National"}, {value: "States"}]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: geography_type}
+        quality:
+          - id: geography_type_values
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["National", "States"]}
+            mustBe: 0
+            description: "The two classes CDC's column description names (National, State), spelled as published. A new class is a layout change to review, not an error in the data."
+      - name: geography
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The place: a state or DC; a city or part of a state that reports separately ('NY-City of New York', 'NY-Rest of state', 'TX-City of Houston'), published beside its state's own row and never added to it (how they overlap is open question 'Places'); 'United States'; or 'U.S. Median', a median as CDC labels it, never a national estimate (what it is a median over is open question 'National row'). No territory was published on 2026-11-25."
+        examples: ["Michigan", "NY-City of New York", "TX-City of Houston", "United States", "U.S. Median"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: geography}
+      - name: year_season
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The school year, as CDC writes it ('2024-25')."
+        examples: ["2023-24", "2024-25", "2025-26"]
+        customProperties:
+          - {property: role, value: dimension}
+          - {property: sourceField, value: year_season}
+      - name: coverage_estimate
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Percent of kindergartners with the vaccine and dose, or with that exemption, among all children enrolled in kindergarten (column 'Estimate (%)'). Empty where CDC published a code instead of a number; the code is kept in estimate_as_published."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: coverage_estimate}
+          - {property: unit, value: "%"}
+          - {property: missingCodes, value: ["NA", "NReq", "Nreq", "NR"], description: "Column description, https://data.cdc.gov/api/views/ijqb-a7ye.json: 'Non-numeric data are present in this column, such as \"NA\" and \"NReq.\" These data indicate whether an estimate is not applicable or a vaccine is not required by a state for school entry (respectively).' Nreq (1 row) and NR (25 rows) are also published but not defined (open question 'Estimate codes'); none of the four is a number, so each is stored as no value, never as zero, and the published text is kept in estimate_as_published. Any other non-numeric estimate refuses the whole load (the typed projection can't read it as a number), so a new code is never guessed at: a maintainer adds it here with its meaning before the source refreshes again. The live check test_every_estimate_code_is_declared is the early warning."}
+        quality:
+          - id: coverage_is_a_percent
+            dimension: conformity
+            severity: error
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE coverage_estimate < 0 OR coverage_estimate > 100"
+            mustBe: 0
+            description: "The column is a percent ('Estimate (%)'), so it lies from 0 to 100."
+      - name: estimate_as_published
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The estimate exactly as CDC published it, number or code: NA (not applicable) and NReq (not required by the state for school entry) per CDC's column description; Nreq and NR are published but not defined. Kept so a code is never lost when coverage_estimate is empty. Required because every one of the 8,753 rows had an estimate on 2026-11-25 (SoQL count of rows where coverage_estimate is null or empty: 0); this also makes a vanished or renamed estimate field fail the load rather than pass the percent range check over an empty column."
+        examples: ["92.2", "NA", "NReq", "NR"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: coverage_estimate}
+      - name: population_sample_size
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Number of children enrolled in kindergarten in the place (state, city or part of a state that reports separately, or the nation) for that school year (column 'Population Size'). This is the enrolment the coverage_estimate description calls 'all children enrolled in Kindergarten', not the number surveyed or vaccinated."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: population_sample_size}
+          - {property: unit, value: "1"}
+      - name: percent_surveyed
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Percent of enrolled kindergartners the state surveyed that year (column 'Percent Surveyed'). Footnote * on coverage rows: it may be under 100% but shown as 100%."
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: percent_surveyed}
+          - {property: unit, value: "%"}
+        quality:
+          - id: percent_surveyed_is_a_percent
+            dimension: conformity
+            severity: error
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE percent_surveyed < 0 OR percent_surveyed > 100"
+            mustBe: 0
+            description: "The column is a percent of enrolled children ('Percent Surveyed'), so it lies from 0 to 100."
+      - name: foot_notes
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "CDC's footnote symbols for the row, exactly as published, such as '†' or '<'. Several symbols in one row are kept as CDC joined them, such as '‡. §' or '>=. *'. Their meanings are in CDC's footnote key (the contract's footnoteKey), which differs between coverage and exemption rows; they are not interpreted here."
+        examples: ["*", "†", "‡. §", "≥.*", "<"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: foot_notes}
+      - name: number_of_exemptions
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Number of vaccine exemptions among kindergartners, as CDC labels it (column 'Number of Exemptions'); published only on exemption rows. Whether it counts children or exemptions is open question 'Exemption count'; footnote § says some states reported exemptions per vaccine."
+        customProperties:
+          - {property: role, value: measure}
+          - {property: sourceField, value: number_of_exemptions}
+          - {property: unit, value: "1"}
+        quality:
+          - id: exemption_count_only_on_exemption_rows
+            dimension: consistency
+            severity: warn
+            type: sql
+            query: "SELECT COUNT(*) FROM {object} WHERE number_of_exemptions IS NOT NULL AND vaccine <> 'Exemption'"
+            mustBe: 0
+            description: "The column is 'the number of vaccine exemptions', and 'exemptions only exist within Kindergartner data' (column descriptions): a count on a vaccine row would be a layout change. Every count published on 2026-11-25 is on an Exemption row."
+          - id: total_number_of_exemptions_staging_to_intermediate
+            type: custom
+            engine: dbt-expectations
+            implementation: {check: total_matches, model: intermediate, compare: staging}
+            dimension: consistency
+            severity: error
+            description: "The total number of kindergartners with an exemption (number_of_exemptions), summed over every row, any total rows included, is the same in staging and the intermediate model: a checksum between layers, not an answer (it adds any total rows to their parts). It guards the generated intermediate model, which today is a view with no join, filter or aggregation, so it checks our code, not the publisher's data; it becomes a reconciliation of the data once a mart can change the grain (#131)."
+      - name: survey_type
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "How the state or local area collected the data that year, as published, such as 'Census', 'Stratified 2-stage cluster sample', 'Voluntary response' or 'Census (public); Voluntary response (private)'. CDC spells the same method several ways; it is kept as published."
+        examples: ["Census", "Stratified 2-stage cluster sample", "Voluntary response", "Not conducted", "NA"]
+        customProperties:
+          - {property: role, value: attribute}
+          - {property: sourceField, value: survey_type}
+slaProperties:
+  - {property: frequency, value: 1, unit: y, driver: analytics}
+customProperties:
+  - {property: licence, value: public-domain-us-federal}
+  - {property: citation, value: "Centers for Disease Control and Prevention, National Center for Immunization and Respiratory Diseases. Vaccination Coverage and Exemptions among Kindergartners, SchoolVaxView. https://data.cdc.gov/d/ijqb-a7ye"}
+  - {property: refresh, value: annual}
+  - property: rawLoad
+    value: {mode: snapshot}
+    description: "Each refresh stores the complete table as a dated, append-only load, so a change to an earlier school year shows as a difference between snapshots."
+  - {property: geographyBasis, value: "unresolved: the dataset doesn't say whether children are placed by school location or residence (school location is likely for a school assessment, but it is not stated here), so comparisons with residence-based figures wait for a maintainer"}
+  - {property: unreliableRule, value: {kind: none, description: "None stated: CDC publishes no reliability rule and no confidence intervals for these percents. The footnote key notes where an estimate may be an underestimate or a lower bound; those symbols are kept on each row."}}
+  - property: gbdCauseProposals
+    value:
+      review: pending_maintainer_review
+      source: "Drafted 25 Nov 2026 from each vaccine's target diseases; cause names not yet checked against the GBD 2023 hierarchy with the IHME connector. Proposals only; nothing is keyed to GBD until a maintainer reviews them (hard rule 1)."
+      proposals:
+        - {vaccine: "MMR", causes: ["Measles"], note: "Mumps and rubella have no separate GBD 2023 cause to key to here."}
+        - {vaccine: "DTP, DTaP, or DT", causes: ["Diphtheria", "Tetanus", "Pertussis"], note: "DT rows (e.g. Pennsylvania before 2017-18, footnote ||) do not cover pertussis."}
+        - {vaccine: "Varicella", causes: ["Varicella and herpes zoster"]}
+        - {vaccine: "Hepatitis B", causes: ["Acute hepatitis B"], note: "For the maintainer to accept or drop."}
+        - {vaccine: "Polio", causes: [], note: "No GBD 2023 cause chosen; a maintainer decides."}
+        - {vaccine: "Exemption", causes: [], note: "Exemptions have no cause."}
+  - property: openQuestions
+    value:
+      - "Freshness: the publisher's own last-update time is not stored, so load_within_refresh times our latest load against the annual cadence (slaProperties frequency), not the publisher's update. The weekly refresh fetches every source into an empty lake, so there the load is minutes old and the check passes; it says something about the data only once it times the publisher's update. Store the publisher's update time (e.g. Socrata rowsUpdatedAt) in the snapshot manifest, then check that instead."
+      - "Freshness grace: how long past the annual cadence should a load count as stale? Nothing the publisher states sets a grace period, so load_within_refresh warns at exactly the cadence. Maintainer to decide."
+      - "Survey type: survey_type differs by state and year (census, sample, voluntary response, mixed public/private). Can a sample-based state's estimate be set beside a census state's? CDC's methods must say so; until then answers show each row's survey type through query_sql and describe_dataset, and states are never ranked here."
+      - "Footnote symbols: the footnote key (footnoteKey) gives the symbols' meanings, separately for coverage and exemption rows. Published symbols outside the key (≥, >=, and the replacement character where a symbol was garbled) have no stated meaning. A maintainer reads CDC's key and decides how each symbol is shown; nothing reads them into a number."
+      - "Exemption count: is number_of_exemptions a count of children with an exemption, or of exemptions by type (medical, non-medical)? Footnote § says some states counted per vaccine, so a child can be counted more than once there."
+      - "National row: what is the 'United States' row: a pooled estimate over reporting states, weighted by enrolment, or something else? The 'U.S. Median' row is labelled a median: is it the median over states only, or over every reporting area including the cities that report separately? CDC's metadata doesn't say. Neither is ever computed here."
+      - "Places: 'NY-City of New York', 'NY-Rest of state' and 'TX-City of Houston' are published under geography_type 'States' beside New York and Texas. Which years does each state row include the city's children, and is 'NY-Rest of state' plus the city the whole state? Until answered they are shown as published and never added to or set against their state."
+      - "Empty dose: MMR, DTaP, polio and hepatitis B rows have an empty dose; varicella has '1 Dose', '2 Doses' and 'UTD' (each 'or disease history'). Does an empty dose mean the state's school-entry requirement (e.g. 2 doses of MMR), and did that change by state or year? Codebook only."
+      - "MMR (PAC): what is 'MMR (PAC)' (vaccine and dose both 'MMR (PAC)', 480 rows on 2026-11-25) and how does it differ from MMR? Not defined in the dataset metadata; shown exactly as CDC labels it until a maintainer declares it."
+      - "No intervals: CDC publishes no confidence interval for these percents; the metrics say so. Does CDC publish standard errors for sample-based states elsewhere (SchoolVaxView methods)? None is computed here."
+      - "Estimate codes: NR (25 rows) and Nreq (1 row) are published in the estimate column but not defined; NA and NReq are. Is Nreq the same as NReq, and what is NR (not reported)? Until answered each is stored as no value, with its code kept as published in estimate_as_published."
+      - "Grain: vaccine x dose x geography x school year was unique over the whole table on 2026-11-25 (8,753 rows). A maintainer confirms it as the key before one is declared."
+      - "Licence: the Socrata metadata has no licence field; public-domain-us-federal is assumed from its being a CDC work (17 USC 105). Maintainer to confirm the wording before the first public release (the catalog says hosting: public, as every catalogued CDC source does, and the contract stays draft until then)."
+      - "GBD mapping: review the GBD cause proposals in gbdCauseProposals (vaccine to cause). None is asserted until a maintainer approves it."

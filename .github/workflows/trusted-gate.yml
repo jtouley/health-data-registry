@@ -1,0 +1,118 @@
+name: Trusted gate
+
+# The ratchet (src/health_data_registry/ratchet.py) that a pull request cannot weaken: it fails a pull request that
+# lowers a coverage or mutation floor, adds a skip, pragma, type-ignore, noqa or lint relaxation that is not in
+# .github/ratchet-allowlist.txt, drops tests, removes or loosens a required check, touches eval/sealed/, adds a
+# way around the git hooks, loosens ci/budgets.yml, or weakens a job that runs mutation tests (the PR shards, the
+# nightly run, the release gate). docs/dev/README.md#the-trusted-gate has the rules.
+#
+# Why main's copy. A `pull_request` run uses the pull request's own copy of this file, the Makefile and scripts/,
+# so a pull request could edit the gate and pass it. The preferred enforcement is a ruleset "required workflows"
+# rule pinning this file to refs/heads/main; GitHub offers it only in organisation rulesets. Until the repository
+# belongs to an organisation, `pull_request_target` gives the same property: GitHub uses this file as it is on
+# main, and the job checks out main's code. Either way the triggers below are the ones that run it.
+#
+# The sharp edge, and how this file stays off it. pull_request_target runs with the base repository's context,
+# so a workflow that checks out the pull request and runs it (make, pip install, pytest, a script from the PR)
+# hands that code whatever the job holds. Here:
+# - the workflow grants nothing by default (permissions: {}); the one job's token is read-only (contents: read),
+#   and no secret is referenced anywhere;
+# - the only checkout is main's own commit, with credentials dropped: on pull_request_target, github.sha, which
+#   GitHub sets to main's tip when the run starts (so an allowlist entry merged since the pull request was opened
+#   counts on the next run), or the queue's base_sha on merge_group. If a required-workflows rule ever runs this on
+#   pull_request, github.sha is the pull request's merge commit there: that event needs its own expression first;
+# - the pull request's commit is fetched as git objects by its SHA from the event payload, and the ratchet reads
+#   it with `git cat-file` and `git diff --no-ext-diff --no-textconv`: nothing from it is checked out, imported,
+#   installed or executed, and the Python environment comes from main's uv.lock (hash-checked), with no cache;
+# - no title, branch name, body or other text a contributor writes reaches a `run:` block; the ratchet strips
+#   control characters from every path and line it prints, so it cannot forge a workflow command.
+#
+# In the merge queue (merge_group) GitHub runs the queued commit's copy of this file, which includes the pull
+# request's changes. The check that let the pull request into the queue is the pull_request_target run above,
+# from main's copy; the queue run repeats it against main's code for the merged result, but with the queued
+# commit's YAML, so for a pull request that changes this file the queue's result is self-reported.
+on:
+  pull_request_target:
+    # edited fires on every title, body or base-branch edit, and cancels the run in flight (concurrency below):
+    # a cancelled run is not a gate failure. Editing the title is also how to re-run the gate against main's
+    # current allowlist without a push. The job has no `if:` on purpose: a skipped required check counts as
+    # passing, so never filter these events with a job condition.
+    types: [opened, synchronize, reopened, edited]
+    branches: [main]
+  merge_group:
+
+permissions: {}
+
+concurrency:
+  group: trusted-gate-${{ github.event.pull_request.number || github.event.merge_group.head_sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
+
+jobs:
+  ratchet:
+    name: Trusted gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      # main's own commit: the ratchet that runs is the one already merged.
+      - name: Check out main (never the pull request)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up uv (no cache)
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+          # A pull_request_target run writes to main's cache scope; keep it from writing anything.
+          enable-cache: false
+      # SHAs from the event payload only; refused unless they are 40 hex characters.
+      - name: Fetch the pull request's commit as data
+        env:
+          BASE_SHA: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: |
+          for sha in "${BASE_SHA}" "${HEAD_SHA}"; do
+            if ! [[ "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "The event did not carry a full commit SHA, so the gate fails. Run the check again from the pull request; if it fails again, push a new commit."
+              exit 1
+            fi
+          done
+          git fetch --no-tags --no-recurse-submodules --quiet origin "${HEAD_SHA}"
+          git cat-file -e "${HEAD_SHA}^{commit}"
+          {
+            echo "BASE_SHA=${BASE_SHA}"
+            echo "HEAD_SHA=${HEAD_SHA}"
+          } >> "$GITHUB_ENV"
+      # The checks the ruleset requires, so the ratchet knows which jobs must keep reporting. A failed lookup, or
+      # an answer naming no check (the rule disabled or mid-edit, the API's shape changed), fails the gate rather
+      # than skipping the rule.
+      - name: Read the required checks from main's ruleset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          if ! gh api --paginate "repos/${REPO}/rules/branches/main" \
+            --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context' \
+            > "${RUNNER_TEMP}/required-checks.txt"; then
+            echo "Could not read main's required checks from the ruleset, so the gate fails. Run the check again; if it fails again, see docs/dev/README.md#when-the-gate-itself-is-wrong."
+            exit 1
+          fi
+          if ! [ -s "${RUNNER_TEMP}/required-checks.txt" ]; then
+            echo "main's ruleset names no required checks, so the gate cannot check them and fails. See docs/dev/README.md#when-the-gate-itself-is-wrong."
+            exit 1
+          fi
+          echo "Required checks:"
+          cat "${RUNNER_TEMP}/required-checks.txt"
+      # main's locked runtime dependencies only (pyyaml for the workflows), hash-checked; the project itself is not
+      # built, and the ratchet is imported from main's src/.
+      - name: Install main's locked environment
+        run: uv sync --locked --no-default-groups --no-install-project
+      - name: Ratchet
+        env:
+          PYTHONPATH: src
+        run: >-
+          uv run --no-sync python -m health_data_registry.ratchet --github
+          --base "${BASE_SHA}" --head "${HEAD_SHA}" --required-checks "${RUNNER_TEMP}/required-checks.txt"

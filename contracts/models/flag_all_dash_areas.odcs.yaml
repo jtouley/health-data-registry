@@ -1,0 +1,63 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: flag_all_dash_areas
+name: Review queue - NNDSS areas whose every week is '-'
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Lists NNDSS reporting areas and conditions where every published week has an empty current-week count flagged '-' (no reported cases), the pattern behind issue #14, so a maintainer can check whether the area reports the condition at all."
+  usage: "A review queue for maintainers. It removes and changes nothing: each '-' stays as published, a count with no number and its flag (no reported cases). By the maintainer's declaration of 25 Nov 2026 (NNDSS contract, noCasesCode), '-' means not reported, never a reported zero, so no answer counts it as 0 (issues #14, #173)."
+  limitations: "An area with truly no cases in every week looks the same as one that does not report the condition; only the publisher can tell them apart."
+schema:
+  - name: flag_all_dash_areas
+    physicalName: flag_all_dash_areas
+    physicalType: table
+    logicalType: object
+    description: "One row per reporting area (summary rows such as TOTAL and the census divisions left out) and condition whose current-week count is empty and flagged '-' in every published week; an area is matched across years ignoring case, edge spaces and dots, and a renamed area (the NNDSS contract's renamedLabels on states) is joined to its earlier name; conditions are compared exactly as published."
+    customProperties:
+      - {property: layer, value: flag}
+      - {property: totalRows, value: none}
+      - {property: tableShape, value: registry}
+    properties:
+      - name: states
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Reporting area, as NNDSS spells it in the latest year listed; two spellings in that year: the alphabetically last."
+        customProperties: [{property: role, value: dimension}]
+      - name: label
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Condition, as NNDSS names it."
+        customProperties: [{property: role, value: dimension}]
+      - name: first_year
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "First MMWR year published for the pair."
+        customProperties: [{property: role, value: attribute}]
+      - name: last_year
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "Last MMWR year published for the pair."
+        customProperties: [{property: role, value: attribute}]
+      - name: weeks
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "How many published weeks there are for the pair, every one of them '-'."
+        customProperties: [{property: role, value: attribute}]
+      - name: reason
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Why the row is in the queue, in plain words."
+        customProperties: [{property: role, value: attribute}]
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None: a review queue, not published numbers."}}
+  - property: openQuestions
+    value:
+      - "Issue #14: for each pair here, does the area report the condition at all? '-' is read as not reported (maintainer's declaration of 25 Nov 2026), so no answer treats the period as zero; ask the publisher whether the area reports it."

@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # The pre-PR gate, local half: run the CI checks plus a docs-drift check, and stop at the first failure.
-# Usage: make precheck [BASE=origin/main] [MUTATION_FLOOR=70] [COV_FLOOR=85]
+# Usage: make precheck [COV_FLOOR=85]
 # Then merge origin/main into the branch if it moved, push to pre-pr/<branch> and wait for every check to be
 # green (CLAUDE.md, "How changes land").
 #
 # Not covered here: CodeQL and the Python 3.13 leg of the test matrix, which run only in CI (on the pre-pr push
-# and again on the PR). Each step prints one PASS/FAIL line; a summary of every step that ran follows at the end.
+# and again on the PR). Mutation tests are not part of CI or precheck: they run nightly on main
+# (.github/workflows/mutation.yml); `make mutate` runs them locally when you want them. Each step prints one
+# PASS/FAIL line; a summary of every step that ran follows at the end.
 #
 # Portable to macOS's bash 3.2: no mapfile, no associative arrays, and no arrays at all, since expanding an empty
 # array under `set -u` is an error before bash 4.4.
@@ -13,8 +15,6 @@ set -uo pipefail
 
 UV="${UV:-uv}"
 MAKE="${MAKE:-make}"
-BASE="${BASE:-origin/main}"
-MUTATION_FLOOR="${MUTATION_FLOOR:-70}"
 COV_FLOOR="${COV_FLOOR:-85}"
 
 cd "$(git rev-parse --show-toplevel)" || exit 1
@@ -55,30 +55,24 @@ step() {
   fi
 }
 
-# Mutation reports go in a directory this script creates and removes itself; no caller-supplied path is deleted.
-if [ -n "${PRECHECK_REPORTS:-}" ]; then
-  fail "settings" "PRECHECK_REPORTS is no longer read: precheck keeps its mutation reports in a temporary directory of its own. Unset it."
-fi
-REPORTS="$(mktemp -d "${TMPDIR:-/tmp}/precheck-mutation.XXXXXX")" || fail "settings" "Could not create a temporary directory."
-trap 'rm -rf "${REPORTS}"' EXIT
-
 tree_state() {
   { git status --porcelain=v1 --untracked-files=all; git diff; } | git hash-object --stdin
 }
 
-# make docs must change nothing. On a clean tree this is `git diff --exit-code`; on a dirty one, it compares the
+# make docs and make contracts must change nothing (CI's Checks job runs both). On a clean tree this is `git diff --exit-code`; on a dirty one, it compares the
 # tree before and after, so uncommitted work is not mistaken for drift.
 docs_drift() {
   local before after
   before="$(tree_state)"
   "${MAKE}" --no-print-directory docs || return 1
+  "${MAKE}" --no-print-directory contracts || return 1
   after="$(tree_state)"
   if [ -z "$(git status --porcelain=v1 --untracked-files=all)" ]; then
     git diff --exit-code
     return
   fi
   if [ "${before}" != "${after}" ]; then
-    echo "make docs changed generated files; commit what it wrote:"
+    echo "make docs or make contracts changed generated files; commit what they wrote:"
     git status --short
     return 1
   fi
@@ -89,11 +83,6 @@ if [ -n "$(git status --porcelain=v1 --untracked-files=all)" ]; then
   echo "pushing to pre-pr/<branch>."
 fi
 
-# The mutation steps compare with BASE; check it names a commit before spending time on the other steps.
-if ! git rev-parse --verify --quiet "${BASE}^{commit}" > /dev/null; then
-  fail "settings: BASE=${BASE}" "BASE is not a commit in this checkout. Run git fetch origin main, or pass BASE=<branch or commit>."
-fi
-
 step "pre-commit (all files)" "${UV}" run pre-commit run --all-files --show-diff-on-failure
 step "lint" "${MAKE}" --no-print-directory lint
 step "typecheck" "${MAKE}" --no-print-directory typecheck
@@ -101,32 +90,7 @@ step "test (coverage floor ${COV_FLOOR}%)" "${MAKE}" --no-print-directory test C
 step "smoke" "${MAKE}" --no-print-directory smoke
 step "transform (generated models reproduce; dbt build on fixtures)" "${MAKE}" --no-print-directory transform
 step "Projects kit" "${MAKE}" --no-print-directory kit
-step "docs drift (make docs, then git diff --exit-code)" docs_drift
-
-# Mutation tests as CI shards them: list the shards of the changed modules (a module, or `<module>#<k>of<n>@<split>`
-# for a big one), one step per shard, then the floor on the total. Each shard refuses a split hash that differs
-# from its own split, so editing a module while its shards run fails the shard instead of miscounting it.
-echo
-echo "==> mutation: list changed modules since ${BASE}"
-if ! modules_json="$("${UV}" run python scripts/mutate_changed.py --list --base "${BASE}")"; then
-  fail "mutation: list changed modules since ${BASE}" "scripts/mutate_changed.py --list failed; its message is above."
-fi
-if ! "${UV}" run python -c 'import json, sys; print("\n".join(json.loads(sys.argv[1])))' "${modules_json}" \
-  > "${REPORTS}/modules.txt"; then
-  fail "mutation: list changed modules since ${BASE}" "The module list was not JSON: ${modules_json}"
-fi
-summary="${summary}  PASS  mutation: shards of the changed modules since ${BASE}: ${modules_json}
-"
-echo "PASS  mutation: shards of the changed modules since ${BASE}: ${modules_json}"
-
-mkdir "${REPORTS}/shards" || fail "settings" "Could not create ${REPORTS}/shards."
-while IFS= read -r module <&3; do
-  [ -n "${module}" ] || continue
-  step "mutation: ${module}" "${UV}" run python scripts/mutate_changed.py --module "${module}" \
-    --report "${REPORTS}/shards/${module}.json"
-done 3< "${REPORTS}/modules.txt"
-step "mutation floor (${MUTATION_FLOOR}% of all mutants)" "${UV}" run python scripts/mutate_changed.py \
-  --aggregate "${REPORTS}/shards" --expect "${modules_json}" --floor "${MUTATION_FLOOR}"
+step "generated files drift (make docs and make contracts, then git diff --exit-code)" docs_drift
 
 finish
 echo

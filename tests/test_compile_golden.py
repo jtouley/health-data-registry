@@ -16,10 +16,11 @@ from typing import Any
 import pytest
 
 from health_data_registry import query
+from health_data_registry.adapters import method_digest
 from health_data_registry.query import Engine, QueryRefused, compile_metric, envelope
 from health_data_registry.registry import Registry, load_registry
 from health_data_registry.staging import PublisherDataRefused
-from health_data_registry.store import Manifest, build_snapshot, latest_snapshot, write_ndjson
+from health_data_registry.store import Manifest, build_snapshot, latest_snapshot, sha256_file, write_ndjson
 from tests.conftest import CATALOG, raw_fetch, write_registry
 
 EST_CATALOG = CATALOG.replace("shape: surveillance_series", "shape: estimate_table").replace(
@@ -313,14 +314,33 @@ def test_build_snapshot_manifest_and_pointer(est: tuple[Registry, Engine, Path],
     )
     late = raw_fetch("https://data.cdc.gov/resource/p2.json", RECS[1:], when=WHEN)
     m = build_snapshot(lake, reg.get("toy_cases"), [early, late], [f], partial=True)
-    # The latest fetch time, then a hash of the raw bytes, the contract and semantic versions and partial.
-    digest = hashlib.sha256(f"{early.sha256}{late.sha256}|0.2.0|0.2.0|True".encode()).hexdigest()[:12]
+    # The latest fetch time, then a hash of the raw bytes, the contract and semantic versions, partial and how the
+    # records were read (the adapter type, its config and extensions: ADR 0016).
+    method = method_digest(reg.get("toy_cases").entry)
+    digest = hashlib.sha256(f"{early.sha256}{late.sha256}|0.2.0|0.2.0|True|{method}".encode()).hexdigest()[
+        :12
+    ]
     assert m.snapshot_id == f"20261124T120000Z-{digest}"
     found = latest_snapshot(lake, "toy_cases")
     assert found is not None
     path, read = found
     assert read == m
-    assert json.loads((path / "manifest.json").read_text()) == {
+    assert read.files == {name: sha256_file(path / name) for name in ("data.duckdb", "data.parquet")}
+    written = json.loads((path / "manifest.json").read_text())
+    quality = written.pop("quality")
+    # The volume check, then a fill-rate check per optional column that is not a flag column (a flag is empty
+    # wherever its count is published); this fixture fills them all, and its contract has no rules.
+    assert quality["tool"] == "contract-rules" and quality["rule_errors"] == []
+    assert {r["test"]: r["status"] for r in quality["results"]} == {
+        "has_rows": "pass",
+        **{
+            f"fill_rate_{c.name}": "pass"
+            for c in reg.get("toy_cases").contract.columns
+            if not c.required and c.flag_for is None
+        },
+    }
+    assert written == {
+        "files": read.files,
         "dataset": "toy_cases",
         "snapshot_id": m.snapshot_id,
         "contract_version": "0.2.0",
@@ -340,9 +360,9 @@ def test_build_snapshot_manifest_and_pointer(est: tuple[Registry, Engine, Path],
         "release_contract_version": None,
         "release_files": {},
         "notes": [],
-        "quality": {},
         "silver": {"layout_version": "1", "row_count": 4, "unlisted_codes": {}},
         "layouts": {},
+        "method": {"type": "socrata", "digest": method},
     }
     assert (lake / "datasets" / "toy_cases" / "LATEST").read_text() == m.snapshot_id + "\n"
     assert sorted(p.name for p in lake.iterdir()) == [

@@ -2,32 +2,73 @@
 
 How to read the numbers this tool gives you: what kind of number each one is, how final it is, what an empty cell
 means, how places and years are named, and how to set them beside GBD. Every rule here comes from a source's
-contract (see [What a contract is](#where-these-rules-come-from)), not from Claude's judgement.
+contract (see [What a contract is](#where-these-rules-come-from)) or a recorded maintainer decision, not from
+Claude's judgement.
 
-**Contents:** [Measures](#measures-never-mixed) · [Final and provisional](#final-and-provisional) ·
-[Empty cells](#empty-cells-suppression-and-missing-codes-never-zero) · [Uncertainty](#uncertainty) ·
-[Places](#places) · [Years and weeks](#years-and-weeks) · [Age standardisation](#age-standardisation) ·
+**Contents:** [Show everything](#show-everything-qualify-dont-decide) · [Measures](#measures-never-mixed) ·
+[Final and provisional](#final-and-provisional) · [Empty cells](#empty-cells-suppression-and-missing-codes) ·
+[Uncertainty](#uncertainty) · [Places](#places) · [Years and weeks](#years-and-weeks) ·
+[Age standardisation](#age-standardisation) ·
 [Case definitions](#case-definitions) · [Using it with GBD](#using-it-with-gbd) ·
 [Where these rules come from](#where-these-rules-come-from)
+
+## Show everything; qualify, don't decide
+
+The rule every answer follows ([ADR 0018](adr/0018-show-everything-qualify-dont-decide.md), the maintainer's
+decision of 27 Nov 2026). You see all the data and make the judgement; the tool tells you what each number is and
+what it leaves out.
+
+- **Every row the publisher sent comes back,** each with its flag and what the flag means: `-` (not reported,
+  never turned into 0), suppressed cells, total rows, catchment areas, screening counts.
+- **Any figure you ask for is worked out:** a sum, a rate, a trend.
+- **Where the source's contract or a data check says a figure may mislead,** the answer says so in plain words
+  and, where there is one, puts the figure without that problem beside it. The tool doesn't say which figure is
+  right; you choose. For example:
+  - "this adds the US total row to the states; without it: N";
+  - "weekly counts undercount the year; CDC's year-to-date figure: N";
+  - "catchment area only; the state population overstates the denominator";
+  - "screening detections, not incidence".
+- **Every such note names where it comes from:** a rule in the source's contract, the result of a data check,
+  or a recorded finding.
+- **Gaps are data.** What is missing, suppressed or covers only part of a place is something you can ask about,
+  for example for a paper on gaps in surveillance data.
+- **Published uncertainty ranges always come back.**
+- **A copy of the data whose checks never ran is never used.** The tool won't let a number look checked when it
+  wasn't.
+
+**Today the tools don't yet do all of this, and this is changing.** Every empty cell, NNDSS's `-` included,
+already comes back empty with its flag, never as 0. Where today's answers differ, the sections below say so:
+
+- Some tools refuse a sum or a rate, or leave the publisher's total rows out of a sum, where this rule would work
+  the figure out and add a note.
+- A new copy of the data that failed one of its most serious (error-level) data checks is held back too, not only
+  one whose checks never ran. You get no refusal: the tool keeps answering from the copy before it, so the
+  numbers may be older than the publisher's latest; the fetch time in each answer's provenance line says how old.
+- One kind of check that never ran, a set of rules that returned no result at all, isn't caught yet
+  ([#222](https://github.com/jtouley/health-data-registry/issues/222)).
 
 ## Measures, never mixed
 
 Every row says which kind of number it is, in its `measure` column. There are four kinds:
 
-| Measure | What it is | Example source | Can it be added up? |
+| Measure | What it is | Example source | Does a sum mean anything? |
 |---|---|---|---|
-| `cases` (a count) | Cases reported to a health department, as the publisher counted them | NNDSS weekly tables | Yes, across places, with the publisher's total rows left out |
-| `rate` | Cases per 100,000 population, as the publisher worked it out | RESP-NET hospitalisation rates; HAICViz C. diff rates | Never |
-| `percent` | A share, such as percent of isolates resistant | NHSN antimicrobial resistance | Never |
-| `estimate` | A modelled value, not a count of reported cases | WHO tuberculosis incidence | Never |
+| `cases` (a count) | Cases reported to a health department, as the publisher counted them | NNDSS weekly tables | Yes, across places, as long as the publisher's total rows aren't in it |
+| `rate` | Cases per 100,000 population, as the publisher worked it out | RESP-NET hospitalisation rates; HAICViz C. diff rates | No |
+| `percent` | A share, such as percent of isolates resistant | NHSN antimicrobial resistance | No |
+| `estimate` | A modelled value, not a count of reported cases | WHO tuberculosis incidence | No |
 
-- **Counts are added; nothing else is.** When a place or year needs a count added up, the tool adds the count
-  column and leaves out the publisher's own total rows, so nothing is counted twice. Rates, percents and estimates
-  are shown exactly as published. If more than one published rate matches what you asked, the tool refuses rather
-  than average or add them, and says which breakdown to choose.
+- **Sums.** Today the tool adds only the count column and leaves the publisher's total rows out, so nothing is
+  counted twice; it shows rates, percents and estimates exactly as published; and if more than one published
+  rate matches what you asked, it refuses rather than average or add them, and says which breakdown to choose.
+  This is changing, under the [rule above](#show-everything-qualify-dont-decide): a sum you ask for will be
+  worked out, with a note when it may mislead. A sum that takes in a publisher's total row will say so and give
+  the figure without it; a sum of rates, percents or estimates will say that the total is not itself a rate,
+  percent or estimate.
 - **Measures never mix in one answer.** If a question matches series of different kinds (for example, a count from
   one source and a rate from another), the answer opens with a warning and the `measure` column tells them apart.
-  Never compare or add numbers across measures.
+  Today the tools don't compare or add numbers across measures. Under the rule above, a figure you ask for across
+  measures will come back with a note that it is not a count, rate or estimate of anything.
 - **A number the tool works out is labelled as such.** `get_rate` divides cases by Census population and returns
   `rate_per_100k` with `lower_95` and `upper_95`; every row of `get_rate`, `compare_rates`, `get_trend`,
   `age_adjust` and `check_signal` ends with a `computed` column saying it was computed here and how, so it can't
@@ -57,13 +98,22 @@ Recent surveillance counts change as late reports arrive. Every row from a runni
   until a domain reviewer approves them as the same count (`resolution_policy: require_domain_review`).
 
 How NNDSS annual counts are read: the tool takes CDC's running year-to-date column at the last week published for
-that year. Weekly counts are **never** added up to make a year, because late reports land in the running total,
-not in the week they happened: for Michigan in 2023, adding the weekly column gives 62 cases, the year-end running
-total 103. A year-to-date column is added across places only at one week; the tool refuses it otherwise.
+that year. Adding up weekly counts undercounts the year, because late reports land in the running total, not in
+the week they happened: for Michigan in 2023, adding the weekly column gives 62 cases, the year-end running total
+103. Today the tool doesn't add weeks into a year, and it adds a year-to-date column across places only at one
+week, refusing otherwise. `query_sql` follows the same rules today: it refuses a sum of weekly counts or of
+year-to-date counts across weeks, and a sum across places leaves CDC's summary rows out (the US totals, US
+territories combined and the nine census divisions); Non-U.S. Residents stays in, as its own bucket. These
+`query_sql` rules apply to sums only. This is changing, under the [rule above](#show-everything-qualify-dont-decide):
+a weekly sum you ask for will come with that note and CDC's year-to-date figure beside it ("weekly counts
+undercount the year; CDC's year-to-date figure: 103").
 
-An empty NNDSS count flagged `-` is CDC's "no reported cases" (dataset notes), so it is read as **0**, with the
-flag kept beside it. Every other flag (`U` unavailable, `N` not reportable, `NN`, `NP`, `NC`) leaves the cell
-empty, never zero.
+An empty NNDSS count flagged `-` is CDC's "no reported cases": the jurisdiction did not submit any cases (dataset
+notes). It is read as **not reported**, the maintainer's declaration of 25 Nov 2026, which reverses the earlier
+reading as a reported zero. It comes back empty, with the flag and its meaning beside it, and is **never counted
+as 0**: no total, rate or trend point is worked out from it. In `get_series` and `query_sql` the flag and its
+meaning come back beside the empty value; `get_rate` and `get_trend` name the flag when they leave the year out.
+Every other flag (`U` unavailable, `N` not reportable, `NN`, `NP`, `NC`) leaves the cell empty too.
 
 Other sources:
 
@@ -75,26 +125,28 @@ Other sources:
 
 ## Empty cells: suppression and missing codes
 
-An empty value means the publisher marked it missing, not reportable or suppressed. **It is never a zero**, and
-the tool never fills it in or back-calculates it. The one exception is a code the publisher's own codebook
-defines as "no reported cases" (NNDSS `-`): that cell is read as 0, always with its flag beside it.
+An empty value means the publisher marked it missing, not reported, not reportable or suppressed. **It is never a
+zero**, and the tool never fills it in or back-calculates it. That includes a code the publisher's codebook
+defines as "no reported cases" (NNDSS `-`): the cell stays empty, with its flag and that meaning beside it. It
+comes back as a row, so you can count the gaps or study them.
 
 | Source | What an empty cell can mean |
 |---|---|
-| NNDSS weekly | A flag explains it: `U` the jurisdiction could not send data; `N` not reportable there; `NN` not nationally notifiable; `NP` notifiable but not published; `NC` not calculated. A flag of `-` with an empty count means no reported cases (dataset notes), so it is read as 0 with the flag kept. |
+| NNDSS weekly | A flag explains it: `U` the jurisdiction could not send data; `N` not reportable there; `NN` not nationally notifiable; `NP` notifiable but not published; `NC` not calculated. A flag of `-` with an empty count is CDC's "no reported cases", read as not reported; it stays empty with the flag, never 0. |
 | NHSN resistance | Resistant count and percent resistant are shown only when at least 20 isolates were tested; smaller cells are empty. |
 | RESP-NET | Some estimated cumulative rates for the current season are published empty. |
 | WHO tuberculosis | No value published for that country and year. |
 
-NNDSS's `-` stays stored as published (empty, with the flag); only reading it turns it into 0, labelled "no
-reported cases". A maintainer confirms this on review of the contract (its `noCasesCode`).
+NNDSS's `-` is stored and returned as published (empty, with the flag). The maintainer declared on 25 Nov 2026
+that it means not reported, never a zero; the declaration is in the contract.
 
 ## Uncertainty
 
 - **Observed counts have no uncertainty interval.** A reported case count is what was reported, not an
   estimate. The tool says so with every count.
-- **Published bounds are always kept.** Where a publisher gives lower and upper bounds, they come back in the
-  `lower` and `upper` columns, next to the value. They are never dropped.
+- **Published bounds are always kept** ([show everything](#show-everything-qualify-dont-decide)). Where a
+  publisher gives lower and upper bounds, they come back in the `lower` and `upper` columns, next to the value.
+  They are never dropped.
   - **NHSN:** 95% mid-P exact confidence intervals around percent resistant. They describe precision only.
   - **WHO tuberculosis:** WHO's low and high bounds around its estimate. Whether they are 95% intervals is not
     stated in WHO's data feed; this is an open question in the contract.
@@ -123,7 +175,10 @@ Place traps the tool reports with each answer:
 - **New York in NNDSS excludes New York City,** which is reported as its own area.
 - **US RESIDENTS in NNDSS excludes territories;** the TOTAL row includes territories and non-US residents.
 - **RESP-NET rates cover each site's catchment area,** not necessarily the whole state. "Overall" means all
-  participating sites of that network combined, and the site list differs by network and season.
+  participating sites of that network combined, and the site list differs by network and season. A figure that
+  sets a catchment count beside a whole state's population says so: "catchment area only; the state population
+  overstates the denominator". Which counties each catchment covers, and when, is being recorded as data
+  ([#223](https://github.com/jtouley/health-data-registry/issues/223)).
 - **HAICViz C. diff covers the Emerging Infections Program catchment areas,** pooled across sites. It has no
   state-level values.
 - **NHSN:** small territories are in the national figures but not shown as states; Puerto Rico is shown as a state
@@ -168,7 +223,12 @@ like it rose or fell.
 - **NNDSS** counts follow the national surveillance case definitions (CSTE position statements, listed at
   [ndc.services.cdc.gov](https://ndc.services.cdc.gov/)). NNDSS does not publish confirmed and probable cases
   separately here, so each count may combine them as the condition's definition allows, and they cannot be split.
-- **C. auris:** clinical cases and screening (colonisation) cases are separate series. Never add them.
+- **C. auris:** clinical cases and screening (colonisation) cases are separate series. Screening counts people
+  found to carry *C. auris*, not new cases of disease (the NNDSS contract's `notIncidence`); its counts are always
+  returned. Today the tools keep the two apart and give no rate per 100,000 people for screening. This is
+  changing, under the [rule above](#show-everything-qualify-dont-decide): a sum of the two, or a rate from
+  screening counts, will come back with the note "screening detections, not incidence" and the clinical figure
+  beside it.
 - **RESP-NET** counts only laboratory-confirmed COVID-19, influenza and RSV hospitalisations.
 - **NHSN** covers pathogens from healthcare-associated infections reported to NHSN (CLABSI, CAUTI and SSI). It is
   not all clinical isolates in a state. Some phenotypes count non-susceptible rather than strictly resistant
@@ -239,5 +299,12 @@ Every fact that changes a number comes from the source's **contract**, never fro
 - A fact in a contract comes only from the publisher's own documentation, an exact fact about the file's
   structure, or a maintainer's reviewed note. Anything else is written down as an open question, and
   `list_caveats` shows it to you.
+- **Every note that qualifies a number names its source:** the contract rule, the data check result or the
+  recorded finding it comes from ([#225](https://github.com/jtouley/health-data-registry/issues/225)).
+- **A copy of the data whose checks never ran is never used.** A check that ran is reported, pass or fail; one
+  that didn't run can't vouch for anything. Today a copy that failed an error-level check is held back too, and
+  the tool answers from the copy before it; one kind of check that never ran isn't caught yet
+  ([#222](https://github.com/jtouley/health-data-registry/issues/222)). See
+  [Show everything](#show-everything-qualify-dont-decide).
 
 **Every contract is still a draft** that no maintainer has reviewed. Every answer says so.

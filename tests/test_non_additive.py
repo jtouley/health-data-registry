@@ -51,6 +51,8 @@ ROWS = [
     nndss("KANSAS", "7", m3="70", label="Rabies, Animal"),
     # A summary row: the contract's totalRows drops it from every sum that excludes totals.
     nndss("US RESIDENTS", "99", summary=True, m3="990", label="Coccidioidomycosis, Confirmed"),
+    # Another week and condition, with a flag code: a full load has some, so the codebook rule has a value to judge.
+    nndss("DISTRICT OF COLUMBIA", None, flag="-", week=51),
 ]
 WEEK = {"mmwr_year": 2024, "mmwr_week": 52}
 JARGON = ("Traceback", "Error", "SQL", "non_additive", "weekly_cases", "reporting_area", "stratum", "mmwr")
@@ -415,9 +417,9 @@ def test_query_sql_refuses_an_unpinned_sum(sql: str) -> None:
     ],
 )
 def test_query_sql_refuses_a_sum_it_cant_trace(sql: str) -> None:
-    with pytest.raises(SqlRefused, match="Add up directly from the catalogued table instead") as e:
+    with pytest.raises(SqlRefused, match="inner query or WITH table") as e:
         _guard(sql)
-    assert e.value.code == "non_additive"
+    assert e.value.code == "sum_over_subquery"
 
 
 def test_query_sql_without_flags_is_unchanged() -> None:
@@ -481,8 +483,9 @@ def test_real_percents_estimates_and_rates_say_where_their_uncertainty_is() -> N
 def test_changed_models_carry_a_new_version() -> None:
     """Provenance reports the semantic model's version (ADR 0003): answers from before and after this change differ."""
     reg = load_registry(ROOT)
-    for ds_id in ("cdc_haicviz_cdi", "cdc_nndss_weekly", "cdc_respnet"):
+    for ds_id in ("cdc_haicviz_cdi", "cdc_respnet"):
         assert reg.get(ds_id).semantic.version == "0.2.0", ds_id
+    assert reg.get("cdc_nndss_weekly").semantic.version == "0.3.0"  # weeks non-additive, '-' never 0 (#173)
     for ds_id in ("detroit_dhd_epi_annual", "detroit_dhd_resp_ed_weekly"):
         assert reg.get(ds_id).semantic.version == "0.1.1", ds_id
 
@@ -684,7 +687,8 @@ def _nhsn_rules() -> dict[str, str]:
     rules: dict[str, str] = {}
     for prop in doc["schema"][0]["properties"]:
         for q in prop.get("quality") or []:
-            rules[q["id"]] = q["query"]
+            if q.get("type") == "sql":  # custom rules are dbt-expectations checks, run in the dbt build
+                rules[q["id"]] = q["query"]
     return rules
 
 
