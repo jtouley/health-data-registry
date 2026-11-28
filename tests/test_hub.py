@@ -920,3 +920,27 @@ def test_bounded_and_check_outside_and_inside_a_deadline(monkeypatch: Any) -> No
         time.sleep(0.06)
         with pytest.raises(deadline.DeadlineExceeded):
             Engine(registry=Registry(root=Path("."), datasets={}), lake=Path("x"), hub=None).connect()
+
+
+def test_hub_fetch_refusals_say_exactly_what_failed(tmp_path: Path, released: Path, monkeypatch: Any) -> None:
+    """Issue #212: the plain words of both fetch refusals, and where a local release is copied to."""
+    h = Hub(url=str(released), cache=tmp_path / "c")
+    got = h.fetch("manifest.json")
+    assert got == tmp_path / "c" / "hub" / "local" / released.resolve().name / "manifest.json"
+    with pytest.raises(HubError) as e:
+        h.fetch("nope.json")
+    assert str(e.value) == f"The hub release at {released} has no file nope.json."
+
+    import huggingface_hub
+
+    def broken(*a: Any, **kw: Any) -> str:
+        raise OSError("offline")
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", broken)
+    url = f"hf://datasets/org/other@release-{RUN}"
+    with pytest.raises(HubError) as e:
+        Hub(url=url, cache=tmp_path / "d").fetch("manifest.json")
+    assert str(e.value) == (
+        f"The open data hub ({url}) could not be reached to download manifest.json. Check the internet connection "
+        "and try again; nothing was changed on this computer."
+    )

@@ -1045,3 +1045,184 @@ def test_plan_recuts_when_its_estimate_is_short() -> None:
     bounds = paging.plan(res, "csv", 2_000, render)
     assert all(paging.wire_size(render(lo, hi, 0, bounds)) <= 2_000 for lo, hi in bounds if hi - lo > 1)
     assert [b for b in bounds if b[1] > b[0]] and bounds[-1][1] == 40
+
+
+# --------------------------------------------------------------------- the plan's exact arithmetic (issue #212)
+# A later page is re-planned from scratch on every call (the pin checks the rows, not the cut), so the cut for the
+# same rows must not drift between releases. These pin it exactly, with the real page render and with renders whose
+# sizes are known to the character.
+
+_PLAN_ROWS = [[f"r{i}", "x" * (i % 7)] for i in range(100)]
+
+
+_LONG_ARGS = {"condition": "legionellosis", "location": ["Michigan", "Ohio", "United States", "Indiana"]}
+_LONG_PIN = "v1.eyJ2IjoxLCJzIjp7InRveV9jYXNlcyI6WyIyMDI2MTEyNFQwMDAwMDBaLTAwMDAiXX19.abcdefabcdef"
+
+
+def _real_plan(fmt: str, budget: int, long_call: bool = False) -> list[tuple[int, int]]:
+    """With a long call (many arguments, a real-length pin) the Next line, not the last-page line, is widest."""
+    res = tools.Result(["a", "b"], [list(r) for r in _PLAN_ROWS], ["a note"])
+    args, pin = (
+        ({**_LONG_ARGS, "fmt": fmt}, _LONG_PIN) if long_call else ({"condition": "x", "fmt": fmt}, "tok")
+    )
+
+    def render(lo: int, hi: int, n: int, bounds: list[tuple[int, int]]) -> Any:
+        return paging._render_page(res, lo, hi, n, bounds, "get_series", args, pin, [], fmt)
+
+    return paging.plan(res, fmt, budget, render)
+
+
+def _runs(*sizes: int) -> list[tuple[int, int]]:
+    out, lo = [], 0
+    for s in sizes:
+        out.append((lo, lo + s))
+        lo += s
+    return out
+
+
+@pytest.mark.parametrize(
+    ("fmt", "budget", "want"),
+    [
+        ("csv", 900, _runs(*[1] * 100)),
+        ("csv", 1300, _runs(21, 20, 20, 20, 19)),
+        ("json", 3000, _runs(18, 18, 18, 18, 18, 10)),
+        ("json", 4500, _runs(38, 38, 24)),
+    ],
+)
+def test_the_same_rows_are_cut_into_the_same_pages(
+    fmt: str, budget: int, want: list[tuple[int, int]]
+) -> None:
+    assert _real_plan(fmt, budget) == want
+
+
+@pytest.mark.parametrize(
+    ("budget", "want"),
+    [(2496, _runs(*[1] * 100)), (2500, _runs(2, 1, 1, 1, 1, 1, 2, *[1] * 91))],
+)
+def test_a_long_next_line_is_what_each_json_page_reserves_room_for(
+    budget: int, want: list[tuple[int, int]]
+) -> None:
+    assert _real_plan("json", budget, long_call=True) == want
+
+
+def _synthetic(n: int, k: int, extra: Any, budget: int) -> tuple[list[tuple[int, int]], list[int], int]:
+    """Plan n rows of k characters (k + 1 with the newline) under a render of exactly k head characters plus the
+    rows' own cost plus extra(rows); returns the bounds, the rooms each pass used, and the row cost."""
+    res = tools.Result(["a"], [["x" * k] for _ in range(n)], [])
+    costs = [paging._row_cost(r, "csv") for r in res.rows]
+    rooms: list[int] = []
+    real_cut = paging.cut
+
+    def cut(c: Any, room: int) -> list[tuple[int, int]]:
+        rooms.append(room)
+        return real_cut(c, room)
+
+    def render(lo: int, hi: int, i: int, bounds: list[tuple[int, int]]) -> Any:
+        return "h" * 20 + "x" * (sum(costs[lo:hi]) + (extra(hi - lo) if hi > lo else 0))
+
+    import unittest.mock
+
+    with unittest.mock.patch.object(paging, "cut", cut):
+        bounds = paging.plan(res, "csv", budget, render)
+    return bounds, rooms, costs[0]
+
+
+def test_a_page_that_fills_the_budget_exactly_is_kept() -> None:
+    bounds, rooms, cost = _synthetic(20, 9, lambda r: 0, 2 * 20 + 2 * 5 * 10)
+    assert cost == 10 and rooms == [50] and bounds == _runs(5, 5, 5, 5)
+
+
+def test_a_page_one_character_over_is_cut_again() -> None:
+    budget = 2 * (20 + 50 + 1) - 1  # odd, so a page can be over by exactly one
+    bounds, rooms, _ = _synthetic(20, 9, lambda r: 1 if r > 1 else 0, budget)
+    assert rooms == [50, 45] and bounds == _runs(4, 4, 4, 4, 4)
+
+
+def test_two_row_pages_are_measured_too() -> None:
+    bounds, rooms, _ = _synthetic(12, 9, lambda r: 4 * r, 94)
+    assert rooms[0] == 27 and bounds == _runs(*[1] * 12)
+    assert all(paging.wire_size("h" * 20 + "x" * 10 * (hi - lo)) <= 94 for lo, hi in bounds)
+
+
+@pytest.mark.parametrize(
+    ("n", "k", "extra", "budget", "want_rooms"),
+    [
+        (
+            200,
+            999,
+            lambda r: 3,
+            2 * (20 + 9_000),
+            [9_000, 8_100],
+        ),  # a steady small overshoot: a tenth of the room a pass
+        (40, 9, lambda r: 50 * r, 400, [180, -720]),  # a huge one: half the overshoot
+        (30, 1, lambda r: 1 if r > 1 else 0, 21, [-10]),  # no room at all: one row a page, never re-measured
+        (
+            30,
+            1,
+            lambda r: 1 if r > 2 else 0,
+            2 * (20 + 6) + 1,
+            [6, 5],
+        ),  # little room: at least one character a pass
+    ],
+)
+def test_each_pass_shrinks_the_room_by_the_largest_of_its_three_steps(
+    n: int, k: int, extra: Any, budget: int, want_rooms: list[int]
+) -> None:
+    _, rooms, _ = _synthetic(n, k, extra, budget)
+    assert rooms == want_rooms
+
+
+def _finishes(fn: Any, seconds: float = 10.0) -> Any:
+    import threading
+
+    box: list[Any] = []
+    t = threading.Thread(target=lambda: box.append(fn()), daemon=True)
+    t.start()
+    t.join(seconds)
+    assert box, "the plan did not finish"
+    return box[0]
+
+
+def test_rows_too_long_for_any_page_get_one_page_each_and_the_plan_ends() -> None:
+    res = tools.Result(["a"], [["x" * 5_000], ["y" * 5_000], ["z" * 5_000]], [])
+
+    def render(lo: int, hi: int, n: int, bounds: list[tuple[int, int]]) -> Any:
+        return paging._render_page(res, lo, hi, n, bounds, "query_sql", {"sql": "SELECT 1"}, "tok", [], "csv")
+
+    assert _finishes(lambda: paging.plan(res, "csv", 2_000, render)) == [(0, 1), (1, 2), (2, 3)]
+
+
+@pytest.mark.parametrize("fmt", ["csv", "json"])
+def test_two_rows_too_long_together_are_paged_not_refused(registry: Registry, eng: Engine, fmt: str) -> None:
+    rows = [["y" * 2_000, "", 1], ["z" * 2_000, "", 2]]
+    first = _wide(registry, eng, rows, fmt, 1, 6_000)
+    text = first if isinstance(first, str) else json.dumps(first)
+    assert "y" * 2_000 in text and "z" * 2_000 not in text and "too long to send" not in text
+
+
+@pytest.mark.parametrize("fmt", ["csv", "json"])
+def test_too_long_refusals_keep_the_format_and_the_real_size(
+    registry: Registry, eng: Engine, fmt: str
+) -> None:
+    rows = [["y" * 20_000, "", 1]]
+    one = paging.respond(
+        "query_sql", {"sql": "SELECT 1", "fmt": fmt}, eng,
+        lambda e: tools.Result(["a", "b", "c"], [list(r) for r in rows], ["a note"], {}),
+        page=None, pin=None, fmt=fmt, budget=6_000,
+    )  # fmt: skip
+    many = _wide(registry, eng, [["small", "", 0], *rows], fmt, 2, 6_000)
+    for out in (one, many):
+        assert isinstance(out, dict) == (fmt == "json")
+        text = out["message"] if isinstance(out, dict) else out
+        found = re.search(r"about ([\d,]+) characters", text)
+        assert found is not None
+        size = int(found[1].replace(",", ""))
+        assert size > 40_000  # the row's own size, both copies counted, never a placeholder's
+        if isinstance(out, dict):
+            assert out["refused"] == "too_large"
+
+
+def test_a_page_past_the_end_is_refused_as_no_such_page(registry: Registry, eng: Engine) -> None:
+    two = _respond(registry, eng, "json", 1, None, 60_000)
+    beyond = _respond(registry, eng, "json", two["page"]["pages"] + 1, None, 60_000)
+    assert beyond["refused"] == "no_such_page"

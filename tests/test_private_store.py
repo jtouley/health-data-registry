@@ -410,3 +410,55 @@ def test_purge_deletes_every_private_copy(
         "the private hub dataset org/health-data-registry-private-idweek-abstracts was not deleted: set HF_TOKEN "
         "to a write token and rerun"
     ]
+
+
+def test_a_private_read_carries_every_url_hash_and_version_it_was_made_from(
+    reg: Registry, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #213: the manifest of a private read, field by field, from rows the store returns as they are."""
+    ds = reg.get("idweek_abstracts")
+    rows = [
+        a_row(DOI_A, year=2025, europepmc_source_url="https://www.ebi.ac.uk/e", europepmc_raw_sha256="3" * 64,
+              retrieved_at="2026-11-24T12:00:00+00:00", title=None),
+        a_row(DOI_B, source_url="https://api.crossref.org/y", raw_sha256=None, openalex_source_url="https://o",
+              retrieved_at="2026-11-25T08:00:00+00:00"),
+    ]  # fmt: skip
+    got = private.PrivateRows(rows, "hub", [{"complete": True}], revision="abc123")
+    monkeypatch.setattr(private, "read_rows", lambda lake, d: got)
+    eng = Engine(registry=reg, lake=tmp_path / "lake", hub=None, fetch_at_run_time=False)
+    records, m = eng._read_private(ds)
+    assert records[0]["year"] == "2025" and records[0]["title"] is None  # text as stored, empty kept empty
+    assert m.dataset == ds.id and m.snapshot_id == f"private-{got.version}"
+    assert (m.contract_version, m.semantic_version, m.catalog_status) == (
+        ds.contract.version, ds.semantic.version, ds.entry.status,
+    )  # fmt: skip
+    assert m.retrieved_at == "2026-11-25T08:00:00+00:00"  # the latest row's
+    assert m.source_urls == [
+        "https://api.crossref.org/x",
+        "https://www.ebi.ac.uk/e",
+    ]  # each with its hash only
+    assert m.raw_sha256 == ["0" * 64, "3" * 64]
+    assert (m.licence, m.redistribution, m.partial, m.release_ref) == (
+        ds.entry.licence.id,
+        False,
+        False,
+        "abc123",
+    )
+    assert m.row_count == 2 and m.origin == "private"
+
+
+def test_a_private_store_that_is_not_connected_says_where_to_read_instead(
+    reg: Registry, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ds = reg.get("idweek_abstracts")
+    monkeypatch.setattr(private, "read_rows", lambda lake, d: None)
+    eng = Engine(registry=reg, lake=tmp_path / "lake", hub=None, fetch_at_run_time=False)
+    with pytest.raises(QueryRefused) as e:
+        eng._read_private(ds)
+    assert str(e.value).endswith(
+        f"Open the abstracts on {ds.entry.source.landing_url} instead, or ask the maintainer to connect the private "
+        "store."
+    )
+    monkeypatch.setattr(private, "read_rows", lambda lake, d: private.PrivateRows([], "local", []))
+    _, m = eng._read_private(ds)
+    assert m.retrieved_at == "" and m.partial
