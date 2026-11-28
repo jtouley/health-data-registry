@@ -342,6 +342,8 @@ def test_each_caveat_line_is_printed_once(reg: Registry, tmp_path: Path) -> None
     lake = tmp_path / "lake"
     eng = _store(reg, lake)
     _store(reg, lake, "shea_abstracts")
+    # A query across two sources needs a declared join (#82); declared here to reach the multi-source caveats.
+    eng.declared_joins = frozenset({frozenset({"idweek_abstracts", "shea_abstracts"})})
     for sql in (
         "SELECT doi FROM idweek_abstracts",
         "SELECT doi FROM idweek_abstracts UNION ALL SELECT doi FROM shea_abstracts",
