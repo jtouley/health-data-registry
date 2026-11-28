@@ -24,6 +24,10 @@ vars:
   # number in an answer.
   near_zero_ytd_max: 1
   near_zero_prior_year_min: 10
+  # dbt_date's clock, which dbt-expectations' freshness test reads (expect_row_values_to_have_recent_data): UTC,
+  # the zone every snapshot id's retrieval time is written in (store.py). It is project-wide: any later dbt_date
+  # use (an MMWR calendar, say) inherits UTC, so set a local zone there explicitly if one is meant.
+  "dbt_date:time_zone": "UTC"
 
 models:
   health_data_registry:

@@ -56,6 +56,21 @@ models:
           contract: contracts/cdc_respnet.odcs.yaml
           checks: 'No row has a value for point estimate: hospitalizations per 100,000 site catchment population
             (rates) or percent of hospitalized patients (clinical rows); unit given by estimate_type.'
+  - dbt_expectations.expect_table_row_count_to_equal_other_table:
+      name: cdc_respnet_rows_staging_to_intermediate
+      arguments:
+        compare_model: ref('stg_cdc_respnet')
+      config:
+        severity: error
+        meta:
+          dimension: consistency
+          rule: rows_staging_to_intermediate
+          contract: contracts/cdc_respnet.odcs.yaml
+          check: row_count_matches
+          checks: 'The intermediate model has exactly as many rows as staging: it only adds columns beside each
+            staging row (an exact structural fact). It guards the generated intermediate model, which today is a
+            view with no join, filter or aggregation, so it checks our code, not the publisher''s data; it becomes
+            a reconciliation of the data once a mart can change the grain (#131).'
   columns:
   - name: surveillance_network
     data_type: varchar
