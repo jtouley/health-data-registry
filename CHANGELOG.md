@@ -6,8 +6,51 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- `query_sql` refuses queries that could build values too large to answer safely (#74): `lpad`/`rpad` lengths
+  over 1,000, `string_agg`/`list`/`array_agg` and the other ways to gather a whole column into one value
+  (`ARRAY(SELECT ...)`, `max`/`min`/`arg_max`/`arg_min` with a count), `levenshtein`, recursive `WITH`,
+  non-literal `replace` replacements and `strftime` formats, and any one value that `||`, `concat`, `replace`,
+  splitting, lists or structs could grow more than 256-fold. Growth is counted per value, through CTEs and
+  subqueries, so separate columns and conditions don't add up against each other. Each refusal says what to ask
+  instead, and `query_sql` passes that next step on.
+- `query_sql` refuses any query that reaches two sources with no declared join in any part of it, including each
+  branch of a `UNION`, `INTERSECT` or `EXCEPT`, every subquery and every CTE (#74).
+- The lake is never read from the working folder: it is `$HDR_LAKE` (a full path) or a per-user data folder.
+  Each time the server connects, it checks each lake snapshot's dataset id, snapshot id, contract version and
+  review status, that its folder and files belong to the current user and can't be changed by others (on Unix),
+  and that `data.duckdb` is a regular file with the sha256 in its manifest. A snapshot that fails, or can't be
+  read, is refused in plain words; the others still answer. DuckDB then reads the file by its path, so a change
+  made after that check is read until the next reconnect. The manifest sits beside the data, so these hashes
+  catch damage, not tampering. A file is hashed once per server process and again only when its size, times or
+  inode change. `export-public` checks `data.duckdb` and `data.parquet` the same way before publishing, and
+  compares the copy it publishes. Cached hub files are checked again each time the server reconnects (#74).
+  Snapshots built before this change have no file fingerprints and must be rebuilt with `refresh`.
+
 ### Fixed
 
+- The hosted server (`serve --http`) refuses to start while `HDR_HTTPS_PROXY` is set, because behind a proxy
+  the check against private or loopback addresses is advisory (#270). An operator whose proxy itself allows only
+  the catalogued publisher hosts on public addresses opts in with `HDR_PROXY_ENFORCES_ALLOWLIST=1`
+  (docs/dev/hosting.md). Its other startup refusals (a bad limit such as `HDR_PAGE_CHARS`) now print a plain
+  message instead of a traceback too. Nothing changes for clinicians, local use is unchanged, and the Space sets
+  no proxy.
+- Release blockers from #173, where the served path returned wrong numbers:
+  - NNDSS's `-` (no reported cases) is read as not reported (the maintainer's declaration of 25 Nov 2026). It
+    comes back empty with its flag, never as 0 and never as a rate: `get_rate` gives no rate, `compare_rates`
+    refuses, `get_trend` leaves the year out and names the flag, and `check_signal` refuses any 4-week window
+    with a `-` week, which is common for rare conditions. The measles trial row "Imported 2024" is now empty
+    with flag `-`, not 0.
+  - Weekly counts, or year-to-date counts, are never added across weeks into a year (late reports reach only
+    the year-to-date count), in the metric compiler and in `query_sql`.
+  - A `query_sql` sum across places leaves the publisher's total rows out of that sum and says so; a sum that
+    meets an empty value stops, and so does one that filters out the empty values first. These rules cover
+    sums only.
+  - *C. auris* screening (colonisation) gets no rate per 100,000 people, from the NNDSS contract's new
+    `notIncidence` declaration (the maintainer's declaration); its counts are still returned.
+  - `refresh` exits non-zero when a development sample (`--max-rows`) fails a blocking data check, and every
+    answer from that sample says which check failed.
 - A summed count never adds up labels that overlap or count different things (hard rule 2). Semantic-model
   dimensions say `non_additive: true` or `false`, and each `true` says why in plain words
   (`non_additive_reason`), which the refusal and `describe_dataset` show. A metric or series that neither picks
@@ -32,6 +75,7 @@ All notable changes to this project are documented here. The format follows
   now checks that every entry is well-formed instead: it parses, its path is a plain path under an existing
   top-level directory of this repository (a file a later pull request adds counts), and it has a comment above it
   saying why.
+
 ### Changed
 
 - The README is rewritten for clinicians: five setup steps that each say what you'll see (the Start here
@@ -50,6 +94,62 @@ All notable changes to this project are documented here. The format follows
   visits for COVID-19, influenza and RSV with CDC's trend and activity level (NSSP, data.cdc.gov rdmq-nq56), on
   the existing Socrata adapter. State and national answers read CDC's own state and United States rows; county rows
   carry their Health Service Area's shared figure and are never added up.
+- New source, draft: `nchs_resp_deaths_pct`, NCHS's provisional weekly percent of all deaths among US residents
+  involving COVID-19, influenza, RSV or the three combined, by age group, sex and race and Hispanic origin
+  (data.cdc.gov 53g5-jf7x). Read as published and never added; a suppressed count (1 to 9) is no value, never zero,
+  and keeps NCHS's note. It answers only a question about deaths, however it's worded ("COVID-19 mortality",
+  "deaths from RSV"): a plain "COVID-19" question doesn't get it, from `get_series` or `suggest_datasets`.
+- Semantic series can list `asked_with` words: a series that names a disease but isn't a measure of it (a percent
+  of deaths, vaccination coverage) answers only a question that uses one of them and also names the disease. A
+  bare "vaccination" question gets none of them, and an empty entry is refused.
+- Marts `fct_cdc_nssp_lab_positivity` and `fct_nchs_resp_deaths_pct`, one fact per source with every
+  row kept, the publisher's own notes as published, and a `value_status` that says why a value is empty
+  ("suppressed" only where a count is empty too; else "not published").
+- New source, draft (contract not yet reviewed): `cdc_nssp_lab_positivity`, CDC's weekly NSSP commercial
+  laboratory NAAT tests, positives and percent positive for COVID-19, influenza and RSV by state (data.cdc.gov
+  jqxy-cyu2), on the existing Socrata adapter. Read as published and never added; a count or percent CDC
+  suppressed (under 10 tests or 10 positives) is no value, never zero. A national or county question is told the
+  table is by state only.
+- New source, draft (contract not yet reviewed): `cdc_haicviz_isa`, CDC's Emerging Infections Program case and
+  death rates for invasive Staphylococcus aureus since 2005 (HAICViz iSA, data.cdc.gov ssz5-s49e), on the existing
+  Socrata adapter. Every rate is for the EIP sites combined, never called a state figure, and nothing is added;
+  whether the figures are MRSA only is an open question, so none is called an MRSA rate.
+- New source, draft (contract not yet reviewed): `cdc_haicviz_mugsi`, CDC's Emerging Infections Program case and
+  death rates for carbapenem-resistant Enterobacterales (CRE) and Acinetobacter baumannii (CRAB) since 2012
+  (HAICViz MuGSI, data.cdc.gov v4tm-h8pe), on the existing Socrata adapter. Every rate is for the EIP sites
+  combined, never called a state figure, and nothing is added.
+- The crawler factory's core (ADR 0016, step 1 and the types step 2 names). Every source is read by one generic
+  adapter type chosen in its catalog entry (`type:`; the older `portal:` is read for one more release and `validate`
+  warns about it), configured by that type's strict block, plus named extensions it opts in to. New types:
+  `https_file` (csv, xlsx, or one member of a zip; xlsx values as stored with their number format, never the displayed
+  text), `html_table` (one table by selector, or a resumable listing of item pages) and `pdf_table` (reports linked
+  from an index page, plus facts a report prints once, read by a `parse` extension). `socrata`, `odata` (WHO GHO),
+  `https_csv`, `tableau` and `doi` read exactly as before. `pdf_table` reads a table wide (one record per row) or long
+  (one record per printed cell, for column headers that change from report to report), and can check a table against
+  its own printed totals, recording each row's `failed_checks` as metadata and refusing a document with more failing
+  rows than the catalog allows. Every row a document type reads (`pdf_table`, `https_file`, `html_table`) carries its
+  document's URL with any key stripped, sha256 and fetch time. A listing crawl checks that each item is of the year
+  asked for and carries the number the listing gives it, combines several `parse` extensions on one item page in their
+  declared order, and reports a listing that runs out before its own total as incomplete, to resume next run. One
+  fetch core: a source reaches only its own hosts and declared paths (catalogued patterns matched whole, on the
+  linear-time RE2 engine), config can only slow the pace, robots.txt is reread after 24 hours and its Request-rate
+  honoured, keys never reach provenance, and a source stops being crawled only after 8 weeks of continuous failure.
+  The row-level guard (hard rule 4) runs on every page of every type, with no way to switch it off. A snapshot's
+  identity now includes how its records were read (the type, its config and extensions), so a config-only change
+  builds a new snapshot; existing snapshots are rebuilt once on their next refresh.
+- From the review of the crawler factory (#148): the new types keep every field a document gives in the raw layer,
+  not only the contract's, so a year the codebook doesn't list stops the load instead of being dropped; a
+  contract for a type that adds per-row metadata must declare it (and `failed_checks` when it reconciles), and a
+  staging step's added key must be in the contract's primary key. `failed_checks` is a JSON array of sentences,
+  on the cell it concerns in the long layout. A `pdf_table` snapshot keeps its index page as a fetch. A listing
+  crawl's checkpoint is tied to how its items were read, a finished year rechecks its listing's total once a run,
+  a moving total restarts the listing walk instead of stopping the crawl for good, a gone item is named and asked
+  for again without walking the listing, and one year that can't finish no longer holds the others back. A fetch
+  sends exactly the URL the scope check approved, and every redirect stays on the source's own hosts. Valid HTML
+  that leaves out optional end tags is read as a browser reads it.
+- New source, draft (contract not yet reviewed): `cdc_nrevss_positivity`, CDC's weekly national percent of laboratory tests
+  positive for COVID-19, influenza and RSV (NREVSS, data.cdc.gov seuz-s2cv), on the existing Socrata adapter. One
+  figure for the whole country each week; a question about a state or region is told so.
 - SchoolVaxView kindergarten coverage and exemptions (`cdc_schoolvaxview_kindergarten`, CDC data.cdc.gov
   ijqb-a7ye): the percent of kindergartners vaccinated, or with an exemption, by vaccine and dose or exemption
   type, state and school year, as each state reported it, read as published and never added up. Draft contract.

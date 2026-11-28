@@ -135,9 +135,10 @@ src/health_data_registry/
                   runs guarded SQL, wraps every answer with its source, version, SQL and method
   sql_guard.py    governed read-only SQL: one SELECT, allowlisted functions, declared joins only
   fetch.py        HTTPS-only fetcher to catalogued, publicly routable publisher hosts
-  store.py        the lake ($HDR_LAKE, default ./lake): raw/<sha256>, datasets/<id>/run_date=<d>/<snapshot>/
-                  with data.parquet, data.duckdb and manifest.json, LATEST, fetch_log/, and
-                  raw_records/<id>/<snapshot>.ndjson (parsed records that dbt staging reads)
+  store.py        the lake ($HDR_LAKE as a full path, else a per-user data folder): raw/<sha256>,
+                  datasets/<id>/run_date=<d>/<snapshot>/ with data.parquet, data.duckdb and manifest.json,
+                  LATEST, fetch_log/, and raw_records/<id>/<snapshot>.ndjson (parsed records that dbt staging
+                  reads)
   staging.py      the one contract-driven typed projection (names, types, missing codes, required, code
                   lists); the lake, the live read and the generated dbt staging models all use it
   transform_gen.py  `make contracts`: writes transform/'s raw sources, staging and intermediate models,
@@ -151,7 +152,15 @@ src/health_data_registry/
   release_gate.py the release gate: passes a hub release only after a complete, clean dbt build, and records it
                   served only after its upload; ops/builds.jsonl, ops/serving_log.jsonl and ops/SERVING, kept in
                   the private ops dataset health-data-registry-ops-release-gate
-  crawl.py        fetch one source into a lake (refresh, fetch, and run-time fetches)
+  crawl.py        fetch one source into a lake (refresh, fetch, and run-time fetches); the access policy
+                  (crawl.Robots) and the one polite getter every type and runner fetches through
+  access.py       the shared fetch rules beside it: a source's own hosts and scope paths, link normalising,
+                  pace that config can only slow, persisted pace and per-host locks, keys stripped from
+                  provenance, live reads clamped to the deadline, the 8-week stop rule
+  listing.py      the resumable listing crawl (html_table, shape listing): checkpoints in the lake, data first
+                  and checkpoint last, a snapshot only when the crawl matches the listing's own total
+  source_config.py  the crawler factory's catalog schema (ADR 0016): type names, strict per-type config blocks
+                  with bounded caps, checked scope patterns, extension choices
   publish.py      export-public to the open data hub: cards, licence, manifest, pre-publish checks, tag
   hosted.py       serve --http: stateless Streamable HTTP for the claude.ai connector; hub releases and live only,
                   rate limits per session and overall, result cap, no request content in any log
@@ -161,9 +170,13 @@ src/health_data_registry/
   product.py      the ODPS data product (contracts/health-data-registry.odps.yaml)
   geo.py          one place whatever the publisher calls it (name, postal code, FIPS; GBD location name)
   evaluation.py   sealed blind sets: seal check, scorer, release gate
-  adapters/       socrata.py (CDC portals), who_gho.py (WHO GHO OData), https_csv.py (one CSV file, e.g. Census)
-catalog/          one reviewed YAML per dataset (6 sources: 5 infectious-disease, plus Census county population
-                  as the denominator; contracts all draft)
+  adapters/       the generic adapter types (ADR 0016), registered in adapters.TYPES with declared capabilities:
+                  socrata, odata (WHO GHO), https_csv, https_file (csv, xlsx, zip member), html_table (a table,
+                  or a listing of item pages), pdf_table (wide or long; reconcile.py checks printed totals as
+                  metadata), tableau, doi; adapters.pages runs every page through
+                  the row guard; extensions/ holds the named, pure extensions a source opts in to by name
+catalog/          one reviewed YAML per dataset: infectious-disease sources, Census population denominators, and
+                  covariates that explain their rates (hard rule 11); contracts all draft
 contracts/        one ODCS v3.2.0 contract per dataset, the ODPS data product, and models/: one contract per
                   model computed in dbt (e.g. the MMWR calendar)
 semantic/         one dbt-style semantic model per dataset
@@ -220,8 +233,25 @@ These come from the spec and [docs/adr/](docs/adr/README.md). A PR that breaks o
 1. **Facts that change a number** ([ADR 0007](docs/adr/0007-odcs-contracts-and-semantic-models.md), carried over
    from ADR017). A fact that changes a number comes only from the publisher's own codebook, an exact structural
    fact, or a maintainer's reviewed declaration. Anything else is an open question in the contract, never a guess.
-2. **Aggregation.** Frequency tables sum their count column and exclude total rows. Rates and estimates are never
-   summed. Published uncertainty ranges are returned, never dropped.
+2. **Show everything; qualify, don't decide** ([ADR 0018](docs/adr/0018-show-everything-qualify-dont-decide.md),
+   the maintainer's decision of 27 Nov 2026; it replaces the aggregation rule from ADR 0007). The ADR has the
+   examples; the clinician's copy is
+   [docs/data-conventions.md](docs/data-conventions.md#show-everything-qualify-dont-decide).
+   - Every row the publisher sent is returned with its flag and what it means (`-` is never turned into 0).
+     Published uncertainty ranges are always returned. Gaps are data a researcher can ask for
+     ([#223](https://github.com/jtouley/health-data-registry/issues/223)).
+   - Any figure we compute is computed when asked. Where a contract rule, a data check's result or a recorded
+     finding says it may mislead, the answer says so in plain words, cites that source
+     ([#225](https://github.com/jtouley/health-data-registry/issues/225)) and, where there is one, puts the figure
+     without that problem beside it, described by what it is, never as the safer or right one (ADR 0004).
+   - One thing still blocks: a data check that never ran
+     ([#222](https://github.com/jtouley/health-data-registry/issues/222)). That is about our own honesty, not
+     deciding for physicians.
+   - Binding now for new code and for any refusal or dropped row a PR's own change touches. Code that already
+     refuses sums and rates or leaves total rows out moves in
+     [#226](https://github.com/jtouley/health-data-registry/issues/226), and code that holds back a copy after a
+     failed check moves in [#243](https://github.com/jtouley/health-data-registry/issues/243); a PR is not wrong
+     for leaving that code untouched. Comments and tests citing "hard rule 2" for a refusal mean the old rule.
 3. **Review.** Contracts and semantic models may be drafted by inference or a model, but merge only after a
    maintainer reviews them. Until then `list_caveats` reports the contract as a draft.
 4. **No patient data.** No upload or local-file tool, ever. Tools read only catalogued public sources. Never join
@@ -240,8 +270,13 @@ These come from the spec and [docs/adr/](docs/adr/README.md). A PR that breaks o
 10. **Licences decide what is mirrored.** Public-domain US federal data may be snapshotted and published;
     restricted terms (e.g. WHO, non-commercial) are never published and their terms show with every result
     ([ADR 0009](docs/adr/0009-licences-decide-mirroring.md)).
-11. **Infectious disease only** for now. Don't add datasets from other fields until ID passes its evaluation bar.
-    Population denominators (Census) are allowed: they serve only as the denominators of infectious-disease rates.
+11. **Infectious disease, its denominators and its covariates** for now
+    ([ADR 0019](docs/adr/0019-covariates-for-infectious-disease-rates.md)). Don't add datasets from other fields
+    until ID passes its evaluation bar. Population denominators (Census) are allowed: they serve only as the
+    denominators of infectious-disease rates. Covariates that explain infectious-disease rates (e.g. CDC/ATSDR's
+    Social Vulnerability Index) are allowed, with research area `covariate` and no conditions, series or GBD cause.
+    They are served only beside an infectious-disease answer, never as a topic of their own; the rate tools never
+    use them as a denominator; and they are area-level only (rule 4). They open no new fields of medicine.
 12. **Built for clinicians** ([ADR 0012](docs/adr/0012-built-for-clinicians.md)). Tool descriptions, helpers and
     every refusal are in plain clinical words with a next step: never a stack trace, an HTTP code or a bare
     exception. Every step a clinician takes has a helper; change helper text only in `helpers.py`, then

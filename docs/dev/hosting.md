@@ -134,6 +134,20 @@ answer would then be dropped instead of paged.
 - **Host checks.** `serve --http` binds to 127.0.0.1 unless `--host` says otherwise, and the Host and Origin
   headers are checked (the SDK's DNS-rebinding protection) whenever the address isn't the explicitly public
   `0.0.0.0` or `::`. The Space passes `--host 0.0.0.0` behind Hugging Face's proxy.
+- **No egress proxy unless it enforces the publisher allowlist.** `HDR_HTTPS_PROXY` sends every fetch through an
+  HTTP CONNECT proxy, which looks up the publisher's address itself, so the fetcher's refusal of private or
+  loopback addresses becomes advisory (`fetch.py`). `serve --http` therefore refuses to start while
+  `HDR_HTTPS_PROXY` is set, with a plain message that names the next step. The opt-in is
+  `HDR_PROXY_ENFORCES_ALLOWLIST=1`: set it only when the proxy itself allows nothing but the catalogued publisher
+  hosts on public addresses. While `HDR_HTTPS_PROXY` is set, its only accepted value is `1`; any other value
+  (`0`, `false`, `yes`) stops the server just as an unset opt-in does, so a typo never turns the check off. With
+  no proxy the opt-in is ignored, and the server logs a warning that it has nothing to vouch for, so a stale one
+  can be removed before a proxy is added later. With the opt-in, the proxy address must look like
+  `http://host:port` with no credentials, or the server doesn't start; it then logs one warning that names the
+  proxy's host and port. The opt-in also means `HDR_EXTRA_CA_FILE`, if set, is trusted for every publisher, as it
+  is in any proxy mode, so set that file only for a proxy that re-terminates TLS and that you control. Local use
+  (`serve` on stdio, `refresh`, `fetch`) is unchanged: it still fetches through the proxy and warns. The Space
+  sets no proxy.
 
 ## Privacy
 

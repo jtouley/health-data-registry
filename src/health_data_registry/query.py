@@ -6,6 +6,7 @@ so a clinician (or a grader) can check the number without trusting the model tha
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from collections import OrderedDict
 from collections.abc import Collection, Mapping, Sequence
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
+import sqlglot
 
 from health_data_registry import deadline
 from health_data_registry.registry import (
@@ -27,7 +29,14 @@ from health_data_registry.registry import (
     unpinned_non_additive,
 )
 from health_data_registry.registry import label_key_sql as registry_label_key_sql
-from health_data_registry.sql_guard import GuardedQuery, guard_sql, harden, run_guarded
+from health_data_registry.sql_guard import (
+    GuardedQuery,
+    SumRules,
+    guard_sql,
+    harden,
+    run_guarded,
+    weekly_sum_message,
+)
 from health_data_registry.store import Manifest, latest_snapshot, snapshot_dir
 
 MAX_ROWS = 5000
@@ -56,11 +65,18 @@ NEXT_STEPS: dict[str, str] = {
     "would_combine_rates": "Use describe_dataset to see the filters, and ask for one published group at a time.",
     "publisher_unreachable": "Try again in a few minutes.",
     "publisher_bad_table": "Try again later; if it keeps happening, run the Something's wrong helper.",
+    "quality_not_run": "Try again later; if it keeps happening, run the Something's wrong helper.",
     "needs_single_value": "Ask for the year's total, or for one week.",
     "non_additive": "Use describe_dataset to see the values, then ask again for one of them, or ask to see each "
     "one on its own row.",
     "not_a_human_count": "Use get_series to read these counts as published; they are not cases in people, so "
     "there is no rate per 100,000 people.",
+    "not_incidence": "Use get_series to read these counts as published. A trend in the counts themselves is "
+    'available from get_trend with fit_on="counts".',
+    "weekly_sum": "For a year's count, use get_series, which reads the year-to-date count at the year's last week, "
+    "or ask for one week at a time.",
+    "empty_in_sum": "Ask for the rows without adding them up, to see each value with its flag, or use get_series.",
+    "sum_over_subquery": "Write the sum directly over the catalogued table, without an inner query or WITH table.",
     "bad_page": "Ask for page=1, or leave page out.",
     "no_such_page": "Ask for a page the answer has, or leave page out for page 1.",
     "bad_pin": "Copy the Next line from the previous page exactly, or ask again without page and pin.",
@@ -69,8 +85,20 @@ NEXT_STEPS: dict[str, str] = {
     "too_slow": "Try again in a few minutes, or narrow the question: one condition, fewer places or fewer years.",
     "busy": "Try again in a minute.",
     "too_large": "Ask again for fewer columns or one measure.",
+    "lake_unverified": "Run the Something's wrong helper. A maintainer can rebuild the source's local copy "
+    "with refresh, or remove that source's folder from the local lake so the published release is read "
+    "instead.",
     "too_much_memory": "Ask again for fewer columns, fewer groups or a shorter span of years.",
 }
+
+# query_sql's own refusals (sql_guard.SqlRefused) reuse the codes too_large and too_slow for a different cause than
+# the hosted call limits above, so they have their own next steps.
+SQL_NEXT_STEPS: dict[str, str] = {
+    "too_large": "Ask for fewer values joined together, or split the question into smaller ones that return the "
+    "parts as separate rows or columns.",
+    "too_slow": "Compare the values with =, LIKE or ILIKE instead.",
+}
+SQL_NEXT_STEP = "Use get_series, get_rate or describe_dataset, which answer most questions without SQL."
 
 
 def next_step_for(code: str | None) -> str:
@@ -88,6 +116,22 @@ class QueryRefused(ValueError):
 
 def _q(ident: str) -> str:
     return '"' + ident.replace('"', '""') + '"'
+
+
+def within_period(sem: Any) -> str | None:
+    """The column a source's running total is kept along within each period (NNDSS: week), or None.
+
+    Declared by the semantic model: its cumulative_latest metrics' order_by, which SemanticModel validation
+    requires to name one column, through dimensions declared non_additive. In such a source, late reports are
+    added to the running total, not to the week they belong to, so a count per week is never added up across that
+    column into a period's total: the running total at the period's last week is the period's count.
+    """
+    cols = {
+        sem.dimension(str(m.order_by)).column
+        for m in sem.metrics
+        if m.aggregation == "cumulative_latest" and m.order_by
+    }
+    return cols.pop() if len(cols) == 1 else None
 
 
 @dataclass(frozen=True)
@@ -134,6 +178,20 @@ def compile_metric(
                 f"a state's count already includes its cities). Filter {d} to one value, or group by {d} to get one "
                 "row each.",
             )
+    within = within_period(sem)
+    on_within = [
+        d.name for d in sem.dimensions if d.column == within
+    ]  # every name the model gives that column
+    if (
+        metric.aggregation == "sum"
+        and measure.kind == "count"
+        and on_within
+        and not any(d in group_by or is_single_value((filters or {}).get(d)) for d in on_within)
+    ):
+        raise QueryRefused("weekly_sum", weekly_sum_message(str(within)))
+    # The running-total column held under one of its names holds it under all of them.
+    held_within = any(d in group_by or is_single_value((filters or {}).get(d)) for d in on_within)
+    pinned_within = on_within if held_within else []
 
     def dim(name: str) -> str:
         if name not in dims:
@@ -191,7 +249,9 @@ def compile_metric(
     group_cols = [dim(g) for g in group_by]
     # Hard rule 2: a sum never adds across a dimension whose values overlap or count different things.
     loose = unpinned_non_additive(
-        sem, metric, [*group_by, *(d for d, v in (filters or {}).items() if is_single_value(v))]
+        sem,
+        metric,
+        [*group_by, *(d for d, v in (filters or {}).items() if is_single_value(v)), *pinned_within],
     )
     if loose:
         # Plain words only (hard rule 12): each dimension's clinical description and the reason its values can't
@@ -228,15 +288,14 @@ def compile_metric(
     params = params + period_params
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
     if metric.aggregation == "sum":
-        # A group with any empty (suppressed or missing) value has no total: sum() would skip the empty rows and
-        # return a smaller number as if it were the whole count. suppressed_rows says how many were empty. An
-        # empty value whose flag is the codebook's "no reported cases" code is a zero, not a gap.
+        # A group with any empty value has no total: sum() would skip the empty rows and return a smaller number
+        # as if it were the whole count. suppressed_rows says how many were empty. An empty value is never read
+        # as 0, whatever its flag: the codebook's "no reported cases" code ('-') stays an empty value with its
+        # flag, never a number (issue #173).
         zero = flag.no_cases_code if flag else None
-        is_empty = f"{m_col} IS NULL" + (
-            f" AND {_q(flag.name)} IS DISTINCT FROM {_lit(zero)}" if flag and zero is not None else ""
-        )
+        is_empty = f"{m_col} IS NULL"
         empty = f"count(*) FILTER (WHERE {is_empty})"
-        total = f"coalesce(sum({m_col}), 0)" if zero is not None else f"sum({m_col})"
+        total = f"sum({m_col})"
         sel = [
             *select_dims,
             f"CASE WHEN {empty} = 0 THEN {total} END AS {_q(metric.name)}",
@@ -263,8 +322,9 @@ def compile_metric(
             + ". A group with any suppressed or missing value has no total (never a partial sum); "
             "suppressed_rows gives how many of its values were empty."
             + (
-                f" An empty value flagged '{zero}' counts as 0: the publisher's codebook defines '{zero}' as no "
-                "reported cases."
+                f" A count flagged '{zero}' (no reported cases, in the publisher's codebook) has no number and is "
+                "never counted as 0: it is read as not reported (the maintainer's declaration in the contract), so a "
+                "group that has one has no total."
                 if zero is not None
                 else ""
             )
@@ -296,11 +356,36 @@ def compile_metric(
 
 def non_additive_columns(ds: Dataset) -> frozenset[str]:
     """Columns a sum in query_sql must filter to one value or group by: the semantic model's non_additive
-    dimensions, and every categorical dimension a model leaves undeclared (fail closed)."""
+    dimensions, and every categorical dimension a model leaves undeclared (fail closed). The period a running
+    total is kept along (within_period) is left to sum_rules, whose refusal says why weeks never add up."""
+    within = within_period(ds.semantic)
     return frozenset(
         d.column
         for d in ds.semantic.dimensions
-        if d.non_additive or (d.non_additive is None and d.type == "categorical")
+        if (d.non_additive or (d.non_additive is None and d.type == "categorical")) and d.column != within
+    )
+
+
+def sum_rules(ds: Dataset) -> SumRules:
+    """What a typed-SQL sum over this source must respect (sql_guard.SumRules), from its contract and model:
+    the contract's totalRows and the columns that name an area (series' place dimensions and the columns
+    totalRows reads), its measure columns (an empty one never counts as 0), and, where the model keeps a running
+    total within each period, the per-week counts and running totals never added up across weeks."""
+    sem = ds.semantic
+    places = [s.location_dimension for s in sem.series] + [g.location_dimension for g in sem.generic_series]
+    areas = {sem.dimension(p).column for p in places if p}
+    if ds.contract.total_rows:
+        tree = sqlglot.parse_one(ds.contract.total_rows, dialect="duckdb")
+        areas |= {c.name for c in tree.find_all(sqlglot.exp.Column)}
+    within = within_period(sem)
+    return SumRules(
+        total_rows=ds.contract.total_rows,
+        areas=frozenset(a.casefold() for a in areas),
+        measures=frozenset(c.name.casefold() for c in ds.contract.columns if c.role == "measure"),
+        per_week=frozenset(
+            m.column.casefold() for m in sem.measures if within and m.kind in ("count", "running_count")
+        ),
+        within=within.casefold() if within else None,
     )
 
 
@@ -394,12 +479,6 @@ def _compile_cumulative(
             f"arg_max({v}, {ob}) FILTER (WHERE {v} IS NOT NULL) AS v, "
             f"max({ob}) FILTER (WHERE {v} IS NOT NULL) AS v_at, max({ob}) AS last_at, {last_flag} AS last_flag"
         )
-        if fc is not None and fc.no_cases_code is not None:
-            # Every empty value in the period carries the codebook's "no reported cases" code.
-            aggs += (
-                f", coalesce(bool_and(coalesce({_q(fc.name)}, '') = {_lit(fc.no_cases_code)}) "
-                f"FILTER (WHERE {v} IS NULL), false) AS none_reported"
-            )
         return f"SELECT {cols}, {aggs} FROM base GROUP BY ALL"  # noqa: S608 - quoted contract identifiers
 
     m_flag = ds.contract.flag_column(m_col)
@@ -408,19 +487,17 @@ def _compile_cumulative(
         f" || ': ' || {_flag_text(m_flag, 'c.last_flag')} || ')' ELSE '' END"
     )
     zero = m_flag.no_cases_code if m_flag else None
-    # A period whose running total is empty in every week, each flagged with the codebook's "no reported cases"
-    # code, has no reported cases: read as 0 and labelled so (never stored as a number).
-    none_status = (
-        f" WHEN c.v IS NULL AND c.none_reported THEN CASE WHEN {{ended}} THEN 'provisional: as published at {span} "
-        f"end: no reported cases (through {unit} ' || c.last_at || '; flag ''{zero}'' = no reported cases)' ELSE "
-        f"'provisional: running total so far: no reported cases (through {unit} ' || c.last_at || '; flag "
-        f"''{zero}'' = no reported cases)' END"
+    # A period with no number (e.g. '-' in every week) stays empty, with its flag: the codebook's "no reported
+    # cases" code is never counted as 0, so it is never added up or turned into a rate (issue #173).
+    not_zero = (
+        f" || CASE WHEN c.last_flag = {_lit(zero)} THEN '; read as not reported, never counted as 0' ELSE '' END"
         if zero is not None
         else ""
     )
     status = (
-        f"CASE{none_status} WHEN c.v IS NULL THEN 'no number published through {unit} ' || c.last_at"
+        f"CASE WHEN c.v IS NULL THEN 'no number published through {unit} ' || c.last_at"
         f" || CASE WHEN c.last_flag <> '' THEN ' (flag: ' || {_flag_text(m_flag, 'c.last_flag')} || ')' ELSE '' END"
+        f"{not_zero}"
         f" WHEN c.v_at < c.last_at THEN 'incomplete: running total last published at {unit} ' || c.v_at"
         f" || ' of ' || c.last_at || {gap} || ', so this is not the {span} total'"
         f" WHEN {{ended}} THEN 'provisional: as published at {span} end (through {unit} ' || c.v_at || ')'"
@@ -428,8 +505,7 @@ def _compile_cumulative(
     )
     flag_out = "CASE WHEN c.v_at IS DISTINCT FROM c.last_at THEN nullif(c.last_flag, '') END"
     ctes = f"WITH base AS (SELECT * FROM {_q(ds.id)}{where_sql}), cur AS ({running(m_col, t)})"  # noqa: S608 - quoted contract identifiers
-    value = "CASE WHEN c.v IS NULL AND c.none_reported THEN 0 ELSE c.v END" if zero is not None else "c.v"
-    sel = [*(f"c.{_q(g)}" for g in group_by), f"{value} AS {_q(metric.name)}"]
+    sel = [*(f"c.{_q(g)}" for g in group_by), f"c.v AS {_q(metric.name)}"]
     columns = [*group_by, metric.name, "period_status", "flag"]
     join = ""
     if metric.restated_by:
@@ -518,11 +594,19 @@ class Engine:
     cache: Path = field(default_factory=_default_cache)
     fetch_at_run_time: bool = field(default_factory=_live_enabled)
     getter: Any = None  # a crawl.Getter for live fetches; None builds the guarded HTTPS fetcher
+    # Pairs of sources query_sql may combine (join, subquery or set operation). None is declared yet, so every
+    # query_sql reads one source (ADR 0008); a pair is added only after a maintainer reviews the join.
+    declared_joins: frozenset[frozenset[str]] = frozenset()
     _con: duckdb.DuckDBPyConnection | None = None
     _hub_files: dict[str, tuple[Path, Manifest]] = field(default_factory=dict)
     _live: dict[str, Any] = field(default_factory=dict)  # dataset id -> live.LiveTable (memory only)
     _live_failed: set[str] = field(default_factory=set)  # live tables that could not be loaded (refused once)
+    _lake_refused: dict[str, QueryRefused] = field(
+        default_factory=dict
+    )  # lake snapshots that failed their checks
     _private: dict[str, Any] = field(default_factory=dict)  # dataset id -> (records, Manifest), memory only
+    # Live or private tables whose data checks did not all run (dataset id -> why): refused once, never answered.
+    _unchecked: dict[str, str] = field(default_factory=dict)
     # Lake snapshots to read instead of LATEST (dataset id -> snapshot id): a later page pinned to older data.
     lake_pins: dict[str, str] = field(default_factory=dict)
     # The sources the current call has read, in order (paging.respond clears it per call and reads it after).
@@ -534,6 +618,13 @@ class Engine:
     # this engine's own connection (stdio, the CLI): see isolation.py for why.
     isolation: Any = None
     _sources: list[Any] = field(default_factory=list)  # isolation.Source per table, as connect() set them up
+    _sum_rules: dict[str, SumRules] = field(default_factory=dict)  # built once, on the first query_sql
+
+    def sum_rules(self) -> dict[str, SumRules]:
+        """Each source's SumRules for query_sql, built once from the registry (it never changes in a process)."""
+        if not self._sum_rules:
+            self._sum_rules = {ds.id: sum_rules(ds) for ds in self.registry}
+        return self._sum_rules
 
     def connect(self) -> duckdb.DuckDBPyConnection:
         # Every read starts here: a call past its deadline (one the hosted guard gave up on) stops before it
@@ -543,9 +634,11 @@ class Engine:
             return self._con
         from health_data_registry.isolation import Source
         from health_data_registry.live import load_live
+        from health_data_registry.quality import expected_ids, unchecked_message
 
         con = duckdb.connect(":memory:")
         parquet: list[str] = []
+        self._lake_refused.clear()
         sources: list[Source] = []
         for ds in self.registry:
             if ds.entry.tier == "private":
@@ -557,6 +650,16 @@ class Engine:
                 except Exception:  # noqa: BLE001 - one bad store must not break the other sources
                     del self._private[ds.id]
                     continue
+                # A check that did not run is never answered (#222); run_rules reports on every rule, so this
+                # holds against a rule error, and against a missing result as defence in depth.
+                if why := unchecked_message(
+                    ds.id, staged.quality.as_dict(), expected=expected_ids(ds.contract)
+                ):
+                    con.execute(f"DROP TABLE IF EXISTS {_q(ds.id)}")
+                    del self._private[ds.id]
+                    self._unchecked[ds.id] = why
+                    continue
+                self._unchecked.pop(ds.id, None)  # checked cleanly now: an older refusal no longer applies
                 manifest = replace(  # its data checks reach answers as caveats, as a live table's do
                     held[1],
                     notes=[*held[1].notes, *staged.notes()],
@@ -572,7 +675,19 @@ class Engine:
                 except Exception:  # noqa: BLE001 - one bad publisher table must not break the other sources
                     del self._live[ds.id]
                     self._live_failed.add(ds.id)
+                    self._unchecked.pop(ds.id, None)  # this load's own refusal, not an older one
                     continue
+                if why := unchecked_message(  # as for a private table above
+                    ds.id,
+                    report.quality.as_dict(),
+                    expected=expected_ids(ds.contract),
+                    publisher=ds.entry.publisher,
+                ):
+                    con.execute(f"DROP TABLE IF EXISTS {_q(ds.id)}")
+                    del self._live[ds.id]
+                    self._unchecked[ds.id] = why
+                    continue
+                self._unchecked.pop(ds.id, None)  # checked cleanly now: an older refusal no longer applies
                 manifest = replace(
                     table.manifest,
                     notes=[*table.manifest.notes, *report.notes()],
@@ -580,15 +695,15 @@ class Engine:
                     quality=report.quality.as_dict(),
                 )
                 sources.append(Source("live", ds.id, ds=ds, records=table.records))
-            elif (found := self._lake_snapshot(ds.id)) is not None:
+            elif (found := self._lake_snapshot(ds)) is not None:
                 path, manifest = found
-                alias = f"snap_{ds.id}"
-                db = str(path / "data.duckdb").replace("'", "''")
-                con.execute(f"ATTACH '{db}' AS {_q(alias)} (READ_ONLY)")
-                con.execute(f"CREATE VIEW {_q(ds.id)} AS SELECT * FROM {_q(alias)}.{_q(ds.id)}")  # noqa: S608 - quoted contract identifiers, bound values
+                if not self._attach_lake(con, ds, path, manifest):
+                    continue
                 sources.append(Source("attach", ds.id, path=str(path / "data.duckdb")))
-            elif ds.id in self._hub_files and not self._hub_files[ds.id][0].is_file():
-                del self._hub_files[ds.id]  # removed from the cache: downloaded again on next use
+            elif ds.id in self._hub_files and not self._hub_intact(self._hub_files[ds.id][0]):
+                del self._hub_files[
+                    ds.id
+                ]  # removed or changed in the cache: downloaded and checked again on next use
                 continue
             elif ds.id in self._hub_files:
                 file, manifest = self._hub_files[ds.id]
@@ -603,6 +718,77 @@ class Engine:
         self._con = con
         self._sources = sources
         return con
+
+    def _lake_refusal(self, ds: Dataset, message: str) -> QueryRefused:
+        """A lake_unverified refusal whose next step names this lake's folder for the source."""
+        from health_data_registry.hub import LAKE_UNVERIFIED
+
+        return QueryRefused(
+            LAKE_UNVERIFIED,
+            message,
+            next_step=(
+                "Run the Something's wrong helper. A maintainer can rebuild this source's local copy with "
+                f"`refresh {ds.id}`, or remove the folder {self.lake / 'datasets' / ds.id} so the published "
+                "release is read instead."
+            ),
+        )
+
+    def _attach_lake(
+        self, con: duckdb.DuckDBPyConnection, ds: Dataset, path: Path, manifest: Manifest
+    ) -> bool:
+        """Check a lake snapshot (hub.verify_lake_snapshot) and attach it read-only; False, with the plain refusal
+        kept for this source, when it fails. A damaged copy is that one source's refusal, never a crash of the others.
+        """
+        from health_data_registry.hub import HubError, verify_lake_snapshot
+
+        alias = f"snap_{ds.id}"
+        try:
+            verify_lake_snapshot(ds, path, manifest)
+            db = str(path / "data.duckdb").replace("'", "''")
+            con.execute(f"ATTACH '{db}' AS {_q(alias)} (READ_ONLY)")
+            con.execute(f"CREATE VIEW {_q(ds.id)} AS SELECT * FROM {_q(alias)}.{_q(ds.id)}")  # noqa: S608 - quoted contract identifiers, bound values
+        except HubError as e:
+            self._lake_refused[ds.id] = self._lake_refusal(ds, str(e))
+            return False
+        # A damaged manifest or file (a wrong type, a missing key, an unreadable or broken database) must not break
+        # the other sources: it is this source's refusal.
+        except (OSError, ValueError, LookupError, TypeError, AttributeError, duckdb.Error):
+            with contextlib.suppress(duckdb.Error):  # best effort: nothing of it stays attached
+                con.execute(f"DETACH DATABASE IF EXISTS {_q(alias)}")
+            self._lake_refused[ds.id] = self._lake_refusal(
+                ds,
+                f"The local copy of {ds.entry.title} was not used, because it could not be checked or opened. "
+                "No numbers were read from it.",
+            )
+            return False
+        return True
+
+    def _lake_snapshot(self, ds: Dataset) -> tuple[Path, Manifest] | None:
+        """The lake snapshot of a source to read (LATEST, or the one a later page is pinned to); a damaged pointer
+        or manifest is a refusal, not a crash."""
+        try:
+            sid = self.lake_pins.get(ds.id)
+            if sid is None:
+                return latest_snapshot(self.lake, ds.id)
+            path = snapshot_dir(self.lake, ds.id, sid)
+            return (
+                (path, Manifest.read(path / "manifest.json")) if (path / "manifest.json").is_file() else None
+            )
+        except (OSError, ValueError, TypeError):
+            self._lake_refused[ds.id] = self._lake_refusal(
+                ds,
+                f"The local copy of {ds.entry.title} was not used, because its LATEST pointer or manifest is "
+                "damaged. No numbers were read from it.",
+            )
+            return None
+
+    def _hub_intact(self, file: Path) -> bool:
+        """Re-check a cached hub file's sha256 on every reconnect (a hub without that check: the file exists)."""
+        check = getattr(self.hub, "still_intact", None)
+        try:
+            return bool(check(file)) if check is not None else file.is_file()
+        except OSError:
+            return False  # unreadable: downloaded and checked again on next use
 
     def _run(
         self, sql: str, params: Sequence[Any] = (), *, limit: int | None = None, guarded: GuardedQuery | None = None,
@@ -636,13 +822,6 @@ class Engine:
             if e.code == "too_slow" and left is not None and left <= 0:
                 raise deadline.DeadlineExceeded() from e  # the call's own budget ran out: its own message
             raise QueryRefused(e.code, e.message) from e
-
-    def _lake_snapshot(self, dataset_id: str) -> tuple[Path, Manifest] | None:
-        sid = self.lake_pins.get(dataset_id)
-        if sid is None:
-            return latest_snapshot(self.lake, dataset_id)
-        path = snapshot_dir(self.lake, dataset_id, sid)
-        return (path, Manifest.read(path / "manifest.json")) if (path / "manifest.json").is_file() else None
 
     def _reconnect(self) -> None:
         if self._con is not None:
@@ -752,9 +931,13 @@ class Engine:
             del self._live[dataset_id]  # past the in-memory limit: read the publisher again
             self._reconnect()
         m = self.manifests.get(dataset_id)
+        if m is None and dataset_id in self._lake_refused:
+            raise self._lake_refused[dataset_id]  # never fall back quietly from a copy that failed its checks
         if m is None and ds is not None and self._obtain(ds):
             self._reconnect()
             m = self.manifests.get(dataset_id)
+        if m is None and (why := self._unchecked.pop(dataset_id, None)):
+            raise QueryRefused("quality_not_run", why)  # the next question reads the table afresh
         if m is None and dataset_id in self._live_failed:
             self._live_failed.discard(dataset_id)  # the next question reads the publisher afresh
             raise QueryRefused(
@@ -985,9 +1168,11 @@ class Engine:
         q: GuardedQuery = guard_sql(
             sql,
             allowed_tables=available,
+            declared_joins=self.declared_joins,
             max_rows=MAX_ROWS,
             ordered=True,
             non_additive={ds.id: non_additive_columns(ds) for ds in self.registry},
+            sum_rules=self.sum_rules(),
         )
         for t in sorted(q.tables):
             if t in self.registry.datasets:
@@ -1003,8 +1188,9 @@ class Engine:
         if len(ids) == 1:
             ds = self.registry.get(ids[0])
             out = envelope(
-                ds, self.manifests[ids[0]], cols, rows, sql=q.sql, params=[], method="Read-only SQL."
-            )
+                ds, self.manifests[ids[0]], cols, rows, sql=q.sql, params=[],
+                method=" ".join(["Read-only SQL.", *q.notes]),
+            )  # fmt: skip
             return out
         caveats = list(notices)
         for i in ids:  # each source's review state and licence travel with a joined answer too
@@ -1019,7 +1205,7 @@ class Engine:
             "rows": [list(r) for r in rows],
             "sql": q.sql,
             "sources": [_source(self.registry.get(i), self.manifests[i]) for i in ids],
-            "method": "Read-only SQL across datasets.",
+            "method": " ".join(["Read-only SQL across datasets.", *q.notes]),
             "caveats": caveats,
         }
 
@@ -1068,6 +1254,17 @@ def envelope(
     if m.catalog_status != "reviewed":
         notes.insert(0, "This dataset's contract is a draft that no maintainer has reviewed yet.")
     if m.partial:
+        # A development sample (refresh --max-rows) is served locally even when a blocking check failed on it;
+        # the refresh exited 1 for it, and every answer from it says so too.
+        from health_data_registry.quality import expected_ids, sample_blocked_message
+
+        checked = (m.quality or {}).get(
+            "tool"
+        ) == "contract-rules"  # a live read's partial copy has no checks
+        if checked and (
+            blocked := sample_blocked_message(ds.id, m.quality, expected=expected_ids(ds.contract))
+        ):
+            notes.insert(0, blocked)
         notes.insert(0, "This snapshot is a partial sample, not the full dataset.")
     if truncated:
         notes.insert(0, f"Only the first {MAX_ROWS} rows are shown.")

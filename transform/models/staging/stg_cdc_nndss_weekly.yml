@@ -15,6 +15,35 @@ models:
     contract_version: 0.1.0
     contract_status: draft
     primary_key: []
+  data_tests:
+  - dbt_expectations.expect_table_row_count_to_equal_other_table:
+      name: cdc_nndss_weekly_rows_raw_to_staging
+      arguments:
+        compare_model: source('raw', 'cdc_nndss_weekly')
+      config:
+        severity: error
+        meta:
+          dimension: consistency
+          rule: rows_raw_to_staging
+          contract: contracts/cdc_nndss_weekly.odcs.yaml
+          check: row_count_matches
+          checks: 'Staging has exactly as many rows as the raw load it types: staging drops and adds no row (an
+            exact structural fact of the generated staging model).'
+  - dbt_expectations.expect_row_values_to_have_recent_data:
+      name: cdc_nndss_weekly_load_within_refresh
+      arguments:
+        column_name: try_strptime(left(_snapshot_id, 16), '%Y%m%dT%H%M%SZ')
+        datepart: day
+        interval: 7
+      config:
+        severity: warn
+        meta:
+          dimension: timeliness
+          rule: load_within_refresh
+          contract: contracts/cdc_nndss_weekly.odcs.yaml
+          check: load_within_sla
+          checks: The latest load is no older than the weekly cadence in slaProperties frequency. It times our copy,
+            not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold.
   columns:
   - name: states
     data_type: varchar
@@ -55,10 +84,28 @@ models:
       missing_codes: []
     constraints:
     - type: not_null
+    data_tests:
+    - dbt_expectations.expect_column_values_to_be_between:
+        name: cdc_nndss_weekly_week_in_range
+        arguments:
+          min_value: 1
+          max_value: 53
+          row_condition: '"week" is not null'
+        config:
+          severity: error
+          meta:
+            dimension: conformity
+            rule: week_in_range
+            contract: contracts/cdc_nndss_weekly.odcs.yaml
+            check: values_between
+            checks: The codebook gives the MMWR week as 1-52, or 53 in 53-week years (the column description).
   - name: label
     data_type: varchar
     description: 'Notifiable condition as named in the NNDSS tables (for example Legionellosis, Candida auris, clinical;
-      Syphilis, Primary and secondary). Case definitions: https://ndc.services.cdc.gov/.'
+      Syphilis, Primary and secondary). Case definitions: https://ndc.services.cdc.gov/. Not new cases of disease,
+      so no rate per 100,000 people: ''Candida auris, screening'' counts people found to carry C. auris on screening
+      swabs (colonisation), not new cases of disease in the population; for C. auris, the clinical cases take a
+      rate.'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -66,12 +113,16 @@ models:
       unit: null
       codes: []
       missing_codes: []
+      not_incidence:
+        Candida auris, screening: people found to carry C. auris on screening swabs (colonisation), not new cases
+          of disease in the population; for C. auris, the clinical cases take a rate
     constraints:
     - type: not_null
   - name: m1
     data_type: bigint
-    description: Cases reported for this condition and area in this MMWR week (publisher column 'Current week').
-      Empty when the flag column m1_flag holds a code; '-' means no reported cases.
+    description: 'Cases reported for this condition and area in this MMWR week (publisher column ''Current week'').
+      Empty only where the flag column m1_flag holds a code; a count flagged ''-'' (no reported cases) means not
+      reported (maintainer''s declaration, see noCasesCode): it has no number and is never counted as 0.'
     meta:
       logical_type: integer
       physical_type: BIGINT
@@ -180,7 +231,9 @@ models:
     data_type: bigint
     description: 'Cumulative cases so far in this MMWR year up to and including this week (year to date). Cumulative:
       take the latest week, never sum across weeks. Can be incomplete if the condition was reportable for only part
-      of the year (publisher footnote).'
+      of the year (publisher footnote). Empty only where the flag column m3_flag holds a code; a count flagged ''-''
+      (no reported cases) means not reported (maintainer''s declaration, see noCasesCode): it has no number and
+      is never counted as 0.'
     meta:
       logical_type: integer
       physical_type: BIGINT
@@ -231,9 +284,11 @@ models:
           where: nullif(trim(m3_flag), '') is not null
   - name: m4
     data_type: bigint
-    description: Cumulative cases in the previous MMWR year up to the same week, as published in this week's table.
-      The codebook doesn't say whether it counts the same thing as that year's own year-to-date (m3); for some conditions
-      the two differ widely (see openQuestions), so it is shown beside m3, never in its place.
+    description: 'Cumulative cases in the previous MMWR year up to the same week, as published in this week''s table.
+      The codebook doesn''t say whether it counts the same thing as that year''s own year-to-date (m3); for some
+      conditions the two differ widely (see openQuestions), so it is shown beside m3, never in its place. Empty
+      only where the flag column m4_flag holds a code; a count flagged ''-'' (no reported cases) means not reported
+      (maintainer''s declaration, see noCasesCode): it has no number and is never counted as 0.'
     meta:
       logical_type: integer
       physical_type: BIGINT
