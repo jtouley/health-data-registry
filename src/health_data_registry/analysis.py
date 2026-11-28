@@ -624,13 +624,32 @@ def compare_rates(
     a = next((r for r in a_rows if r.est), None)
     b = next((r for r in b_rows if r.est), None)
     if a is None or b is None:
-        side, rows = ((location, year), a_rows) if a is None else ((loc_b, year_b), b_rows)
-        why = "; ".join(rows[0].flags) if rows else "no case count was found"
-        return message(
-            f"A rate for {side[0]} in {side[1]} can't be worked out ({why}), so the comparison can't be made. "
-            "Try get_rate to see which years and places have counts and populations.",
-            fmt,
-            refused="no_rate",
+        # Nothing to divide on one side: the closest data held comes back instead of a refusal, each row with
+        # why it has no rate, and the question to ask next (ADR 0018, #283).
+        side = (location, year) if a is None else (loc_b, year_b)
+        missing = a_rows if a is None else b_rows
+        why = "; ".join(missing[0].flags) if missing else "no case count was found"
+        cols = ["what", "estimate", "lower_95", "upper_95", "cases", "population", "period_status", "flags"]
+        held: list[list[Any]] = []
+        for (place, y), got in (((location, year), a_rows), ((loc_b, year_b), b_rows)):
+            if not got:
+                held.append([f"rate per 100,000: {place} {y}", None, None, None, None, None, "",
+                             "no case count was found in the loaded sources"])  # fmt: skip
+            for r in got:
+                held.append([f"rate per 100,000: {r.place} {r.year}", _sig(r.est.value) if r.est else None,
+                             _sig(r.est.lower) if r.est else None, _sig(r.est.upper) if r.est else None,
+                             r.cases, r.population, r.status, "; ".join(r.flags)])  # fmt: skip
+        notes = [
+            f"No rate ratio or difference is worked out: {side[0]} in {side[1]} has no rate ({why}), so there is "
+            "nothing to divide on that side. The rows above are what the loaded sources hold for each side.",
+            "Next question: ask get_rate or get_series for the years and places that have both a count and a "
+            "population, or compare with another year (other_year) or place (other_location).",
+            *_qualified_notes([(r.case_ds, s) for r in (a_rows + b_rows)[:1] for s in r.case_ds.semantic.series
+                               if s.label == r.label][:1]),
+            *notes,
+        ]  # fmt: skip
+        return _computed(
+            cols, held, notes, "computed here: crude rates where there is a count and a population"
         )
     name_a, name_b = f"{a.place} {a.year}", f"{b.place} {b.year}"
     # a and b were chosen for having a rate, so both have a whole count and a positive population.
@@ -1106,16 +1125,29 @@ def check_signal(
         for first in (week - 2 * WINDOW + 1, week - WINDOW + 1, week + 1)
     ]
     if current is None:
-        # Nothing to compare: no week of the current period has a number (never counted as 0).
-        return message(
-            f"No week of {year} weeks {week - WINDOW + 1}-{week} has a number in the data ({current_gap}), so there "
-            "is no current 4-week total to check. A week with no number is never counted as 0."
-            + (
-                f" '{zero}' is {ds.entry.agency}'s 'no reported cases', read as not reported." if zero else ""
-            ),
-            fmt,
-            refused="incomplete_history",
-            next_step="Use get_series to see the counts that are there, or ask about another week.",
+        # No week of the current period has a number: the weekly counts held for these weeks come back instead
+        # of a refusal, with their flags, and the question to ask next (ADR 0018, #283). Never counted as 0.
+        span = range(week - WINDOW + 1, week + 1)
+        cols = ["location", "condition", "year", "week", "cases", "flag", "source_id"]
+        held = [[place, s.label, year, w, weekly.get((year, w)), flags.get((year, w)), ds.id] for w in span
+                if (year, w) in weekly]  # fmt: skip
+        return Result(
+            cols,
+            held,
+            [
+                f"No signal is worked out: no week of {year} weeks {week - WINDOW + 1}-{week} has a number in the "
+                f"data ({current_gap}), so there is no current 4-week total to compare. A week with no number is "
+                "never counted as 0"
+                + (
+                    f" ('{zero}' is {ds.entry.agency}'s 'no reported cases', read as not reported)"
+                    if zero
+                    else ""
+                )
+                + ". The rows are the weekly counts held for those weeks.",
+                "Next question: ask check_signal about an earlier week that has counts, or get_series for the "
+                "yearly figures.",
+                *notes,
+            ],
         )
     hist = [h for h, _ in history if h is not None]
     gaps = [g for g in [current_gap, *(g for _, g in history)] if g]

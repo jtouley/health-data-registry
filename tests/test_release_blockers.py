@@ -158,7 +158,14 @@ def test_compare_rates_refuses_a_dash_year(served: tuple[Registry, Engine]) -> N
     reg, eng = served
     out = analysis.compare_rates(reg, eng, condition=CLIN, location="New Jersey", year=2024,
                                  other_location="Michigan", fmt="json")  # fmt: skip
-    assert refused(out) == "no_rate"  # was a rate ratio of 0 against Michigan
+    # Was a rate ratio of 0 against Michigan. Now no ratio: what each side holds comes back, with the next question.
+    got = {r["what"]: r for r in rows(out)}
+    nj = got["rate per 100,000: New Jersey 2024"]
+    assert nj["estimate"] is None and nj["cases"] is None and "'-' = no reported cases" in nj["flags"]
+    assert got["rate per 100,000: Michigan 2024"]["estimate"] == 2.1
+    assert not any(k.startswith("rate ratio") for k in got)
+    assert any(n.startswith("No rate ratio or difference is worked out") for n in out["notes"])
+    assert any(n.startswith("Next question:") for n in out["notes"])
 
 
 def test_get_trend_leaves_dash_years_out(served: tuple[Registry, Engine]) -> None:
@@ -631,8 +638,11 @@ def test_check_signal_puts_the_check_on_complete_periods_beside(served: tuple[Re
 
 def test_check_signal_refuses_only_when_no_current_week_has_a_number(served: tuple[Registry, Engine]) -> None:
     reg, eng = served
+    """Even then, no bare refusal: the weekly counts held for those weeks, and the question to ask next."""
     out = analysis.check_signal(reg, eng, condition=LEGIO, location="Ohio", year=2025, week=16, fmt="json")
-    assert refused(out) == "incomplete_history" and "never counted as 0" in out["message"]
+    assert "refused" not in out and rows(out) == []  # Ohio has no 2025 weeks in the data
+    assert any("No signal is worked out" in n and "never counted as 0" in n for n in out["notes"])
+    assert any(n.startswith("Next question:") for n in out["notes"])
 
 
 def test_get_rate_labels_animal_counts(served: tuple[Registry, Engine]) -> None:

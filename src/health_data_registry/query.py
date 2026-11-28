@@ -58,7 +58,6 @@ NEXT_STEPS: dict[str, str] = {
     "no_denominator": "Use get_series for the counts, or a rate the source publishes (describe_dataset says).",
     "ambiguous_condition": "Ask again with the full label of one series as the condition.",
     "nothing_to_compare": "Ask again with other_location or other_year.",
-    "no_rate": "Use get_rate to see which places and years have both a count and a population.",
     "too_few_points": "Ask for a longer span of years, or use get_series to read the counts.",
     "publisher_unreachable": "Try again in a few minutes.",
     "publisher_bad_table": "Try again later; if it keeps happening, run the Something's wrong helper.",

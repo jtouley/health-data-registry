@@ -717,8 +717,8 @@ REFUSALS = [
                                          fmt="json"), "nothing_to_compare"),
     (lambda r, e: analysis.compare_rates(r, e, condition="mumps", location="Ohio", year=2023, other_year=2022,
                                          fmt="json"), "unknown_condition"),
-    (lambda r, e: analysis.compare_rates(r, e, condition="legionellosis", location="Ohio", year=2023,
-                                         other_year=2024, fmt="json"), "no_rate"),
+    (lambda r, e: analysis.compare_rates(r, e, condition="mumps", location="Ohio", year=2023,
+                                         other_location="Michigan", fmt="json"), "unknown_condition"),
     (lambda r, e: analysis.get_trend(r, e, condition="mumps", location="Ohio", fmt="json"), "unknown_condition"),
     (lambda r, e: analysis.get_trend(r, e, condition="legionellosis", location="Michigan", year_start=2022,
                                      fmt="json"), "too_few_points"),
@@ -738,8 +738,8 @@ REFUSALS = [
                                         fmt="json"), "no_weekly_series"),
     (lambda r, e: analysis.check_signal(r, e, condition="legionellosis", location="Ohio", year=2024, week=7,
                                         fmt="json"), "week_out_of_range"),
-    (lambda r, e: analysis.check_signal(r, e, condition="legionellosis", location="Ohio", year=2030, week=30,
-                                        fmt="json"), "incomplete_history"),
+    (lambda r, e: analysis.check_signal(r, e, condition="legionellosis", location="Ohio", year=2024, week=49,
+                                        fmt="json"), "week_out_of_range"),
 ]  # fmt: skip
 
 

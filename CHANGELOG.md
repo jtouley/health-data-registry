@@ -11,7 +11,7 @@ All notable changes to this project are documented here. The format follows
 - Refusals become qualified answers, under hard rule 2, "show everything; qualify, don't decide" (ADR 0018,
   #226). A figure that may mislead is worked out when asked, with a plain-words note citing the contract or
   semantic-model rule behind it and, where there is one, the figure without that problem beside it. A tool
-  refuses only when nothing can be worked out, and `-` is still never 0.
+  refuses only when nothing catalogued touches the question, and `-` is still never 0.
   - A sum of weekly counts across weeks says that weekly counts undercount the year and gives CDC's
     year-to-date count beside it (`year_to_date_at_last_week` in the metric compiler; `query_sql` names the
     column). A sum of running totals across weeks, or across places or years, is added up with a note.
@@ -25,7 +25,9 @@ All notable changes to this project are documented here. The format follows
     disease in people; a count that covers only part of a place is labelled "catchment area only".
   - When more than one published rate matches a group, each comes back on its own row with a note.
   - `check_signal` adds up the weeks that have a number, names those that don't and, where it can, gives the
-    same check on the complete 4-week periods beside it; it refuses only when no current week has a number.
+    same check on the complete 4-week periods beside it. With no current week that has a number, it returns the
+    weekly counts held and the question to ask next.
+  - `compare_rates` with no rate on one side returns what each side holds and the next question, not a refusal.
   - The tool text Claude receives and the docs no longer say "never add them"; they say what a tool's note
     means.
 

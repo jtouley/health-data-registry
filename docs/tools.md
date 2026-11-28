@@ -348,7 +348,8 @@ with a 95% interval.
 ratio uses an exact conditional interval and the difference has none. A note says if the case definition changed
 between the two years. A rate that may mislead (see [`get_rate`](#get_rate)) is compared all the same, with the
 same notes; for *C. auris* screening the clinical cases' rates for both sides come back beside the comparison.
-When either side has no rate at all (no count, or no population), it refuses and says which side and why.
+When either side has no rate at all (no count, or no population), there is nothing to divide: it gives no ratio,
+returns what each side holds (count, population and why there is no rate) and suggests the question to ask next.
 
 **Try:** "Is legionellosis more common in Michigan than in Ohio in 2023?"
 
@@ -407,9 +408,9 @@ the same, preceding and following 4 weeks in each of the past 5 years.
 `ratio`, `lower_limit`, `upper_limit`, `signal` (above, below or within limits), `periods_used`, `source_id`,
 `computed`. A week with no number, CDC's `-` (read as not reported) included, is never counted as zero: a 4-week
 total adds up the weeks that have a number, and a note names the weeks that don't. When the current 4 weeks are
-complete, a second row gives the same check on the historical totals that have a number for every week. It
-refuses only when none of the current 4 weeks has a number. A signal means more or fewer reports than usual, not
-an outbreak.
+complete, a second row gives the same check on the historical totals that have a number for every week. When
+none of the current 4 weeks has a number, it gives no signal and returns the weekly counts held for those weeks,
+with the question to ask next. A signal means more or fewer reports than usual, not an outbreak.
 
 **Try:** "Were legionellosis reports in Michigan unusual in week 20 of 2024?"
 
@@ -451,8 +452,9 @@ every rule of the contract for you.
 A tool never shows a stack trace or an error code to you. It says, in plain words, what happened and what to try.
 
 Under the rule [show everything; qualify, don't decide](data-conventions.md#show-everything-qualify-dont-decide),
-a figure that may mislead comes back with a note instead of a refusal, and a tool refuses only when nothing can
-be worked out. The only data problem that holds data back is a data check that never ran. Today a copy of the
+a figure that may mislead comes back with a note instead of a refusal. When the figure itself can't be worked out
+(nothing to divide, no week with a number), the tool returns the closest data it holds, says how it differs from
+what you asked, and suggests the next question. The only data problem that holds data back is a data check that never ran. Today a copy of the
 data that failed a serious data check is also held back. That case shows you no refusal: the tool answers from
 the copy before it, and the fetch time in the provenance line says how old that copy is. If the
 numbers look older than the publisher's page, run the [Something's wrong](helpers.md#somethings-wrong) helper.
@@ -465,8 +467,7 @@ The common ones:
 | "… has no rows for: …" | That place isn't in the source (for example, a state in a source that covers EIP sites only) | Check `describe_dataset` for the places it covers |
 | "None of the loaded sources split this by sex yet" | No sex breakdown in these series | Ask again without sex |
 | "'…' matches more than one series …" | `compare_rates` needs the same series on both sides | Use the full name of one series |
-| "A rate for … can't be worked out …" | `compare_rates`: one side has no count or no population, so there is nothing to divide | Use `get_series` for the counts on that side |
-| "No week of … has a number in the data …" | `check_signal`: none of the current 4 weeks has a number (CDC's `-` is read as not reported, never 0) | Use `get_series` for the counts, or ask about another week |
+
 | "Population counts (Census) aren't loaded yet …" | `get_rate` has no denominator on this setup | Use `get_series`, or a published rate |
 | "… could not be reached to download …" | A restricted source (WHO) is fetched from the publisher, and the publisher's site didn't answer | Try again in a few minutes |
 | "The hub release … has no file …" or "… does not list …" | The hub release the server reads from is incomplete | Try again later, or [open an issue](https://github.com/jtouley/health-data-registry/issues) |
