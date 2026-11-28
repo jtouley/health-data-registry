@@ -173,3 +173,25 @@ def test_make_contracts_check_names_each_stale_file_on_stderr(
     )
     assert transform_gen.main([]) == 0
     assert written == [tmp_path] and capsys.readouterr().out == "wrote models/a.sql\n"
+
+
+def test_derived_label_columns_map_every_rename_and_partial_place() -> None:
+    """Two renames and two partial places: each CASE has a WHEN per entry, and the SQL runs."""
+    col = SimpleNamespace(
+        name="area", renamed_labels=[("Area One", "Area 1"), ("Area Two", "Area 2")],
+        partial_places=[("Area 1", "part of the year"), ("Area 3", "two counties only")], flag_codes=(),
+    )  # fmt: skip
+    contract = SimpleNamespace(total_rows=None, columns=[col], column_names=frozenset({"area"}))
+    derived = transform_gen.derived_columns(cast(Any, contract))
+    con = duckdb.connect(":memory:")
+    got = {}
+    for name, _typ, sql, _desc in derived[1:]:
+        got[name] = [
+            con.execute(f"SELECT {sql} FROM (SELECT ? AS area)", [v]).fetchall()[0][0]
+            for v in ("area one", "Area 2", "Area 3", "Elsewhere")
+        ]
+    assert got == {
+        "area_key": ["AREA 1", "AREA 2", "AREA 3", "ELSEWHERE"],
+        "area_label": ["Area 1", "Area 2", "Area 3", "Elsewhere"],
+        "area_partial_note": [None, None, "two counties only", None],
+    }

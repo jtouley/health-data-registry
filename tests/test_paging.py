@@ -1055,6 +1055,18 @@ def test_plan_recuts_when_its_estimate_is_short() -> None:
 _PLAN_ROWS = [[f"r{i}", "x" * (i % 7)] for i in range(100)]
 
 
+def _finishes(fn: Any, seconds: float = 10.0) -> Any:
+    """fn(), on a helper thread: a plan that never ends fails the test instead of hanging the run."""
+    import threading
+
+    box: list[Any] = []
+    t = threading.Thread(target=lambda: box.append(fn()), daemon=True)
+    t.start()
+    t.join(seconds)
+    assert box, "the plan did not finish"
+    return box[0]
+
+
 _LONG_ARGS = {"condition": "legionellosis", "location": ["Michigan", "Ohio", "United States", "Indiana"]}
 _LONG_PIN = "v1.eyJ2IjoxLCJzIjp7InRveV9jYXNlcyI6WyIyMDI2MTEyNFQwMDAwMDBaLTAwMDAiXX19.abcdefabcdef"
 
@@ -1069,7 +1081,7 @@ def _real_plan(fmt: str, budget: int, long_call: bool = False) -> list[tuple[int
     def render(lo: int, hi: int, n: int, bounds: list[tuple[int, int]]) -> Any:
         return paging._render_page(res, lo, hi, n, bounds, "get_series", args, pin, [], fmt)
 
-    return paging.plan(res, fmt, budget, render)
+    return _finishes(lambda: paging.plan(res, fmt, budget, render))
 
 
 def _runs(*sizes: int) -> list[tuple[int, int]]:
@@ -1127,7 +1139,7 @@ def _synthetic(
     import unittest.mock
 
     with unittest.mock.patch.object(paging, "cut", cut):
-        bounds = paging.plan(res, "csv", budget, render)
+        bounds = _finishes(lambda: paging.plan(res, "csv", budget, render))
     return bounds, rooms, costs[0]
 
 
@@ -1176,17 +1188,6 @@ def test_each_pass_shrinks_the_room_by_the_largest_of_its_three_steps(
 ) -> None:
     _, rooms, _ = _synthetic(n, k, extra, budget)
     assert rooms == want_rooms
-
-
-def _finishes(fn: Any, seconds: float = 10.0) -> Any:
-    import threading
-
-    box: list[Any] = []
-    t = threading.Thread(target=lambda: box.append(fn()), daemon=True)
-    t.start()
-    t.join(seconds)
-    assert box, "the plan did not finish"
-    return box[0]
 
 
 def test_rows_too_long_for_any_page_get_one_page_each_and_the_plan_ends() -> None:
