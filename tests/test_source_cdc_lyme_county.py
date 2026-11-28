@@ -14,9 +14,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import pytest
 
-from health_data_registry import tools
+from health_data_registry import analysis, quality, tools
 from health_data_registry.query import Engine
 from health_data_registry.registry import Registry, load_registry
 from health_data_registry.store import build_snapshot, write_ndjson
@@ -62,17 +63,21 @@ RECORDS = {
 }
 
 
-@pytest.fixture
-def real(tmp_path: Path) -> tuple[Registry, Engine, Path]:
+def _lake(tmp_path: Path, records: dict[str, list[dict[str, str]]]) -> tuple[Registry, Engine, Path]:
     reg = load_registry(ROOT)
     lake = tmp_path / "lake"
     lake.mkdir()
-    for ds, rows in RECORDS.items():
+    for ds, rows in records.items():
         f = tmp_path / f"{ds}.ndjson"
         write_ndjson(f, rows)
         url = f"https://data.cdc.gov/resource/{SOCRATA_ID[ds]}.json"
         build_snapshot(lake, reg.get(ds), [raw_fetch(url, rows)], [f])
     return reg, Engine(registry=reg, lake=lake), lake
+
+
+@pytest.fixture
+def real(tmp_path: Path) -> tuple[Registry, Engine, Path]:
+    return _lake(tmp_path, RECORDS)
 
 
 def _rows(out: Any) -> list[dict[str, str]]:
@@ -102,6 +107,18 @@ def test_a_question_about_other_countries_is_told_no() -> None:
     for ds in (NOW, MID, OLD):
         assert rows[ds]["can_answer"] == "no"
         assert "not country" in rows[ds]["why"]
+
+
+def test_a_county_question_is_told_the_series_go_down_to_state_only() -> None:
+    """No series reads by county yet (#262), so routing says no rather than a yes no tool can answer."""
+    reg = load_registry(ROOT)
+    rows = {
+        r["source_id"]: r
+        for r in _rows(tools.suggest_datasets(reg, "Lyme disease in Lehigh County, Pennsylvania"))
+    }
+    for ds in (NOW, MID, OLD):
+        assert rows[ds]["can_answer"] == "no"
+        assert "not county" in rows[ds]["why"]
 
 
 def test_a_years_question_is_told_which_table_covers_it() -> None:
@@ -169,9 +186,77 @@ def test_the_raw_layer_keeps_every_value_as_sent(real: tuple[Registry, Engine, P
     assert any(r["fips"] == "42  ." for r in RECORDS[OLD])
 
 
+ERA = {NOW: (2022, None), MID: (2008, 2021), OLD: (1992, 2007)}
+Row = tuple[int, str, str, str, str, str, int | None]
+
+
+def _rules_on(ds: str, rows: list[Row]) -> quality.QualityReport:
+    """The source contract's quality rules, run as the lake runs them, on a typed table of these rows."""
+    con = duckdb.connect()
+    con.execute(
+        "CREATE TABLE t (year BIGINT, state VARCHAR, fips VARCHAR, case_status VARCHAR, sex VARCHAR, "
+        "age_cat_yrs VARCHAR, frequency BIGINT)"
+    )
+    con.executemany("INSERT INTO t VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
+    report = quality.run_rules(con, "t", quality.rules_for(load_registry(ROOT).get(ds).contract))
+    assert not report.rule_errors, report.rule_errors
+    return report
+
+
+def _status(report: quality.QualityReport) -> dict[str, str]:
+    return {str(r["test"]): str(r["status"]) for r in report.results}
+
+
 @pytest.mark.parametrize("ds", [NOW, MID, OLD])
-def test_each_table_rejects_a_year_from_another_era(ds: str) -> None:
+def test_each_table_passes_its_boundary_years_and_blocks_a_year_from_another_era(ds: str) -> None:
+    first, last = ERA[ds]
+    good: list[Row] = [(first, "MI", "26163", "Confirmed", "Female", "20+", 1)]
+    if last is not None:
+        good.append((last, "MI", "26163", "Confirmed", "Male", "0-19", 2))
+    ok = _rules_on(ds, good)
+    assert set(_status(ok).values()) == {"pass"}, ok.results
+    assert not ok.blocking
+    outside = [first - 1] + ([last + 1] if last is not None else [])
+    for year in outside:
+        bad = _rules_on(ds, [*good, (year, "MI", "26163", "Confirmed", "Female", "0-19", 1)])
+        assert _status(bad)["year_in_this_tables_era"] == "fail", year
+        assert bad.blocking, year
+
+
+@pytest.mark.parametrize(
+    ("ds", "row", "rule"),
+    [
+        (NOW, (2023, "MI", "26163", "Suspect", "Female", "20+", 1), "case_status_is_confirmed_or_probable"),
+        (OLD, (2001, "MI", "26163", "Probable", "Female", "20+", 1), "case_status_is_confirmed"),
+        (OLD, (1993, "PA", "42  .", "Confirmed", "Unknown", "Unknown", 1), "fips_is_five_digits_or_a_marker"),
+        (
+            MID,
+            (2015, "suppressed", "26163", "Confirmed", "Female", "20+", 1),
+            "state_is_a_postal_code_or_a_marker",
+        ),
+        (MID, (2015, "MI", "26163", "Confirmed", "F", "20+", 1), "sex_is_a_listed_value"),
+        (NOW, (2023, "MI", "26163", "Confirmed", "Female", "65+", 1), "age_group_is_a_listed_value"),
+    ],
+)
+def test_a_label_outside_the_codebook_warns_and_never_blocks(ds: str, row: Row, rule: str) -> None:
+    first, _ = ERA[ds]
+    report = _rules_on(ds, [(first, "MI", "26163", "Confirmed", "Female", "20+", 1), row])
+    status = _status(report)
+    assert status[rule] == "warn", report.results
+    assert {k for k, v in status.items() if v != "pass"} == {rule}
+    assert not report.blocking
+    assert any("gave a warning" in c for c in report.caveats())
+
+
+@pytest.mark.parametrize(("ds", "span"), [(NOW, "2022 onward"), (MID, "2008 to 2021"), (OLD, "1992 to 2007")])
+def test_a_trend_says_it_may_cross_a_case_definition_change(ds: str, span: str) -> None:
+    """No dated caseDefinitions yet: get_trend's note says the fit may mix definitions, never that one held."""
     reg = load_registry(ROOT)
-    rule = next(r for r in reg.get(ds).contract.quality if r.id == "year_in_this_tables_era")
-    assert rule.severity == "error"
-    assert "year" in (rule.query or "")
+    note = analysis._case_definition_note(reg.get(ds), [])
+    assert note.startswith(f"{ds}: The CSTE Lyme disease case definition may have changed within {span}")
+    assert "may mix definitions" in note and "assumes the definition stayed the same" not in note
+    # A dated change still splits the fit, and a source with neither keeps the plain assumption.
+    assert "split there" in analysis._case_definition_note(reg.get(ds), [(2011, "CSTE 2011")])
+    assert "assumes the definition stayed the same" in analysis._case_definition_note(
+        reg.get("cdc_haicviz_isa"), []
+    )

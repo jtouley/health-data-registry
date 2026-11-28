@@ -1,106 +1,112 @@
 apiVersion: v3.2.0
 kind: DataContract
 id: fct_cdc_lyme_county
-name: Lyme disease cases by county of residence, all three CDC tables, each row qualified
+name: "Fact - Lyme disease cases by county of residence, 2022 onward"
 version: 0.1.0
 status: draft
 domain: infectious_disease
 description:
-  purpose: "One fact table over CDC's three Lyme disease county tables (cdc_lyme_county_1992_2007, cdc_lyme_county_2008_2021, cdc_lyme_county), every published row kept, each labelled with the table and case-definition era it came from and with flags saying when CDC withheld or did not know its state or county."
-  usage: "Add frequency within one era only. The eras never form one trend: CDC split the tables where the case definitions changed (1992-2007 confirmed only; probable cases from 2008; laboratory evidence alone in high-incidence states from 2022). The flags qualify a row; nothing is dropped, moved or filled in because of them."
-  limitations: "Inherits every open question of the three source contracts. Which state a row with a withheld state and a known county belongs to is not decided here (hard rule 1)."
+  purpose: "Every row of CDC's Lyme disease county table for 2022 onward (cdc_lyme_county) as one fact per year, place, case status, sex and age group, with the case-definition era and statuses that say in words whether CDC published the count, the state and the county."
+  usage: "Add frequency within this table only: the eras never form one trend, because CDC split the tables where the case definitions changed. A state's figure adds the rows whose state_status is a state postal code and whose state names it; the nation adds every row. The statuses qualify a row; nothing is dropped, moved or filled in because of them."
+  limitations: "Inherits every open question of the source contract. Not read by the MCP server yet: get_series and the analysis tools read the snapshot through the semantic model (follow-up issue). Which state a row with an unknown or suppressed state and a known county belongs to is not decided here (hard rule 1)."
+  authoritativeDefinitions:
+    - {type: businessDefinition, url: "contracts/cdc_lyme_county.odcs.yaml", description: "The source dataset's contract, whose descriptions and rules this fact carries"}
 schema:
   - name: fct_cdc_lyme_county
     physicalName: fct_cdc_lyme_county
     physicalType: table
     logicalType: object
-    description: "One row per published count: source table, year, state, county of residence, case status, sex and age group, with flags beside the published values."
+    description: "One row per published count of Lyme disease cases, 2022 onward: year, state, county of residence, case status, sex and age group, every row of int_cdc_lyme_county kept. Counts add up within this case-definition era only; the eras never form one trend."
     customProperties:
       - {property: layer, value: marts}
       - property: totalRows
         value: none
-        description: "None of the three source tables has total rows (their contracts' totalRows is none), and this table only unions them."
+        description: "The source contract declares no total rows, and is_total_row is carried from the intermediate model so a later declaration shows here; transform/tests checks that no row is one."
       - {property: tableShape, value: frequency_table}
     properties:
-      - name: source_id
-        physicalType: VARCHAR
-        logicalType: string
-        required: true
-        primaryKey: true
-        primaryKeyPosition: 1
-        description: "The catalogued source the row was read from: cdc_lyme_county_1992_2007, cdc_lyme_county_2008_2021 or cdc_lyme_county."
-        customProperties: [{property: role, value: dimension}]
       - name: case_definition_era
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "The span of years CDC published together because the case definitions in it match, as the dataset descriptions give them: 1992-2007, 2008-2021 or 2022 onward. Counts are added within one era only."
+        description: "The table CDC published the row in, 2022 onward. Lyme disease data are split into separate tables for 1992 to 2007, 2008 to 2021 and 2022 onward, where the case definitions changed (dataset description); this table is 2022 onward, from which high-incidence states report on laboratory evidence alone. Which definition applies to each year within a table is an open question. Add counts within one era only."
         customProperties: [{property: role, value: dimension}]
       - name: year
         physicalType: BIGINT
         logicalType: integer
         required: true
         primaryKey: true
-        primaryKeyPosition: 2
-        description: "Reporting year."
+        primaryKeyPosition: 1
+        description: "Reporting year, 2022 onward, as CDC assigns it; every year falls in this table's era (the source contract's year_in_this_tables_era check)."
         customProperties: [{property: role, value: dimension}]
       - name: state
         physicalType: VARCHAR
         logicalType: string
         required: true
         primaryKey: true
-        primaryKeyPosition: 3
-        description: "State of residence as published: a two-letter postal abbreviation, or 'Suppressed' or 'Unknown'."
+        primaryKeyPosition: 2
+        description: "State of residence as published: a two-letter postal abbreviation, 'Suppressed' when CDC withheld it to protect privacy, or 'Unknown' when it was not reported. state_status says which."
         customProperties: [{property: role, value: dimension}]
       - name: fips
         physicalType: VARCHAR
         logicalType: string
         required: true
         primaryKey: true
-        primaryKeyPosition: 4
-        description: "County of residence as published: a five-digit FIPS code, or 'Suppressed' or 'Unknown' (and three 1992-1993 rows with a state-only value)."
+        primaryKeyPosition: 3
+        description: "County of residence as published: a five-digit FIPS code, two digits for the state and three for the county, kept as text so the leading zero stays; 'Suppressed' when CDC withheld it, 'Unknown' when it was not reported. Connecticut's codes change to its planning regions from 2023, so its counties don't line up across 2022 and 2023. county_status says which."
         customProperties: [{property: role, value: dimension}]
       - name: case_status
         physicalType: VARCHAR
         logicalType: string
         required: true
         primaryKey: true
-        primaryKeyPosition: 5
-        description: "Confirmed or Probable, as published."
+        primaryKeyPosition: 4
+        description: "Surveillance case classification by local and state public health authorities: Confirmed or Probable, as published."
         customProperties: [{property: role, value: dimension}]
       - name: sex
         physicalType: VARCHAR
         logicalType: string
         required: true
         primaryKey: true
-        primaryKeyPosition: 6
-        description: "Female, Male, Unknown or Suppressed, as published."
+        primaryKeyPosition: 5
+        description: "Patient sex as reported to health authorities: Female, Male, Unknown, or Suppressed when CDC withheld it."
         customProperties: [{property: role, value: dimension}]
       - name: age_cat_yrs
         physicalType: VARCHAR
         logicalType: string
         required: true
         primaryKey: true
-        primaryKeyPosition: 7
-        description: "Age group in years, 0-19 or 20+, or Unknown or Suppressed, as published."
+        primaryKeyPosition: 6
+        description: "Patient age group in years, 0-19 or 20+, or Unknown, or Suppressed when CDC withheld it."
         customProperties: [{property: role, value: dimension}]
       - name: frequency
         physicalType: BIGINT
         logicalType: integer
         required: false
-        description: "Number of Lyme disease cases in the group, as published; empty stays empty, never zero."
+        description: "Number of Lyme disease cases in the group, as published; an empty count stays empty, never zero."
         customProperties: [{property: role, value: measure}, {property: unit, value: cases}]
-      - name: state_withheld
-        physicalType: BOOLEAN
-        logicalType: boolean
+      - name: value_status
+        physicalType: VARCHAR
+        logicalType: string
         required: true
-        description: "True when the state reads 'Suppressed' or 'Unknown': the cases count in the nation but in no state's figure."
+        description: "Whether CDC published a count for the row: 'published', or 'not published: the publisher's cell is empty'."
         customProperties: [{property: role, value: attribute}]
-      - name: county_withheld
+      - name: state_status
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "What the state column holds, in words: 'two-letter state postal code'; 'suppressed by CDC (fewer than 5 records share the group)'; 'not reported (Unknown)'; or 'not a two-letter state postal code or a CDC marker: a label to review'. Only a postal code places the cases in a state; the others count in the nation only."
+        customProperties: [{property: role, value: attribute}]
+      - name: county_status
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "What the fips column holds, in words: 'five-digit county FIPS code'; 'suppressed by CDC (fewer than 5 records share the group)'; 'not reported (Unknown)'; or 'not a five-digit county FIPS code or a CDC marker: a label to review'. A row with a county code but an unknown or suppressed state counts in that county when rows are added by fips, yet in no state's figure, so county and state sums can disagree for those rows (an open question in the source contract)."
+        customProperties: [{property: role, value: attribute}]
+      - name: is_total_row
         physicalType: BOOLEAN
         logicalType: boolean
         required: true
-        description: "True when the county is not a five-digit FIPS code ('Suppressed', 'Unknown' or a state-only value): the cases can't be placed in a county."
+        description: "True for a row the source contract declares a total of other rows. The contract declares none, so every row is one group of cases and rows add up."
         customProperties: [{property: role, value: attribute}]
       - name: _snapshot_id
         physicalType: VARCHAR
@@ -112,7 +118,7 @@ schema:
         physicalType: VARCHAR
         logicalType: string
         required: true
-        description: "The sha256 fingerprint of the raw files the row was parsed from."
+        description: "The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order: the exact bytes the publisher sent."
         customProperties: [{property: role, value: attribute}]
 customProperties:
-  - {property: unreliableRule, value: {kind: none, description: "None here: the source contracts carry CDC's suppression rule (fewer than 5 records), which withholds labels, not counts."}}
+  - {property: unreliableRule, value: {kind: none, description: "None here: the source contract carries CDC's suppression rule (fewer than 5 records), which withholds labels, not counts."}}

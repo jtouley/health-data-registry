@@ -1,0 +1,124 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: fct_cdc_lyme_county_2008_2021
+name: "Fact - Lyme disease cases by county of residence, 2008-2021"
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Every row of CDC's Lyme disease county table for 2008 to 2021 (cdc_lyme_county_2008_2021) as one fact per year, place, case status, sex and age group, with the case-definition era and statuses that say in words whether CDC published the count, the state and the county."
+  usage: "Add frequency within this table only: the eras never form one trend, because CDC split the tables where the case definitions changed. A state's figure adds the rows whose state_status is a state postal code and whose state names it; the nation adds every row. The statuses qualify a row; nothing is dropped, moved or filled in because of them."
+  limitations: "Inherits every open question of the source contract. Not read by the MCP server yet: get_series and the analysis tools read the snapshot through the semantic model (follow-up issue). Which state a row with an unknown or suppressed state and a known county belongs to is not decided here (hard rule 1)."
+  authoritativeDefinitions:
+    - {type: businessDefinition, url: "contracts/cdc_lyme_county_2008_2021.odcs.yaml", description: "The source dataset's contract, whose descriptions and rules this fact carries"}
+schema:
+  - name: fct_cdc_lyme_county_2008_2021
+    physicalName: fct_cdc_lyme_county_2008_2021
+    physicalType: table
+    logicalType: object
+    description: "One row per published count of Lyme disease cases, 2008 to 2021: year, state, county of residence, case status, sex and age group, every row of int_cdc_lyme_county_2008_2021 kept. Counts add up within this case-definition era only; the eras never form one trend."
+    customProperties:
+      - {property: layer, value: marts}
+      - property: totalRows
+        value: none
+        description: "The source contract declares no total rows, and is_total_row is carried from the intermediate model so a later declaration shows here; transform/tests checks that no row is one."
+      - {property: tableShape, value: frequency_table}
+    properties:
+      - name: case_definition_era
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The table CDC published the row in, 2008-2021. Lyme disease data are split into separate tables for 1992 to 2007, 2008 to 2021 and 2022 onward, where the case definitions changed (dataset description); this table is 2008 to 2021. Which definition applies to each year within a table is an open question. Add counts within one era only."
+        customProperties: [{property: role, value: dimension}]
+      - name: year
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "Reporting year, 2008 to 2021, as CDC assigns it; every year falls in this table's era (the source contract's year_in_this_tables_era check)."
+        customProperties: [{property: role, value: dimension}]
+      - name: state
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "State of residence as published: a two-letter postal abbreviation, 'Suppressed' when CDC withheld it to protect privacy, or 'Unknown' when it was not reported. state_status says which."
+        customProperties: [{property: role, value: dimension}]
+      - name: fips
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 3
+        description: "County of residence as published: a five-digit FIPS code, two digits for the state and three for the county, kept as text so the leading zero stays; 'Suppressed' when CDC withheld it, 'Unknown' when it was not reported. county_status says which."
+        customProperties: [{property: role, value: dimension}]
+      - name: case_status
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 4
+        description: "Surveillance case classification by local and state public health authorities: Confirmed or Probable, as published; the probable case definition began in 2008."
+        customProperties: [{property: role, value: dimension}]
+      - name: sex
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 5
+        description: "Patient sex as reported to health authorities: Female, Male, Unknown, or Suppressed when CDC withheld it."
+        customProperties: [{property: role, value: dimension}]
+      - name: age_cat_yrs
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 6
+        description: "Patient age group in years, 0-19 or 20+, or Unknown, or Suppressed when CDC withheld it."
+        customProperties: [{property: role, value: dimension}]
+      - name: frequency
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Number of Lyme disease cases in the group, as published; an empty count stays empty, never zero."
+        customProperties: [{property: role, value: measure}, {property: unit, value: cases}]
+      - name: value_status
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Whether CDC published a count for the row: 'published', or 'not published: the publisher's cell is empty'."
+        customProperties: [{property: role, value: attribute}]
+      - name: state_status
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "What the state column holds, in words: 'two-letter state postal code'; 'suppressed by CDC (fewer than 5 records share the group)'; 'not reported (Unknown)'; or 'not a two-letter state postal code or a CDC marker: a label to review'. Only a postal code places the cases in a state; the others count in the nation only."
+        customProperties: [{property: role, value: attribute}]
+      - name: county_status
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "What the fips column holds, in words: 'five-digit county FIPS code'; 'suppressed by CDC (fewer than 5 records share the group)'; 'not reported (Unknown)'; or 'not a five-digit county FIPS code or a CDC marker: a label to review'. A row with a county code but an unknown or suppressed state counts in that county when rows are added by fips, yet in no state's figure, so county and state sums can disagree for those rows (an open question in the source contract)."
+        customProperties: [{property: role, value: attribute}]
+      - name: is_total_row
+        physicalType: BOOLEAN
+        logicalType: boolean
+        required: true
+        description: "True for a row the source contract declares a total of other rows. The contract declares none, so every row is one group of cases and rows add up."
+        customProperties: [{property: role, value: attribute}]
+      - name: _snapshot_id
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The lake snapshot the row was read from; its manifest gives the source address, retrieval time and version."
+        customProperties: [{property: role, value: attribute}]
+      - name: _raw_sha256
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order: the exact bytes the publisher sent."
+        customProperties: [{property: role, value: attribute}]
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None here: the source contract carries CDC's suppression rule (fewer than 5 records), which withholds labels, not counts."}}

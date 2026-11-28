@@ -7,9 +7,12 @@ country: US
 research_areas: [infectious_disease]
 id_areas: [vector_borne]
 years: {start: 2008, end: 2021}
-# County of residence (FIPS), state (postal code) and, by adding every row, the nation. A county or state CDC
-# suppressed is written 'Suppressed' and stays in the national count only.
-geography: [nation, state, county]
+# The rows are by county of residence (FIPS) and state (postal code), and adding every row gives the nation. CDC
+# writes 'Suppressed' or 'Unknown' in place of a withheld or unreported county or state: a row whose county is
+# withheld still counts in its state when the state is named, and a row whose state is withheld or unknown counts
+# in the nation only. The series answer by state and nation, so county is left out here until a county series
+# exists (#262); until then the fips column is read with query_sql.
+geography: [nation, state]
 shape: frequency_table
 grain: "One row is one year, county of residence, case status (confirmed or probable), sex and age group (0-19 or 20+ years), with the number of Lyme disease cases reported to NNDSS for that combination. Where fewer than 5 records shared a combination, CDC wrote 'Suppressed' in place of the county, state, sex or age group, and kept the row and its count."
 refresh: annual

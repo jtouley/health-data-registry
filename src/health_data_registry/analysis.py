@@ -216,6 +216,28 @@ def case_definition_years(ds: Dataset, condition: str) -> list[tuple[int, str]]:
     return sorted(out)
 
 
+def _case_definition_note(ds: Dataset, changes: Sequence[tuple[int, str]]) -> str:
+    """What a trend's fit assumes about the case definition: split at each recorded change; one fit that may
+    cross changes the contract says it can't date yet (caseDefinitionYearsUnrecorded); or, with neither, one
+    definition throughout."""
+    if changes:
+        return (
+            f"{ds.id}: the case definition changed in {', '.join(str(y) for y, _ in changes)}; the trend is split "
+            "there and the parts are never joined."
+        )
+    unrecorded = str(contract_property(ds, "caseDefinitionYearsUnrecorded") or "").strip()
+    if unrecorded:
+        return (
+            f"{ds.id}: {unrecorded.rstrip('.')}. The contract doesn't yet record the years a definition changed, "
+            "so this is one trend fitted across them and it may mix definitions. Use get_series to read each "
+            "year with its case definition, and list_caveats for the open question."
+        )
+    return (
+        f"{ds.id}: the contract records no change in case definition, so this trend assumes the definition "
+        "stayed the same over these years."
+    )
+
+
 def is_count(value: float | None) -> bool:
     """A whole, non-negative number of cases; anything else is never truncated into one."""
     return value is not None and value >= 0 and float(value).is_integer()
@@ -775,13 +797,7 @@ def get_trend(
                     "rates (cases per Census population)" if on_rates else "case counts (population change ignored)",
                     eff if eff is not None else "", "; ".join(left_out), _sig(fit.dispersion, 3), ds.id,
                 ])  # fmt: skip
-            notes.append(
-                f"{ds.id}: the case definition changed in {', '.join(str(y) for y, _ in changes)}; the trend is split "
-                "there and the parts are never joined."
-                if changes
-                else f"{ds.id}: the contract records no change in case definition, so this trend assumes the "
-                "definition stayed the same over these years."
-            )
+            notes.append(_case_definition_note(ds, changes))
         notes += _source_notes(engine, used)
     except (QueryRefused, stats.StatsError) as e:
         if isinstance(e, stats.StatsError):

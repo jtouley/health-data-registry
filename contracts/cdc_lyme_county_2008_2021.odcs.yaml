@@ -130,6 +130,15 @@ schema:
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: sex}
+        quality:
+          - id: sex_is_a_listed_value
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["Female", "Male", "Unknown", "Suppressed"]}
+            mustBe: 0
+            description: "The column description lists Female, Male and Unknown, and the Glossary/Methodology adds the suppressed marker. Any other label is a warning to review, never a reason to stop the load."
       - name: age_cat_yrs
         physicalType: VARCHAR
         logicalType: string
@@ -141,6 +150,15 @@ schema:
         customProperties:
           - {property: role, value: dimension}
           - {property: sourceField, value: age_cat_yrs}
+        quality:
+          - id: age_group_is_a_listed_value
+            dimension: conformity
+            severity: warn
+            type: library
+            metric: invalidValues
+            arguments: {validValues: ["0-19", "20+", "Unknown", "Suppressed"]}
+            mustBe: 0
+            description: "The column description lists the age groups 0-19 and 20+ years and Unknown, and the Glossary/Methodology adds the suppressed marker. Any other label is a warning to review, never a reason to stop the load."
       - name: frequency
         physicalType: BIGINT
         logicalType: integer
@@ -162,7 +180,7 @@ schema:
             dimension: completeness
             severity: error
             type: sql
-            description: "Fill rate at error level: an all-empty frequency column passes the check above, and a table with no counts can't answer anything (every one of 40,468 rows had a count on 2026-11-25). The generated fill-rate check says the same at warn level."
+            description: "Fill rate at error level: an all-empty frequency column passes the check above, and a table with no counts can't answer anything (every one of 40,468 rows had a count on 2026-11-25). The generated fill_rate_frequency check fires on the same condition, at warn: this rule is the one that stops the build, and that one only adds the plain-words caveat."
             query: "SELECT COUNT(*) FROM {object} WHERE frequency IS NOT NULL"
             mustBeGreaterThan: 0
     quality:
@@ -178,6 +196,9 @@ customProperties:
   - {property: licenceSource, value: "Socrata metadata license field, read 2026-11-25: 'Public Domain U.S. Government', terms https://www.usa.gov/government-works."}
   - {property: citation, value: "Centers for Disease Control and Prevention, Division of Vector-Borne Diseases. Lyme disease public use aggregated data with geography, 2008-2021. https://data.cdc.gov/d/qtbi-xd4i. Accessed on <date>."}
   - {property: refresh, value: annual}
+  - property: caseDefinitionYearsUnrecorded
+    value: "The CSTE Lyme disease case definition may have changed within 2008 to 2021, and which definition applies to each year is on CDC's case definition page, not in the data (an open question)"
+    description: "Read by get_trend: with no dated caseDefinitions, a trend over these years says it may cross a definition change instead of assuming one definition. Replace with caseDefinitions once a maintainer has read CDC's case definition page."
   - property: rawLoad
     value: {mode: snapshot}
     description: "Each refresh stores the complete table as a dated, append-only load. Incremental loading waits for a reviewed row key and the publisher's update field."
@@ -189,6 +210,7 @@ customProperties:
       description: "Glossary/Methodology: cells are suppressed for low frequency (fewer than 5 Lyme disease records with the same combination of county, state, sex and age group); the suppressed values are re-coded 'suppressed' and the records are never removed. The count is kept; only the label is withheld."
   - property: openQuestions
     value:
+      - "Required keys: year, state, fips, case_status, sex and age_cat_yrs are declared required because every row had all six on 2026-11-25; the publisher does not say they are never blank. A blank one stops the staging build (not-null constraint) until a maintainer reviews it."
       - "Case definition: which CSTE Lyme disease case definitions apply to each year 2008 to 2021 is on CDC's case definition page, not in the data. Add as caseDefinitions after a maintainer reads them."
       - "Which high-incidence states used other surveillance methods whose data were not reportable to CDC before 2022, and in which years (dataset Data Limitations)? Needed before any state is compared across years."
       - "State and county are withheld independently. On 2026-11-25 every row with a suppressed or unknown state also has a suppressed or unknown county (83 suppressed-state rows, 561 cases), so these count only in the national total."

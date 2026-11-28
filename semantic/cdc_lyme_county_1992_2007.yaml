@@ -5,23 +5,23 @@ version: 0.1.0
 dimensions:
   - {name: year, column: year, type: time, non_additive: false, description: "Reporting year."}
   - {name: state, column: state, type: categorical, non_additive: false, description: "State of residence (postal code), or Suppressed or Unknown."}
-  - {name: county_fips, column: fips, type: categorical, non_additive: false, description: "County of residence (five-digit FIPS), or Suppressed or Unknown."}
+  - {name: county_fips, column: fips, type: categorical, non_additive: false, description: "County of residence (five-digit FIPS), or Suppressed or Unknown; three 1992-1993 rows hold a value that is neither ('41  .', '42  .'), an open question in the contract."}
   - {name: case_status, column: case_status, type: categorical, non_additive: false, description: "Confirmed only in these years."}
   - {name: sex, column: sex, type: categorical, non_additive: false, description: "Female, Male, Unknown or Suppressed."}
   - {name: age_group, column: age_cat_yrs, type: categorical, non_additive: false, description: "0-19 or 20+ years, Unknown or Suppressed."}
 measures:
   - {name: lyme_cases, column: frequency, kind: count, unit: "cases", description: "Lyme disease cases reported to NNDSS, as counted by CDC."}
 metrics:
-  - name: lyme_cases_all
-    description: "Lyme disease cases (all confirmed in these years), added across the rows asked for (counties, sexes and age groups)."
+  - name: lyme_cases_confirmed
+    description: "Confirmed Lyme disease cases, added across the rows asked for (counties, sexes and age groups). Every row of these years is Confirmed (the probable definition began in 2008); the filter keeps the series' label true if another status ever appears, which the case_status_is_confirmed warning would also report."
     measure: lyme_cases
     aggregation: sum
     exclude_total_rows: true
-    filters: []
+    filters: ["case_status = 'Confirmed'"]
 series:
   - condition: "Lyme disease"
     label: "Lyme disease cases, confirmed (1992-2007 case definition)"
-    metric: lyme_cases_all
+    metric: lyme_cases_confirmed
     measure: cases
     location_dimension: state
     time_dimension: year
@@ -29,7 +29,7 @@ series:
     case_definition: "CSTE Lyme disease surveillance case definitions in force from 1992 to 2007 (confirmed cases only); not comparable with 2008 or later"
   - condition: "Lyme disease"
     label: "Lyme disease cases, confirmed, all reported cases in the United States (1992-2007 case definition)"
-    metric: lyme_cases_all
+    metric: lyme_cases_confirmed
     measure: cases
     place_coverage: "United States: every reported case, including those whose state or county CDC suppressed or did not know"
     time_dimension: year

@@ -95,7 +95,10 @@ All notable changes to this project are documented here. The format follows
   data.cdc.gov x5j9-wybp), `cdc_lyme_county_2008_2021` (qtbi-xd4i) and `cdc_lyme_county_1992_2007` (84rx-ksgd,
   confirmed cases only), on the existing Socrata adapter. Counts by county of residence, case status, sex and age
   group add up to a state or the nation; CDC's 'Suppressed' labels are kept, and the eras are never joined into
-  one trend.
+  one trend. A trend over one table says it may cross a case-definition change the contract can't date yet,
+  rather than assuming one definition held. Marts `fct_cdc_lyme_county`, `fct_cdc_lyme_county_2008_2021` and
+  `fct_cdc_lyme_county_1992_2007`, one fact per source with every row kept, label each row's era and say in words
+  whether CDC published its count, state and county.
 - New source, draft: `nchs_resp_deaths_pct`, NCHS's provisional weekly percent of all deaths among US residents
   involving COVID-19, influenza, RSV or the three combined, by age group, sex and race and Hispanic origin
   (data.cdc.gov 53g5-jf7x). Read as published and never added; a suppressed count (1 to 9) is no value, never zero,
