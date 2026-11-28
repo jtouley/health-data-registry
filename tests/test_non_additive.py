@@ -687,7 +687,8 @@ def _nhsn_rules() -> dict[str, str]:
     rules: dict[str, str] = {}
     for prop in doc["schema"][0]["properties"]:
         for q in prop.get("quality") or []:
-            rules[q["id"]] = q["query"]
+            if q.get("type") == "sql":  # custom rules are dbt-expectations checks, run in the dbt build
+                rules[q["id"]] = q["query"]
     return rules
 
 

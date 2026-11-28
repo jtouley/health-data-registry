@@ -121,11 +121,17 @@ A pull request's CI should pass the first time. So a commit is checked twice bef
    again and repeat the steps below.
 1. **`make precheck`** runs the CI checks locally plus a drift check, and stops at the first failure: all
    pre-commit hooks (actionlint with shellcheck included), lint, typecheck, tests with the coverage floor, the
-   smoke journey, `make transform` (dbt on the fixtures), the Projects kit build, and the generated-files drift
-   check (`make docs` and `make contracts`, then nothing may change). Mutation tests are not in it, as they are not
-   in CI: they run nightly ([CI](#ci)); `make mutate` runs them locally. Each step prints a PASS or FAIL line, and a
-   summary follows. It checks the working tree, so commit first: CI checks the commit you push. It runs on macOS's
-   bash 3.2 as well.
+   smoke journey, `make transform` (dbt on the fixtures; see the note on dbt packages below), the Projects kit
+   build, and the generated-files drift check (`make docs` and `make contracts`, then nothing may change). Mutation
+   tests are not in it, as they are not in CI: they run nightly ([CI](#ci)); `make mutate` runs them locally. Each
+   step prints a PASS or FAIL line, and a summary follows. It checks the working tree, so commit first: CI checks
+   the commit you push. It runs on macOS's bash 3.2 as well.
+
+   `make transform` installs the dbt packages (`dbt deps`) only when `transform/dbt_packages/` is not already the
+   locked install, then checks every installed file against the reviewed sha256s in
+   `transform/package-digests.yml` (`scripts/dbt_packages.py`). The first install needs `hub.getdbt.com` and
+   `codeload.github.com`; where a session's network blocks either, the step stops there until the packages are
+   installed.
 2. **Push to `pre-pr/<branch>`** (`git push origin HEAD:pre-pr/<branch>`). CI and CodeQL run on every push to
    `pre-pr/**`, against `origin/main`, with only what the change can affect while main has a merge queue (see
    [CI](#ci) below). A newer push to the same pre-pr branch cancels the older run and its queued jobs.
@@ -467,7 +473,11 @@ Every table's provenance line must be complete and carry the sha256 of the raw b
 
 ## Adding a dataset
 
-One pull request, four parts. Scope is infectious disease only for now.
+One pull request, four parts. Scope is infectious disease, the population denominators of its rates, and
+area-level covariates that explain its rates, such as social vulnerability
+([ADR 0019](../adr/0019-covariates-for-infectious-disease-rates.md)). A covariate's catalog entry sets
+`research_areas: [covariate]` and declares no conditions, series, GBD cause or `id_areas` (it keeps the GBD
+location crosswalk), so it never answers a question on its own.
 
 1. `catalog/<id>.yaml`: agency, publisher, level, years, geography, shape, grain, refresh cadence, licence and
    terms, citation, source host and dataset, codebook URL, caveats, and the GBD cause and location crosswalk.
@@ -479,6 +489,10 @@ One pull request, four parts. Scope is infectious disease only for now.
    summed with total rows excluded; rates and estimates are never summed.
 4. Blind questions: 8–10 clinician questions by an author who has not seen the connector or written the contract,
    each answer computed twice, sealed with a hash under `eval/sealed/`.
+
+For a covariate: step 1's crosswalk is the GBD location crosswalk only, with no GBD cause; the catalog entry and
+semantic model declare no conditions or series; and the blind questions are infectious-disease questions that set
+the covariate beside a rate (county Lyme rates by SVI quartile), never questions about the covariate alone.
 
 Then:
 

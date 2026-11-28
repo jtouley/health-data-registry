@@ -16,6 +16,35 @@ models:
     contract_version: 0.1.0
     contract_status: draft
     primary_key: []
+  data_tests:
+  - dbt_expectations.expect_table_row_count_to_equal_other_table:
+      name: cdc_nhsn_ar_hai_rows_raw_to_staging
+      arguments:
+        compare_model: source('raw', 'cdc_nhsn_ar_hai')
+      config:
+        severity: error
+        meta:
+          dimension: consistency
+          rule: rows_raw_to_staging
+          contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
+          check: row_count_matches
+          checks: 'Staging has exactly as many rows as the raw load it types: staging drops and adds no row (an
+            exact structural fact of the generated staging model).'
+  - dbt_expectations.expect_row_values_to_have_recent_data:
+      name: cdc_nhsn_ar_hai_load_within_refresh
+      arguments:
+        column_name: try_strptime(left(_snapshot_id, 16), '%Y%m%dT%H%M%SZ')
+        datepart: year
+        interval: 1
+      config:
+        severity: warn
+        meta:
+          dimension: timeliness
+          rule: load_within_refresh
+          contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
+          check: load_within_sla
+          checks: The latest load is no older than the annual cadence in slaProperties frequency. It times our copy,
+            not the publisher's last update, which is not stored yet (see openQuestions); a warning, never a hold.
   columns:
   - name: source
     data_type: varchar
@@ -220,6 +249,22 @@ models:
         name: stg_cdc_nhsn_ar_hai_percent_resistant_filled
         config:
           severity: warn
+    - dbt_expectations.expect_column_values_to_be_between:
+        name: cdc_nhsn_ar_hai_percent_resistant_in_range
+        arguments:
+          min_value: 0
+          max_value: 100
+          row_condition: '"percent_resistant" is not null'
+        config:
+          severity: error
+          meta:
+            dimension: conformity
+            rule: percent_resistant_in_range
+            contract: contracts/cdc_nhsn_ar_hai.odcs.yaml
+            check: values_between
+            checks: A percent of tested isolates (resistant / tested x 100, column description), so it lies from
+              0 to 100. Rows with no percent are skipped, so an all-empty column passes this check; only the fill-rate
+              warning (fill_rate_percent_resistant) flags that.
   - name: suppressed
     data_type: boolean
     description: Publisher's suppression indicator ('If data should be suppressed or not'). Observed values are
