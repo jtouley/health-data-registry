@@ -68,7 +68,7 @@ flowchart TB
     router --> silver
     router --> raw
     router -.->|nothing touches the question| handoff
-    queue["Source request queue<br/>propose_source: metadata only;<br/>triaged, then built through the factory"]
+    queue["Source request queue<br/>propose_source: metadata only;<br/>an agent session triages, profiles<br/>and drafts the source PR"]
     router -.->|a source we don't hold| queue
     queue -.->|accepted and merged| raw
     raw --> silver --> marts --> products
@@ -458,32 +458,45 @@ ran blocks, ADR 0018), `publisher_unreachable`, `publisher_bad_table`, `no_snaps
 ## Decision 5. Demand-driven ingestion
 
 Issue [#285](https://github.com/jtouley/health-data-registry/issues/285). A clinician's session will find public
-sources we don't hold. They are captured, reviewed and built, and the router answers from the fallback meanwhile.
+sources we don't hold. An agent session pulls each one in, reviews it, and drafts its pull request, and the
+router answers from the fallback meanwhile.
 
 ### The decision
 
 - **`propose_source` records source metadata only.** The client calls it with the publisher, the dataset's URL or
-  landing page, the condition, the geography and the years. Its arguments are those fields only: the condition is
-  a `dim_condition` term or a short label, with a length cap, and there is no free-text field. It never records
-  the clinician's question or any conversation text (hard rule 4; no logging of questions). The hosted server
-  rate-limits it per session and overall, as `hosted.py` does for every tool.
-- **An append-only request queue in the ops control plane.** Each request is a series of events: `proposed`,
-  `triaged`, `accepted` or `rejected` (with a reason), `built`, `ingested`. Events are never rewritten, as for the
-  release gate's logs. The same source proposed again adds weight to the open request; it never makes a duplicate.
-- **Triage before anything is fetched,** against the hard rules:
-  - rule 2 (ADR 0018): the publisher's rows, flags and uncertainty ranges can be kept as sent;
-  - rule 3: its contracts stay drafts until a maintainer reviews them;
-  - rule 4: no record-level data that could re-identify a person;
-  - rule 6: a primary publisher (ADR 0002), over HTTPS, on a host that gets catalogued;
-  - rule 10: its licence decides whether it is mirrored, read live, or kept private;
-  - rule 11: infectious disease, or a denominator (or a covariate, if ADR 0019 in #276 is accepted).
-- **A factory build of each accepted source.** An accepted request becomes one source pull request: catalog
-  entry as adapter-type config (ADR 0016), contracts at every layer, semantic model with its question kinds,
-  dbt models and tests. It follows "How changes land" like any other source.
-- **The router answers from the fallback meanwhile** (decision 0), and says the source is queued and its state.
+  landing page, the topic, the places and the years. Those are its only arguments: the topic is a `dim_condition`
+  term or a short label with a length cap, and there is no free-text field. It never records the clinician's
+  question or any conversation text (hard rule 4; no logging of questions). The hosted server rate-limits it per
+  session and overall, as `hosted.py` does for every tool.
+- **An append-only request log in the ops control plane.** Each request is a series of events: `proposed`,
+  `triaged`, `accepted` or `rejected` (with a plain reason), `connected`, `drafted`, `ingested`. Events are never
+  rewritten, the same pattern as #277. A repeat proposal adds weight to the open request, never a duplicate.
+- **An agent session drains the log, never the hosted server.** The server only appends `proposed`. A scheduled
+  agent session, in its own sandbox, does everything else:
+  1. **Triage**, before any fetch, against the hard rules: rule 2 (ADR 0018: rows, flags and uncertainty ranges
+     can be kept as sent), rule 3 (contracts stay drafts until a maintainer reviews them), rule 4 (no
+     record-level data that could re-identify anyone), rule 6 (a primary publisher, ADR 0002, over HTTPS), rule
+     10 (the licence decides mirroring) and rule 11 (infectious disease, a denominator, or a covariate if ADR
+     0019 in #276 is accepted). A rejection is an event with its reason.
+  2. **Pull in and profile.** It fetches the dataset from the publisher, profiles fields, grain, coverage, codes,
+     suppression, flags and row counts, and reads the codebook. Nothing it fetches is committed (hard rule 5).
+  3. **Connect.** It opens a source issue or draft pull request that records which conformed dimensions the
+     source maps to (`dim_place`, time, condition through the ontology and GBD names, measure, population
+     group), where it overlaps or conflicts with sources we hold, which router question kinds it could answer,
+     and open questions for anything the codebook doesn't state (hard rule 1).
+  4. **Extend through the factory** (ADR 0016; config where an adapter type fits) and draft the pull request:
+     the catalog entry with its host catalogued; ODCS contracts at every layer, with raw integrity, silver
+     rules and fill rates, and mart product tests; the ODPS port; the semantic model with its question kinds;
+     the generated dbt models, plus a mart where a data product needs one; data quality checks from the contract
+     (#240), dbt unit tests, synthetic fixtures, offline tests and a live `network` test.
+- **The pull request lands like any other.** "How changes land" applies: pre-pr green, then one review round and
+  one fix round by fresh agents. The contracts stay drafts until a maintainer reviews them (hard rule 3).
+  Merging adds `ingested`, and the router can use the source from the next build.
+- **The router answers from the fallback meanwhile** (decision 0), and says the source has been proposed and is
+  being reviewed.
 - **Nothing is fetched at question time from an uncatalogued host.** `fetch.py`'s catalogued-host rule is
-  unchanged; a proposed URL is data in the queue, never a fetch target, until its catalog entry merges.
-- **Visible.** `list_sources` shows open requests and their state.
+  unchanged: a proposed URL is data in the log, never a fetch target for the server.
+- **Visible.** `list_sources` shows each open request, its state and a link to its issue or draft pull request.
 
 ### What changes from today
 
@@ -491,16 +504,17 @@ sources we don't hold. They are captured, reviewed and built, and the router ans
 |---|---|
 | `tools.py`, `server.py` | A `propose_source` tool; `list_sources` shows open requests |
 | `hosted.py` | Rate limits for `propose_source`; its arguments stay out of every log |
-| New ops module (beside `release_gate.py`) | The append-only request queue: write events, read state, merge duplicates |
+| New ops module (beside `release_gate.py`) | The append-only request log: append events, read state, merge repeats |
+| A scheduled agent workflow, and a repo skill for it | Drains the log: triage, profile, connect, draft the pull request |
 | `helpers.py` | A helper step for "this source isn't held yet: propose it" |
 
 ### Migration order
 
-1. The queue's event format, with its ODCS contract as a control-plane export, and its tests.
-2. `propose_source` on stdio, writing to the local lake's ops queue.
-3. The hosted server writes to the private ops queue (open question 1).
-4. The router names queued requests in its fallback answers.
-5. The triage step: a checklist in the issue template first, automation later (open question 2).
+1. The log's event format, with its ODCS contract as a control-plane export, and its tests.
+2. `propose_source` on stdio, appending to the local lake's ops log.
+3. The hosted server appends to the private ops log (open question 1).
+4. The router names open requests in its fallback answers.
+5. The agent session: triage and the connect issue first, then the drafted pull request.
 
 ### What it closes or supersedes
 
@@ -508,17 +522,19 @@ sources we don't hold. They are captured, reviewed and built, and the router ans
 
 ### Open questions for the maintainer
 
-1. The server is read-only today. Does the hosted server get a write path that can only append to the request
-   queue, or does it return the proposal for the clinician to file, with the maintainer's agent filing it?
-2. Who triages, and how fast: a scheduled agent with maintainer sign-off, or the maintainer alone?
-3. Does a proposal from the hosted server count the same as one from a local session?
+1. The server is read-only today. Is an append-only write to the request log, and nothing else, acceptable for
+   the hosted server?
+2. How often does the agent drain the log (hourly, daily), and does a demand threshold apply?
+3. Do agent-drafted pull requests wait as drafts for the maintainer to start review, or go straight into the
+   review round?
+4. Does a proposal from the hosted server count the same as one from a local session?
 
 ## Consequences
 
 - Every number a clinician sees comes from a tested model of one gate-passed build, and says which layer, which
   checks and which qualifications apply.
-- A source a clinician needs and we don't hold is queued for review and built through the factory, never fetched
-  ad hoc.
+- A source a clinician needs and we don't hold is queued, and an agent session drafts its pull request through
+  the factory; the server never fetches it ad hoc.
 - The facts hold all the data; the data products stay curated and grow with usage.
 - Adding a source adds declarations (contract rules, coverage, ontology terms, question kinds), not code or word
   lists.
