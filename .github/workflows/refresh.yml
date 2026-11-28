@@ -11,7 +11,8 @@
 #            third-party code (dbt and its dependencies) never shares a job with the publish token; its only
 #            output is dbt's run record (run_results.json, manifest.json), as an artifact.
 #   publish  runs only when every fetch job passed: it checks each planned source has a snapshot, merges the
-#            per-source lakes, re-checks every contract, runs the release gate on the transform job's run record,
+#            per-source lakes, re-checks the contracts of the sources it publishes (drift in any other source
+#            is a warning only), runs the release gate on the transform job's run record,
 #            then `export-public` publishes a new immutable release-<run date> tag to the hub, and the gate
 #            records that exact tag as served. A release is never partial: if any source fails, nothing is
 #            published or tagged and report-failure opens an issue instead. Skipped with a notice when no
@@ -308,8 +309,19 @@ jobs:
           fi
       - name: Cross-check the catalog, contracts and semantic models
         run: uv run --no-sync health-data-registry validate
-      - name: Publishers still serve every contract field
-        run: uv run --no-sync health-data-registry check-contracts
+      # Blocking: the sources this release carries (hosting: public, so stored in the lake and published to the
+      # hub; the same list plan fetched) must still be served with every field their contracts read.
+      - name: Publishers of the published sources still serve every contract field
+        run: uv run --no-sync health-data-registry check-contracts --scope published
+      # Not blocking: every other source (read live, private or a browser-only dashboard) has no rows in the
+      # release, so its drift can't change a published number. It is reported here as a warning, and the weekly
+      # drift check (drift-check.yml) still fails and opens an issue on it (#218).
+      - name: Drift in sources the release doesn't carry (warning only)
+        timeout-minutes: 15
+        continue-on-error: true # a hang or crash here still can't hold a release that carries none of these rows
+        run: |
+          uv run --no-sync health-data-registry check-contracts --scope unpublished \
+            || echo "::warning title=Contract drift (not published)::A source this release doesn't carry failed its contract check; see this step's log. The release is not held for it, and drift-check.yml tracks it (#218)."
       # The pre-publish checks include the data: every snapshot has rows, and each data file has exactly the
       # rows its snapshot's manifest records. Any problem stops the run before anything is uploaded.
       - name: Stage the release locally (pre-publish and row-count checks, no upload)

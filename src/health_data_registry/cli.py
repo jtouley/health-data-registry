@@ -131,13 +131,24 @@ def export_public(
     return 0
 
 
-def check_contracts(registry: Registry) -> int:
-    """Does each publisher still serve every field its contract reads? (The nightly drift check.)"""
+CONTRACT_SCOPES = ("all", "published", "unpublished")
+
+
+def check_contracts(registry: Registry, scope: str = "all") -> int:
+    """Does each publisher still serve every field its contract reads? (The weekly drift check.)
+
+    ``scope`` picks the sources: ``all`` (the drift check), ``published`` (the sources a hub release carries,
+    `hosting: public`: the refresh publish blocks on these) or ``unpublished`` (every other source, which the
+    publish job reports only as a warning, since none of their rows reach the release)."""
     from health_data_registry.adapters import capabilities, publisher_fields
 
+    if scope not in CONTRACT_SCOPES:
+        raise ValueError(f"unknown scope {scope!r}; choose one of {', '.join(CONTRACT_SCOPES)}")
     get = _fetcher(registry)
     bad = 0
     for ds in registry:
+        if scope != "all" and ds.entry.hosted != (scope == "published"):
+            continue
         if capabilities(ds.entry).checks_layout_on_read:
             print(f"skip {ds.id}: its adapter type checks the publisher's layout on every read")
             continue
@@ -344,7 +355,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=None,
         help="write the release tag to this file once the release is uploaded and tagged (or already published)",
     )
-    sub.add_parser("check-contracts", help="check each publisher still serves the fields its contract reads")
+    cc = sub.add_parser(
+        "check-contracts", help="check each publisher still serves the fields its contract reads"
+    )
+    cc.add_argument(
+        "--scope",
+        choices=CONTRACT_SCOPES,
+        default="all",
+        help="published: only the sources a hub release carries (hosting: public); unpublished: every other "
+        "source; all (default): every source",
+    )
     sub.add_parser("validate", help="load and cross-check every catalog entry, contract and semantic model")
     ev = sub.add_parser(
         "eval", help="verify the sealed blind sets; with --run, score a client run against them"
@@ -434,7 +454,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if a.cmd in ANALYSIS_COMMANDS + ROW_COMMANDS:
         return run_analysis(registry, a)
     if a.cmd == "check-contracts":
-        return check_contracts(registry)
+        return check_contracts(registry, a.scope)
     if a.cmd == "harvest-doi":
         return harvest_doi(
             registry, a.conference, year=a.year, max_records=a.max_records, enrich=not a.no_enrich,

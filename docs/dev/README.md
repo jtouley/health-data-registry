@@ -47,7 +47,7 @@ The README's images (`assets/readme/*.svg`, light and dark) come from one token 
 | `make eval` | Verify the sealed blind sets; with `--run`, score a client run against them |
 
 The CLI behind them: `health-data-registry serve | refresh <dataset>|--all [--max-rows N] | fetch <source> |
-export-public --to hf://datasets/<org>/<name>|DIR [--run-date YYYY-MM-DD] | check-contracts | validate |
+export-public --to hf://datasets/<org>/<name>|DIR [--run-date YYYY-MM-DD] | check-contracts [--scope all|published|unpublished] | validate |
 eval [--sealed DIR] [--run FILE]`. `fetch <source>` refreshes one source. `export-public` publishes the sources
 whose licence allows redistribution to the open data hub (cards, licence text, Parquet, `manifest.json`, tag
 `release-<run date>`), lists the rest with a card and no data, and stops if a pre-publish check fails; it needs

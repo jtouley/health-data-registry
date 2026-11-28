@@ -86,6 +86,44 @@ def test_check_contracts_reports_ok_drift_and_failure(
     assert "FAIL toy_cases: could not read publisher metadata" in capsys.readouterr().err
 
 
+def test_check_contracts_scope_splits_published_from_unpublished_sources(
+    env: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    """The refresh publish blocks only on the sources a release carries (hosting: public); the rest are checked
+    in their own run, which the workflow reports as a warning."""
+    from health_data_registry import adapters
+
+    reg = load_registry(env)
+    hosted = {ds.id for ds in reg if ds.entry.hosted}
+    unhosted = {ds.id for ds in reg} - hosted
+    assert hosted and unhosted  # the fixture registry has both kinds
+    seen: list[str] = []
+
+    def fails_unless_hosted(entry: Any, get: Any) -> set[str]:
+        seen.append(entry.id)
+        if entry.hosted:
+            return {c.source_field for c in reg.get(entry.id).contract.columns}
+        raise RuntimeError("This source needs a browser to read")
+
+    monkeypatch.setattr(adapters, "publisher_fields", fails_unless_hosted)
+    assert cli.main(["check-contracts", "--scope", "published"]) == 0
+    assert set(seen) == hosted
+    out = capsys.readouterr()
+    assert all(f"ok   {i}: all " in out.out for i in hosted) and "FAIL" not in out.err
+    seen.clear()
+    assert cli.main(["check-contracts", "--scope", "unpublished"]) == 1
+    assert set(seen) == unhosted
+    err = capsys.readouterr().err
+    assert all(f"FAIL {i}: could not read publisher metadata" in err for i in unhosted)
+    seen.clear()
+    assert cli.main(["check-contracts"]) == 1  # the default checks every source, as the drift check does
+    assert set(seen) == hosted | unhosted
+    with pytest.raises(SystemExit):
+        cli.main(["check-contracts", "--scope", "hosted"])
+    with pytest.raises(ValueError, match="unknown scope"):
+        cli.check_contracts(reg, "hosted")
+
+
 def test_eval_without_and_with_broken_seals(env: Path, tmp_path: Path, capsys: Any) -> None:
     empty = tmp_path / "sealed"
     empty.mkdir()

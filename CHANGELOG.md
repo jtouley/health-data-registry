@@ -87,6 +87,9 @@ All notable changes to this project are documented here. The format follows
   again) apart from "the hub has no published release yet" (retrying won't help).
 - `tools/` is linted and type-checked with the rest of the code, and a test fails if the committed README images
   differ from what the generator draws.
+- The weekly refresh publish holds a release only on contract drift in the sources it publishes (`hosting:
+  public`), with `check-contracts --scope published`. Drift in any other source, such as the browser-only
+  Detroit and MDHHS dashboards, shows as a warning on the run and still fails the weekly drift check (#218).
 
 ### Added
 

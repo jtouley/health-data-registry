@@ -71,8 +71,10 @@ ends green with a notice and does nothing. Each starts working on its next run a
    (the owner must be `HDR_PRIVATE_HF_OWNER`, never the variable's own) or if that dataset is public.
 4. **publish** (main only, full runs only, in the GitHub environment `hub-publish`) runs only when every fetch
    job passed. It checks that each planned
-   source has a snapshot, merges the per-source lakes, runs `validate` and `check-contracts` (publishers still
-   serve every contract field), stages the release locally (all pre-publish checks, including that every
+   source has a snapshot, merges the per-source lakes, runs `validate` and `check-contracts --scope published`
+   (the publishers of the sources the release carries still serve every contract field; any other source's
+   drift, such as a browser-only dashboard's, is reported as a warning and never holds the release, and the
+   drift check below still opens an issue on it), stages the release locally (all pre-publish checks, including that every
    snapshot has rows and each data file has exactly the rows its snapshot's manifest records), then runs `export-public --to hf://datasets/<repo>`, which tags the hub
    commit `release-<date>`. `export-public` stops before uploading if a check fails, never moves a tag, and
    publishes a correction for the same date as `release-<date>.2`. A release is never partial: if any source
@@ -188,7 +190,8 @@ config header. Before uploading, the deploy job writes the tag and its commit in
 
 ### Drift check and keep-alive (`drift-check.yml`)
 
-`check-contracts` asks each publisher whether it still serves every field its contract reads. On failure on
+`check-contracts` asks each publisher whether it still serves every field its contract reads, for every
+source (`--scope published` or `--scope unpublished` narrows it, as the refresh publish does). On failure on
 main, the job opens the issue "Contract drift: a publisher changed", or comments on the open one. Only that job
 has `issues: write`.
 
