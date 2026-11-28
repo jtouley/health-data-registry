@@ -1224,6 +1224,7 @@ def test_too_long_refusals_keep_the_format_and_the_real_size(
         assert found is not None
         size = int(found[1].replace(",", ""))
         assert size > 40_000  # the row's own size, both copies counted, never a placeholder's
+        assert "or use describe_dataset to see which columns hold long text." in text
         if isinstance(out, dict):
             assert out["refused"] == "too_large"
 

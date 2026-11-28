@@ -86,3 +86,13 @@ def test_the_citation_fills_in_the_access_date_or_says_how_to() -> None:
         ds, release="r1", run_date="2026-11-24", port=None, snap=m, hosted=False
     )
     assert "(accessed 2026-11-24)" in listed["citation"]
+
+
+def test_a_card_without_a_country_and_with_an_access_date_in_its_citation(toy: Dataset) -> None:
+    from dataclasses import replace
+
+    entry = toy.entry.model_copy(update={"country": None, "citation": "CDC. Toy (accessed <retrieved_at>)."})
+    ds = replace(toy, entry=entry)
+    card = _card(ds, "org/hub")
+    assert "Geography: nation, state.\n" in card
+    assert "Cite as: CDC. Toy (accessed 2026-11-24).\n" in card
