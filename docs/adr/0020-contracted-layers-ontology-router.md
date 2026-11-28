@@ -1,4 +1,4 @@
-# 0020. Contracted layers, one ontology, one quality engine, and a router
+# 0020. Answer with what we hold: contracted layers, one ontology, one quality engine and a router
 
 - **Status:** Proposed
 - **Date:** 2026-11-28
