@@ -1,0 +1,60 @@
+id: cdc_nhanes_id_prevalence
+title: DQS NHANES Select Infectious Diseases Prevalence Estimates
+agency: CDC
+publisher: "Centers for Disease Control and Prevention, National Center for Health Statistics, Division of Health and Nutrition Examination Surveys (NHANES)"
+level: federal
+country: US
+research_areas: [infectious_disease]
+id_areas: [stis]
+years: {start: 1999, end: 2018}
+# A national survey sample: one estimate per survey cycle for the United States, no state values.
+geography: [nation]
+shape: estimate_table
+grain: "One row is one infection (herpes simplex virus type 1 or type 2 antibody), one two-year NHANES survey cycle and one population group of adults aged 20-49 (all, or by age, sex, race and Hispanic origin, or sex and age): the crude percent with antibody, its standard error and 95% confidence interval, and NCHS's flag where the estimate is unreliable or not available."
+refresh: irregular
+licence:
+  # The dataset's Socrata metadata names the licence: Public Domain U.S. Government (checked 2026-11-25).
+  id: public-domain-us-federal
+  redistribution: true
+  terms_url: https://www.usa.gov/government-works
+citation: "National Center for Health Statistics. Division of Health and Nutrition Examination Surveys. NHANES Interactive Data Visualizations. DQS NHANES Select Infectious Diseases Prevalence Estimates. https://data.cdc.gov/d/v7tk-n6v3 (accessed <retrieved_at>)."
+source:
+  portal: socrata
+  host: data.cdc.gov
+  dataset: v7tk-n6v3
+  landing_url: https://www.cdc.gov/nchs/nhanes/visualization/
+  api_url: https://data.cdc.gov/resource/v7tk-n6v3.json
+codebook_url: https://data.cdc.gov/d/iqm3-hbev
+caveats:
+  - "These are antibody (seroprevalence) estimates from a national survey sample, not reported cases: the percent of adults aged 20-49 whose sera had antibody to herpes simplex virus type 1 or type 2. HSV-1 and HSV-2 were not tested at ages 50 and over (NCHS footnote)."
+  - "Each figure is for the United States as a whole, from the NHANES sample; there are no state values."
+  - "Survey cycles are two-year periods (1999-2000 to 2017-2018). A year range picks the cycles that start in it."
+  - "NCHS flags an estimate that does not meet its standards of reliability (*) and one that is not available (- - -). Every row is shown with its flag; a flagged-unavailable estimate is empty, never a zero."
+  - "Percents are never added, and the age, sex, race and Hispanic origin, and sex-and-age groups each cover the same people again. Estimates for non-Hispanic Asian people start in 2011-2012 and for Hispanic people in 2007-2008 (NCHS footnote)."
+gbd:
+  # Proposed GBD key, not reviewed (hard rules 1 and 3): HSV-2 antibody to GBD's genital herpes, whose prevalence
+  # GBD models from HSV-2 seroprevalence. HSV-1 is left unmapped. No GBD location column: the figure is national.
+  location_column: null
+  causes:
+    - {condition: "Herpes simplex virus type 2", cause: "Genital herpes"}
+conditions:
+  dimension: infection
+  # Provenance: every distinct value of the topic column at https://data.cdc.gov/resource/v7tk-n6v3.json, read
+  # 2026-11-25 (two values), defined in NCHS's footnotes (https://data.cdc.gov/d/iqm3-hbev).
+  source: "NCHS's names for the infections in this NHANES table, exactly as published on data.cdc.gov (checked 25 Nov 2026); each is defined in NCHS's footnotes as antibody to that virus from tested sera."
+  labels:
+    - "Herpes simplex virus type 1"
+    - "Herpes simplex virus type 2"
+  aliases:
+    - alias: "HSV-1"
+      label: "Herpes simplex virus type 1"
+      source: "https://data.cdc.gov/d/iqm3-hbev (FN_NHANESINFECTIOUS11: Herpes simplex virus type 1 (HSV-1) is defined as antibody to herpes simplex virus type 1 from tested sera)"
+      review: publisher_codebook
+    - alias: "HSV-2"
+      label: "Herpes simplex virus type 2"
+      source: "https://data.cdc.gov/d/iqm3-hbev (FN_NHANESINFECTIOUS12: Herpes simplex virus type 2 (HSV-2) is defined as antibody to herpes simplex virus type 2 from tested sera)"
+      review: publisher_codebook
+contract: contracts/cdc_nhanes_id_prevalence.odcs.yaml
+semantic_model: semantic/cdc_nhanes_id_prevalence.yaml
+status: draft
+hosting: public

@@ -39,7 +39,7 @@ _ID = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
 _SQL_IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
 # A publisher field name goes into generated SQL and dbt Jinja: braces, quotes, backslashes and control
 # characters are refused rather than escaped in every place it lands.
-_UNSAFE_FIELD = re.compile(r"[{}\\'\"\x00-\x1f\x7f]")
+_UNSAFE_FIELD = re.compile(r"[{}\\'\"`\x00-\x1f\x7f]")
 
 DUCKDB_TYPES = frozenset({"VARCHAR", "BIGINT", "INTEGER", "DOUBLE", "DATE", "BOOLEAN", "TIMESTAMP"})
 # The ODCS logicalType each physical type may carry: the two must say the same thing about a column.
@@ -654,6 +654,15 @@ class Column:
     # load (e.g. a field the publisher leaves empty in every row). Every other declared field must appear, and
     # it gets no fill-rate check (quality.fill_rate_rules).
     may_be_empty: bool = False
+    # customProperties.thousandsSeparator: the character the publisher groups digits with in a numeric text field
+    # ("1,234"), an exact structural fact of the publisher's text. Staging drops it only from a value written as
+    # whole groups of three digits, so "1,5" is never read as 15.
+    thousands_separator: str | None = None
+    # customProperties.inlineCodes: true on a VARCHAR flag column that reads the same publisher field as the
+    # numeric column it flags, because the publisher writes a code in place of the number (HepTracker's 'S').
+    # Staging then keeps any text that isn't a plain number in the flag and reads it as empty in the number,
+    # instead of stopping the load. Declared, never inferred from two columns sharing a field.
+    inline_codes: bool = False
 
     def partial_note(self, label: str) -> str | None:
         """The contract's note when this place label covers only part of the place it is named after."""
@@ -915,12 +924,28 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
         source_field = str(cp.get("sourceField") or name)
         if _UNSAFE_FIELD.search(source_field):
             raise RegistryError(
-                f"{expected_id}.{name}: sourceField {source_field!r} has a brace, quote, backslash or control "
-                "character, which generated SQL and dbt can't carry safely"
+                f"{expected_id}.{name}: sourceField {source_field!r} has a brace, quote, backtick, backslash or "
+                "control character, which generated SQL, dbt and a Socrata query can't carry safely"
             )
         may_be_empty = cp.get("mayBeEmpty", False)
         if not isinstance(may_be_empty, bool):
             raise RegistryError(f"{expected_id}.{name}: mayBeEmpty must be true or false")
+        sep = cp.get("thousandsSeparator")
+        if sep is not None and (
+            ptype not in ("BIGINT", "INTEGER", "DOUBLE")
+            or not isinstance(sep, str)
+            or sep not in (",", " ", "'")
+        ):
+            raise RegistryError(
+                f"{expected_id}.{name}: thousandsSeparator is one character (a comma, a space or an apostrophe) "
+                "on a numeric column"
+            )
+        inline = cp.get("inlineCodes", False)
+        if not isinstance(inline, bool) or (inline and (cp.get("flagFor") is None or ptype != "VARCHAR")):
+            raise RegistryError(
+                f"{expected_id}.{name}: inlineCodes is true or false, and true only on a VARCHAR flag column "
+                "(flagFor)"
+            )
         pairs = {k: _pairs(cp.get(k), f"{expected_id}.{name}.{k}") for k in _PAIR_PROPS}
         zero = cp.get("noCasesCode")
         if zero is not None and (cp.get("flagFor") is None or str(zero) not in dict(pairs["flagCodes"])):
@@ -946,10 +971,13 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
                 not_incidence=pairs["notIncidence"],
                 no_cases_code=None if zero is None else str(zero),
                 may_be_empty=may_be_empty,
+                thousands_separator=sep,
+                inline_codes=inline,
             )
         )
     if not cols:
         raise RegistryError(f"{expected_id}: contract declares no properties")
+    _check_inline_codes(expected_id, cols)
     names = [c.name for c in cols]
     if len(set(names)) != len(names):
         raise RegistryError(f"{expected_id}: duplicate column names in contract")
@@ -1670,6 +1698,25 @@ def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticMode
                 raise RegistryError(
                     f"{entry.id}: notIncidence names {unknown[0]!r}, which is not in the catalog's conditions.labels"
                 )
+
+
+def _check_inline_codes(contract_id: str, cols: list[Column]) -> None:
+    """A flag reading its number's own publisher field declares inlineCodes, and only such a flag does."""
+    by_name = {c.name: c for c in cols}
+    for c in cols:
+        number = by_name.get(c.flag_for) if c.flag_for is not None else None
+        shares = number is not None and number.source_field == c.source_field
+        numeric = number is not None and number.physical_type in ("BIGINT", "INTEGER", "DOUBLE")
+        if c.inline_codes and not (shares and numeric):
+            raise RegistryError(
+                f"{contract_id}.{c.name}: inlineCodes needs flagFor to name a numeric column that reads the same "
+                "sourceField"
+            )
+        if shares and numeric and not c.inline_codes:
+            raise RegistryError(
+                f"{contract_id}.{c.name}: it reads the same sourceField as {c.flag_for}, so the publisher writes "
+                "codes in place of the number; declare inlineCodes: true to keep them, or read another field"
+            )
 
 
 def _check_load_metadata(entry: CatalogEntry, contract: Contract) -> None:
