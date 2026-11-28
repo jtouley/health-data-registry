@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import math
@@ -77,7 +78,7 @@ def _json(**kw: Any) -> dict[str, Any]:
 
 
 def _fresh(**kw: Any) -> dict[str, Any]:
-    format_choice._decide.cache_clear()
+    format_choice._decide_cached.cache_clear()
     return _json(**kw)
 
 
@@ -178,9 +179,15 @@ def test_rubric_sha256_version_and_fixed_wording_in_every_answer(kw: dict[str, A
 def test_unknowns_are_named_and_never_imputed() -> None:
     out = _json(**PAPER)
     named = {u["criterion"]: u["reason"] for u in out["not_used"]}
-    assert named["reach"].startswith("unknown:")
-    assert named["acceptance_chance"].startswith("unknown:") and "for any" in named["acceptance_chance"]
-    assert "no venue was named" in named["deadline_fit"]
+    kinds = {u["criterion"]: u["kind"] for u in out["not_used"]}
+    assert kinds["reach"] == kinds["acceptance_chance"] == "unknown" and kinds["deadline_fit"] == "not used"
+    assert "for any" in named["acceptance_chance"]
+    assert "no conference was named" in named["deadline_fit"]
+    # The notes name each criterion by its label, never its id, and say "unknown" or "not used" once.
+    assert "Not used: time before the conference's deadline. No conference was named" in " ".join(
+        out["notes"]
+    )
+    assert not any("deadline_fit" in n or "not used: not used" in n.lower() for n in out["notes"])
     assert "never an imputed rate" in named["citable_record (abstract_poster upside)"]
     scored = {s["criterion"] for s in out["scores"]}
     assert not scored & {"reach", "acceptance_chance", "deadline_fit"}
@@ -237,7 +244,10 @@ def test_gate_leaves_out_a_format_that_does_not_fit_before_scoring() -> None:
     # ADR 0018: shown with its scores and the reason, never hidden.
     assert vp["status"].startswith("left out of the ranking") and "contribution = empirical" in vp["reason"]
     assert vp["score_interval_95"] is not None and vp["wins"] == 0.0
-    assert any(n.startswith("Left out: viewpoint") for n in out["notes"])
+    assert any(
+        n.startswith("Left out of the ranking: viewpoint or perspective. This format isn't made")
+        for n in out["notes"]
+    )
 
 
 def test_argument_leaves_one_format_and_says_no_weight_can_flip_it() -> None:
@@ -250,8 +260,102 @@ def test_too_close_to_call_shows_the_flip_condition_first() -> None:
     out = _json(**IDWEEK_PRELIM)
     assert out["review"] == REVIEW_CLOSE
     assert (
-        out["notes"][0].startswith("Too close to call.") and out["flip_condition"]["text"] in out["notes"][0]
+        out["notes"][0].startswith("What would change it:")
+        and out["flip_condition"]["text"] in out["notes"][0]
     )
+    assert sum("too close to call" in n.lower() for n in out["notes"]) == 1
+
+
+# The draws and the declared weights can disagree on which format is first; these inputs include such cases.
+DISAGREE = [
+    {"contribution": "empirical", "data_maturity": "idea", "worked_examples": 6, "needs_methods_section": False},
+    {"contribution": "empirical", "data_maturity": "preliminary_counts", "worked_examples": 3,
+     "needs_methods_section": True},
+    {"contribution": "empirical", "data_maturity": "preliminary_counts", "worked_examples": 0,
+     "needs_methods_section": True, "conference": "IDWeek"},
+    {"contribution": "case", "data_maturity": "idea", "worked_examples": 6, "needs_methods_section": False},
+    {"contribution": "empirical", "data_maturity": "adjudicated", "worked_examples": 6,
+     "needs_methods_section": False},
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("kw", [*CASES, *DISAGREE])
+def test_what_would_change_it_never_contradicts_the_choice(kw: dict[str, Any]) -> None:
+    out = _json(**kw)
+    flip, choice = out["flip_condition"], out["choice"]
+    label = next(r["label"] for r in out["formats"] if r["format"] == choice)
+    if flip["found"]:
+        assert flip["declared_top"] == choice and flip["format"] != choice
+        assert flip["text"].endswith(f"instead of {label}.")
+    elif flip["declared_top"] != choice:
+        assert "rubric's weights exactly as written" in flip["text"] and label in flip["text"]
+
+
+def test_draws_and_declared_weights_that_disagree_are_said_so() -> None:
+    outs = [_json(**kw) for kw in DISAGREE]
+    assert any(o["flip_condition"]["declared_top"] != o["choice"] for o in outs)
+
+
+def test_too_close_with_no_single_flip_says_several_weights_move_together() -> None:
+    out = _json(contribution="case", data_maturity="idea", worked_examples=0, needs_methods_section=False)
+    flip = out["flip_condition"]
+    assert out["review"] == REVIEW_CLOSE and not flip["found"] and flip["declared_top"] == out["choice"]
+    assert "several weights changing together" in out["notes"][0]
+
+
+def test_a_choice_at_the_lowest_level_on_a_criterion_is_said_plainly() -> None:
+    # Empirical work at the idea stage: the gate leaves out the viewpoint, and every other format is at level 1
+    # on data readiness. The choice stands (ADR 0018), and the answer says what level 1 means.
+    out = _json(
+        contribution="empirical", data_maturity="idea", worked_examples=6, needs_methods_section=False
+    )
+    lowest = {x["criterion"]: x["legend"] for x in out["choice_lowest_levels"]}
+    assert lowest["data_readiness"] == "the data you have now can't support this format yet"
+    assert any("at the lowest level on 'the data you have now supports it'" in n for n in out["notes"])
+    level = {s["criterion"]: s["score"] for s in out["scores"] if s["format"] == out["choice"]}
+    assert all(level[c] == 1 for c in lowest)
+    assert _json(**PAPER)["choice_lowest_levels"] == []
+
+
+def test_the_draft_rubric_is_said_up_front() -> None:
+    notes = _json(**PAPER)["notes"]
+    assert format_choice.DRAFT_NOTE in notes[:5]
+
+
+def test_review_act_reads_as_a_phrase_in_the_notes() -> None:
+    out = _fresh(**ARGUMENT)
+    assert out["review"] == REVIEW_ACT
+    assert any("review: act on it." in n for n in out["notes"])
+
+
+def test_a_cached_answer_cannot_be_changed_by_a_caller() -> None:
+    first = _fresh(**PAPER)
+    first["scores"].pop()
+    first["probabilities"]["viewpoint"] = 99.0
+    first["flip_condition"]["text"] = "changed"
+    first["formats"][0]["venues"].append("changed")
+    assert _json(**PAPER) == _fresh(**PAPER)
+
+
+def test_a_base_rate_without_its_count_is_named_not_read_as_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    from health_data_registry import publication
+
+    real = publication.load_base_rates()
+    conf = publication.find_conference("IDWeek")
+    assert conf is not None
+    rates = {
+        **real.rates,
+        conf.abstract_to_paper: dataclasses.replace(real.rates[conf.abstract_to_paper], k=None),
+    }
+    monkeypatch.setattr(publication, "load_base_rates", lambda: dataclasses.replace(real, rates=rates))
+    out = _fresh(**IDWEEK_PRELIM)
+    reason = next(u["reason"] for u in out["not_used"] if u["criterion"].startswith("citable_record"))
+    assert "no verified count" in reason
+    abstract = next(
+        s for s in out["scores"] if s["criterion"] == "citable_record" and s["format"] == "abstract_poster"
+    )
+    assert abstract["probabilities"] == {"2": 1.0}
+    format_choice._decide_cached.cache_clear()
 
 
 # ------------------------------------------------------------------------------------------ weights and flips
@@ -281,6 +385,18 @@ def test_a_priority_that_cannot_be_scored_is_named() -> None:
     out = _json(**{**PAPER, "priorities": ["reach", "speed"]})
     assert any("reach as a priority" in n for n in out["notes"])
     assert "reach" not in out["weights"]
+
+
+def test_only_unscorable_priorities_fall_back_to_unit_weights_and_say_so() -> None:
+    out = _json(**{**PAPER, "priorities": ["reach"]})
+    assert len(set(out["weights"].values())) == 1
+    weights_note = next(n for n in out["notes"] if n.startswith("Weights:"))
+    assert weights_note.startswith("Weights: none of your priorities can be scored yet")
+    assert "Dawes" in weights_note and "Barron" not in weights_note
+    mixed = next(
+        n for n in _json(**{**PAPER, "priorities": ["reach", "speed"]})["notes"] if n.startswith("Weights:")
+    )
+    assert mixed.startswith("Weights: your priorities (speed) in order")
 
 
 def test_priorities_change_the_weights_and_say_so() -> None:
@@ -325,7 +441,7 @@ def test_flip_condition_is_exact_on_the_declared_weights(kw: dict[str, Any]) -> 
     [
         ({"contribution": None}, "contribution must be one of"),
         ({"contribution": ""}, "contribution must be one of"),
-        ({"contribution": "opinion"}, "Got 'opinion'"),
+        ({"contribution": "opinion"}, "You gave: opinion."),
         ({"data_maturity": None}, "data_maturity must be one of"),
         ({"data_maturity": "  "}, "data_maturity must be one of"),
         ({"worked_examples": None}, "worked_examples must be a whole number"),
@@ -346,6 +462,7 @@ def test_flip_condition_is_exact_on_the_declared_weights(kw: dict[str, Any]) -> 
 def test_bad_inputs_are_refused_in_plain_words(change: dict[str, Any], expect: str) -> None:
     out = _json(**{**PAPER, **change})
     assert out["refused"] == "unknown_input" and expect in out["message"] and out["next_step"]
+    assert "None" not in out["message"] and "'" + str(next(iter(change.values()))) + "'" not in out["message"]
     text = choose_output_format(**{**PAPER, **change})
     assert isinstance(text, str) and expect in text and "Traceback" not in text
 
@@ -442,6 +559,34 @@ def test_a_rubric_without_sources_or_with_contradictions_is_refused(edit: Any, m
         RubricError, match=message.replace("[", r"\[").replace("]", r"\]").replace("(", r"\(")
     ):
         parse_rubric(_rubric_with(edit))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "not: [valid yaml",
+        rubric_text().replace("  flip_multipliers: {low: 0.25, high: 4.0}\n", ""),
+        rubric_text().replace("concentration: 20", "concentration: twenty"),
+        rubric_text().replace("\nversion: 0.1.0\n", "\n", 1),
+    ],
+)
+def test_a_malformed_rubric_is_refused_in_words_not_a_traceback(text: str) -> None:
+    with pytest.raises(RubricError):
+        parse_rubric(text)
+
+
+def test_a_broken_rubric_never_stops_the_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    from health_data_registry import server
+
+    def broken() -> Any:
+        raise RubricError("criterion speed has no basis")
+
+    monkeypatch.setattr(format_choice, "load_rubric", broken)
+    assert server._rubric_enum("contribution") == {}
+    out = server._safe(lambda: format_choice.choose_output_format(fmt="json", **PAPER), "json")
+    assert isinstance(out, dict) and out["refused"] == "rubric_error"
+    assert "data tools still work" in out["next_step"] and "Traceback" not in str(out)
 
 
 def test_the_answer_carries_the_shipped_files_sha256(real_rubric: None) -> None:

@@ -92,7 +92,8 @@ formats:
       - {name: OFID Perspective, words: 1200, abstract_words: 150, figures_tables: 2, references: 20, source: ofid_author_guidelines}
       - {name: EID Perspective, words: 3500, abstract_words: 150, figures_tables: as needed, references: 50, source: eid_article_types}
 
-# Each criterion gives every format a level from 1 to 5. Levels describe situations, not bare numbers.
+# Each criterion gives every format a level, at most 5 (deadline_fit runs 1 to 3). Levels describe situations,
+# not bare numbers.
 criteria:
   - id: contribution_fit
     label: fits this kind of work
@@ -192,8 +193,8 @@ criteria:
         needed for a research article). The bands and levels are a proposed declaration.
 
   - id: deadline_fit
-    label: time before the venue's deadline
-    requires: conference # weeks_to_deadline is the deadline of the venue named; with no venue it is not used
+    label: time before the conference's deadline
+    requires: conference # weeks_to_deadline is the named conference's deadline; with no conference it is not used
     legend:
       1: the deadline is this week or next; too little time to write it well
       2: two or three weeks; tight, possible with a draft in hand
@@ -211,8 +212,8 @@ criteria:
       cites: [issue_176]
       text: >-
         Only a short time before a meeting's abstract deadline counts against the abstract; journals take
-        submissions at any time. Ample time gives no advantage, so leaving this out when no venue is named never
-        removes one format's advantage.
+        submissions at any time. Plenty of time earns no format an advantage, so leaving this out when no
+        conference is named takes nothing from any one format.
 
   - id: speed
     label: how soon something is public

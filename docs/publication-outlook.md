@@ -6,6 +6,9 @@ will be published. Today it is **base rate only**: model version none, calibrati
 
 The rule it is built around: never show a number that looks more precise than its evidence.
 
+The same page also covers `choose_output_format`, which compares output formats for one project: see
+[Choosing an output format](#choosing-an-output-format).
+
 ## Method today
 
 **Frame: per conference.** The base-rate file (`src/health_data_registry/publication_base_rates.yaml`, shipped
@@ -113,10 +116,21 @@ fellows or projects.
 methods_standard, argument, case), `data_maturity` (idea, preliminary_counts, frozen_dataset, adjudicated),
 `worked_examples` (a whole number), `needs_methods_section` (true or false), and optionally `conference`,
 `weeks_to_deadline` (the deadline of that conference; with no conference it is not used) and `priorities` (from
-speed, citable_record, reach, effort, most important first). Anything else is refused in plain words.
+speed, citable_record, reach, effort, most important first; `reach` is accepted but not scored yet, and the answer
+says so). Anything else is refused in plain words. These are the tool's names; on the command line the methods
+answer is `--needs-methods-section yes` or `no`, and each priority is its own `--priority`. For example, the
+worked case below:
+
+```sh
+uv run health-data-registry choose-output-format --contribution methods_standard --data-maturity frozen_dataset \
+  --worked-examples 7 --needs-methods-section yes
+```
+
+`choose-output-format --help` lists every flag.
 
 **The rubric** is `src/health_data_registry/format_rubric.yaml` (status draft until the maintainer reviews it).
-Each criterion gives each format a level from 1 to 5. Each level describes a situation, and each rule names its
+Each criterion gives each format a level, at most 5 (time before the deadline runs 1 to 3; acceptance chance and
+reach have no levels because they aren't used yet). Each level describes a situation, and each rule names its
 basis: a reporting guideline (STROBE, RECORD), a venue's own author instructions (OFID, EID, checked 25 Nov
 2026), a published method, or a maintainer's declaration marked "pending review". `validate` refuses a rubric
 whose weight, rule, limit or threshold has no source.
@@ -133,30 +147,39 @@ whose weight, rule, limit or threshold has no source.
    declared weights (concentration 20, a proposed declaration). Each sourced rate comes from its Beta(k + 1,
    n − k + 1) posterior. `probabilities` are the share of draws in which each format ranks first, so they say how
    often a format wins across reasonable weightings. They sum to 1, and a format left out by the gate gets 0.
-4. **Confidence** is (p_max − 1/n) / (1 − 1/n) over the n formats left after the gate, as TypeSafe defines it
-   for a Choice. It says how settled the answer is, not whether it is right. The **review** advice is `act` at
+4. **Confidence** is (p_max − 1/n) / (1 − 1/n) over the n formats left after the gate. The formula comes from
+   the [TypeSafe documentation](https://docs.typesafe.ai), which defines confidence this way for its "Choice"
+   output (a choice among named options). It says how settled the answer is, not whether it is right. The
+   **review** advice is `act` (shown as "act on it") at
    p_max 0.9 or more, `discuss with your mentor` from 0.67, and `too close to call: decide with your mentor`
    below that; that last one shows the flip condition first.
 5. **Flip condition.** The answer names the change to one declared weight, between 0.25× and 4×, nearest 1×,
    that would put another format first. It is computed exactly on the declared weights, without simulation.
+   When the rubric's weights exactly as written put a different format first from the draws, the answer says
+   so instead of naming a change, so the two never contradict each other.
+6. **Lowest levels.** The choice is never changed after the draws, but if the chosen format is at level 1 on
+   any criterion (for example data readiness for an idea), the answer says so in plain words, with what level 1
+   means.
 
 **Unknowns are never imputed.** A criterion with no sourced rule (reach) or no verified rate (acceptance chance,
 for every venue) is left out for every format and named under "not used". The citable-record criterion is defined
 by what the format itself yields once accepted: a published abstract, or an indexed article. When the named
 conference has a verified abstract-to-paper rate (today only IDWeek, 236 of 887), the abstract can also reach
 level 5 with that chance. Without one, the abstract keeps only the record it certainly gives, and the missing
-rate is named. Ample time before a deadline earns no advantage. So leaving a criterion out never removes one
-format's advantage only.
+rate is named. Plenty of time before a deadline earns no format an advantage, so leaving the deadline out (when
+no conference is named) takes nothing from any one format.
 
 **Each criterion per format is a Score:** its level (the probability-weighted mean), the probabilities over
 levels, the legend from level to situation, the weight, and the source. A rule-based level puts all its
 probability on one level; only a sourced rate spreads it. Every answer carries the rubric's version, status and
-sha256, the draws and the seed, so it can be reproduced later. The answer follows the shape of TypeSafe's Choice
-and Score outputs. Nothing calls their service, and no model's judgement enters a level, a weight or a
-probability.
+sha256, the draws and the seed, so it can be reproduced later. The answer's shape (one Choice, one Score per
+criterion and format) follows the TypeSafe documentation's Choice and Score outputs. This server never calls
+TypeSafe, and no model's judgement enters a level, a weight or a probability.
 
-With the defaults, the decision record's case (methods_standard, frozen_dataset, 7 worked examples, a methods
-section needed) picks the full original manuscript, with a probability below 1.
+With the shipped rubric, the worked case in the maintainer's specification
+([issue 176](https://github.com/jtouley/health-data-registry/issues/176): methods_standard, frozen_dataset, 7
+worked examples, a methods section needed) picks the full original manuscript with p = 0.91; a test keeps that
+figure from drifting.
 
 ## Open questions
 

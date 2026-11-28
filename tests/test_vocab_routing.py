@@ -674,3 +674,16 @@ def test_real_rates_refuse_animal_counts(tmp_path: Path) -> None:
         "No rate per 100,000 people is given for 'Rabies, Animal': 'Rabies, Animal' counts rabid animals, not people."
     )
     assert rate["next_step"] == next_step_for("not_a_human_count")
+
+
+def test_validate_reports_a_malformed_format_rubric_in_words(
+    vocab: tuple[Registry, Engine], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from health_data_registry import format_choice
+
+    broken = format_choice.rubric_text().replace("  flip_multipliers: {low: 0.25, high: 4.0}\n", "")
+    monkeypatch.setattr(format_choice, "load_rubric", lambda: format_choice.parse_rubric(broken))
+    reg, eng = vocab
+    assert cli.validate(reg, eng.lake) == 1
+    err = capsys.readouterr().err
+    assert "FAIL format rubric: the rubric is malformed (missing 'flip_multipliers')" in err

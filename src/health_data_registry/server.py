@@ -75,8 +75,19 @@ number.
 """
 
 
-_CONTRIBUTIONS = tuple(format_choice.load_rubric().inputs["contribution"])
-_MATURITIES = tuple(format_choice.load_rubric().inputs["data_maturity"])
+def _rubric_enum(name: str) -> dict[str, Any]:
+    """The schema's list of accepted values for one rubric input, read when this module loads.
+
+    A broken rubric never stops the server: the schema then lists no values, and choose_output_format itself
+    refuses in plain words while every other tool keeps working."""
+    try:
+        return {"enum": list(format_choice.load_rubric().inputs[name])}
+    except format_choice.RubricError:
+        return {}
+
+
+_CONTRIBUTIONS = _rubric_enum("contribution")
+_MATURITIES = _rubric_enum("data_maturity")
 
 PAGE_ARGS = "page: 1-based page of a long answer; pin: copy it from the previous page's Next line."
 
@@ -399,8 +410,8 @@ def build_server(
 
     @mcp.tool(annotations=READ_ONLY)
     def choose_output_format(
-        contribution: Annotated[str, Field(json_schema_extra={"enum": list(_CONTRIBUTIONS)})],
-        data_maturity: Annotated[str, Field(json_schema_extra={"enum": list(_MATURITIES)})],
+        contribution: Annotated[str, Field(json_schema_extra=_CONTRIBUTIONS)],
+        data_maturity: Annotated[str, Field(json_schema_extra=_MATURITIES)],
         worked_examples: int,
         needs_methods_section: bool,
         weeks_to_deadline: int | None = None,
@@ -410,14 +421,16 @@ def build_server(
         fmt: Fmt = "csv",
     ) -> Out:
         """Which output fits this project now: conference abstract or poster, research letter or brief report,
-        full original manuscript, or viewpoint. Answers with the format, the probability that each ranks first
+        full original manuscript, or viewpoint (the rubric is a draft awaiting the maintainer's review, and every
+        answer says so). Answers with the format, the probability that each ranks first
         under the stated priorities, how settled that is, whether to act or discuss it with a mentor, what would
         change it, and every criterion's level with its source. A decision under stated priorities, never a
         prediction of publication and never a ranking of ideas or people. Ask the clinician for each answer:
         contribution (empirical, methods_standard, argument, case); data_maturity (idea, preliminary_counts,
         frozen_dataset, adjudicated); worked_examples (how many shown in full); needs_methods_section (true or
-        false); weeks_to_deadline (weeks before the named conference's deadline; needs conference); priorities
-        (from speed, citable_record, reach, effort, most important first)."""
+        false); weeks_to_deadline (weeks before that conference's deadline; ignored without a conference);
+        priorities (from speed, citable_record, reach, effort, most important first; reach is accepted but not
+        scored yet)."""
         return safe(
             "choose_output_format",
             lambda: format_choice.choose_output_format(

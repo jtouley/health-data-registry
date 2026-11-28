@@ -91,10 +91,11 @@ All notable changes to this project are documented here. The format follows
 ### Added
 
 - `choose_output_format` (CLI `choose-output-format`) and the "Which format should I aim for?" helper: for one
-  project, which output fits now (abstract or poster, research letter, full manuscript or viewpoint), from
-  structured answers only. It gives each format's probability of ranking first (fixed-seed draws of Dirichlet
-  weights around the declared ones and Beta posteriors of sourced rates), a confidence, review advice, the
-  weight change that would flip the choice, and one sourced Score per criterion. Unknown rates are left out
+  project, which output fits now (conference abstract or poster, research letter or brief report, full original
+  manuscript, or viewpoint or perspective), from structured answers only. It gives each format's probability of
+  ranking first, which is the share of 10,000 reasonable weightings under which it comes first (method:
+  fixed-seed draws of Dirichlet weights around the rubric's own and Beta posteriors of sourced rates), a
+  confidence, review advice, the weight change that would flip the choice, and one sourced Score per criterion. Unknown rates are left out
   for every format and named, never imputed. The rubric (`format_rubric.yaml`) is a draft awaiting maintainer
   review, and `validate` refuses any weight, rule or limit without a source. The publication outlook's rule
   now says its base rate may inform how formats are compared for one project, and is still never used to rank

@@ -324,8 +324,9 @@ WORKFLOWS: tuple[Workflow, ...] = (
         name="choose-format",
         title="Which format should I aim for?",
         description=(
-            "Asks five short questions about your project and returns which output fits now (abstract or poster, "
-            "research letter, full manuscript or viewpoint), how settled that is, and what would change it."
+            "Asks a few short questions about your project and returns which output fits now (conference "
+            "abstract or poster, research letter or brief report, full original manuscript, or viewpoint or "
+            "perspective), how settled that is, and what would change it."
         ),
         argument_hint="[your project in a sentence]",
         args=("project",),
@@ -349,8 +350,12 @@ WORKFLOWS: tuple[Workflow, ...] = (
                 "methods section to trust the numbers (yes or no)."
             ),
             Step(
-                "Ask whether I have a target conference and how many weeks remain before its deadline, and which "
-                "matters most to me, in order, from: speed, citable record, reach, effort. Both are optional."
+                "Ask whether I have a target conference and, if so, how many weeks remain before its deadline. "
+                "This is optional."
+            ),
+            Step(
+                "Ask which matters most to me, in order, from: speed, citable record, reach, effort. This is "
+                "optional too; without it every criterion counts the same, and reach is not scored yet."
             ),
             Step(
                 "Run choose_output_format with my answers. Show the chosen format, each format's probability of "
@@ -504,9 +509,10 @@ PUBLICATION_OUTLOOK = (
     "How to judge whether a question could become a publishable piece, and where.\n\n"
     "There is no agreed method yet. Until there is, say so plainly, and only list what is already published on "
     "the question (title, year, venue, link) from PubMed and find_prior_work. For how often presented abstracts "
-    "become papers, use get_publication_outlook. For which format to aim for (abstract or poster, research "
-    "letter, full manuscript or viewpoint), use choose_output_format: ask the clinician each answer, never infer "
-    "it, and present the result as a decision under their priorities, not a prediction of publication.\n"
+    "become papers, use get_publication_outlook. For which format to aim for (conference abstract or poster, "
+    "research letter or brief report, full original manuscript, or viewpoint or perspective), use "
+    "choose_output_format: ask the clinician each answer, never infer it, and present the result as a decision "
+    "under their priorities, not a prediction of publication.\n"
 )
 
 RUBRIC = (

@@ -4,7 +4,7 @@ The answer is a decision under stated priorities, never a prediction that the wo
 ranking of ideas, fellows or projects. Its parts, all from the reviewed rubric (format_rubric.yaml):
 
 - Inputs are structured answers only (fixed values and numbers), never read from free text (hard rule 9).
-- Each criterion gives every format a level from 1 to 5 by a deterministic rule with a named basis. A criterion
+- Each criterion gives every format a level (at most 5) by a deterministic rule with a named basis. A criterion
   whose evidence is unknown is left out for every format and named; nothing is imputed.
 - Gate: a format at level 1 on contribution fit can't rank first; it is still scored and shown, flagged, with
   the reason (ADR 0018: show everything; qualify, don't decide).
@@ -23,6 +23,7 @@ ranking of ideas, fellows or projects. Its parts, all from the reviewed rubric (
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import math
 from collections.abc import Sequence
@@ -55,14 +56,26 @@ NOT_A_RANKING = (
 REVIEW_ACT = "act"
 REVIEW_DISCUSS = "discuss with your mentor"
 REVIEW_CLOSE = "too close to call: decide with your mentor"
+# How each review value reads in the notes; the JSON keeps the short value.
+REVIEW_SAYS = {REVIEW_ACT: "act on it", REVIEW_DISCUSS: REVIEW_DISCUSS, REVIEW_CLOSE: REVIEW_CLOSE}
 NEXT_STEP = (
-    "Answer each question with one of the listed values; the Which format should I aim for? helper asks them one "
-    "at a time."
+    'Answer each question with one of the listed values; the "Which format should I aim for?" helper asks them '
+    "one at a time."
+)
+DRAFT_NOTE = (
+    "Draft: the maintainer hasn't reviewed this rubric yet. Every level, band, weight spread and threshold marked "
+    "pending review may change, and so may this answer."
 )
 
 
 class RubricError(ValueError):
     """The rubric contradicts itself or names something without a source; the message says where."""
+
+    code = "rubric_error"
+    next_step = (
+        "The rubric this tool reads needs fixing by the maintainer; the data tools still work. Run the Something's "
+        "wrong helper and mention this question."
+    )
 
 
 # ------------------------------------------------------------------------------------------ the rubric
@@ -302,8 +315,28 @@ def _criterion(raw: dict[str, Any], rubric_inputs: dict[str, dict[str, str]], fo
 
 
 def parse_rubric(text: str) -> Rubric:
-    """Load and cross-check the rubric; any weight, rule, limit or threshold without a source is refused."""
+    """Load and cross-check the rubric; any weight, rule, limit or threshold without a source is refused.
+
+    A missing key, a value of the wrong type or a file that isn't YAML is refused as a RubricError too, so
+    `validate` reports it in words instead of a traceback."""
+    try:
+        return _parse_rubric(text)
+    except RubricError:
+        raise
+    except (KeyError, TypeError, AttributeError, ValueError, yaml.YAMLError) as e:
+        if isinstance(e, KeyError):
+            what = f"missing {e}"
+        else:
+            what = str(e).splitlines()[0] if str(e) else type(e).__name__
+        raise RubricError(
+            f"the rubric is malformed ({what}); compare it with the shipped format_rubric.yaml"
+        ) from e
+
+
+def _parse_rubric(text: str) -> Rubric:
     raw = yaml.safe_load(text)
+    if not isinstance(raw, dict):
+        raise RubricError("the rubric is empty or isn't a YAML mapping")
     if raw.get("schema_version") != 1:
         raise RubricError("the rubric's schema_version must be 1")
     sources = {str(k): dict(v) for k, v in (raw.get("sources") or {}).items()}
@@ -408,6 +441,15 @@ def _enum(name: str, value: Any, allowed: dict[str, str]) -> str | None:
     return v if v in allowed else None
 
 
+def _gave(value: Any) -> str:
+    """The value a clinician gave, as plain text for a refusal; nothing when it was left out."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return ""
+    if isinstance(value, list | tuple):
+        return f" You gave: {', '.join(str(v) for v in value)}."
+    return f" You gave: {value}."
+
+
 def _whole(value: Any) -> int | None:
     if isinstance(value, bool):
         return None
@@ -443,38 +485,38 @@ def _check_inputs(
     c = _enum("contribution", contribution, rubric.inputs["contribution"])
     if c is None:
         return (
-            f"What kind of work is this? contribution must be one of: {_menu(rubric.inputs['contribution'])}. "
-            f"Got {contribution!r}."
+            f"What kind of work is this? contribution must be one of: {_menu(rubric.inputs['contribution'])}."
+            + _gave(contribution)
         )
     d = _enum("data_maturity", data_maturity, rubric.inputs["data_maturity"])
     if d is None:
         return (
-            f"How far along is the data? data_maturity must be one of: {_menu(rubric.inputs['data_maturity'])}. "
-            f"Got {data_maturity!r}."
+            f"How far along is the data? data_maturity must be one of: {_menu(rubric.inputs['data_maturity'])}."
+            + _gave(data_maturity)
         )
     n = _whole(worked_examples)
     if n is None or n < 0:
         return (
             "worked_examples must be a whole number, 0 or more: how many worked examples (cases, places or "
-            f"analyses shown in full) the piece needs. Got {worked_examples!r}."
+            "analyses shown in full) the piece needs." + _gave(worked_examples)
         )
     if not isinstance(needs_methods_section, bool):
         return (
             "needs_methods_section must be true or false: does a reader need a methods section to trust the "
-            f"numbers? Got {needs_methods_section!r}."
+            "numbers?" + _gave(needs_methods_section)
         )
     weeks: int | None = None
     if weeks_to_deadline is not None:
         weeks = _whole(weeks_to_deadline)
         if weeks is None or weeks < 0:
             return (
-                "weeks_to_deadline must be a whole number of weeks, 0 or more, before the named venue's deadline, "
-                f"or left out. Got {weeks_to_deadline!r}. If the deadline has passed, leave it out."
+                "weeks_to_deadline must be a whole number of weeks, 0 or more, before the named conference's "
+                f"deadline, or left out.{_gave(weeks_to_deadline)} If the deadline has passed, leave it out."
             )
     conf: str | None = None
     if conference is not None:
         if not isinstance(conference, str):
-            return f"conference must be a conference's name, such as IDWeek, or left out. Got {conference!r}."
+            return f"conference must be a conference's name, such as IDWeek, or left out.{_gave(conference)}"
         if conference.strip():
             found = publication.find_conference(conference)
             if found is None:
@@ -495,7 +537,7 @@ def _check_inputs(
             v = _norm(p) if isinstance(p, str) else ""
             if v not in PRIORITIES:
                 return (
-                    f"{p!r} isn't on the priorities menu. Choose from: {', '.join(PRIORITIES)}, most important "
+                    f'"{p}" isn\'t on the priorities menu. Choose from: {", ".join(PRIORITIES)}, most important '
                     "first; or leave priorities out to use the rubric's equal weights."
                 )
             if v in out:
@@ -536,8 +578,9 @@ def _rate_for(conference: str | None) -> tuple[Rate | None, str]:
     if conf is None or conf.abstract_to_paper == publication.UNKNOWN:
         return None, f"no verified base rate yet for how often {conference} abstracts become full papers"
     r = publication.load_base_rates().rates[conf.abstract_to_paper]
-    k = r.k if r.k is not None else 0  # a conference's own base rate always has a count; the loader checks it
-    return Rate(f"{conference} abstracts that became full papers", k, r.n,
+    if r.k is None:  # a rate without its count is unknown here, never read as 0 of n
+        return None, f"the base rate for {conference} abstracts has no verified count of papers yet"
+    return Rate(f"{conference} abstracts that became full papers", r.k, r.n,
                 f"{r.short_citation}, PMID {r.pmid}, doi {r.doi}"), ""  # fmt: skip
 
 
@@ -547,12 +590,13 @@ def evaluate(rubric: Rubric, inp: Inputs) -> tuple[list[Evaluated], list[dict[st
     not_used: list[dict[str, str]] = []
     for c in rubric.criteria:
         if c.kind == "unknown":
-            not_used.append({"criterion": c.id, "reason": f"unknown: {c.unknown_reason}"})
+            not_used.append(
+                {"criterion": c.id, "label": c.label, "kind": "unknown", "reason": c.unknown_reason}
+            )
             continue
         if c.requires == "conference" and inp.conference is None:
-            not_used.append(
-                {"criterion": c.id, "reason": "not used: no venue was named, so there is no deadline"}
-            )
+            not_used.append({"criterion": c.id, "label": c.label, "kind": "not used",
+                             "reason": "no conference was named, so there is no deadline"})  # fmt: skip
             continue
         if c.kind == "table":
             value = (
@@ -564,7 +608,8 @@ def evaluate(rubric: Rubric, inp: Inputs) -> tuple[list[Evaluated], list[dict[st
         elif c.kind == "bands":
             value = getattr(inp, c.input)
             if value is None:
-                not_used.append({"criterion": c.id, "reason": f"not used: {c.input} was not given"})
+                not_used.append({"criterion": c.id, "label": c.label, "kind": "not used",
+                                 "reason": f"{c.input.replace('_', ' ')} was not given"})  # fmt: skip
                 continue
             for lo, hi, row in c.bands:
                 if value >= lo and (hi is None or value <= hi):
@@ -576,15 +621,18 @@ def evaluate(rubric: Rubric, inp: Inputs) -> tuple[list[Evaluated], list[dict[st
             text = "by format"
             if c.upside is not None:
                 rate, why = _rate_for(inp.conference)
+                up_label = _label(rubric, c.upside["format"])
                 if rate is None:
                     not_used.append({
                         "criterion": f"{c.id} ({c.upside['format']} upside)",
-                        "reason": f"unknown: {why}; the {c.upside['format']} format keeps only the record it "
-                        "certainly gives, never an imputed rate",
+                        "label": f"{c.label}: the chance a {up_label} later becomes a full paper",
+                        "kind": "unknown",
+                        "reason": f"{why}; the {up_label} keeps only the record it certainly gives, never an "
+                        "imputed rate",
                     })  # fmt: skip
                 else:
-                    text += (f"; {c.upside['format']} rises to level {c.upside['level']} with the sourced chance "
-                             "of a later full paper")  # fmt: skip
+                    text += (f"; {up_label} rises to level {c.upside['level']} with the sourced chance of a later "
+                             "full paper")  # fmt: skip
             used.append(Evaluated(c, "the format itself", text, c.fixed, rate))
     return used, not_used
 
@@ -597,7 +645,7 @@ def gate(rubric: Rubric, inp: Inputs) -> tuple[list[str], list[dict[str, str]]]:
     out = [
         {
             "format": f,
-            "reason": f"left out of the ranking: {g.legend[1]} (contribution = {inp.contribution}); its scores are still shown",
+            "reason": f"{g.legend[1]} (contribution = {inp.contribution}); its scores are still shown",
         }
         for f in rubric.format_ids
         if row[f] == 1
@@ -684,19 +732,27 @@ def _mean_level(e: Evaluated, f: str) -> float:
 
 
 def flip_condition(rubric: Rubric, used: Sequence[Evaluated], formats: Sequence[str],
-                   weights: dict[str, float]) -> dict[str, Any]:  # fmt: skip
+                   weights: dict[str, float], choice: str | None = None) -> dict[str, Any]:  # fmt: skip
     """On the declared weights: the one-weight multiplier in [low, high], nearest 1x, that puts another format first.
 
     Scaling weight c by m changes every format's total by the same normaliser, so the order follows
     S_f(m) = A_f + m * w_c * L_fc, with A_f the rest of the total. Another format g passes the top format t
     once m crosses m* = (A_t - A_g) / (w_c * (L_gc - L_tc)), which is exact; nothing is simulated.
+
+    `choice` is the format the draws put first. When the declared weights put another format first, no flip is
+    given: the sentence says the two disagree, so it never contradicts the choice shown beside it.
     """
     totals = {f: sum(weights[e.criterion.id] * _mean_level(e, f) for e in used) for f in formats}
     top = max(formats, key=lambda f: (totals[f], -formats.index(f)))
     result: dict[str, Any] = {"declared_top": top, "found": False}
     if len(formats) < 2:
+        result["text"] = "Only one format is left in the ranking, so no weight change can alter the choice."
+        return result
+    if choice is not None and choice != top:
         result["text"] = (
-            "Only one format is left after the fit check, so no weight change can alter the choice."
+            f"On the rubric's weights exactly as written, {_label(rubric, top)} would rank first; "
+            f"{_label(rubric, choice)} ranks first in more of the {rubric.draws:,} draws, where the weights are "
+            "allowed to vary. Because the two disagree, no single weight change is named."
         )
         return result
     best: tuple[float, str, str, float] | None = None
@@ -732,7 +788,7 @@ def flip_condition(rubric: Rubric, used: Sequence[Evaluated], formats: Sequence[
         found=True, criterion=c, format=g, multiplier=round(m, 2), direction="more" if more else "less"
     )
     result["text"] = (
-        f"If '{crit}' mattered {'more' if more else 'less'} than {m:.2f}x as much as declared, "
+        f"If '{crit}' counted for {'more' if more else 'less'} than {m:.2f} times its weight in the rubric, "
         f"{_label(rubric, g)} would rank first instead of {_label(rubric, top)}."
     )
     return result
@@ -768,8 +824,13 @@ def _score(e: Evaluated, f: str, sim: Simulation) -> tuple[float, dict[int, floa
     return float(base), {base: 1.0}
 
 
-@lru_cache(maxsize=256)
 def _decide(rubric_sha: str, inp: Inputs) -> dict[str, Any]:
+    """The decision for these inputs: a fresh copy each call, so no caller can change a cached answer."""
+    return copy.deepcopy(_decide_cached(rubric_sha, inp))
+
+
+@lru_cache(maxsize=256)
+def _decide_cached(rubric_sha: str, inp: Inputs) -> dict[str, Any]:
     rubric = load_rubric()
     used, not_used = evaluate(rubric, inp)
     formats, excluded = gate(rubric, inp)
@@ -779,12 +840,18 @@ def _decide(rubric_sha: str, inp: Inputs) -> dict[str, Any]:
     probabilities = {f: sim.wins.get(f, 0.0) / rubric.draws for f in rubric.format_ids}
     p_max = max(probabilities.values())
     choice = next(f for f in rubric.format_ids if probabilities[f] == p_max)
-    flip = flip_condition(rubric, used, formats, weights)
+    flip = flip_condition(rubric, used, formats, weights, choice)
     priorities_unused = []
     by_priority = {c.priority: c for c in rubric.criteria if c.priority}
     for p in inp.priorities:
         if by_priority[p].id not in ids:
             priorities_unused.append(p)
+    # ADR 0018: the choice is not changed, but a lowest level on any criterion it was scored on is said plainly.
+    lowest = [
+        {"criterion": e.criterion.id, "label": e.criterion.label, "legend": e.criterion.legend[1]}
+        for e in used
+        if not e.criterion.gate and e.levels[choice] == 1 and 1 in e.criterion.legend
+    ]
     format_rows = []
     for f in rubric.formats:
         comp = sorted(sim.composites.get(f.id, []))
@@ -832,6 +899,7 @@ def _decide(rubric_sha: str, inp: Inputs) -> dict[str, Any]:
         "excluded": excluded,
         "weights": weights,
         "priorities_unused": priorities_unused,
+        "choice_lowest_levels": lowest,
         "formats": format_rows,
         "scores": scores,
         "has_rate": any(e.rate is not None for e in used),
@@ -845,40 +913,58 @@ def _refuse(text: str, fmt: Fmt) -> Out:
 def _notes(rubric: Rubric, inp: Inputs, d: dict[str, Any]) -> list[str]:
     choice_label = _label(rubric, d["choice"])
     p = d["probabilities"][d["choice"]]
+    flip = d["flip"]
+    flip_text = flip["text"]
+    if d["review"] == REVIEW_CLOSE and not flip["found"] and flip["declared_top"] == d["choice"]:
+        flip_text += (
+            " The closeness comes from several weights changing together across the draws, not from any one of "
+            "them."
+        )
     notes = []
     if d["review"] == REVIEW_CLOSE:
-        notes.append(f"Too close to call. {d['flip']['text']}")
+        notes.append(f"What would change it: {flip_text}")
     notes += [
         f"Choice: {choice_label} ranks first in {p:.0%} of {rubric.draws:,} draws (seed {rubric.seed}); "
-        f"confidence {d['confidence']:.2f}; review: {d['review']}.",
+        f"confidence {d['confidence']:.2f}; review: {REVIEW_SAYS[d['review']]}.",
         CONFIDENCE_MEANS,
         NOT_A_PREDICTION,
     ]
+    if rubric.status == "draft":
+        notes.append(DRAFT_NOTE)
+    for x in d["choice_lowest_levels"]:
+        notes.append(f"Note: {choice_label} is at the lowest level on '{x['label']}': {x['legend']}.")
     if d["review"] != REVIEW_CLOSE:
-        notes.append(f"What would change it: {d['flip']['text']}")
+        notes.append(f"What would change it: {flip_text}")
     notes.append(
-        "How the probabilities are made: each draw takes the weights from a Dirichlet centred on the declared "
-        f"weights (concentration {rubric.concentration:g})"
-        + (" and each sourced rate from its Beta posterior" if d["has_rate"] else "")
-        + ", so a probability is the share of reasonable weightings under which a format ranks first. Most "
-        "levels come from declared rules, not measured rates, so the answer is only as good as those rules."
+        f"A probability is the share of {rubric.draws:,} reasonable weightings under which a format ranks first. "
+        "Method: each draw takes the weights from a Dirichlet centred on the rubric's weights (concentration "
+        f"{rubric.concentration:g})"
+        + (", and each sourced rate from its Beta posterior" if d["has_rate"] else "")
+        + ". Most levels come from declared rules, not measured rates, so the answer is only as good as those "
+        "rules."
     )
-    if inp.priorities:
+    ranked = [pr for pr in inp.priorities if pr not in d["priorities_unused"]]
+    if ranked:
         notes.append(
-            f"Weights: your priorities ({', '.join(inp.priorities)}) in order, then the rest tied; "
+            f"Weights: your priorities ({', '.join(ranked)}) in order, then the rest tied; "
             + rubric.priority_weights.describe(rubric.sources)
         )
     else:
         notes.append(
-            "Weights: no priorities were given, so the rubric's defaults apply: "
+            ("Weights: none of your priorities can be scored yet" if inp.priorities else
+             "Weights: no priorities were given")
+            + ", so the rubric's defaults apply: "
             + rubric.default_weights.describe(rubric.sources)
-        )
+        )  # fmt: skip
     for pr in d["priorities_unused"]:
         notes.append(
             f"You named {pr} as a priority, but it can't be scored yet, so it was left out of the weights."
         )
-    notes += [f"Left out: {x['format']}: {x['reason']}." for x in d["excluded"]]
-    notes += [f"Not used: {x['criterion']}: {x['reason']}." for x in d["not_used"]]
+    notes += [
+        f"Left out of the ranking: {_label(rubric, x['format'])}. {_sentence(x['reason'])}"
+        for x in d["excluded"]
+    ]
+    notes += [f"{x['kind'].capitalize()}: {x['label']}. {_sentence(x['reason'])}" for x in d["not_used"]]
     if inp.contribution == "case":
         notes.append("A case report is its own format and isn't compared here; ask the journal for its case-report "
                      "instructions.")  # fmt: skip
@@ -888,6 +974,10 @@ def _notes(rubric: Rubric, inp: Inputs, d: dict[str, Any]) -> list[str]:
         f"{rubric.sha256}. The same inputs and rubric always give the same answer.",
     ]
     return notes
+
+
+def _sentence(text: str) -> str:
+    return text[:1].upper() + text[1:] + ("" if text.endswith(".") else ".")
 
 
 def choose_output_format(
@@ -919,6 +1009,7 @@ def choose_output_format(
             "flip_condition": d["flip"],
             "not_used": d["not_used"],
             "excluded": d["excluded"],
+            "choice_lowest_levels": d["choice_lowest_levels"],
             "weights": {k: round(v, 4) for k, v in d["weights"].items()},
             "inputs": {
                 "contribution": inp.contribution,

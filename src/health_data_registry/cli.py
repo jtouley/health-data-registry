@@ -421,7 +421,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     co.add_argument(
         "--weeks-to-deadline", type=int, default=None, help="weeks before the named conference's deadline"
     )
-    co.add_argument("--conference", default=None, help='the target meeting, e.g. "IDWeek"')
+    co.add_argument("--conference", default=None, help='the target conference, e.g. "IDWeek"')
     co.add_argument(
         "--priority",
         dest="priorities",
