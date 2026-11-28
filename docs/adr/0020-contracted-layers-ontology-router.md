@@ -103,7 +103,7 @@ The maintainer flagged four things that are drifting apart:
    have no reader, and the semantic models name source columns that the marts rename (#236, #265).
 2. **Quality.** Contract rules run through two engines. `quality.run_rules` measures them in Python on every
    snapshot and live read (`staging.check_snapshot`, `staging.stage_checked`). `transform_gen.quality_tests`
-   turns the same `measure_sql` into `odcs_check` dbt tests. #240 adds dbt-expectations checks from
+   turns the same `measure_sql` into `odcs_check` dbt tests. #240 (merged) added dbt-expectations checks from
    `dq_checks.CHECK_TYPES`, which `quality.run_rules` skips, so live reads never run them.
 3. **Places and coverage.** Place keys live only in `geo.py`, where Puerto Rico is a state. The catalog's
    `geography` list is kept by hand, and `list_sources`, `search_datasets`, `suggest_datasets` and
@@ -221,7 +221,7 @@ snapshots stay raw inputs that builds read by hash (hard rule 15).
 
 - **Rules are declared once**, in the ODCS contract of the layer they check, and in the ODPS entry for a port's
   product tests. Nothing else declares a check.
-- **One contract-bound factory compiles them.** `transform_gen.py`, with #240's `dq_checks.CHECK_TYPES` as its
+- **One contract-bound factory compiles them.** `transform_gen.py`, with `dq_checks.CHECK_TYPES` (from #240) as its
   one registry, turns every declared rule into a named dbt test: `odcs_check` for SQL rules, dbt-expectations for
   ranges, reconciliation and freshness (#240), and dbt's own tests for keys and accepted values. A new kind of
   check is one registry entry, ADR 0016 style, never a new code path.
@@ -242,7 +242,7 @@ snapshots stay raw inputs that builds read by hash (hard rule 15).
 | File | Change |
 |---|---|
 | `quality.py` | Rule parsing moves to `registry.py`; measurement moves to the factory; judging stays |
-| `transform_gen.py`, `dq_checks.py` (#240) | The one factory: raw integrity checks and product tests join the generated tests |
+| `transform_gen.py`, `dq_checks.py` | The one factory: raw integrity checks and product tests join the generated tests |
 | `staging.py` | `check_snapshot` and the checks in `stage_checked` go once nothing serves the snapshot copy |
 | `store.py` | `_promote` judges the snapshot by raw integrity only; silver and mart checks belong to the build |
 | `release_gate.py` | `expected_from` expects every layer's checks; only checks that never ran and models that failed hold a build |
@@ -250,7 +250,7 @@ snapshots stay raw inputs that builds read by hash (hard rule 15).
 
 ### Migration order
 
-1. #240 lands: dbt-expectations under one registry.
+1. Done in #240: dbt-expectations checks are declared in the contracts under one registry.
 2. Raw integrity checks are declared and generated (#269 first, then #277).
 3. The release gate holds only on checks that never ran or models that failed to build (#243). Data failures
    become qualifications in the check record.
