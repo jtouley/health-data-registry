@@ -622,7 +622,7 @@ def _too_many(request_id: Any, which: str, wait: float) -> Response:
 class PrivacyFilter(logging.Filter):
     """Only the counters logger speaks freely; every other record keeps its logger, level and exception type.
 
-    Libraries (the MCP SDK, uvicorn, httpx, pydantic) can put request content in a message or an exception
+    Libraries (the MCP SDK, uvicorn, httpx2, pydantic) can put request content in a message or an exception
     (a validation error quotes its input), so their text never reaches the log.
     """
 
@@ -641,6 +641,19 @@ class PrivacyFilter(logging.Filter):
         return True
 
 
+_LIBRARY_LOGGERS = (
+    "uvicorn",
+    "uvicorn.error",
+    "uvicorn.access",
+    "mcp",
+    "httpx2",
+    "httpcore2",
+    "httpx",
+    "httpcore",
+    "huggingface_hub",
+)
+
+
 def configure_logging(stream: Any = None) -> logging.Handler:
     """Replace every root handler with one privacy-filtered handler, and silence the libraries' own handlers."""
     handler = logging.StreamHandler(stream or sys.stderr)
@@ -651,7 +664,9 @@ def configure_logging(stream: Any = None) -> logging.Handler:
         root.removeHandler(h)
     root.addHandler(handler)
     root.setLevel(logging.INFO)
-    for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "mcp", "httpx", "httpcore", "huggingface_hub"):
+    # The HTTP client the lock installs is httpx2 (logging as httpx2 and httpcore2); httpx and httpcore stay
+    # listed so a dependency that brings the old client back is silenced too.
+    for name in _LIBRARY_LOGGERS:
         lg = logging.getLogger(name)
         lg.handlers.clear()
         lg.propagate = True

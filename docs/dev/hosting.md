@@ -155,7 +155,7 @@ From day one, and tested (`tests/test_hosted.py`):
 
 - No request body, tool argument, query string, prompt, session id or IP address is ever logged. uvicorn's
   access log is off and uvicorn doesn't set up logging of its own (`log_config=None`).
-- Every library log record (the MCP SDK, uvicorn, httpx, huggingface_hub) is cut to its logger name, level and
+- Every library log record (the MCP SDK, uvicorn, httpx2, huggingface_hub) is cut to its logger name, level and
   exception type, because a library message or exception can quote its input (a validation error does).
   Records below WARNING are dropped.
 - The only log lines with content are aggregate counters, once an hour (`HDR_METRICS_LOG_S`):
