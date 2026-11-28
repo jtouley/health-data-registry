@@ -35,7 +35,6 @@ from health_data_registry.sql_guard import (
     guard_sql,
     harden,
     run_guarded,
-    weekly_sum_message,
 )
 from health_data_registry.store import Manifest, latest_snapshot, snapshot_dir
 
@@ -60,22 +59,13 @@ NEXT_STEPS: dict[str, str] = {
     "no_denominator": "Use get_series for the counts, or a rate the source publishes (describe_dataset says).",
     "ambiguous_condition": "Ask again with the full label of one series as the condition.",
     "nothing_to_compare": "Ask again with other_location or other_year.",
-    "no_rate": "Use get_rate to see which places and years have both a count and a population.",
     "too_few_points": "Ask for a longer span of years, or use get_series to read the counts.",
-    "would_combine_rates": "Use describe_dataset to see the filters, and ask for one published group at a time.",
     "publisher_unreachable": "Try again in a few minutes.",
     "publisher_bad_table": "Try again later; if it keeps happening, run the Something's wrong helper.",
     "quality_not_run": "Try again later; if it keeps happening, run the Something's wrong helper.",
     "needs_single_value": "Ask for the year's total, or for one week.",
     "non_additive": "Use describe_dataset to see the values, then ask again for one of them, or ask to see each "
     "one on its own row.",
-    "not_a_human_count": "Use get_series to read these counts as published; they are not cases in people, so "
-    "there is no rate per 100,000 people.",
-    "not_incidence": "Use get_series to read these counts as published. A trend in the counts themselves is "
-    'available from get_trend with fit_on="counts".',
-    "weekly_sum": "For a year's count, use get_series, which reads the year-to-date count at the year's last week, "
-    "or ask for one week at a time.",
-    "empty_in_sum": "Ask for the rows without adding them up, to see each value with its flag, or use get_series.",
     "sum_over_subquery": "Write the sum directly over the catalogued table, without an inner query or WITH table.",
     "bad_page": "Ask for page=1, or leave page out.",
     "no_such_page": "Ask for a page the answer has, or leave page out for page 1.",
@@ -116,6 +106,12 @@ class QueryRefused(ValueError):
 
 def _q(ident: str) -> str:
     return '"' + ident.replace('"', '""') + '"'
+
+
+def _select(sel: Sequence[str], table: str, where_sql: str = "") -> str:
+    """One SELECT built here: every name in it is quoted with _q, and every value is a bound parameter."""
+    sql = f"SELECT {', '.join(sel)} FROM {table}{where_sql}"  # noqa: S608 - quoted contract identifiers, bound values
+    return sql
 
 
 def within_period(sem: Any) -> str | None:
@@ -160,38 +156,39 @@ def compile_metric(
         ) from None
     measure = sem.measure(metric.measure)
     dims = {d.name: d for d in sem.dimensions}
+    within = within_period(sem)
+    on_within = [
+        d.name for d in sem.dimensions if d.column == within
+    ]  # every name the model gives that column
+
+    def held(d: str) -> bool:
+        return d in group_by or is_single_value((filters or {}).get(d))
+
+    # A sum across the weeks a running total is kept along (NNDSS: weekly counts into a year, or running totals
+    # across weeks) is worked out when asked, with a note and the running total beside it (ADR 0018).
+    across_within = (
+        metric.aggregation == "sum"
+        and measure.kind == "count"
+        and bool(on_within)
+        and not any(map(held, on_within))
+    )
+    running_across: list[str] = []  # dimensions a running total is added up across
     for d in metric.single_value_of:
         if measure.kind == "running_count":
-            if d in group_by or not is_single_value((filters or {}).get(d)):
-                raise QueryRefused(
-                    "needs_single_value",
-                    f"{metric.name} is a running total, so it is read at one {d}: filter {d} to a single value "
-                    f"(normally the latest) and don't group by it. Adding up the running totals of several {d}s "
-                    "would count the same cases many times.",
-                )
+            if not held(d):
+                running_across.append(d)
+                across_within = across_within or d in on_within
         # A count whose values of d overlap (Michigan includes Detroit) or are different things (conditions): each
         # answer row holds one value of d, by a filter to one value or by grouping by it; never added across them.
-        elif d not in group_by and not is_single_value((filters or {}).get(d)):
+        elif not held(d):
             raise QueryRefused(
                 "needs_single_value",
                 f"{metric.name} is never added up across {d}s: they overlap or count different things (for example "
                 f"a state's count already includes its cities). Filter {d} to one value, or group by {d} to get one "
                 "row each.",
             )
-    within = within_period(sem)
-    on_within = [
-        d.name for d in sem.dimensions if d.column == within
-    ]  # every name the model gives that column
-    if (
-        metric.aggregation == "sum"
-        and measure.kind == "count"
-        and on_within
-        and not any(d in group_by or is_single_value((filters or {}).get(d)) for d in on_within)
-    ):
-        raise QueryRefused("weekly_sum", weekly_sum_message(str(within)))
-    # The running-total column held under one of its names holds it under all of them.
-    held_within = any(d in group_by or is_single_value((filters or {}).get(d)) for d in on_within)
-    pinned_within = on_within if held_within else []
+    # Weeks and the running total's own dimensions are handled above, each with its note.
+    pinned_within = [*on_within, *running_across]
 
     def dim(name: str) -> str:
         if name not in dims:
@@ -247,7 +244,8 @@ def compile_metric(
             period_params.append(end)
 
     group_cols = [dim(g) for g in group_by]
-    # Hard rule 2: a sum never adds across a dimension whose values overlap or count different things.
+    # A sum never adds across a dimension the semantic model declares non-additive (its values overlap or count
+    # different things); weeks are the exception above, worked out with a note.
     loose = unpinned_non_additive(
         sem,
         metric,
@@ -288,19 +286,14 @@ def compile_metric(
     params = params + period_params
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
     if metric.aggregation == "sum":
-        # A group with any empty value has no total: sum() would skip the empty rows and return a smaller number
-        # as if it were the whole count. suppressed_rows says how many were empty. An empty value is never read
-        # as 0, whatever its flag: the codebook's "no reported cases" code ('-') stays an empty value with its
-        # flag, never a number (issue #173).
+        # An empty value is never read as 0, whatever its flag: the codebook's "no reported cases" code ('-')
+        # stays an empty value with its flag, never a number (issue #173). sum() adds the reported values only, so
+        # a group with an empty value gets the sum of its reported values, and suppressed_rows says how many had
+        # no number (ADR 0018); a group with no reported value at all has no sum.
         zero = flag.no_cases_code if flag else None
         is_empty = f"{m_col} IS NULL"
         empty = f"count(*) FILTER (WHERE {is_empty})"
-        total = f"sum({m_col})"
-        sel = [
-            *select_dims,
-            f"CASE WHEN {empty} = 0 THEN {total} END AS {_q(metric.name)}",
-            f"{empty} AS suppressed_rows",
-        ]
+        sel = [*select_dims, f"sum({m_col}) AS {_q(metric.name)}", f"{empty} AS suppressed_rows"]
         out_cols = [*group_by, metric.name, "suppressed_rows", *(["flag"] if flag else [])]
         if flag:
             # The publisher's flags on the empty cells the sum had to leave out, so a gap is never silent.
@@ -308,7 +301,7 @@ def compile_metric(
             sel.append(
                 f"string_agg(DISTINCT {f_col}, ', ' ORDER BY {f_col}) FILTER (WHERE {is_empty}) AS flag"
             )
-        sql = f"SELECT {', '.join(sel)} FROM {table}{where_sql}"  # noqa: S608 - quoted contract identifiers, bound values
+        sql = _select(sel, table, where_sql)
         if group_cols:
             sql += " GROUP BY ALL ORDER BY ALL"
         method = (
@@ -319,26 +312,37 @@ def compile_metric(
                 if metric.exclude_total_rows and ds.contract.total_rows
                 else ""
             )
-            + ". A group with any suppressed or missing value has no total (never a partial sum); "
-            "suppressed_rows gives how many of its values were empty."
+            + ". A value with no number (suppressed, missing or not reported) is never counted as 0: a group that "
+            "has one gives the sum of its reported values only, and suppressed_rows says how many had no number "
+            "(flag gives the publisher's reason)."
             + (
-                f" A count flagged '{zero}' (no reported cases, in the publisher's codebook) has no number and is "
-                "never counted as 0: it is read as not reported (the maintainer's declaration in the contract), so a "
-                "group that has one has no total."
+                f" A count flagged '{zero}' (no reported cases, in the publisher's codebook) is read as not reported "
+                "(the maintainer's declaration in the contract, noCasesCode), so it is one of those."
                 if zero is not None
                 else ""
             )
         )
+        if across_within:
+            ytd = _running_total_beside(ds, measure.column if measure.kind == "running_count" else None)
+            method += " " + _across_weeks_note(ds, measure.kind == "running_count", ytd is not None)
+            if ytd is not None:
+                sql = _with_running_total(ds, ytd, where_sql, select_dims, group_by, group_cols, sel)
+                out_cols = [*out_cols, RUNNING_TOTAL_BESIDE, RUNNING_TOTAL_WEEK, RUNNING_TOTAL_EMPTY]
+        elif running_across:
+            method += (
+                f" This adds up running totals across {', '.join(running_across)}, so the same cases are counted "
+                f"again for each value (semantic model: {metric.name} is read at one {', '.join(running_across)})."
+            )
     else:
-        # Rates, percents and estimates are read as published, never added up. One row per group or refuse.
+        # Rates, percents and estimates are read as published, one row each; several for one group are all shown.
         sel = [*select_dims, f"{m_col} AS {_q(metric.name)}", *(f"{_q(c)} AS {_q(b)}" for b, c in bounds)]
         if flag:
             sel.append(f"{_q(flag.name)} AS flag")
-        # An empty published cell is a gap, never a silent blank (hard rule 2): not_published says so per row,
+        # An empty published cell is a gap, never a silent blank (hard rule 2, ADR 0018): not_published says so,
         # beside the publisher's flag where the contract has one.
         sel.append(f"{m_col} IS NULL AS not_published")
         out_cols = [*out_cols, "not_published"]
-        sql = f"SELECT {', '.join(sel)} FROM {table}{where_sql}"  # noqa: S608 - quoted contract identifiers, bound values
+        sql = _select(sel, table, where_sql)
         if group_cols:
             sql += " ORDER BY ALL"
         method = (
@@ -354,6 +358,112 @@ def compile_metric(
     return CompiledMetric(sql=sql, params=params, columns=out_cols, method=method)
 
 
+RUNNING_TOTAL_BESIDE = "year_to_date_at_last_week"
+# Beside it: the week (or span of weeks, across series) it was read at, and how many series had no number at all.
+RUNNING_TOTAL_WEEK = "year_to_date_week_read"
+RUNNING_TOTAL_EMPTY = "year_to_date_series_with_no_number"
+
+
+def _running_total_beside(ds: Dataset, column: str | None) -> str | None:
+    """The running-total column to put beside a sum across weeks: the summed column itself when it is a running
+    total, else the measure the source's cumulative_latest metric reads (NNDSS: the year-to-date count)."""
+    if column is not None:
+        return column
+    sem = ds.semantic
+    within = within_period(sem)
+    cum = next(
+        (
+            m
+            for m in sem.metrics
+            if m.aggregation == "cumulative_latest"
+            and m.order_by
+            and sem.dimension(str(m.order_by)).column == within
+        ),
+        None,
+    )
+    return None if cum is None else sem.measure(cum.measure).column
+
+
+def _across_weeks_note(ds: Dataset, running: bool, beside: bool) -> str:
+    """The qualification on a sum across the weeks a running total is kept along, citing the semantic model."""
+    sem = ds.semantic
+    within = within_period(sem)
+    dim = next(d for d in sem.dimensions if d.column == within)
+    why = dim.non_additive_reason or "the model declares them so"
+    agency = ds.entry.agency
+    head = (
+        "This adds up running totals across weeks, so each case is counted again in every later week"
+        if running
+        else "This adds up weekly counts across weeks. Weekly counts undercount the year: reports that arrive late "
+        "are added to the year-to-date count, not to the week they belong to"
+    )
+    tail = (
+        f" Beside it, {RUNNING_TOTAL_BESIDE} is {agency}'s year-to-date count at the last week asked for that has "
+        "a number (it counts from the first week of the year), read for each place and condition in the row and "
+        f"added up; {RUNNING_TOTAL_WEEK} gives the week it was read at (a span when they differ), and "
+        f"{RUNNING_TOTAL_EMPTY} how many of them had no year-to-date number at any week asked for, which are not "
+        "in it (never counted as 0)."
+        if beside
+        else ""
+    )
+    return f"{head} (semantic model for {ds.id}: weeks are non-additive, because {why}).{tail}"
+
+
+def _with_running_total(
+    ds: Dataset,
+    ytd: str,
+    where_sql: str,
+    select_dims: list[str],
+    group_by: Sequence[str],
+    group_cols: Sequence[str],
+    sel: list[str],
+) -> str:
+    """Wrap a sum across weeks so each row also carries the running total at the last week with a number: read
+    per series (place, condition, year), then added up, with the week it was read at and how many series had no
+    number at all. A series is every categorical dimension plus the period, never another time column, so a
+    column that changes week by week can't split a series into one per week."""
+    sem = ds.semantic
+    within = within_period(sem)
+    period = next((d.column for d in sem.dimensions if d.type == "time" and d.column != within), None)
+    keys = list(
+        dict.fromkeys(
+            d.column
+            for d in sem.dimensions
+            if (d.type == "categorical" or d.column == period) and d.column not in group_cols
+        )
+    )
+    y, w = _q(ytd), _q(str(within))
+    inner = ", ".join(
+        [
+            *select_dims,
+            *(_q(k) for k in keys),
+            f"arg_max({y}, {w}) FILTER (WHERE {y} IS NOT NULL) AS v",
+            f"max({w}) FILTER (WHERE {y} IS NOT NULL) AS v_at",
+        ]
+    )
+    inner_sql = _select([inner], "base") + (" GROUP BY ALL" if select_dims or keys else "")
+    names = [_q(g) for g in group_by]
+    beside = _select(
+        [
+            *names,
+            f"sum(v) AS {_q(RUNNING_TOTAL_BESIDE)}",
+            "CASE WHEN min(v_at) = max(v_at) THEN CAST(min(v_at) AS VARCHAR) "
+            f"ELSE min(v_at) || '-' || max(v_at) END AS {_q(RUNNING_TOTAL_WEEK)}",
+            f"count(*) FILTER (WHERE v IS NULL) AS {_q(RUNNING_TOTAL_EMPTY)}",
+        ],
+        f"({inner_sql})",
+    )
+    if names:
+        beside += " GROUP BY ALL"
+    agg = _select(sel, "base") + (" GROUP BY ALL" if group_cols else "")
+    # NULL-safe, so a group whose key is empty still meets its own running total.
+    on = " AND ".join(f"agg.{n} IS NOT DISTINCT FROM beside.{n}" for n in names)
+    join = f"LEFT JOIN beside ON {on}" if names else "CROSS JOIN beside"
+    ctes = f"WITH base AS ({_select(['*'], _q(ds.id), where_sql)}), agg AS ({agg}), beside AS ({beside}) "
+    out = [f"beside.{_q(c)}" for c in (RUNNING_TOTAL_BESIDE, RUNNING_TOTAL_WEEK, RUNNING_TOTAL_EMPTY)]
+    return ctes + _select(["agg.*", *out], f"agg {join}") + " ORDER BY ALL"
+
+
 def non_additive_columns(ds: Dataset) -> frozenset[str]:
     """Columns a sum in query_sql must filter to one value or group by: the semantic model's non_additive
     dimensions, and every categorical dimension a model leaves undeclared (fail closed). The period a running
@@ -367,10 +477,11 @@ def non_additive_columns(ds: Dataset) -> frozenset[str]:
 
 
 def sum_rules(ds: Dataset) -> SumRules:
-    """What a typed-SQL sum over this source must respect (sql_guard.SumRules), from its contract and model:
+    """What a typed-SQL sum over this source may mislead about (sql_guard.SumRules), from its contract and model:
     the contract's totalRows and the columns that name an area (series' place dimensions and the columns
-    totalRows reads), its measure columns (an empty one never counts as 0), and, where the model keeps a running
-    total within each period, the per-week counts and running totals never added up across weeks."""
+    totalRows reads), its measure columns (an empty one never counts as 0) and its no-cases code, and, where the
+    model keeps a running total within each period, the per-week counts and running totals that undercount or
+    double count when added up across weeks, with the running total that is the figure without that problem."""
     sem = ds.semantic
     places = [s.location_dimension for s in sem.series] + [g.location_dimension for g in sem.generic_series]
     areas = {sem.dimension(p).column for p in places if p}
@@ -378,6 +489,15 @@ def sum_rules(ds: Dataset) -> SumRules:
         tree = sqlglot.parse_one(ds.contract.total_rows, dialect="duckdb")
         areas |= {c.name for c in tree.find_all(sqlglot.exp.Column)}
     within = within_period(sem)
+    week = next((d for d in sem.dimensions if within and d.column == within), None)
+    zero = next(
+        (
+            (c.no_cases_code, dict(c.flag_codes).get(c.no_cases_code or ""))
+            for c in ds.contract.columns
+            if c.no_cases_code
+        ),
+        None,
+    )
     return SumRules(
         total_rows=ds.contract.total_rows,
         areas=frozenset(a.casefold() for a in areas),
@@ -386,6 +506,15 @@ def sum_rules(ds: Dataset) -> SumRules:
             m.column.casefold() for m in sem.measures if within and m.kind in ("count", "running_count")
         ),
         within=within.casefold() if within else None,
+        running=frozenset(m.column.casefold() for m in sem.measures if within and m.kind == "running_count"),
+        within_reason=(week.non_additive_reason or "") if week else "",
+        year_to_date=_running_total_beside(ds, None) if within else None,
+        empty_meaning=(
+            f"A count flagged '{zero[0]}' ({ds.entry.agency}'s '{zero[1]}') is read as not reported, the "
+            "maintainer's declaration in the contract (noCasesCode)."
+            if zero
+            else ""
+        ),
     )
 
 
@@ -430,28 +559,29 @@ def _compile_cumulative(
     sem = ds.semantic
     time_dims = [d.name for d in sem.dimensions if d.type == "time" and d.name != metric.order_by]
     tname = period_col or (time_dims[0] if time_dims else None)
-    if tname is None or tname not in group_by:
+    if tname is None:
         raise QueryRefused(
             "needs_period",
-            f"{metric.name} is a running total, so it is read once per {tname or 'period'}; "
-            f"group by {tname or 'the time dimension'}.",
+            f"{metric.name} is a running total read once per period, and this source has no period to read it by.",
         )
     if tname == metric.order_by:
         raise QueryRefused(
             "needs_period", f"{metric.name} can't be grouped by {tname}, the within-period order."
         )
-    # A running total is read once per group: with a place or condition neither grouped nor pinned, the last
-    # week would pick one group's total at random instead of adding them up.
+    # A running total is read once per group (place, condition, period). Asked for several at once, each group's
+    # figure is read on its own, then they are added up, with a note (ADR 0018).
     loose = [
         d.name
         for d in sem.dimensions
         if d.type == "categorical" and d.name not in group_by and not is_single_value(filters.get(d.name))
     ]
-    if loose:
-        raise QueryRefused(
-            "needs_grouping",
-            f"{metric.name} is a running total kept separately for each {', '.join(loose)}, so it can't be read "
-            f"for several at once: group by {', '.join(loose)} or filter each to one value.",
+    if tname not in group_by or loose:
+        each = [*group_by, *([tname] if tname not in group_by else []), *loose]
+        inner = _compile_cumulative(
+            ds, metric, where, params, period_where, period_params, period_col, each, filters
+        )
+        return _added_across(
+            ds, metric, inner, group_by, [*([tname] if tname not in group_by else []), *loose]
         )
     order_by = str(metric.order_by)
     col = {d.name: d.column for d in sem.dimensions}
@@ -552,9 +682,74 @@ def _compile_cumulative(
             else ""
         )
         + ("; publisher total rows excluded" if metric.exclude_total_rows and ds.contract.total_rows else "")
-        + ". Weekly counts are never added up, because late reports land in the running total, not the week."
+        + ". It reads the running total rather than adding up weekly counts, because late reports land in the "
+        "running total, not the week."
     )
     return CompiledMetric(sql=sql, params=[*params, *period_params], columns=columns, method=method)
+
+
+def _added_across(
+    ds: Dataset, metric: Metric, inner: CompiledMetric, group_by: Sequence[str], across: Sequence[str]
+) -> CompiledMetric:
+    """Add up the running total read for each value of `across`, one row per value of `group_by`, with a note
+    on what the sum is and, for a non-additive dimension, the semantic model's reason it may mislead."""
+    sem = ds.semantic
+    cols = [_q(g) for g in group_by]
+    v = _q(metric.name)
+    # Each row keeps what its parts say: a part that is not its period's total makes the sum incomplete, and the
+    # parts' own statuses and the publisher's flags come along, so a provisional figure or a '-' is never lost.
+    statuses = "string_agg(DISTINCT period_status, '; ' ORDER BY period_status DESC)"
+    status = (
+        f"CASE WHEN count({v}) = 0 THEN {statuses}"
+        " WHEN bool_or(starts_with(period_status, 'incomplete')) THEN 'incomplete: at least one figure added is "
+        f"not its period''s total; ' || {statuses} FILTER (WHERE {v} IS NOT NULL)"
+        f" ELSE {statuses} FILTER (WHERE {v} IS NOT NULL) END"
+    )
+    sel = [
+        *cols,
+        f"sum({v}) AS {v}",
+        f"count(*) FILTER (WHERE {v} IS NULL) AS suppressed_rows",
+        f"{status} AS period_status",
+        "string_agg(DISTINCT flag, ', ' ORDER BY flag) AS flag",
+    ]
+    sql = _select(sel, f"({inner.sql})")
+    if cols:
+        sql += " GROUP BY ALL ORDER BY ALL"
+
+    def misleads(d: str) -> bool:
+        # The same predicate as non_additive_columns: an undeclared categorical dimension fails closed.
+        dim = sem.dimension(d)
+        return bool(dim.non_additive) or (dim.non_additive is None and dim.type == "categorical")
+
+    warn = [
+        f"{d} ({sem.dimension(d).non_additive_reason or _undeclared(sem.dimension(d))})"
+        for d in across
+        if misleads(d)
+    ]
+    note = (
+        f" Then added up across {', '.join(across)}: each {', '.join(across)} value's own figure, read as above "
+        "(the next table's restated figure is not in the sum). A figure with no number is not counted as 0: "
+        "suppressed_rows says how many had none, and period_status and flag carry what each part's own status "
+        "and the publisher's flags say."
+        + (
+            f" This adds values the semantic model for {ds.id} declares non-additive: {'; '.join(warn)}, so the "
+            "total may count the same cases twice or mix different things."
+            if warn
+            else ""
+        )
+    )
+    return CompiledMetric(
+        sql=sql,
+        params=inner.params,
+        columns=[*group_by, metric.name, "suppressed_rows", "period_status", "flag"],
+        method=inner.method + note,
+    )
+
+
+def _undeclared(dim: Any) -> str:
+    if dim.non_additive is None:
+        return "the semantic model doesn't say whether these values can be added"
+    return "the semantic model declares it non-additive"
 
 
 def _live_enabled() -> bool:
@@ -1096,21 +1291,18 @@ class Engine:
         cm = compile_metric(ds, metric, filters=filters, group_by=group_by, period=period)
         _, rows = self._run(cm.sql + f" LIMIT {MAX_ROWS + 1}", cm.params, tables=(dataset_id,))
         m = ds.semantic.metric(metric)
-        if m.aggregation == "none" and group_by:
-            keys = [tuple(r[: len(group_by)]) for r in rows]
-            if len(keys) != len(set(keys)):
-                raise QueryRefused(
-                    "would_combine_rates",
-                    "More than one published figure matches some of the groups asked for. Each published figure "
-                    "is read on its own and never added to another, so nothing is shown rather than one picked "
-                    "at random.",
-                )
-        elif m.aggregation == "none" and len(rows) > 1:
-            raise QueryRefused(
-                "would_combine_rates",
-                "This figure is published separately for each group and is never added up, so one figure "
-                "can't be given for all of them together.",
+        cm_method = cm.method
+        keys = [tuple(r[: len(group_by)]) for r in rows]
+        if m.aggregation == "none" and len(keys) != len(set(keys)):
+            # Every published figure is shown, each on its own row; none is added to, averaged with or picked over
+            # another (ADR 0018).
+            cm_method += (
+                " More than one published figure matches some of the groups asked for: each is shown on its own row "
+                "as published, never added up or averaged, because they differ by a breakdown that wasn't chosen "
+                f"(the semantic model for {ds.id} reads this figure as published, never summed). describe_dataset "
+                "lists that breakdown's values."
             )
+        cm = replace(cm, method=cm_method)
         method = (
             f"{manifest.notes[0]} {cm.method}" if manifest.origin in ("publisher", "private") else cm.method
         )

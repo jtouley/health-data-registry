@@ -523,8 +523,8 @@ class Conditions(_Strict):
     labels: list[str] = Field(default_factory=list)
     aliases: list[ConditionAlias] = Field(default_factory=list)
     # Labels whose counts are not cases in people (animals, screening swabs), each with the reason in plain words,
-    # read from the label itself: get_rate, compare_rates and get_trend(fit_on="rates") give no rate per 100,000
-    # people for them.
+    # read from the label itself: get_rate, compare_rates and get_trend(fit_on="rates") label a rate per 100,000
+    # people from them as not a rate of disease in people (ADR 0018).
     not_a_human_case_count: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -648,8 +648,15 @@ class Column:
     no_cases_code: str | None = None
     # Condition labels whose counts are not new cases of disease in the population (NNDSS: C. auris screening,
     # which counts colonisation found by screening), each with the reason in plain words: (label, why). Declared
-    # on the condition column; get_rate, compare_rates and get_trend on rates give no rate per 100,000 for them.
+    # on the condition column; a rate per 100,000 from them is worked out when asked and labelled with
+    # notIncidenceLabel's words (or "not incidence" when it gives none) and this reason (ADR 0018).
     not_incidence: tuple[tuple[str, str], ...] = ()
+    # For a notIncidence label, the words its rates are labelled with (NNDSS: 'Candida auris, screening' ->
+    # 'screening detections, not incidence', ADR 0018): (label, words).
+    not_incidence_label: tuple[tuple[str, str], ...] = ()
+    # For a notIncidence label, the label of the same source whose counts are the incidence figure to put beside
+    # it (NNDSS: 'Candida auris, screening' -> 'Candida auris, clinical'): (label, counterpart label).
+    incidence_counterpart: tuple[tuple[str, str], ...] = ()
     # customProperties.mayBeEmpty: true when the contract says this field can be absent or empty in a whole
     # load (e.g. a field the publisher leaves empty in every row). Every other declared field must appear, and
     # it gets no fill-rate check (quality.fill_rate_rules).
@@ -854,7 +861,14 @@ def _custom(props: Any) -> dict[str, Any]:
     return out
 
 
-_PAIR_PROPS = ("flagCodes", "partialPlaces", "renamedLabels", "notIncidence")
+_PAIR_PROPS = (
+    "flagCodes",
+    "partialPlaces",
+    "renamedLabels",
+    "notIncidence",
+    "notIncidenceLabel",
+    "incidenceCounterpart",
+)
 
 
 def _pairs(value: Any, where: str) -> tuple[tuple[str, str], ...]:
@@ -969,6 +983,8 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
                 partial_places=pairs["partialPlaces"],
                 renamed_labels=pairs["renamedLabels"],
                 not_incidence=pairs["notIncidence"],
+                not_incidence_label=pairs["notIncidenceLabel"],
+                incidence_counterpart=pairs["incidenceCounterpart"],
                 no_cases_code=None if zero is None else str(zero),
                 may_be_empty=may_be_empty,
                 thousands_separator=sep,
@@ -1046,7 +1062,8 @@ class Dimension(_Strict):
     description: str = ""
     # True when the dimension's values overlap (a Total or All row beside its parts, Confirmed + Probable = Total)
     # or count different things (different conditions, a count beside a rate): a summed metric must then pin it to
-    # one value or group by it, never add across it (hard rule 2). A model with a summed metric says true or false
+    # one value or group by it, never add across it; the time dimension a running total is kept along (weeks) is
+    # the one exception, added when asked, with a note (ADR 0018). A model with a summed metric says true or false
     # for every dimension, so a new model can't forget; so does any model that declares one (query_sql reads them).
     non_additive: bool | None = None
     # Why the values can't be added, in plain clinical words: refusals and describe_dataset show it to clinicians.
@@ -1436,7 +1453,7 @@ class Dataset:
 
         Labels are compared by spelling only (case, spaces and punctuation ignored), so a condition the publisher
         spells two ways in different years ("Hepatitis B, acute" and "Hepatitis, B, acute") returns both labels.
-        Each stays its own series: the variants are never merged or dropped (hard rule 2)."""
+        Each stays its own series: the variants are never merged or dropped (hard rule 2: show everything)."""
         labels = self.entry.conditions.labels
         key = spelling_key(text)
         targets = {key} | {
@@ -1445,19 +1462,33 @@ class Dataset:
         return [x for x in labels if spelling_key(x) in targets]
 
     def not_a_human_case_count(self, label: str) -> str | None:
-        """Why this label's counts are not cases in people (so no rate per 100,000 people), or None."""
+        """Why this label's counts are not cases in people (a rate from them is labelled so), or None."""
         return self.entry.conditions.not_a_human_case_count.get(label)
 
+    def _condition_column(self) -> Column | None:
+        dim = self.entry.conditions.dimension
+        return None if dim is None else self.contract.column(self.semantic.dimension(dim).column)
+
     def not_incidence(self, label: str) -> str | None:
-        """Why this publisher label's counts are not new cases of disease (so no rate per 100,000 people), or None.
+        """Why this publisher label's counts are not new cases of disease, or None. A rate from them is still
+        worked out when asked, labelled with this reason (ADR 0018).
 
         Read only from the contract's notIncidence on the condition column, never guessed from the label's words.
         """
-        dim = self.entry.conditions.dimension
-        if dim is None:
-            return None
-        column = self.contract.column(self.semantic.dimension(dim).column)
-        return dict(column.not_incidence).get(label)
+        column = self._condition_column()
+        return None if column is None else dict(column.not_incidence).get(label)
+
+    def not_incidence_label(self, label: str) -> str:
+        """The words a rate from this notIncidence label is labelled with: the contract's notIncidenceLabel, or
+        "not incidence" when it gives none."""
+        column = self._condition_column()
+        return (None if column is None else dict(column.not_incidence_label).get(label)) or "not incidence"
+
+    def incidence_counterpart(self, label: str) -> str | None:
+        """The label whose counts are the incidence figure beside a notIncidence label's (the contract's
+        incidenceCounterpart on the condition column), or None. Never guessed from the label's words."""
+        column = self._condition_column()
+        return None if column is None else dict(column.incidence_counterpart).get(label)
 
     def condition_series(self, label: str) -> list[Series]:
         """Series for one catalogued label: the generic templates pinned to it, or, for a dataset that is one
@@ -1698,6 +1729,41 @@ def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticMode
                 raise RegistryError(
                     f"{entry.id}: notIncidence names {unknown[0]!r}, which is not in the catalog's conditions.labels"
                 )
+
+    # After every column's own checks, so a misplaced notIncidence is named first.
+    for c in contract.columns:
+        undeclared = [label for label, _ in c.not_incidence_label if label not in dict(c.not_incidence)]
+        if undeclared:
+            raise RegistryError(
+                f"{entry.id}: notIncidenceLabel names {undeclared[0]!r}, which notIncidence on the same column "
+                "doesn't declare"
+            )
+        if c.incidence_counterpart:
+            declared = dict(c.not_incidence)
+            for label, other in c.incidence_counterpart:
+                if label not in declared:
+                    raise RegistryError(
+                        f"{entry.id}: incidenceCounterpart names {label!r}, which notIncidence on the same column "
+                        "doesn't declare"
+                    )
+                if other not in cond.labels or other in declared:
+                    raise RegistryError(
+                        f"{entry.id}: incidenceCounterpart gives {other!r} for {label!r}; it must be a catalogued "
+                        "condition label that is not itself declared notIncidence"
+                    )
+                # Each of the label's series needs one of the counterpart's, read the same way (same metric), or
+                # the figure promised beside it would silently be missing.
+                generic = {g.metric for g in semantic.generic_series}
+                for ser in semantic.series:
+                    if ser.condition != label:
+                        continue
+                    if ser.metric not in generic and not any(
+                        o.condition == other and o.metric == ser.metric for o in semantic.series
+                    ):
+                        raise RegistryError(
+                            f"{entry.id}: incidenceCounterpart gives {other!r} for {label!r}, but the semantic "
+                            f"model has no {other!r} series on {ser.metric} to put beside {ser.label!r}"
+                        )
 
 
 def _check_inline_codes(contract_id: str, cols: list[Column]) -> None:

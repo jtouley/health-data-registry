@@ -163,7 +163,7 @@ def test_every_real_catalogued_label_compiles_with_its_aggregation_rule() -> Non
                 cm = compile_metric(ds, s.metric, filters=filters, group_by=group)
                 kind = ds.semantic.measure(metric.measure).kind
                 if metric.aggregation == "cumulative_latest":
-                    assert "Weekly counts are never added up" in cm.method
+                    assert "rather than adding up weekly counts" in cm.method
                 elif kind in ("rate", "percent", "estimate"):
                     assert "not summed" in cm.method and "sum(" not in cm.sql
                 checked += 1
@@ -207,7 +207,7 @@ def test_generic_series_keeps_the_rules(vocab: tuple[Registry, Engine]) -> None:
     assert sorted(r[:3] for r in tul["rows"]) == [["Michigan", 2023, 7], ["Ohio", 2023, 5]]
     assert any("Provenance for toy_cases:" in n for n in tul["notes"])
     bru = _json(tools.get_series(reg, eng, condition="Brucellosis", fmt="json"))
-    assert bru["rows"][0][2] is None and "suppressed or missing" in bru["rows"][0][6]  # never a zero
+    assert bru["rows"][0][2] is None and "has no number" in bru["rows"][0][6]  # never a zero
     # A word shared by two labels returns both, labelled, never added.
     q = _json(tools.get_series(reg, eng, condition="q fever", fmt="json"))
     assert sorted((r[0], r[2], r[9]) for r in q["rows"]) == [("Ohio", 1, "Q fever, Chronic"),
@@ -668,9 +668,12 @@ def test_real_rates_refuse_animal_counts(tmp_path: Path) -> None:
 
     reg = load_registry(ROOT)
     eng = Engine(registry=reg, lake=tmp_path / "empty", hub=None, fetch_at_run_time=False)
+    # A rate from animal counts is no longer refused (ADR 0018): it is labelled, citing the catalog's declaration.
     rate = _json(analysis.get_rate(reg, eng, condition="Rabies, Animal", year=2024, fmt="json"))
-    assert rate["refused"] == "not_a_human_count"
-    assert rate["message"] == (
-        "No rate per 100,000 people is given for 'Rabies, Animal': 'Rabies, Animal' counts rabid animals, not people."
+    assert rate.get("refused") != "not_a_human_count"
+    nndss = reg.get("cdc_nndss_weekly")
+    (series,) = [s for ds, s in analysis.series_for(reg, "Rabies, Animal", "cases") if ds.id == nndss.id][:1]
+    assert analysis.not_incidence_note(nndss, series) == (
+        "not a rate of disease in people: 'Rabies, Animal' counts rabid animals, not people (the catalog's "
+        "not_a_human_case_count for cdc_nndss_weekly), so this is that count per 100,000 people"
     )
-    assert rate["next_step"] == next_step_for("not_a_human_count")

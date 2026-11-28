@@ -2,7 +2,8 @@
 
 These load the real registry (catalog/, contracts/, semantic/) and hold synthetic records in memory, the way a live
 read does (the sources are never stored). The numbers are made up; only the layout follows each dashboard. They
-pin hard rule 2: a suppressed day leaves its period with no total; Detroit is never added to Michigan, nor one
+pin hard rule 2 (ADR 0018): a suppressed day is never a number, and its period's sum says how many were left out;
+Detroit is never added to Michigan, nor one
 condition to another; rates and shares are never summed; outbreak measles cases are never added to all cases.
 """
 
@@ -69,10 +70,13 @@ def test_covid_a_week_with_a_suppressed_day_has_no_total(reg: Registry, tmp_path
     eng = engine(reg, tmp_path, "detroit_dhd_covid_archive_daily", COVID_ROWS)
     out = eng.query_metric("detroit_dhd_covid_archive_daily", "daily_covid19_cases",
                            period={"start": "2021-01-10", "end": "2021-01-12"})  # fmt: skip
+    """A suppressed day is never a number: the week's sum is of the reported days only (30 + 40), with the
+    suppressed day counted beside it and its published marker named (ADR 0018; #186 gave no total)."""
     (row,) = out["rows"]
     got = dict(zip(out["columns"], row, strict=True))
-    assert got["daily_covid19_cases"] is None and got["suppressed_rows"] == 1
+    assert got["daily_covid19_cases"] == 70 and got["suppressed_rows"] == 1
     assert got["flag"] == "<16"  # the published marker, never a number
+    assert "the sum of its reported values only" in out["method"]
 
 
 def test_covid_a_clean_week_adds_only_the_daily_bars(reg: Registry, tmp_path: Path) -> None:
@@ -138,11 +142,11 @@ def test_epi_rates_are_never_summed(reg: Registry, tmp_path: Path) -> None:
                         group_by=["place", "year"])  # fmt: skip
     assert "sum(" not in cm.sql.lower() and "not summed" in cm.method
     eng = engine(reg, tmp_path, "detroit_dhd_epi_annual", EPI_ROWS)
-    with pytest.raises(QueryRefused) as e:
-        eng.query_metric(
-            "detroit_dhd_epi_annual", "annual_case_rate", filters={"condition": "TByear", "year": 2024}
-        )
-    assert e.value.code == "would_combine_rates"
+    # Detroit's and Michigan's rates, each as published on its own row, never added (was refused; ADR 0018).
+    out = eng.query_metric(
+        "detroit_dhd_epi_annual", "annual_case_rate", filters={"condition": "TByear", "year": 2024}
+    )
+    assert len(out["rows"]) == 2 and "never added up or averaged" in out["method"]
 
 
 # --------------------------------------------------------------------------------------------- respiratory ED
@@ -164,9 +168,12 @@ def test_ed_shares_are_never_summed(reg: Registry, tmp_path: Path) -> None:
     )
     assert "sum(" not in cm.sql.lower()
     eng = engine(reg, tmp_path, "detroit_dhd_resp_ed_weekly", rows)
-    with pytest.raises(QueryRefused) as e:  # COVID + RSV in one week: two shares, never one added share
-        eng.query_metric("detroit_dhd_resp_ed_weekly", "weekly_share_of_ed_visits", group_by=["week_ending"])
-    assert e.value.code == "would_combine_rates"
+    # COVID + RSV in one week: two shares, each on its own row, never one added share (was refused; ADR 0018).
+    both = eng.query_metric(
+        "detroit_dhd_resp_ed_weekly", "weekly_share_of_ed_visits", group_by=["week_ending"]
+    )
+    assert sorted(r[1] for r in both["rows"] if str(r[0]) == "2026-11-14") == [0.003, 0.0042]
+    assert "never added up or averaged" in both["method"]
     out = eng.query_metric("detroit_dhd_resp_ed_weekly", "weekly_share_of_ed_visits",
                            filters={"diagnosis": "COVID"}, group_by=["week_ending"])  # fmt: skip
     assert [r[1] for r in out["rows"]] == [0.004, 0.0042]

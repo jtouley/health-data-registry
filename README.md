@@ -74,7 +74,9 @@ Claude replies with the yearly counts, drawn here as a chart, and notes like the
   later count is 33 for 2022, 110 for 2023 and 184 for 2024. For 2025 it is already 217 by week 45 of 2026,
   and still rising. The answer shows both figures for each year and calls neither final.
 - **What it can't tell you:** where patients were treated, because each case counts in the patient's home state.
-  Clinical and screening cases are separate counts, never added together.
+  Clinical and screening cases are separate counts, and screening finds carriers, not new disease: a rate from
+  screening counts, if you ask for one, comes labelled "screening detections, not incidence", with the clinical
+  rate beside it.
 
 Every answer links to the publisher's page; for this one, [CDC's weekly notifiable disease
 data](https://data.cdc.gov/d/x9gk-5huc). If it works something out itself, like a rate per 100,000, it says so

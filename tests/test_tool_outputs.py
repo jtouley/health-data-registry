@@ -83,7 +83,8 @@ def test_get_rate_is_crude_and_says_so(pop: tuple[Registry, Engine]) -> None:
     )
     assert [r[:6] + r[9:12] for r in empty["rows"]] == [
         ["Michigan", 2024, "Legionellosis", None, 10000000, None,
-         "1 value in this count suppressed or missing in the source, so no total and no rate (it is not zero)",
+         "1 value in this count suppressed or missing in the source, and none of them has a number, so no count and "
+         "no rate (it is not zero)",
          "toy_cases", "toy_cases"]
     ]  # fmt: skip
     csv = tools.get_rate(reg, eng, condition="legionellosis", locations=["Michigan"], year=2023)

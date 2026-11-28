@@ -39,10 +39,11 @@ models:
           dimension: coverage
           rule: cauris_labels_present
           contract: contracts/cdc_nndss_weekly.odcs.yaml
-          checks: Both C. auris labels the review queue flag_cauris_clinical_screening_swap and the notIncidence
-            declaration read by name are still published (they were in the live data on 2026-11-24); if CDC renames
-            one, the queue would go quiet and screening counts would lose their no-rate declaration without this
-            warning.
+          checks: Both C. auris labels that the review queue flag_cauris_clinical_screening_swap, the notIncidence
+            declaration and the incidenceCounterpart declaration read by name are still published (they were in
+            the live data on 2026-11-24); if CDC renames one, the queue would go quiet, screening rates would lose
+            their 'screening detections, not incidence' label, or the clinical rate given beside a screening rate
+            would disappear, without this warning.
   - odcs_check:
       name: cdc_nndss_weekly_m1_empty_only_where_flagged
       arguments:
@@ -270,10 +271,10 @@ models:
   - name: label
     data_type: varchar
     description: 'Notifiable condition as named in the NNDSS tables (for example Legionellosis, Candida auris, clinical;
-      Syphilis, Primary and secondary). Case definitions: https://ndc.services.cdc.gov/. Not new cases of disease,
-      so no rate per 100,000 people: ''Candida auris, screening'' counts people found to carry C. auris on screening
-      swabs (colonisation), not new cases of disease in the population; for C. auris, the clinical cases take a
-      rate.'
+      Syphilis, Primary and secondary). Case definitions: https://ndc.services.cdc.gov/. Labels whose counts are
+      not new cases of disease: ''Candida auris, screening'' counts people found to carry C. auris on screening
+      swabs (colonisation), not new cases of disease in the population (a rate per 100,000 people from them is labelled
+      ''screening detections, not incidence'').'
     meta:
       logical_type: string
       physical_type: VARCHAR
@@ -283,7 +284,11 @@ models:
       missing_codes: []
       not_incidence:
         Candida auris, screening: people found to carry C. auris on screening swabs (colonisation), not new cases
-          of disease in the population; for C. auris, the clinical cases take a rate
+          of disease in the population
+      not_incidence_label:
+        Candida auris, screening: screening detections, not incidence
+      incidence_counterpart:
+        Candida auris, screening: Candida auris, clinical
   - name: m1
     data_type: bigint
     description: 'Cases reported for this condition and area in this MMWR week (publisher column ''Current week'').
@@ -453,8 +458,8 @@ models:
       the exact bytes the publisher sent.'
   - name: is_total_row
     data_type: boolean
-    description: True on the publisher's total and summary rows (the contract's totalRows), which are never added
-      to the rows they sum (hard rule 2).
+    description: True on the publisher's total and summary rows (the contract's totalRows). They are kept as rows;
+      adding one to the rows it totals counts those cases twice.
     meta:
       derived_from_contract: true
   - name: states_key

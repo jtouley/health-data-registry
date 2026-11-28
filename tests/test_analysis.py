@@ -349,7 +349,9 @@ def test_rate_flags_unreliable_partial_and_suppressed_never_zero(env: tuple[Regi
     assert "unreliable by the source's own rule" in rows["Wyoming"]["flags"]
     assert rows["Wyoming"]["rate_per_100k"] is not None
     ny = rows["New York"]
-    assert ny["rate_per_100k"] is None and "excludes New York City" in ny["flags"]
+    # A count that covers part of the place: worked out, labelled, citing the contract (ADR 0018; was no rate).
+    assert ny["rate_per_100k"] is not None and "excludes New York City" in ny["flags"]
+    assert "catchment area only" in ny["flags"] and "partialPlaces" in ny["flags"]
     assert "unreliable" not in rows["Michigan"]["flags"]
 
 
@@ -450,7 +452,7 @@ def test_compare_refusals(env: tuple[Registry, Engine]) -> None:
     assert "Say what to compare with" in str(same)
     ny = analysis.compare_rates(reg, eng, condition="legionellosis", location="New York", year=2023,
                                 other_location="Ohio")  # fmt: skip
-    assert "can't be worked out" in str(ny) and "New York City" in str(ny)
+    assert "catchment area only" in str(ny) and "New York City" in str(ny)  # compared, with the note
     later = analysis.compare_rates(
         reg, eng, condition="legionellosis", location="Ohio", year=2023, other_year=2024
     )
@@ -542,7 +544,7 @@ def test_trend_refuses_too_few_points(env: tuple[Registry, Engine]) -> None:
     text = analysis.get_trend(reg, eng, condition="legionellosis", location="Michigan", year_start=2022)
     assert "at least 3 usable years" in str(text) and "include_provisional" in str(text)
     ny = analysis.get_trend(reg, eng, condition="legionellosis", location="New York")
-    assert "only part of the place" in str(ny)
+    assert "catchment area only" in str(ny) and "partialPlaces" in str(ny)  # fitted, with the note
     assert "as case counts" in str(analysis.get_trend(reg, eng, condition="mumps", location="Ohio"))
 
 
@@ -624,7 +626,7 @@ def test_signal_refusals(env: tuple[Registry, Engine]) -> None:
     short = analysis.check_signal(
         reg, eng, condition="legionellosis", location="Michigan", year=2018, week=20
     )
-    assert "are not in the data" in str(short)
+    assert "not in the data" in str(short)
     assert "turn of the year" in str(analysis.check_signal(reg, eng, condition="legionellosis",
                                                            location="Michigan", year=2024, week=3))  # fmt: skip
     assert "turn of the year" in str(analysis.check_signal(reg, eng, condition="legionellosis",
@@ -715,8 +717,8 @@ REFUSALS = [
                                          fmt="json"), "nothing_to_compare"),
     (lambda r, e: analysis.compare_rates(r, e, condition="mumps", location="Ohio", year=2023, other_year=2022,
                                          fmt="json"), "unknown_condition"),
-    (lambda r, e: analysis.compare_rates(r, e, condition="legionellosis", location="New York", year=2023,
-                                         other_location="Ohio", fmt="json"), "no_rate"),
+    (lambda r, e: analysis.compare_rates(r, e, condition="mumps", location="Ohio", year=2023,
+                                         other_location="Michigan", fmt="json"), "unknown_condition"),
     (lambda r, e: analysis.get_trend(r, e, condition="mumps", location="Ohio", fmt="json"), "unknown_condition"),
     (lambda r, e: analysis.get_trend(r, e, condition="legionellosis", location="Michigan", year_start=2022,
                                      fmt="json"), "too_few_points"),
@@ -736,8 +738,8 @@ REFUSALS = [
                                         fmt="json"), "no_weekly_series"),
     (lambda r, e: analysis.check_signal(r, e, condition="legionellosis", location="Ohio", year=2024, week=7,
                                         fmt="json"), "week_out_of_range"),
-    (lambda r, e: analysis.check_signal(r, e, condition="legionellosis", location="Ohio", year=2024, week=30,
-                                        fmt="json"), "incomplete_history"),
+    (lambda r, e: analysis.check_signal(r, e, condition="legionellosis", location="Ohio", year=2024, week=49,
+                                        fmt="json"), "week_out_of_range"),
 ]  # fmt: skip
 
 
@@ -965,31 +967,39 @@ def _animal(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_rates_refuse_counts_that_are_not_people(
     two_labels: tuple[Registry, Engine], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Counts that are not cases in people get a rate when asked (ADR 0018), labelled as not a rate of disease in
+    people and citing the catalog's declaration; a human count beside them is unchanged."""
     reg, eng = two_labels
     _animal(monkeypatch)
-    for out in (
-        analysis.get_rate(reg, eng, condition="Legionellosis, Total", year=2023, fmt="json"),
-        analysis.compare_rates(reg, eng, condition="Legionellosis, Total", location="Ohio", year=2023,
-                               other_location="Michigan", fmt="json"),
-        analysis.get_trend(reg, eng, condition="Legionellosis, Total", location="Michigan", fmt="json"),
-    ):  # fmt: skip
-        assert out["refused"] == "not_a_human_count", out
-        assert "'Legionellosis, Total' counts rabid animals, not people" in out["message"]
+    rate = analysis.get_rate(reg, eng, condition="Legionellosis, Total", year=2023, fmt="json")
+    cols = rate["columns"]
+    (row,) = [r for r in rate["rows"] if r[cols.index("location")] == "Michigan"]
+    assert row[cols.index("rate_per_100k")] is not None
+    flags = row[cols.index("flags")]
+    assert flags.startswith(
+        "not a rate of disease in people: 'Legionellosis, Total' counts rabid animals, not people"
+    )
+    assert "the catalog's not_a_human_case_count" in flags
+    compare = analysis.compare_rates(reg, eng, condition="Legionellosis, Total", location="Ohio", year=2023,
+                                     other_location="Michigan", fmt="json")  # fmt: skip
+    assert "rows" in compare and any("not a rate of disease in people" in n for n in compare["notes"])
+    trend = analysis.get_trend(reg, eng, condition="Legionellosis, Total", location="Michigan", fmt="json")
+    assert "rows" in trend and any("not a rate of disease in people" in n for n in trend["notes"])
     counts = analysis.get_trend(reg, eng, condition="Legionellosis, Total", location="Michigan", fit_on="counts",
                                 fmt="json")  # fmt: skip
     assert "rows" in counts
-    # Mixed with a human count: its rows keep the count but get no rate, and the trend fits only the human one.
+    # Mixed with a human count: both rows get a rate, and only the animal one carries the note.
     mixed = analysis.get_rate(
         reg, eng, condition="legionellosis", year=2023, locations=["Michigan"], fmt="json"
     )
     cols = mixed["columns"]
     by = {r[cols.index("condition")]: r for r in mixed["rows"]}
     animal = by["Legionellosis, Total"]
-    assert animal[cols.index("rate_per_100k")] is None and animal[cols.index("cases")] == annual(
+    assert animal[cols.index("rate_per_100k")] is not None and animal[cols.index("cases")] == annual(
         "MICHIGAN", 2023
     )
-    assert "counts rabid animals, not people, so no rate per 100,000 people" in animal[cols.index("flags")]
+    assert "not a rate of disease in people" in animal[cols.index("flags")]
     assert by["Legionellosis"][cols.index("rate_per_100k")] is not None
+    assert "not a rate of disease" not in by["Legionellosis"][cols.index("flags")]
     trend = analysis.get_trend(reg, eng, condition="legionellosis", location="Michigan", fmt="json")
-    assert {r[1] for r in trend["rows"]} == {"Legionellosis"}
-    assert "Not fitted on rates: 'Legionellosis, Total' counts rabid animals, not people." in trend["notes"]
+    assert {r[1] for r in trend["rows"]} == {"Legionellosis", "Legionellosis, Total"}

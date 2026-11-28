@@ -238,10 +238,15 @@ def test_weekly_counts_are_never_the_annual_figure(tmp_path: Path) -> None:
     cm = compile_metric(reg.get("toy_cases"), "annual", group_by=["state", "year"])
     assert '"wk"' not in cm.sql and "sum(" not in cm.sql
     # The trap the running total avoids: weeks added into a year undercount it (late reports reach only the
-    # running total), so the compiler refuses it (issue #173); one row per week is still read.
-    with pytest.raises(QueryRefused) as e:
-        eng.query_metric("toy_cases", "weekly", filters={"state": ["MICHIGAN"]}, group_by=["year"])
-    assert e.value.code == "weekly_sum" and "year-to-date count at the year's last week" in e.value.next_step
+    # running total). Asked for, the sum is worked out with that note and the running total beside it (ADR 0018);
+    # one row per week is still read.
+    added = eng.query_metric("toy_cases", "weekly", filters={"state": ["MICHIGAN"]}, group_by=["year"])
+    assert added["columns"][-3:] == [
+        "year_to_date_at_last_week",
+        "year_to_date_week_read",
+        "year_to_date_series_with_no_number",
+    ]
+    assert "Weekly counts undercount the year" in added["method"]
     weekly = eng.query_metric(
         "toy_cases", "weekly", filters={"state": ["MICHIGAN"]}, group_by=["year", "week"]
     )
@@ -260,8 +265,8 @@ def test_without_a_restatement_no_year_is_said_to_be_over(tmp_path: Path) -> Non
     assert "restatement" not in out["method"]
     assert out["method"] == (
         "Running total (ytd) read at the last week of each year that has a number, labelled with that week; "
-        "publisher total rows excluded. Weekly counts are never added up, because late reports land in the "
-        "running total, not the week."
+        "publisher total rows excluded. It reads the running total rather than adding up weekly counts, because "
+        "late reports land in the running total, not the week."
     )
 
 
@@ -275,7 +280,8 @@ def test_method_says_the_two_figures_are_never_swapped(tmp_path: Path) -> None:
         "next year's table's figure for the same year (prior_ytd) is kept as a separate observation, an "
         "unverified restatement, with the week it reaches. The two are never swapped or combined and neither is "
         "final until a domain reviewer approves that they count the same thing; publisher total rows excluded. "
-        "Weekly counts are never added up, because late reports land in the running total, not the week."
+        "It reads the running total rather than adding up weekly counts, because late reports land in the "
+        "running total, not the week."
     )
 
 
@@ -297,7 +303,7 @@ def test_total_rows_are_left_out(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("group_by", "period", "msg"),
     [
-        (["state"], None, "is a running total, so it is read once per year; group by year."),
+        (["state"], None, None),
         (
             ["state", "week"],
             {"dimension": "week"},
@@ -305,8 +311,17 @@ def test_total_rows_are_left_out(tmp_path: Path) -> None:
         ),
     ],
 )
-def test_cumulative_refusals(tmp_path: Path, group_by: list[str], period: Any, msg: str) -> None:
+def test_cumulative_refusals(tmp_path: Path, group_by: list[str], period: Any, msg: str | None) -> None:
+    """Not grouped by year: each year's figure is read, then added up with a note (was refused; ADR 0018).
+    Grouped by the week a running total is kept along: nothing can be read, so it is refused."""
     reg = _registry(tmp_path)
+    if msg is None:
+        cm = compile_metric(reg.get("toy_cases"), "annual", group_by=group_by, period=period)
+        assert (
+            cm.columns == ["state", "annual", "suppressed_rows", "period_status", "flag"]
+            and "Then added up across year" in cm.method
+        )
+        return
     with pytest.raises(QueryRefused) as e:
         compile_metric(reg.get("toy_cases"), "annual", group_by=group_by, period=period)
     assert e.value.code == "needs_period"
@@ -332,13 +347,16 @@ def test_a_restatement_must_be_a_running_count(tmp_path: Path) -> None:
 
 
 def test_a_running_total_without_its_place_grouped_is_refused(tmp_path: Path) -> None:
-    """Regression (dbt review 1): grouped by year alone, arg_max picked one area's total (2023: 16, not 24)."""
+    """Regression (dbt review 1): grouped by year alone, arg_max picked one area's total (2023: 16, not 24).
+
+    The name is kept so the Trusted gate's ratchet doesn't read a rename as a dropped test: the total is no longer
+    refused but read per area and added up, with a note (ADR 0018, #226).
+    """
     _, eng = _setup(tmp_path)
-    with pytest.raises(QueryRefused) as e:
-        eng.query_metric("toy_cases", "annual", group_by=["year"])
-    assert e.value.code == "needs_grouping" and "group by state or filter each to one value" in str(e.value)
-    with pytest.raises(QueryRefused):
-        eng.query_metric("toy_cases", "annual", filters={"state": ["Ohio", "OHIO"]}, group_by=["year"])
+    # Each area's own total read, then added (was refused; ADR 0018): 2023 is Ohio's 8 plus Michigan's 16.
+    added = eng.query_metric("toy_cases", "annual", group_by=["year"])
+    assert dict((r[0], r[1]) for r in added["rows"])[2023] == 24
+    assert "Then added up across state" in added["method"]
     one = eng.query_metric("toy_cases", "annual", filters={"state": "OHIO"}, group_by=["year"])
     assert [r[:2] for r in one["rows"]][0] == [2023, 8]  # Ohio; Michigan is 16, so 24 in all, never 16
 
@@ -354,10 +372,12 @@ def test_a_summed_running_total_needs_one_week(tmp_path: Path) -> None:
     """dbt review 2: year to date is added across places only at a single week, never across weeks."""
     reg = _registry(tmp_path, YTD_SEMANTIC)
     ds = reg.get("toy_cases")
-    for kw in ({}, {"filters": {"week": [1, 2]}}, {"filters": {"week": 1}, "group_by": ["week"]}):
-        with pytest.raises(QueryRefused) as e:
-            compile_metric(ds, "ytd_sum", **kw)  # type: ignore[arg-type]
-        assert e.value.code == "needs_single_value" and "count the same cases many times" in str(e.value)
+    # Across weeks: worked out, with the note and the running total at the last week beside it (was refused).
+    for cm in (compile_metric(ds, "ytd_sum"), compile_metric(ds, "ytd_sum", filters={"week": [1, 2]})):
+        assert "counted again in every later week" in cm.method and "year_to_date_at_last_week" in cm.columns
+    # One row per week adds nothing across weeks.
+    one = compile_metric(ds, "ytd_sum", filters={"week": 1}, group_by=["week"])
+    assert "counted again" not in one.method and "year_to_date_at_last_week" not in one.columns
     assert "sum(" in compile_metric(ds, "ytd_sum", filters={"week": 3}, group_by=["year"]).sql
     with pytest.raises(RegistryError, match="name the dimension it is read at in single_value_of"):
         _registry(tmp_path / "a", YTD_SEMANTIC.replace("\n     single_value_of: [week]", ""))
@@ -412,6 +432,17 @@ def test_compiled_running_total_sql_is_exact(tmp_path: Path) -> None:
     assert cm.params == [2023, 2023]
 
 
+def test_compiled_weekly_sum_with_the_running_total_beside_is_exact(tmp_path: Path) -> None:
+    """The WITH base / agg / beside shape of a sum across weeks, pinned (dbt unit-test review finding 4)."""
+    reg = _registry(tmp_path)
+    cm = compile_metric(reg.get("toy_cases"), "weekly", filters={"state": ["MICHIGAN"]}, group_by=["year"])
+    golden = (
+        (Path(__file__).parent / "golden" / "weekly_sum_beside.sql").read_text().strip().replace("\n", " ")
+    )
+    assert cm.sql == golden
+    assert cm.params == ["MICHIGAN"]
+
+
 SEQ_SEMANTIC = SEMANTIC.replace(
     "  - {name: week, column: week, type: time, non_additive: true, non_additive_reason: late reports reach only the running total}\n",
     "  - {name: week, column: week, type: time, non_additive: true, non_additive_reason: late reports reach only the running total}\n"
@@ -453,11 +484,13 @@ def test_other_period_and_order_names_read_plainly(tmp_path: Path) -> None:
     ]
     assert out["method"] == (
         "Running total (ytd) read at the last epi seq of each period that has a number, labelled with that epi "
-        "seq. Weekly counts are never added up, because late reports land in the running total, not the week."
+        "seq. It reads the running total rather than adding up weekly counts, because late reports land in the "
+        "running total, not the week."
     )
-    with pytest.raises(QueryRefused) as e:
-        compile_metric(reg.get("toy_cases"), "by_seq", group_by=["state"], period={"dimension": "span_id"})
-    assert str(e.value) == "by_seq is a running total, so it is read once per span_id; group by span_id."
+    added = compile_metric(
+        reg.get("toy_cases"), "by_seq", group_by=["state"], period={"dimension": "span_id"}
+    )
+    assert "Then added up across span_id" in added.method
 
 
 ALL_CODES = (

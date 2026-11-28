@@ -243,8 +243,13 @@ def _columns(contract: Contract, model: str, made: Mapping[str, str] | None = No
             meanings = "; ".join(f"{code} = {meaning}" for code, meaning in column.flag_codes)
             description = f"{description} Codes (publisher's codebook): {meanings}."
         if column.not_incidence:
-            reasons = "; ".join(f"'{label}' counts {why}" for label, why in column.not_incidence)
-            description = f"{description} Not new cases of disease, so no rate per 100,000 people: {reasons}."
+            words = dict(column.not_incidence_label)
+            reasons = "; ".join(
+                f"'{label}' counts {why} (a rate per 100,000 people from them is labelled "
+                f"'{words.get(label, 'not incidence')}')"
+                for label, why in column.not_incidence
+            )
+            description = f"{description} Labels whose counts are not new cases of disease: {reasons}."
         col: dict[str, Any] = {
             "name": c.name,
             "data_type": DBT_TYPES[c.physical_type],
@@ -257,6 +262,16 @@ def _columns(contract: Contract, model: str, made: Mapping[str, str] | None = No
                 "codes": list(c.codes),
                 "missing_codes": list(c.missing_codes),
                 **({"not_incidence": dict(column.not_incidence)} if column.not_incidence else {}),
+                **(
+                    {"not_incidence_label": dict(column.not_incidence_label)}
+                    if column.not_incidence_label
+                    else {}
+                ),
+                **(
+                    {"incidence_counterpart": dict(column.incidence_counterpart)}
+                    if column.incidence_counterpart
+                    else {}
+                ),
             },
         }
         if made and c.source_field in made:
@@ -411,8 +426,8 @@ def derived_columns(contract: Contract) -> list[tuple[str, str, str, str]]:
             TOTAL_ROW,
             "boolean",
             f"coalesce(({total}), false)" if total else "false",
-            "True on the publisher's total and summary rows (the contract's totalRows), which are never added to "
-            "the rows they sum (hard rule 2)."
+            "True on the publisher's total and summary rows (the contract's totalRows). They are kept as rows; "
+            "adding one to the rows it totals counts those cases twice."
             if total
             else "Always false: the contract declares that this table has no total rows.",
         )

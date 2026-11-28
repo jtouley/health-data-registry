@@ -138,10 +138,12 @@ class Result:
 
 
 PRESENTATION_RULES = [
-    "Never add up rates, percents or estimates, and never add year-to-date (running) totals across weeks: a "
-    "year-to-date figure is read at one week.",
+    "Don't add up numbers yourself, especially rates, percents, estimates or year-to-date (running) totals: ask a "
+    "tool, which works out a sum when asked and says in a note what it can't mean. A year-to-date figure is read "
+    "at one week.",
     "Different condition labels (clinical and screening, confirmed and probable, or any two labels) are different "
-    "things: show them apart and never add them.",
+    "things: show them apart, and if a figure across them is asked for, give the tool's note with it (for C. auris "
+    "screening: screening detections, not incidence).",
     "Report a change, ratio, difference or share only when a tool returned it (compare_rates, get_trend), quoted as "
     "returned; never work one out yourself.",
     "Never give a number from memory or from another source. If no tool returned a number, there is no number.",
@@ -948,11 +950,18 @@ def series_rows(
         )
         if get(r, "suppressed_rows"):
             n_empty = int(get(r, "suppressed_rows"))
+            own = str(get(r, "period_status") or "")
+            why = " (the flag column says why)" if "flag" in at else ""
             status = (
-                f"no total: {n_empty} value{'s' if n_empty != 1 else ''} suppressed or missing in the source"
-            )
+                f"sum of the reported values only: {n_empty} value{'s' if n_empty != 1 else ''} with no number "
+                f"in the source{why}, not counted (never as 0)"
+                if r[n_keys] is not None
+                else f"no total: its one value has no number in the source{why}"
+                if n_empty == 1
+                else f"no total: all {n_empty} values have no number in the source{why}"
+            ) + (f"; {own}" if own else "")
         elif get(r, "not_published"):
-            # A published cell left empty is a gap, never a blank read as a value (hard rule 2).
+            # A published cell left empty is a gap, never a blank read as a value (hard rule 2, ADR 0018).
             status = "suppressed or not published: the publisher's cell for this row is empty"
         elif "lower" in at and (get(r, "lower") is None or get(r, "upper") is None):
             status += "; the publisher gives no uncertainty interval for this row"
@@ -1025,7 +1034,8 @@ def _dataset_notes(ds: Dataset, m: Any, method: str, got: Sequence[SeriesRow]) -
             + (
                 f" '{zero}' is {who}'s 'no reported cases': the area did not submit any cases. It is read as not "
                 f"reported (the maintainer's declaration in the contract), so a count flagged '{zero}' has no number "
-                "and is never counted as 0: no total, rate or trend point is worked out from it."
+                "and is never counted as 0: a sum leaves it out and says how many had no number, and no rate or "
+                "trend point is worked out from it."
                 if zero
                 else ""
             )
@@ -1087,7 +1097,9 @@ def get_series(
         return matched_nothing(engine, ran, condition, locations, year_start, year_end, fmt)
     if len({s.measure for _, s in matches}) > 1:
         notes.insert(
-            0, "Rows mix measures (see the measure column); never compare or add them across measures."
+            0,
+            "Rows mix measures (see the measure column): a count, a rate and an estimate are different kinds of "
+            "number, so a sum or comparison across them is not a count, rate or estimate of anything.",
         )
     labels = sorted({s.label for _, s in matches})
     conditions = {spelling_key(x) for x in labels}
@@ -1095,7 +1107,8 @@ def get_series(
         notes.insert(
             0,
             f"Rows cover {len(conditions)} different condition labels (see the condition column): they are "
-            "different things, so never add them together.",
+            "different things, so a sum of them is not a count of any one of them (C. auris screening counts "
+            "screening detections, not incidence).",
         )
     notes[0:0] = spelling_notes(labels)
     notes.append(
@@ -1317,7 +1330,9 @@ def get_provenance(
 GEOGRAPHY_TRAPS = [
     "Out-Wayne County reports exclude the City of Detroit, which has its own health department.",
     "NNDSS counts cases by state of residence; some CDC tracking pages count by the state of the facility.",
-    "C. auris clinical cases and screening (colonisation) cases are different series; never add them.",
+    "C. auris clinical cases and screening (colonisation) cases are different series. A sum of the two, or a rate "
+    "from screening, counts screening detections, not incidence; answers that work one out say so, with the "
+    "clinical figure beside it.",
     "C. auris numbers differ by source: NNDSS (cdc_nndss_weekly) counts cases by the week they were reported; "
     "CDC's C. auris tracking page counts cases by specimen collection date; the AR Lab Network counts isolates, "
     "not cases. Say which one a number is from, and don't compare them as if they were the same count.",
@@ -1407,7 +1422,7 @@ def query_sql(
     )  # fmt: skip
 
 
-_SUM_RULE_CODES = frozenset({"weekly_sum", "empty_in_sum", "sum_over_subquery"})
+_SUM_RULE_CODES = frozenset({"sum_over_subquery"})
 
 
 def _query_sql(engine: Engine, sql: str, fmt: Fmt) -> Result | Out:

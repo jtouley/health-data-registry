@@ -181,7 +181,7 @@ schema:
         dimension: uniqueness
         severity: warn
         type: sql
-        description: "Across the views that the by-group metrics read together, no group label other than 'All cases' appears twice in one year, organism and topic (none did on 2026-11-25). A label shared by two views would make those metrics refuse the question, so it is reported here first."
+        description: "Across the views that the by-group metrics read together, no group label other than 'All cases' appears twice in one year, organism and topic (none did on 2026-11-25). A label shared by two views would return two published figures for one group, each on its own row, so it is reported here first."
         query: "SELECT COUNT(*) FROM (SELECT yearname, organism, topic, series FROM {object} WHERE series <> 'All cases' GROUP BY yearname, organism, topic, series HAVING COUNT(*) > 1)"
         mustBe: 0
 customProperties:

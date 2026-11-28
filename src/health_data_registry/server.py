@@ -50,11 +50,14 @@ locations=[...])
   last resort, only when no tool above fits: query_sql(sql=<one read-only SELECT>)
 
 ━━━ WORDS THAT CHANGE THE NUMBER ━━━
-  "so far this year", "year to date": a running total read at ONE week (the latest); never add weeks or running \
-totals together.
+  "so far this year", "year to date": a running total read at ONE week (the latest). Don't add weeks or running \
+totals together yourself: weekly counts undercount the year, and a tool that adds them says so.
   "this year" for a running total is provisional; say so.
-  clinical vs screening, confirmed vs probable, or any two condition labels: different series; never add them.
-  rates, percents and estimates are never added up, across places or years.
+  clinical vs screening, confirmed vs probable, or any two condition labels: different series; keep them apart, \
+and if a figure across them is asked for, give the tool's note with it (C. auris screening: screening detections, \
+not incidence).
+  rates, percents and estimates: don't add them up yourself; a tool that works out such a figure says what it \
+can't mean.
   a county or city: pass it as a location; the place resolver matches it to the source's own place labels, and a \
 source that stops at the state declines with nearest_served (for example "Travis County, Texas" → Texas).
   a GBD cause or a modelled measure (DALYs, YLLs, modelled deaths): use the IHME GBD connector; this server \
@@ -262,7 +265,8 @@ def build_server(
         """Is it rising? Annual percent change with a 95% interval from a Poisson regression on year. Split where
         the case definition changed; provisional years are left out unless include_provisional is true; needs at
         least 3 usable years. fit_on "rates" (default) needs Census population for every year and refuses
-        otherwise; "counts" is a trend in case counts that ignores population change."""
+        otherwise; "counts" is a trend in case counts that ignores population change. Rates from counts that are
+        not incidence (C. auris screening) are fitted when asked and labelled so, with the clinical trend beside."""
         return safe(
             "get_trend",
             lambda: analysis.get_trend(
@@ -304,8 +308,9 @@ def build_server(
     ) -> Out:
         """Is this week unusual? The last 4 weeks' cases against the same, preceding and following 4 weeks of the
         past 5 years, in the style of CDC's historical limits for notifiable diseases. A signal is not an outbreak.
-        A week with no number (CDC's '-', read as not reported) is never counted as zero, so it refuses any window
-        that includes one, which is common for rare conditions."""
+        A week with no number (CDC's '-', read as not reported) is never counted as zero: the 4-week totals add the
+        weeks that have a number and name the ones that don't, and the signal says when the current total may be
+        too low."""
         return safe(
             "check_signal",
             lambda: analysis.check_signal(

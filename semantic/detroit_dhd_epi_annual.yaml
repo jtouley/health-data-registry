@@ -1,6 +1,8 @@
 dataset: detroit_dhd_epi_annual
 # 0.1.1: the rate says the dashboard gives no interval.
-version: 0.1.1
+# 0.1.2 (ADR 0018, issue #226): a sum over rows with a suppressed one gives the sum of the rows that have a number,
+# with suppressed_rows, instead of no total.
+version: 0.1.2
 dimensions:
   - {name: condition, column: worksheet, type: categorical, non_additive: true, non_additive_reason: "each is a different condition", description: "The condition, by the code of the dashboard's yearly chart: TByear = tuberculosis; ChlamydiaYear = chlamydia; HepCyear = hepatitis C (acute, chronic or both is not stated); SyphilisPSyear = primary and secondary syphilis; SyphilisLyear = late syphilis; SyphilisCyear = congenital syphilis. Each is a different condition, so their counts are never added together."}
   - {name: place, column: location_label, type: categorical, non_additive: true, non_additive_reason: "Michigan's figures include Detroit's", description: "Detroit or Michigan, as the chart's legend names them ('Detroit Case Rate', 'Michigan Case Rate'). Michigan's figures include Detroit's, so the two are never added together."}
@@ -10,7 +12,7 @@ measures:
   - {name: case_rate, column: rate, kind: rate, unit: "as published (denominator unconfirmed)", description: "The case rate the dashboard plots."}
 metrics:
   - name: annual_cases
-    description: "Cases of one condition in a year for one place; Detroit and Michigan are never added together (Michigan includes Detroit), and conditions are never added together. A year whose count the dashboard shows suppressed has no total."
+    description: "Cases of one condition in a year for one place; Detroit and Michigan are never added together (Michigan includes Detroit), and conditions are never added together. A year whose count the dashboard shows suppressed has no number (never 0); a sum over several rows adds the ones that have a number, and suppressed_rows says how many had none."
     measure: cases
     aggregation: sum
     exclude_total_rows: false

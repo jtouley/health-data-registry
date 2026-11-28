@@ -118,9 +118,13 @@ def test_group_by_and_period(lake: Path, registry: Registry) -> None:
 
 def test_rates_are_never_added_up(lake: Path, registry: Registry) -> None:
     eng = Engine(registry=registry, lake=lake)
-    with pytest.raises(QueryRefused) as e:
-        eng.query_metric("toy_cases", "case_rate", group_by=["year"], filters={"condition": "Legionellosis"})
-    assert e.value.code == "would_combine_rates"
+    # Several published rates for one year: each on its own row, with the note (was refused; ADR 0018).
+    many = eng.query_metric(
+        "toy_cases", "case_rate", group_by=["year"], filters={"condition": "Legionellosis"}
+    )
+    years = [r[0] for r in many["rows"]]
+    assert len(years) > len(set(years)) and "sum(" not in many["sql"].lower()
+    assert "each is shown on its own row as published, never added up or averaged" in many["method"]
     ok = eng.query_metric(
         "toy_cases",
         "case_rate",
@@ -221,7 +225,7 @@ def test_get_series_csv(lake: Path, registry: Registry) -> None:
         "Legionellosis,confirmed and probable"
     )
     assert lines[3].startswith(
-        "Michigan,2024,,,,as_published,no total: 1 value suppressed or missing in the source,,cases"
+        "Michigan,2024,,,,as_published,no total: its one value has no number in the source,,cases"
     )  # the publisher's 'N' stays empty, not 0
     assert lines[4].startswith(
         "Ohio,2023,400,,,as_published,the publisher marks no provisional or final status for this row,,cases"

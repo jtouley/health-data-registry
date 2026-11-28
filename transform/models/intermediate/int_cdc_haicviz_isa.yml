@@ -87,8 +87,8 @@ models:
           rule: one_group_per_label_in_by_group_rates
           contract: contracts/cdc_haicviz_isa.odcs.yaml
           checks: In the Age, Sex, Race and Epi class views that the by-group metrics read together, no group label
-            appears twice in one year and topic (none did on 2026-11-25). A label shared by two views would make
-            those metrics refuse the question, so it is reported here first.
+            appears twice in one year and topic (none did on 2026-11-25). A label shared by two views would return
+            two published figures for one group, each on its own row, so it is reported here first.
   - odcs_check:
       name: cdc_haicviz_isa_topic_labels_known
       arguments:
@@ -265,7 +265,7 @@ models:
       the exact bytes the publisher sent.'
   - name: is_total_row
     data_type: boolean
-    description: True on the publisher's total and summary rows (the contract's totalRows), which are never added
-      to the rows they sum (hard rule 2).
+    description: True on the publisher's total and summary rows (the contract's totalRows). They are kept as rows;
+      adding one to the rows it totals counts those cases twice.
     meta:
       derived_from_contract: true

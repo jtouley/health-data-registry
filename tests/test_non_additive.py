@@ -252,11 +252,11 @@ def test_cdi_empty_total_says_suppressed_or_not_published(cdi_lake: tuple[Regist
 
 def test_cdi_second_total_row_is_refused_in_plain_words(tmp_path: Path) -> None:
     _, eng = _lake(tmp_path, "cdc_haicviz_cdi", [*CDI_ROWS, cdi(2019, "Total", "all cases", "Total", "1")])
-    with pytest.raises(QueryRefused) as e:
-        eng.query_metric("cdc_haicviz_cdi", "cdi_cases_total", group_by=["year"])
-    assert e.value.code == "would_combine_rates"
-    assert "Rates and estimates" not in str(e.value) and "cdi_cases_total" not in str(e.value)
-    assert str(e.value).startswith("More than one published figure matches")
+    # Both published Totals come back, each on its own row, with the note (was refused; ADR 0018).
+    out = eng.query_metric("cdc_haicviz_cdi", "cdi_cases_total", group_by=["year"])
+    assert [r[0] for r in out["rows"]].count(2019) == 2
+    assert "More than one published figure matches some of the groups asked for" in out["method"]
+    assert "cdi_cases_total" not in out["method"].split("More than one")[1]
 
 
 def test_cdi_epi_class_counts_each_stratum_with_total_excluded(cdi_lake: tuple[Registry, Engine]) -> None:
@@ -434,7 +434,8 @@ def test_engine_query_sql_uses_the_models_flags(nndss_lake: tuple[Registry, Engi
         "SELECT label, sum(m1) FROM cdc_nndss_weekly WHERE year = 2024 AND week = 52 AND location2 IS NULL "
         "GROUP BY label ORDER BY label"
     )
-    assert out["rows"][0] == ["Coccidioidomycosis, Confirmed", 7]
+    # The sum, then the columns beside it: without the total rows, and how many values had no number (ADR 0018).
+    assert out["rows"][0] == ["Coccidioidomycosis, Confirmed", 7, 7, 0]
     # Declared columns, and every categorical column a model leaves undeclared (fail closed).
     assert non_additive_columns(reg.get("cdc_nndss_weekly")) == frozenset({"label"})
     assert non_additive_columns(reg.get("cdc_respnet")) >= {"surveillance_network", "date"}
@@ -485,9 +486,13 @@ def test_changed_models_carry_a_new_version() -> None:
     reg = load_registry(ROOT)
     for ds_id in ("cdc_haicviz_cdi", "cdc_respnet"):
         assert reg.get(ds_id).semantic.version == "0.2.0", ds_id
-    assert reg.get("cdc_nndss_weekly").semantic.version == "0.3.0"  # weeks non-additive, '-' never 0 (#173)
+    # 0.3.0: weeks non-additive, '-' never 0 (#173); 0.4.0: sums across weeks qualified, not refused (#226)
+    assert reg.get("cdc_nndss_weekly").semantic.version == "0.4.0"
     for ds_id in ("detroit_dhd_epi_annual", "detroit_dhd_resp_ed_weekly"):
-        assert reg.get(ds_id).semantic.version == "0.1.1", ds_id
+        # detroit_dhd_epi_annual 0.1.2: a sum with a suppressed row gives the reported rows' sum (#226)
+        assert reg.get(ds_id).semantic.version == (
+            "0.1.2" if ds_id == "detroit_dhd_epi_annual" else "0.1.1"
+        ), ds_id
 
 
 PCT = SEMANTIC.replace(
