@@ -86,12 +86,16 @@ def test_coverage_is_read_as_published_never_summed() -> None:
 
 def test_get_series_reads_one_dose_by_24_months(built: tuple[Registry, Engine]) -> None:
     reg, eng = built
-    out = tools.get_series(reg, eng, condition=MMR, locations=["Michigan"], fmt="json")
+    out = tools.get_series(
+        reg, eng, condition=f"{MMR} vaccination coverage", locations=["Michigan"], fmt="json"
+    )
     got = {str(r["year"]): r["value"] for r in _rows(out)}
     # By 35 months (95.0) is never read for the 24-month series; the 2021-2022 cohort overlaps its single years,
     # so the series reads single birth years only; NA is no value.
     assert got == {"2020": None, "2021": 91.2, "2022": 93.4}
-    dtap = tools.get_series(reg, eng, condition="DTaP", locations=["Michigan"], fmt="json")
+    dtap = tools.get_series(
+        reg, eng, condition="DTaP vaccination coverage", locations=["Michigan"], fmt="json"
+    )
     assert [(r["year"], r["value"]) for r in _rows(dtap)] == [("2022", 80.5)]  # four doses, never three added
 
 
@@ -116,7 +120,13 @@ def test_a_year_range_never_returns_a_cohort_that_reaches_outside_it(built: tupl
     reg, eng = built
     # As text, '2021-2022' sorts inside a 2021-to-2021 period; the series must not return it (2022 births).
     out = tools.get_series(
-        reg, eng, condition=MMR, locations=["Michigan"], year_start=2021, year_end=2021, fmt="json"
+        reg,
+        eng,
+        condition=f"{MMR} vaccination coverage",
+        locations=["Michigan"],
+        year_start=2021,
+        year_end=2021,
+        fmt="json",
     )
     assert [(str(r["year"]), r["value"]) for r in _rows(out)] == [("2021", 91.2)]
 
@@ -142,17 +152,25 @@ def test_the_generic_series_declines_a_vaccine_at_several_doses(built: tuple[Reg
     assert refused.value.code == "would_combine_rates"
 
 
-def test_a_disease_question_also_returns_coverage_labelled_as_coverage(
+def test_a_disease_question_gets_coverage_only_when_it_asks_about_vaccination(
     built: tuple[Registry, Engine],
 ) -> None:
-    # Today's routing (follow-up #192): a disease's name also finds the vaccine's coverage series. Each row
+    # main's asked_with routing (#244): a coverage series answers only a question that asks about vaccination
+    # and names the vaccine. A plain disease question, or a bare vaccination question, gets none of it; each row
     # says it is vaccine coverage, in percent, and measure="cases" leaves it out.
     reg, _eng = built
-    found = [(ds.id, s) for ds, s in tools.series_for(reg, "influenza") if ds.id == DS]
+    assert not [ds for ds, _s in tools.series_for(reg, "influenza") if ds.id == DS]
+    found = [(ds.id, s) for ds, s in tools.series_for(reg, "influenza vaccination coverage") if ds.id == DS]
     assert [(s.measure, s.label) for _id, s in found] == [
         ("percent", "Influenza vaccine coverage (dose as CDC defines it) by 24 months")
     ]
-    assert not [ds for ds, _s in tools.series_for(reg, "influenza", measure="cases") if ds.id == DS]
+    assert not [
+        ds
+        for ds, _s in tools.series_for(reg, "influenza vaccination coverage", measure="cases")
+        if ds.id == DS
+    ]
+    for bare in ("vaccination", "vaccination coverage", "childhood vaccination coverage"):
+        assert not [ds for ds, _s in tools.series_for(reg, bare) if ds.id == DS], bare
 
 
 def test_vaccine_label_rule_lists_the_catalog_labels() -> None:

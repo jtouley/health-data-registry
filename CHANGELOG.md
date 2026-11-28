@@ -94,7 +94,9 @@ All notable changes to this project are documented here. The format follows
   young children vaccinated by a given age (e.g. by 24 months), by vaccine and dose, place (US, HHS region, state,
   selected local areas) and birth year or birth cohort, read as published and never added up. Draft contract.
   `get_series` reads single birth years only (the two- and four-year cohorts overlap them and stay in `query_sql`),
-  and each series' age and dose are draft choices pending a maintainer's review.
+  and each series' age and dose are draft choices pending a maintainer's review. Like the other coverage sources,
+  it answers only a question that asks about vaccination and names the vaccine ("MMR vaccination coverage"): a
+  plain "influenza" or a bare "vaccination" question doesn't get it.
   CDC's 95% interval is kept as the text CDC publishes ('92.2 to 96.1') and returned by `query_sql`; `get_series`
   shows it once a staging extension splits it into two numbers (#172).
 - New source, draft: `nchs_resp_deaths_pct`, NCHS's provisional weekly percent of all deaths among US residents

@@ -155,6 +155,9 @@ def test_every_real_catalogued_label_compiles_with_its_aggregation_rule() -> Non
             if not found and gated and not ds.semantic.generic_series:
                 # Only gated series: the bare label gets nothing (by design); each series' own condition does.
                 found = [x for s in gated for x in tools.series_for(reg, s.condition, source_id=ds.id)]
+            elif not found and (words := tools._only_when_asked_with(ds)):
+                # Every series gated, the generic one too: the label asked with one of their words reads through.
+                found = tools.series_for(reg, f"{label} {words[0]}", source_id=ds.id)
             assert found, (ds.id, label)
             for _, s in found:
                 metric = ds.semantic.metric(s.metric)
