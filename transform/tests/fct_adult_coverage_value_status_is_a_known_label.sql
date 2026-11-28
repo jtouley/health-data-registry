@@ -1,6 +1,6 @@
--- value_status is a label we write ourselves (macros/value_status.sql), an exact structural fact, so a row with any
+-- value_status is a label we write ourselves (macros/flag_value_status.sql), an exact structural fact, so a row with any
 -- other label means the CASE was edited without its list: an error. Returns the offending rows.
-{% set labels = value_status_labels() %}
+{% set labels = flag_value_status_labels() %}
 {% for model in ['fct_cdc_covid_adult_coverage', 'fct_cdc_rsv_adult_coverage'] %}
 select '{{ model }}' as model, value_status
 from {{ ref(model) }}

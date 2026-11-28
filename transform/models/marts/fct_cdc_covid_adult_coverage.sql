@@ -1,6 +1,6 @@
 -- Fact: Fact - COVID-19 vaccination coverage and intent among adults (NIS-FRVM) (contracts/models/fct_cdc_covid_adult_coverage.odcs.yaml).
 -- Every row of the intermediate model, none removed and no value changed; CDC's suppression flag is carried as
--- published, and value_status (macros/value_status.sql) qualifies the estimate without giving the flag a meaning.
+-- published, and value_status (macros/flag_value_status.sql) qualifies the estimate without giving the flag a meaning.
 select
     geographic_name as place,
     geographic_level as place_kind,
@@ -15,7 +15,7 @@ select
     ci_half_width_95pct,
     unweighted_sample_size,
     suppression_flag,
-    {{ value_status('estimate', 'suppression_flag') }} as value_status,
+    {{ flag_value_status('estimate', 'suppression_flag') }} as value_status,
     _snapshot_id,
     _raw_sha256
 from {{ ref('int_cdc_covid_adult_coverage') }}

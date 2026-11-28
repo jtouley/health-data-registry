@@ -1,20 +1,8 @@
 {#
-  value_status: why a published estimate is or isn't there, from the estimate and the publisher's flag, as one of
-  five fixed labels. It qualifies the row and removes nothing (ADR 0018: show every row with its flag; qualify,
-  don't decide). The flag's codes are named, never given a meaning: a code's meaning is a fact for the codebook or
-  a maintainer's reviewed declaration (hard rule 1), so 'CDC flag 1' is not read as 'suppressed' here.
-  The labels are listed once, in value_status_labels(), which the marts' singular test checks against.
+  value_status: whether the publisher published a figure in a fact's cell, in the one wording every fact uses.
+  An empty cell is kept and says so, never dropped or filled with a zero. transform/tests/ checks each fact's
+  value_status against its value, so the two labels can't drift from what the fact contracts describe.
 #}
-{% macro value_status(estimate, flag) %}
-case
-    when {{ estimate }} is not null and {{ flag }} = '1' then 'published; CDC flag 1'
-    when {{ estimate }} is not null then 'published'
-    when {{ flag }} = '1' then 'empty; CDC flag 1'
-    when {{ flag }} = '0' then 'empty; CDC flag 0'
-    else 'empty; no CDC flag 0 or 1'
-end
-{% endmacro %}
-
-{% macro value_status_labels() %}
-{{ return(['published', 'published; CDC flag 1', 'empty; CDC flag 1', 'empty; CDC flag 0', 'empty; no CDC flag 0 or 1']) }}
-{% endmacro %}
+{% macro value_status(column) -%}
+case when {{ column }} is null then 'not published: the publisher''s cell is empty' else 'published' end
+{%- endmacro %}

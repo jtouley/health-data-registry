@@ -1,0 +1,125 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: fct_nchs_resp_deaths_pct
+name: Fact - NCHS percent of deaths involving COVID-19, influenza and RSV
+version: 0.1.0
+status: draft
+domain: infectious_disease
+description:
+  purpose: "Every row of NCHS's weekly percent-of-deaths table (nchs_resp_deaths_pct) as one fact per week, cause and demographic group, with clinical column names, NCHS's own provisional and suppression notes, and a status that says why a value is empty."
+  usage: "Read one cause, demographic group and week, or follow one over the weeks. Every row is kept, suppressed ones included; nothing is added across causes, groups or weeks."
+  limitations: "National only; no all-ages or all-people row; provisional; counts from 1 to 9 suppressed."
+  authoritativeDefinitions:
+    - {type: businessDefinition, url: "contracts/nchs_resp_deaths_pct.odcs.yaml", description: "The source dataset's contract, whose descriptions and rules this fact carries"}
+schema:
+  - name: fct_nchs_resp_deaths_pct
+    physicalName: fct_nchs_resp_deaths_pct
+    physicalType: table
+    logicalType: object
+    description: "One row per week, cause and demographic group: every row of int_nchs_resp_deaths_pct, none removed, each with value_status. The publisher's calendar columns (year, month, MMWR week, last date of the period) and its jurisdiction ('United States' in every row) are left out; they stay in int_nchs_resp_deaths_pct."
+    customProperties:
+      - {property: layer, value: marts}
+      - {property: totalRows, value: none}
+      - {property: tableShape, value: surveillance_series}
+    properties:
+      - name: week_end
+        physicalType: DATE
+        logicalType: date
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: "The Saturday that ends the week of reporting."
+        customProperties: [{property: role, value: dimension}]
+      - name: week_start
+        physicalType: DATE
+        logicalType: date
+        required: true
+        description: "The Sunday that starts the week of reporting (NCHS's first date of the data period)."
+        customProperties: [{property: role, value: attribute}]
+      - name: cause
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        description: "The cause the deaths involve: COVID-19, Influenza, RSV, or Combined for the three together."
+        customProperties: [{property: role, value: dimension}]
+      - name: group_kind
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 3
+        description: "The kind of demographic group: Age Group, Race/Ethnicity or Sex."
+        customProperties: [{property: role, value: dimension}]
+      - name: demographic_group
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 4
+        description: "The demographic group, as NCHS labels it: an age group ('0-17 years', '18-64 years', '65+ years'), a race and Hispanic origin group ('Hispanic', 'White, NH', 'Not Available'), or a sex ('Female', 'Male')."
+        customProperties: [{property: role, value: dimension}]
+      - name: deaths_involving
+        physicalType: BIGINT
+        logicalType: integer
+        required: false
+        description: "Deaths involving the cause, as published; empty where NCHS suppressed a count from 1 to 9."
+        customProperties: [{property: role, value: measure}]
+      - name: all_cause_deaths
+        physicalType: BIGINT
+        logicalType: integer
+        required: true
+        description: "Deaths from all causes in the week and group, as published."
+        customProperties: [{property: role, value: measure}]
+      - name: percent_of_deaths
+        physicalType: DOUBLE
+        logicalType: number
+        required: false
+        description: "Percent of all deaths in the week and group that involved the cause, as published; empty where NCHS suppressed it or no death was recorded (an empty value is never shown as 0)."
+        customProperties: [{property: role, value: measure}]
+      - name: provisional
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "NCHS's provisional mark, exactly as published ('(provisional)' or empty)."
+        customProperties: [{property: role, value: attribute}]
+      - name: suppression_note
+        physicalType: VARCHAR
+        logicalType: string
+        required: false
+        description: "NCHS's suppression note, exactly as published; empty where nothing was suppressed."
+        customProperties:
+          - {property: role, value: attribute}
+          - property: mayBeEmpty
+            value: true
+            description: "A load with no suppressed cell has no note in any row, which is the data, not a broken field."
+      - name: data_as_of
+        physicalType: DATE
+        logicalType: date
+        required: true
+        description: "The date NCHS drew these provisional counts (its 'Data as of'), the same in every row of a load: how current each figure is."
+        customProperties: [{property: role, value: attribute}]
+      - name: value_status
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "Why percent_of_deaths is or isn't there: 'published', 'suppressed by NCHS (a count from 1 to 9)' where the note is present, 'no death recorded in the group' (all-cause deaths published as 0), or 'not published'. It qualifies the row and removes nothing."
+        customProperties: [{property: role, value: attribute}]
+      - name: _snapshot_id
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The lake snapshot the row was read from (the dataset's LATEST load); its manifest gives the source address, retrieval time and dataset version."
+        customProperties: [{property: role, value: attribute}]
+      - name: _raw_sha256
+        physicalType: VARCHAR
+        logicalType: string
+        required: true
+        description: "The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order: the exact bytes the publisher sent."
+        customProperties: [{property: role, value: attribute}]
+customProperties:
+  - {property: unreliableRule, value: {kind: none, description: "None of its own: the source contract's suppression rule applies, and value_status says on each row why a value is empty."}}
+  - property: openQuestions
+    value:
+      - "None beyond the source contract's open questions (Combined, involving versus due to, provisional years)."

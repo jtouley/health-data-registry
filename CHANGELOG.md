@@ -6,8 +6,36 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- `query_sql` refuses queries that could build values too large to answer safely (#74): `lpad`/`rpad` lengths
+  over 1,000, `string_agg`/`list`/`array_agg` and the other ways to gather a whole column into one value
+  (`ARRAY(SELECT ...)`, `max`/`min`/`arg_max`/`arg_min` with a count), `levenshtein`, recursive `WITH`,
+  non-literal `replace` replacements and `strftime` formats, and any one value that `||`, `concat`, `replace`,
+  splitting, lists or structs could grow more than 256-fold. Growth is counted per value, through CTEs and
+  subqueries, so separate columns and conditions don't add up against each other. Each refusal says what to ask
+  instead, and `query_sql` passes that next step on.
+- `query_sql` refuses any query that reaches two sources with no declared join in any part of it, including each
+  branch of a `UNION`, `INTERSECT` or `EXCEPT`, every subquery and every CTE (#74).
+- The lake is never read from the working folder: it is `$HDR_LAKE` (a full path) or a per-user data folder.
+  Each time the server connects, it checks each lake snapshot's dataset id, snapshot id, contract version and
+  review status, that its folder and files belong to the current user and can't be changed by others (on Unix),
+  and that `data.duckdb` is a regular file with the sha256 in its manifest. A snapshot that fails, or can't be
+  read, is refused in plain words; the others still answer. DuckDB then reads the file by its path, so a change
+  made after that check is read until the next reconnect. The manifest sits beside the data, so these hashes
+  catch damage, not tampering. A file is hashed once per server process and again only when its size, times or
+  inode change. `export-public` checks `data.duckdb` and `data.parquet` the same way before publishing, and
+  compares the copy it publishes. Cached hub files are checked again each time the server reconnects (#74).
+  Snapshots built before this change have no file fingerprints and must be rebuilt with `refresh`.
+
 ### Fixed
 
+- The hosted server (`serve --http`) refuses to start while `HDR_HTTPS_PROXY` is set, because behind a proxy
+  the check against private or loopback addresses is advisory (#270). An operator whose proxy itself allows only
+  the catalogued publisher hosts on public addresses opts in with `HDR_PROXY_ENFORCES_ALLOWLIST=1`
+  (docs/dev/hosting.md). Its other startup refusals (a bad limit such as `HDR_PAGE_CHARS`) now print a plain
+  message instead of a traceback too. Nothing changes for clinicians, local use is unchanged, and the Space sets
+  no proxy.
 - Release blockers from #173, where the served path returned wrong numbers:
   - NNDSS's `-` (no reported cases) is read as not reported (the maintainer's declaration of 25 Nov 2026). It
     comes back empty with its flag, never as 0 and never as a rate: `get_rate` gives no rate, `compare_rates`
@@ -47,6 +75,7 @@ All notable changes to this project are documented here. The format follows
   now checks that every entry is well-formed instead: it parses, its path is a plain path under an existing
   top-level directory of this repository (a file a later pull request adds counts), and it has a comment above it
   saying why.
+
 ### Changed
 
 - The README is rewritten for clinicians: five setup steps that each say what you'll see (the Start here
@@ -68,11 +97,33 @@ All notable changes to this project are documented here. The format follows
   from 0 to 1 and is never rescaled (an open question), so its series' measure is `estimate`, not `percent`, and
   a warning flags any value above 1. A suppressed estimate is no value, never zero, and keeps
   CDC's flag. Both answer only vaccination questions: a plain "COVID-19" or "RSV" question doesn't get them.
-- Semantic series can list `asked_with` words: a series that names a disease but isn't a measure of it
-  (vaccination coverage, a percent of deaths) answers only a question that uses one of them.
 - Marts `fct_cdc_covid_adult_coverage` and `fct_cdc_rsv_adult_coverage`: every row kept, CDC's suppression flag as
   published, and a `value_status` that says whether the estimate is there and names CDC's flag beside it, without
   giving the flag a meaning until a maintainer confirms it.
+- New source, draft: `nchs_resp_deaths_pct`, NCHS's provisional weekly percent of all deaths among US residents
+  involving COVID-19, influenza, RSV or the three combined, by age group, sex and race and Hispanic origin
+  (data.cdc.gov 53g5-jf7x). Read as published and never added; a suppressed count (1 to 9) is no value, never zero,
+  and keeps NCHS's note. It answers only a question about deaths, however it's worded ("COVID-19 mortality",
+  "deaths from RSV"): a plain "COVID-19" question doesn't get it, from `get_series` or `suggest_datasets`.
+- Semantic series can list `asked_with` words: a series that names a disease but isn't a measure of it (a percent
+  of deaths, vaccination coverage) answers only a question that uses one of them and also names the disease. A
+  bare "vaccination" question gets none of them, and an empty entry is refused.
+- Marts `fct_cdc_nssp_lab_positivity` and `fct_nchs_resp_deaths_pct`, one fact per source with every
+  row kept, the publisher's own notes as published, and a `value_status` that says why a value is empty
+  ("suppressed" only where a count is empty too; else "not published").
+- New source, draft (contract not yet reviewed): `cdc_nssp_lab_positivity`, CDC's weekly NSSP commercial
+  laboratory NAAT tests, positives and percent positive for COVID-19, influenza and RSV by state (data.cdc.gov
+  jqxy-cyu2), on the existing Socrata adapter. Read as published and never added; a count or percent CDC
+  suppressed (under 10 tests or 10 positives) is no value, never zero. A national or county question is told the
+  table is by state only.
+- New source, draft (contract not yet reviewed): `cdc_haicviz_isa`, CDC's Emerging Infections Program case and
+  death rates for invasive Staphylococcus aureus since 2005 (HAICViz iSA, data.cdc.gov ssz5-s49e), on the existing
+  Socrata adapter. Every rate is for the EIP sites combined, never called a state figure, and nothing is added;
+  whether the figures are MRSA only is an open question, so none is called an MRSA rate.
+- New source, draft (contract not yet reviewed): `cdc_haicviz_mugsi`, CDC's Emerging Infections Program case and
+  death rates for carbapenem-resistant Enterobacterales (CRE) and Acinetobacter baumannii (CRAB) since 2012
+  (HAICViz MuGSI, data.cdc.gov v4tm-h8pe), on the existing Socrata adapter. Every rate is for the EIP sites
+  combined, never called a state figure, and nothing is added.
 - The crawler factory's core (ADR 0016, step 1 and the types step 2 names). Every source is read by one generic
   adapter type chosen in its catalog entry (`type:`; the older `portal:` is read for one more release and `validate`
   warns about it), configured by that type's strict block, plus named extensions it opts in to. New types:

@@ -173,6 +173,109 @@ sources:
       data_type: varchar
       description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
         the exact bytes the publisher sent.'
+  - name: cdc_haicviz_isa
+    description: 'Raw records of HAICViz - iSA as the adapter hands them on, every value as text: the publisher''s
+      own fields, or for a wide table the adapter''s structural reshaping of them (see the staging model). Only
+      the full load the dataset''s LATEST pointer names is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_haicviz_isa.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - series
+      - topic
+      - value
+      - viewby
+      - yearname
+    columns:
+    - name: series
+      data_type: varchar
+      description: 'Publisher field series, as text; read into series (The group the figure is for: All cases, an
+        age group (such as 50-64 years), a sex, a race, an epidemiologic class (Hospital-onset, Healthcare-associated
+        community-onset, Community-associated), Dialysis, a syndrome, or a PFGE strain type (USA 100, USA 300, Other).)'
+    - name: topic
+      data_type: varchar
+      description: 'Publisher field topic, as text; read into topic (What the figure measures: Case rates or Death
+        rates, Syndromes (share of cases by syndrome), or a PFGE type topic (share of cases by strain type, for
+        all cases or one epidemiologic class).)'
+    - name: value
+      data_type: varchar
+      description: 'Publisher field value, as text; read into value (The published figure for the row''s topic and
+        group: a rate for Case rates and Death rates, or a share of cases (values between 0 and 1 on 2026-11-25;
+        unit not stated) for Syndromes and the PFGE topics. Empty in 27 rows on 2026-11-25 (the 1-year age group
+        in 2018, 2020 and 2021, and every PFGE row in 2020 and 2021), and an empty one is never read as zero.)'
+    - name: viewby
+      data_type: varchar
+      description: 'Publisher field viewby, as text; read into viewby (Which breakdown the row belongs to: All cases,
+        Age, Sex, Race, Epi class, Dialysis, Syndromes, or the PFGE topic again. Each view covers the same cases
+        again.)'
+    - name: yearname
+      data_type: varchar
+      description: Publisher field yearname, as text; read into yearname (Surveillance year (2005 to 2021 on 2026-11-25).)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
+  - name: cdc_haicviz_mugsi
+    description: 'Raw records of HAICViz - MuGSI as the adapter hands them on, every value as text: the publisher''s
+      own fields, or for a wide table the adapter''s structural reshaping of them (see the staging model). Only
+      the full load the dataset''s LATEST pointer names is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_haicviz_mugsi.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - organism
+      - series
+      - topic
+      - value
+      - viewby
+      - yearname
+    columns:
+    - name: organism
+      data_type: varchar
+      description: 'Publisher field organism, as text; read into organism (The organism, as CDC abbreviates it:
+        CRE (carbapenem-resistant Enterobacterales) or CRAB (carbapenem-resistant Acinetobacter baumannii).)'
+    - name: series
+      data_type: varchar
+      description: 'Publisher field series, as text; read into series (The group the rate is for: All cases, an
+        age group (such as 65-79 years), Female or Male, a culture source (Blood, Urine, Other site or Other sterile
+        site), or a species inside CRE (such as Klebsiella pneumoniae).)'
+    - name: topic
+      data_type: varchar
+      description: 'Publisher field topic, as text; read into topic (What the figure measures: Case Rates (new cases
+        per population) or Death Rates (deaths among people with the infection, per population).)'
+    - name: value
+      data_type: varchar
+      description: Publisher field value, as text; read into value (The published rate for the row's organism, topic
+        and group, as CDC gives it (cases or deaths per 100,000 population on CDC's MuGSI page; the table itself
+        states no unit). Every row had one on 2026-11-25, and an empty one is never read as zero.)
+    - name: viewby
+      data_type: varchar
+      description: 'Publisher field viewby, as text; read into viewby (Which breakdown the row belongs to: All cases,
+        Age, Sex, Culture source (blood, urine or another site), or Organism (the species inside CRE). Each view
+        covers the same cases again.)'
+    - name: yearname
+      data_type: varchar
+      description: Publisher field yearname, as text; read into yearname (Surveillance year (2012 to 2022 on 2026-11-25).)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
   - name: cdc_nhsn_ar_hai
     description: 'Raw records of National Healthcare Safety Network - Antimicrobial Resistance (2011-2025) as the
       adapter hands them on, every value as text: the publisher''s own fields, or for a wide table the adapter''s
@@ -438,6 +541,73 @@ sources:
         (column description: ''Date of Saturday of the MMWR week''). For COVID-19 and RSV, the week the tests were
         performed (dataset description: laboratories report ''the total number of SARS-CoV-2 and RSV tests performed
         that week''); which date puts an influenza test in a week is not stated (see openQuestions).)'
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
+  - name: cdc_nssp_lab_positivity
+    description: 'Raw records of NSSP Commercial Laboratory Data for COVID, FLU and RSV as the adapter hands them
+      on, every value as text: the publisher''s own fields, or for a wide table the adapter''s structural reshaping
+      of them (see the staging model). Only the full load the dataset''s LATEST pointer names is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/cdc_nssp_lab_positivity.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - geography_type
+      - geography_value
+      - mmwr_week_end
+      - mmwr_week_start
+      - pathogen
+      - percent_pos
+      - positive_count
+      - test_count
+    columns:
+    - name: geography_type
+      data_type: varchar
+      description: 'Publisher field geography_type, as text; read into geography_type (The kind of place, as published:
+        ''state'' in every row (the dataset description says results are reported at the state level).)'
+    - name: geography_value
+      data_type: varchar
+      description: 'Publisher field geography_value, as text; read into geography_value (The state or territory,
+        as its two-letter postal code: the 50 states, DC, Puerto Rico (PR), Guam (GU) and the US Virgin Islands
+        (VI). The patient''s ZIP code of residence places the test, or the ordering provider''s where that is missing
+        (dataset description).)'
+    - name: mmwr_week_end
+      data_type: varchar
+      description: Publisher field mmwr_week_end, as text; read into mmwr_week_end (The Saturday that ends the MMWR
+        week the specimens were collected in (column mmwr_week_end).)
+    - name: mmwr_week_start
+      data_type: varchar
+      description: Publisher field mmwr_week_start, as text; read into mmwr_week_start (The Sunday that starts the
+        MMWR week the specimens were collected in (column mmwr_week_start; results are aggregated by week of specimen
+        collection, dataset description).)
+    - name: pathogen
+      data_type: varchar
+      description: 'Publisher field pathogen, as text; read into pathogen (The virus tested for, as CDC labels it:
+        COVID-19 (SARS-CoV-2), Influenza or RSV (respiratory syncytial virus). Each is by NAAT only (dataset description).)'
+    - name: percent_pos
+      data_type: varchar
+      description: 'Publisher field percent_pos, as text; read into percent_pos (Percent of the week''s NAAT tests
+        for the virus in the state that were positive: positives divided by tests classified positive or negative,
+        times 100 (dataset description). Counts tests, not people. Empty where CDC suppressed it or no test was
+        reported; an empty value is never shown as 0, and a published 0 is a real 0 (zeros are not suppressed).)'
+    - name: positive_count
+      data_type: varchar
+      description: Publisher field positive_count, as text; read into positive_count (Number of those NAAT tests
+        that were positive (dataset description). Empty where CDC suppressed it.)
+    - name: test_count
+      data_type: varchar
+      description: 'Publisher field test_count, as text; read into test_count (Number of NAAT tests for the virus
+        classified as positive or negative that week in the state: the denominator of the percent. Unknown, indeterminate
+        and uninterpretable results are excluded (dataset description). Empty where CDC suppressed it.)'
     - name: _snapshot_id
       data_type: varchar
       description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
@@ -801,6 +971,112 @@ sources:
       data_type: varchar
       description: Publisher field YEAR, as text; read into year (Reference year of the estimate (population on
         July 1 of this year). Taken from the column name POPESTIMATE<year> by the structural pivot; 2020 to 2025.)
+    - name: _snapshot_id
+      data_type: varchar
+      description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the
+        source address, retrieval time and dataset version that go with every answer built on this row.
+    - name: _raw_sha256
+      data_type: varchar
+      description: 'The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch order:
+        the exact bytes the publisher sent.'
+  - name: nchs_resp_deaths_pct
+    description: 'Raw records of Provisional Percent of Deaths for COVID-19, Influenza, and RSV by Select Characteristics
+      as the adapter hands them on, every value as text: the publisher''s own fields, or for a wide table the adapter''s
+      structural reshaping of them (see the staging model). Only the full load the dataset''s LATEST pointer names
+      is read.'
+    meta:
+      raw_contract_version: 0.1.0
+      contract: contracts/nchs_resp_deaths_pct.odcs.yaml
+      load: snapshot
+      load_key: []
+      updated_field: null
+      plugin: hdr_raw
+      source_fields:
+      - data_as_of
+      - deaths
+      - demographic_type
+      - demographic_values
+      - end_date
+      - mmwr_week
+      - month
+      - pathogen
+      - percent_deaths
+      - provisional
+      - start_date
+      - state
+      - suppressed
+      - total_deaths
+      - weekending_date
+      - year
+    columns:
+    - name: data_as_of
+      data_type: varchar
+      description: Publisher field data_as_of, as text; read into data_as_of (The date NCHS's counts were drawn
+        (column 'Data as of'); the same in every row of a load.)
+    - name: deaths
+      data_type: varchar
+      description: Publisher field deaths, as text; read into deaths (Number of deaths involving the cause in the
+        week and group (column description); empty where NCHS suppressed a count from 1 to 9 (a suppressed count
+        is never shown as 0; a published 0 is a real 0).)
+    - name: demographic_type
+      data_type: varchar
+      description: 'Publisher field demographic_type, as text; read into demographic_type (The kind of demographic
+        group: Age Group, Race/Ethnicity or Sex (column description ''[Age, Race/Ethnicity, Sex]'', published as
+        ''Age Group'' for Age).)'
+    - name: demographic_values
+      data_type: varchar
+      description: 'Publisher field demographic_values, as text; read into demographic_values (The demographic group,
+        as NCHS labels it: an age group (''0-17 years'', ''18-64 years'', ''65+ years''), a race and Hispanic origin
+        group (''Hispanic'', ''White, NH'', ''Not Available''), or a sex (''Female'', ''Male'').)'
+    - name: end_date
+      data_type: varchar
+      description: Publisher field end_date, as text; read into end_date (The last day of the week (column 'Last
+        date of data period').)
+    - name: mmwr_week
+      data_type: varchar
+      description: Publisher field mmwr_week, as text; read into mmwr_week (The MMWR week of reporting, 1 to 53
+        (column 'MMWR week of reporting').)
+    - name: month
+      data_type: varchar
+      description: Publisher field month, as text; read into month (The month of reporting (column 'Month of reporting').)
+    - name: pathogen
+      data_type: varchar
+      description: 'Publisher field pathogen, as text; read into pathogen (The cause the deaths involve: COVID-19,
+        Influenza, RSV, or Combined for the three together (column ''Cause of death (pathogen)''; the description
+        writes ''Flu'', the rows ''Influenza'').)'
+    - name: percent_deaths
+      data_type: varchar
+      description: Publisher field percent_deaths, as text; read into percent_deaths (Percent of all deaths in the
+        week and group that involved the cause (column 'Percent of deaths due to pathogen'); empty where NCHS suppressed
+        it, or where no death was recorded (an empty value is never shown as 0).)
+    - name: provisional
+      data_type: varchar
+      description: 'Publisher field provisional, as text; read into provisional (NCHS''s provisional mark, as published:
+        ''(provisional)'' on provisional rows, empty on the others (column ''Is this data provisional'').)'
+    - name: start_date
+      data_type: varchar
+      description: Publisher field start_date, as text; read into start_date (The first day of the week (column
+        'First date of data period').)
+    - name: state
+      data_type: varchar
+      description: 'Publisher field state, as text; read into state (The jurisdiction of residence, as published:
+        ''United States'' in every row (column ''Jurisdiction of residence''; metadata geographic unit: Nation).)'
+    - name: suppressed
+      data_type: varchar
+      description: 'Publisher field suppressed, as text; read into suppressed (NCHS''s suppression note, exactly
+        as published: when it is not empty, deaths and percent_deaths are suppressed for confidentiality (column
+        description).)'
+    - name: total_deaths
+      data_type: varchar
+      description: 'Publisher field total_deaths, as text; read into total_deaths (Number of deaths from all causes
+        in the week and group (column description): the denominator of the percent.)'
+    - name: weekending_date
+      data_type: varchar
+      description: Publisher field weekending_date, as text; read into weekending_date (The Saturday that ends the
+        week of reporting (column 'Week-ending date for the week of reporting').)
+    - name: year
+      data_type: varchar
+      description: Publisher field year, as text; read into year (The MMWR year of reporting (column 'Year of reporting').)
     - name: _snapshot_id
       data_type: varchar
       description: The lake snapshot this row was read from (the dataset's LATEST load). Its manifest gives the

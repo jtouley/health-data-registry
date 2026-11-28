@@ -6,6 +6,11 @@ from {{ ref('int_cdc_covid_adult_coverage') }}
 where "vaccine" is not null and "vaccine" not in ('COVID')
 group by "vaccine"
 union all
+select 'cdc_haicviz_mugsi' as dataset, "organism" as label, count(*) as row_count
+from {{ ref('int_cdc_haicviz_mugsi') }}
+where "organism" is not null and "organism" not in ('CRE', 'CRAB')
+group by "organism"
+union all
 select 'cdc_nhsn_ar_hai' as dataset, "phenotype" as label, count(*) as row_count
 from {{ ref('int_cdc_nhsn_ar_hai') }}
 where "phenotype" is not null and "phenotype" not in ('Aminoglycoside-resistant Pseudomonas aeruginosa', 'Carbapenem-resistant Acinetobacter', 'Carbapenem-resistant E.coli', 'Carbapenem-resistant Enterobacter', 'Carbapenem-resistant Enterobacterales', 'Carbapenem-resistant Klebsiella', 'Carbapenem-resistant Pseudomonas aeruginosa', 'Cefepime-resistant Enterobacter', 'Cephalosporin-resistant E.coli', 'Cephalosporin-resistant Klebsiella', 'Cephalosporin-resistant Pseudomonas aeruginosa', 'Daptomycin-resistant Enterococcus faecalis', 'Daptomycin-resistant Enterococcus faecium', 'Daptomycin-resistant MRSA', 'Fluoroquinolone-resistant E.coli', 'Fluoroquinolone-resistant MRSA', 'Fluoroquinolone-resistant Pseudomonas aeruginosa', 'Linezolid-resistant MRSA', 'MDR Acinetobacter', 'MDR E.coli', 'MDR Enterobacter', 'MDR Klebsiella', 'MDR Pseudomonas aeruginosa', 'Methicillin-resistant Staphylococcus aureus', 'Pip/Tazobactam-resistant Pseudomonas aeruginosa', 'Vancomycin-resistant coagulase-negative Staphylococci', 'Vancomycin-resistant Enterococcus faecalis', 'Vancomycin-resistant Enterococcus faecium', 'Vancomycin-resistant MRSA')
@@ -18,6 +23,11 @@ group by "label"
 union all
 select 'cdc_nrevss_positivity' as dataset, "pathogen" as label, count(*) as row_count
 from {{ ref('int_cdc_nrevss_positivity') }}
+where "pathogen" is not null and "pathogen" not in ('COVID-19', 'Influenza', 'RSV')
+group by "pathogen"
+union all
+select 'cdc_nssp_lab_positivity' as dataset, "pathogen" as label, count(*) as row_count
+from {{ ref('int_cdc_nssp_lab_positivity') }}
 where "pathogen" is not null and "pathogen" not in ('COVID-19', 'Influenza', 'RSV')
 group by "pathogen"
 union all
@@ -35,6 +45,11 @@ select 'cdc_schoolvaxview_kindergarten' as dataset, "vaccine" as label, count(*)
 from {{ ref('int_cdc_schoolvaxview_kindergarten') }}
 where "vaccine" is not null and "vaccine" not in ('DTP, DTaP, or DT', 'Exemption', 'Hepatitis B', 'MMR', 'MMR (PAC)', 'Polio', 'Varicella')
 group by "vaccine"
+union all
+select 'nchs_resp_deaths_pct' as dataset, "pathogen" as label, count(*) as row_count
+from {{ ref('int_nchs_resp_deaths_pct') }}
+where "pathogen" is not null and "pathogen" not in ('COVID-19', 'Influenza', 'RSV', 'Combined')
+group by "pathogen"
 )
 
 select dataset, label, row_count,
