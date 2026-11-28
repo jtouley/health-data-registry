@@ -1,0 +1,11 @@
+# The reviewed contents of each dbt package in package-lock.yml: the sha256 over every installed file's path and
+# sha256 (scripts/dbt_packages.py tree_digest), checked after `dbt deps` by make transform and the refresh. A
+# version bump updates packages.yml, package-lock.yml and this file in one reviewed pull request; print the new
+# digests with `uv run python scripts/dbt_packages.py --print` after installing it.
+packages:
+  dbt_expectations:
+    version: 0.10.10
+    sha256: 98bcd1cce18f5257502757cb6abeb1acf8a9c9ca3db61732524f4cf6237a33f1
+  dbt_date:
+    version: 0.21.0
+    sha256: 0e21ecc535deba7ab18a9b7e321d4f0cd4cd9dbd6be63f921476c2773f4b2fe9
