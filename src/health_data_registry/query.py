@@ -1179,12 +1179,6 @@ class Engine:
                 self.manifest(t)  # brings a hub or run-time source onto this computer on first use
         cols, rows = self._run(q.sql, guarded=q)
         ids = sorted(t for t in q.tables if t in self.manifests)
-        notices = [
-            n
-            for i in ids
-            if self.manifests[i].origin in ("publisher", "private")
-            for n in self.manifests[i].notes
-        ]
         if len(ids) == 1:
             ds = self.registry.get(ids[0])
             out = envelope(
@@ -1192,14 +1186,17 @@ class Engine:
                 method=" ".join(["Read-only SQL.", *q.notes]),
             )  # fmt: skip
             return out
-        caveats = list(notices)
-        for i in ids:  # each source's review state and licence travel with a joined answer too
+        caveats: list[str] = []
+        for i in ids:  # each source's review state, licence and caveats travel with a joined answer, named
             ds = self.registry.get(i)
-            if self.manifests[i].catalog_status != "reviewed":
+            m = self.manifests[i]
+            printed = list(m.notes) if m.origin in ("publisher", "private") else []
+            caveats += [f"{i}: {n}" for n in printed]
+            if m.catalog_status != "reviewed":
                 caveats.append(
                     f"{i}: this dataset's contract is a draft that no maintainer has reviewed yet."
                 )
-            caveats += [f"{i}: {c}" for c in ds.entry.caveats]
+            caveats += [f"{i}: {c}" for c in _caveats_not_in_notes(ds, printed)]
         return {
             "columns": cols,
             "rows": [list(r) for r in rows],
@@ -1212,6 +1209,16 @@ class Engine:
     def _tables(self) -> dict[str, frozenset[str]]:
         self.connect()
         return {i: self.registry.get(i).contract.column_names for i in self.manifests}
+
+
+def _caveats_not_in_notes(ds: Dataset, printed: Sequence[str]) -> list[str]:
+    """The catalog's caveats that the notes printed beside them don't already say. A private source's notes carry
+    each one as "Note: <caveat>" (private.notes), so adding the catalog's list again printed every caveat twice
+    (#166). Pass only the notes the answer prints, so a caveat is never dropped in favour of a line not shown."""
+    from health_data_registry.private import CAVEAT_NOTE
+
+    said = {n.removeprefix(CAVEAT_NOTE) for n in printed}
+    return [c for c in ds.entry.caveats if c not in said]
 
 
 def _source(ds: Dataset, m: Manifest) -> dict[str, Any]:
@@ -1250,7 +1257,7 @@ def envelope(
 ) -> dict[str, Any]:
     truncated = len(rows) > MAX_ROWS
     out = [list(r) for r in rows[:MAX_ROWS]]
-    notes = list(ds.entry.caveats)
+    notes = _caveats_not_in_notes(ds, m.notes)  # envelope prints every one of m.notes below
     if m.catalog_status != "reviewed":
         notes.insert(0, "This dataset's contract is a draft that no maintainer has reviewed yet.")
     if m.partial:

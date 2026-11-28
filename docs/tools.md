@@ -422,7 +422,9 @@ the contract's rules too: across places it leaves the publisher's total rows out
 so); it never adds weekly counts or year-to-date counts across weeks; an empty value (CDC's `-` included) stops
 it rather than counting as 0; and it refuses a filter on the count it adds up, which would drop the empty values
 unseen. These rules cover sums only, not other ways of combining values (an average, a product, a largest
-value). Prefer the named tools: they apply every rule of the contract for you. This is changing, under the rule
+value). A sum that only counts matching rows, such as `SUM(CASE WHEN ... THEN 1 ELSE 0 END)`, adds up no
+published number, so it is allowed wherever `count_if` is. It is still a sum, though: on a table with total
+rows it leaves them out and says so, while `count_if` counts them. Prefer the named tools: they apply every rule of the contract for you. This is changing, under the rule
 [show everything; qualify, don't decide](data-conventions.md#show-everything-qualify-dont-decide): these
 refusals and the dropped total rows will become sums with a note, and the figure without the problem beside
 them.

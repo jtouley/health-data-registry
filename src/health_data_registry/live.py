@@ -19,7 +19,7 @@ import hashlib
 import time
 from dataclasses import dataclass
 from datetime import UTC
-from typing import Any
+from typing import Any, Final
 
 import duckdb
 
@@ -123,6 +123,10 @@ def fetch_live(ds: Dataset, get: Any) -> LiveTable:
     return LiveTable(records=records, manifest=m, fetched=time.monotonic(), dashboard=ds.entry.source.browser)
 
 
+# Rows per INSERT in load_live: few statements for any table, and a bounded extra copy while each one runs.
+LOAD_CHUNK: Final = 10_000
+
+
 def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[str, Any]]) -> Staged:
     """Stage records into an in-memory silver table named after the dataset (the same step as the lake).
 
@@ -148,11 +152,23 @@ def load_live(con: duckdb.DuckDBPyConnection, ds: Dataset, records: list[dict[st
 
     con.execute(f"CREATE TEMP TABLE {q(raw)} ({', '.join(q(f) + ' VARCHAR' for f in fields)})")
     try:
-        if records:
-            marks = ", ".join("?" for _ in fields)
-            con.executemany(
-                f"INSERT INTO {q(raw)} VALUES ({marks})",  # noqa: S608 - quoted contract identifiers, bound values
-                [[r.get(f) for f in fields] for r in records],
+        # Each field's values go in as one bound list, and the lists are unnested side by side, row i from
+        # position i of each: one statement per LOAD_CHUNK rows. An executemany runs one INSERT per row, which made
+        # the first question on a full conference year of abstracts take over a minute (#166); the chunk caps the
+        # extra copy the lists make, since this connection may not spill to disk.
+        cols = ", ".join(f"unnest(${i}::VARCHAR[])" for i in range(1, len(fields) + 1))
+        for start in range(0, len(records), LOAD_CHUNK):
+            chunk = records[start : start + LOAD_CHUNK]
+            values = [[r.get(f) for r in chunk] for f in fields]
+            # A VARCHAR list would cast any other value on the way in (2 becomes '2.0' beside a 1.5), so the
+            # raw layer takes text or NULL only, exactly as the callers read it (hard rule 15).
+            if any(v is not None and not isinstance(v, str) for vs in values for v in vs):
+                raise ValueError(
+                    f"{ds.id}: load_live takes text or NULL values only, as the publisher sent them"
+                )
+            con.execute(
+                f"INSERT INTO {q(raw)} SELECT {cols}",  # quoted contract identifiers, bound values
+                values,
             )
         present = {k for r in records for k in r} or None
         return stage_checked(

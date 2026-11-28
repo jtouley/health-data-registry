@@ -422,6 +422,95 @@ def test_query_sql_refuses_a_sum_it_cant_trace(sql: str) -> None:
     assert e.value.code == "sum_over_subquery"
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT count_if(m1 > 0) FROM t",
+        "SELECT sum(CASE WHEN m1 > 0 THEN 1 ELSE 0 END) FROM t",
+        "SELECT sum(CASE WHEN m1 > 0 THEN 1 END) FROM t",
+        "SELECT sum(CASE WHEN m1 > 0 THEN 1 WHEN m1 < 0 THEN 0 ELSE NULL END) FROM t",
+        "SELECT sum((CASE WHEN m1 > 0 THEN 1 ELSE 0 END)) FROM t",
+        "SELECT sum(IF(m1 > 0, 1, 0)) FROM t",
+        "SELECT year, sum(CASE WHEN label = 'a' THEN 1 ELSE 0 END) FROM t GROUP BY year",
+        "SELECT sum(CASE WHEN m1 > 0 THEN 1 ELSE 0 END) OVER (PARTITION BY year) FROM t",
+        "SELECT sum(CASE label WHEN 'a' THEN 1 ELSE 0 END) FROM t",  # a simple CASE
+        "SELECT sum(IF(m1 > 0, 1)) FROM t",  # no false branch: NULL
+        "SELECT fsum(CASE WHEN m1 > 0 THEN 1 ELSE 0 END) FROM t",  # the other summing functions too
+        "SELECT kahan_sum(IF(m1 > 0, 1, 0)) FROM t",
+        # Over a subquery too, as count(*) is: no value of t is added, so there is nothing to trace.
+        "SELECT sum(CASE WHEN m1 > 0 THEN 1 ELSE 0 END) FROM (SELECT m1 FROM t) AS d",
+    ],
+)
+def test_query_sql_counts_rows_with_a_sum_of_ones_as_it_does_with_count_if(sql: str) -> None:
+    """A sum of 1 or 0 per row counts rows, as count_if does: it adds up no value the publisher sent (#166)."""
+    assert _guard(sql)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT sum(CASE WHEN m1 > 0 THEN m1 ELSE 0 END) FROM t",
+        "SELECT sum(CASE WHEN m1 > 0 THEN 1 ELSE m1 END) FROM t",
+        "SELECT sum(CASE WHEN m1 > 0 THEN 2 ELSE 0 END) FROM t",
+        "SELECT sum(CASE WHEN m1 > 0 THEN 1 ELSE 0 END * m1) FROM t",
+        "SELECT sum(IF(m1 > 0, m1, 0)) FROM t",
+        "SELECT sum(CASE WHEN m1 > 0 THEN '1' ELSE '0' END) FROM t",
+        # Only a bare literal 1, 0 or NULL counts a row; anything that could be another number is checked.
+        "SELECT sum(CASE WHEN m1 > 0 THEN 1.0 ELSE 0 END) FROM t",
+        "SELECT sum(CASE WHEN m1 > 0 THEN TRUE ELSE 0 END) FROM t",
+        "SELECT sum(CASE WHEN m1 > 0 THEN -1 ELSE 0 END) FROM t",
+        "SELECT sum(CASE WHEN m1 > 0 THEN CAST(1 AS INTEGER) ELSE 0 END) FROM t",
+        "SELECT sum(DISTINCT CASE WHEN m1 > 0 THEN 1 ELSE 0 END) FROM t",
+        "SELECT fsum(CASE WHEN m1 > 0 THEN m1 ELSE 0 END) FROM t",
+    ],
+)
+def test_query_sql_still_refuses_a_conditional_sum_of_values(sql: str) -> None:
+    with pytest.raises(SqlRefused) as e:
+        _guard(sql)
+    # Still the non-additive refusal of main: turning it into a qualified answer (hard rule 2, ADR 0018) is #226.
+    assert e.value.code == "non_additive"
+
+
+def _ruled(sql: str) -> Any:
+    """The guard on a table with every SumRules rule: total rows, per-week counts and measures (as NNDSS has)."""
+    from health_data_registry.sql_guard import SumRules
+
+    rule = SumRules(
+        total_rows="location2 IS NOT NULL",
+        areas=frozenset({"states", "location2"}),
+        measures=frozenset({"m1"}),
+        per_week=frozenset({"m1"}),
+        within="week",
+    )
+    tables = {"n": frozenset({"states", "location2", "week", "m1"})}
+    return guard_sql(sql, allowed_tables=tables, sum_rules={"n": rule}, max_rows=10)
+
+
+def test_a_sum_of_ones_follows_the_tables_sum_rules_and_count_if_does_not() -> None:
+    """A row-count sum passes the non-additive check as count_if does, but it is still a sum: on a table with total
+    rows it leaves them out and says so, so no area is counted twice. count_if is not a sum and counts them (#166).
+    """
+    for sql in (
+        "SELECT sum(CASE WHEN m1 > 0 THEN 1 ELSE 0 END) FROM n",
+        "SELECT sum(CASE m1 WHEN 0 THEN 1 ELSE 0 END) FROM n",  # a simple CASE only compares m1, never adds it
+    ):
+        q = _ruled(sql)
+        assert "FILTER(WHERE NOT COALESCE((NOT n.location2 IS NULL), FALSE))" in q.sql
+        assert any("total rows" in n for n in q.notes)
+        assert "ERROR(" not in q.sql  # m1 is only tested, so an empty m1 doesn't stop the count
+    plain = _ruled("SELECT count_if(m1 > 0) FROM n")
+    assert "FILTER" not in plain.sql and not plain.notes
+    # A sum that adds m1 itself is still checked against every rule.
+    with pytest.raises(SqlRefused) as e:
+        _ruled("SELECT sum(CASE m1 WHEN 0 THEN m1 ELSE 0 END) FROM n")
+    assert e.value.code == "weekly_sum"
+    # A row-count sum over an inner query of a ruled table can't be checked against its total rows, so it is
+    # refused, as any sum is there.
+    with pytest.raises(SqlRefused) as e:
+        _ruled("SELECT sum(CASE WHEN m1 > 0 THEN 1 ELSE 0 END) FROM (SELECT m1 FROM n) AS d")
+    assert e.value.code == "sum_over_subquery"
+
+
 def test_query_sql_without_flags_is_unchanged() -> None:
     assert guard_sql("SELECT sum(m1) FROM t", allowed_tables=TABLES).sql
 

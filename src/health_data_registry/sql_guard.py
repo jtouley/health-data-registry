@@ -833,6 +833,39 @@ def _is_sum(node: exp.Expr) -> bool:
     )
 
 
+def _is_one_or_zero(node: exp.Expr | None) -> bool:
+    """A literal 1 or 0 (or NULL, or no ELSE): what a row adds to a count of the rows that match."""
+    if node is None or isinstance(node, exp.Null):
+        return True
+    return isinstance(node, exp.Literal) and not node.is_string and node.name in ("0", "1")
+
+
+def _counts_rows(node: exp.Expr) -> bool:
+    """Is this sum a count of rows, as count_if is: SUM(CASE WHEN ... THEN 1 ELSE 0 END) or SUM(IF(..., 1, 0))?
+
+    Every row adds 1 or 0, never a value from the table, so no published value is added to another: it counts rows,
+    as count(*) and count_if already do, and the non-additive check (_check_sums) passes it as it passes them (#166).
+    It is still a sum, so a table's SumRules still apply to it (_apply_sum_rules): on a table with total rows it
+    leaves them out and says so, where count_if counts them. _added is the per-column sibling of this test: it
+    tells a column only tested inside a sum from one added up.
+    """
+    if isinstance(node, exp.Anonymous):  # fsum, kahan_sum ...: the argument is in expressions, not this
+        if len(node.expressions) != 1:
+            return False
+        arg = node.expressions[0]
+    else:
+        arg = node.this
+    while isinstance(arg, exp.Paren):
+        arg = arg.this
+    if isinstance(arg, exp.Case):  # CASE x WHEN ... too: only the branches' results are added
+        return all(
+            _is_one_or_zero(i.args.get("true")) for i in arg.args.get("ifs") or []
+        ) and _is_one_or_zero(arg.args.get("default"))
+    if isinstance(arg, exp.If):
+        return _is_one_or_zero(arg.args.get("true")) and _is_one_or_zero(arg.args.get("false"))
+    return False
+
+
 def _grouped_columns(select: exp.Select) -> set[tuple[str, str]]:
     """(qualifier, column) pairs a SELECT groups by: by column, output alias, position or GROUP BY ALL."""
     group = select.args.get("group")
@@ -871,7 +904,9 @@ def _check_sums(
     if not isinstance(select, exp.Select) or not loose:
         return
     sums = [
-        n for n in select.walk() if _is_sum(n) and n.find_ancestor(exp.Select, exp.SetOperation) is select
+        n
+        for n in select.walk()
+        if _is_sum(n) and n.find_ancestor(exp.Select, exp.SetOperation) is select and not _counts_rows(n)
     ]
     if not sums:
         return
@@ -948,11 +983,16 @@ def _sum_columns(node: exp.Expr, alias: str, owners: Mapping[str, str]) -> list[
 
 def _added(column: exp.Column, top: exp.Expr) -> bool:
     """True when a sum adds the column's value up; False when the column is only tested (IS NULL, a comparison,
-    IN, BETWEEN, LIKE) between it and the sum `top`, as in sum(CASE WHEN m1 IS NULL THEN 1 ELSE 0 END)."""
+    IN, BETWEEN, LIKE) between it and the sum `top`, as in sum(CASE WHEN m1 IS NULL THEN 1 ELSE 0 END). The
+    operand of a simple CASE (CASE m1 WHEN 0 THEN 1 ... END) is only compared with each WHEN, so it is tested too."""
+    child: exp.Expr = column
     node = column.parent
     while node is not None and node is not top:
         if isinstance(node, exp.Predicate):
             return False
+        if isinstance(node, exp.Case) and node.args.get("this") is child:
+            return False
+        child = node
         node = node.parent
     return True
 
