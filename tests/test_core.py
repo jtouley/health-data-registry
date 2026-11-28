@@ -225,7 +225,7 @@ def test_get_series_csv(lake: Path, registry: Registry) -> None:
         "Legionellosis,confirmed and probable"
     )
     assert lines[3].startswith(
-        "Michigan,2024,,,,as_published,no total: its one value is suppressed or missing in the source,,cases"
+        "Michigan,2024,,,,as_published,no total: its one value has no number in the source,,cases"
     )  # the publisher's 'N' stays empty, not 0
     assert lines[4].startswith(
         "Ohio,2023,400,,,as_published,the publisher marks no provisional or final status for this row,,cases"

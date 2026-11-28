@@ -418,7 +418,6 @@ models:
   - name: is_total_row
     data_type: boolean
     description: True on the publisher's total and summary rows (the contract's totalRows). They are kept as rows;
-      a sum that takes one in with the rows it totals counts those cases twice, so the served answer says so and
-      gives the sum without it (hard rule 2, ADR 0018).
+      adding one to the rows it totals counts those cases twice.
     meta:
       derived_from_contract: true

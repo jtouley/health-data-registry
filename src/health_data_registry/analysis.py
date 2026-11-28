@@ -316,10 +316,14 @@ def populations(
     places: Sequence[str],
     year_start: int | None,
     year_end: int | None,
-) -> tuple[dict[tuple[str, int], tuple[float | None, Dataset]], set[int]]:
-    """Population by (place, year) from every population series, and the years any source covers."""
+) -> tuple[dict[tuple[str, int], tuple[float | None, Dataset, int]], set[int]]:
+    """Population by (place, year) from every population series, and the years any source covers.
+
+    Each figure comes with how many of the values added up into it had no number (0 when none): such a population
+    is the sum of the reported values only, so it may be too low, and every rate on it says so (ADR 0018).
+    """
     want_nation = not places or any(_place_name(p) == NATION for p in places)
-    found: dict[tuple[str, int], tuple[float | None, Dataset]] = {}
+    found: dict[tuple[str, int], tuple[float | None, Dataset, int]] = {}
     years: set[int] = set()
     for ds, s in pops:
         if s.location_dimension is None and not want_nation:
@@ -331,7 +335,7 @@ def populations(
         for o in rows:
             years.add(o.year)
             if o.value is not None:  # an empty figure never hides a real one from another series
-                found.setdefault((o.place, o.year), (o.value, ds))
+                found.setdefault((o.place, o.year), (o.value, ds, o.suppressed))
     return found, years
 
 
@@ -360,11 +364,9 @@ def not_incidence_note(ds: Dataset, s: Series) -> str | None:
             f"not a rate of disease in people: '{s.label}' counts {why} (the catalog's not_a_human_case_count for "
             f"{ds.id}), so this is that count per 100,000 people"
         )
-    if why := ds.not_incidence(s.condition) or ds.not_incidence(s.label):
-        return (
-            f"screening detections, not incidence: '{s.label}' counts {why} (the contract's notIncidence for "
-            f"{ds.id})"
-        )
+    for label in (s.condition, s.label):
+        if why := ds.not_incidence(label):
+            return f"{ds.not_incidence_label(label)}: '{s.label}' counts {why} (the contract's notIncidence for {ds.id})"
     return None
 
 
@@ -374,7 +376,9 @@ def counterpart_series(ds: Dataset, s: Series) -> Series | None:
     other = ds.incidence_counterpart(s.condition) or ds.incidence_counterpart(s.label)
     if other is None:
         return None
-    return next((c for c in ds.semantic.series if c.condition == other and c.metric == s.metric), None)
+    named = [c for c in ds.semantic.series if c.condition == other]
+    found = named or (ds.condition_series(other) if other in ds.entry.conditions.labels else [])
+    return next((c for c in found if c.metric == s.metric), None)
 
 
 def _with_counterparts(matches: Sequence[tuple[Dataset, Series]]) -> list[tuple[Dataset, Series]]:
@@ -394,12 +398,21 @@ def _qualified_notes(matches: Sequence[tuple[Dataset, Series]]) -> list[str]:
     declaration, and where the incidence counterpart's figure is."""
     out: list[str] = []
     for ds, s in matches:
-        note = not_incidence_note(ds, s)
-        if note is None:
+        if why := ds.not_a_human_case_count(s.label):
+            out.append(
+                f"A rate from '{s.label}' is not a rate of disease in people: it counts {why}, per 100,000 people "
+                f"({ds.id} catalog, not_a_human_case_count)."
+            )
+            continue
+        label = next((x for x in (s.condition, s.label) if ds.not_incidence(x)), None)
+        if label is None:
             continue
         other = counterpart_series(ds, s)
         beside = f" The figure for '{other.label}' is beside it, on its own row." if other else ""
-        out.append(f"{ds.id}: a rate from '{s.label}' is {note}.{beside}")
+        out.append(
+            f"A rate from '{s.label}' is labelled '{ds.not_incidence_label(label)}': its counts are "
+            f"{ds.not_incidence(label)} ({ds.id} contract, notIncidence).{beside}"
+        )
     return list(dict.fromkeys(out))
 
 
@@ -408,6 +421,15 @@ def _no_number_why(ds: Dataset, o: Obs) -> str:
     code = "" if o.flag is None else str(o.flag)
     meaning = dict(pair for col in ds.contract.columns for pair in col.flag_codes).get(code) if code else None
     return f"has no number (publisher flag '{code}' = {meaning})" if meaning else "suppressed or missing"
+
+
+def _partial_population(place: str, year: int, n: int) -> str:
+    """The note on a rate whose Census population is the sum of its reported values only."""
+    return (
+        f"the {place} population for {year} is the sum of the reported values only: {n} value"
+        f"{'s' if n != 1 else ''} in it had no number in the source and are not counted (never as 0), so the "
+        "population may be too low and this rate too high"
+    )
 
 
 def _partial_sum(o: Obs) -> str:
@@ -434,6 +456,7 @@ class RateRow:
     flags: list[str]
     case_ds: Dataset
     pop_ds: Dataset | None
+    part: str | None = None  # the contract's partialPlaces note when the count covers only part of the place
 
 
 def _rate_rows(
@@ -461,7 +484,7 @@ def _rate_rows(
             used.append(ds)
         for o in got:
             flags: list[str] = []
-            denom, pds = pop.get((o.place, o.year), (None, None))
+            denom, pds, pop_gaps = pop.get((o.place, o.year), (None, None, 0))
             est = None
             part = partial_area(ds, s, o.raw_place)
             qualified = not_incidence_note(ds, s)
@@ -470,7 +493,7 @@ def _rate_rows(
             elif o.value is None and o.suppressed:
                 flags.append(
                     f"{o.suppressed} value{'s' if o.suppressed != 1 else ''} in this count suppressed or missing "
-                    "in the source and none reported, so no count and no rate (it is not zero)"
+                    "in the source, and none of them has a number, so no count and no rate (it is not zero)"
                 )
             elif o.value is None:
                 flags.append(f"count {_no_number_why(ds, o)} in the source, so no rate (it is not zero)")
@@ -496,13 +519,17 @@ def _rate_rows(
                     )
                 if o.suppressed:
                     flags.append(_partial_sum(o))
+                if pop_gaps:
+                    flags.append(_partial_population(o.place, o.year, pop_gaps))
                 if rule and rule.applies(o.value, est):
                     flags.append(f"unreliable by the source's own rule: {rule.text}")
             if o.flag:
                 flags.append(f"source flag: {o.flag}")
             if _provisional(o.status):
                 flags.append("provisional: may change")
-            rows.append(RateRow(o.place, o.year, s.label, o.value, denom, est, o.status, flags, ds, pds))
+            rows.append(
+                RateRow(o.place, o.year, s.label, o.value, denom, est, o.status, flags, ds, pds, part)
+            )
             if pds is not None:
                 used.append(pds)
     return rows, unmatched, used
@@ -666,6 +693,18 @@ def compare_rates(
         table.append([f"rate per 100,000: {nm}", _sig(est.value), _sig(est.lower), _sig(est.upper),
                       r.cases, r.population, r.status, "; ".join(r.flags)])  # fmt: skip
     small = min(ca, cb) < stats.SMALL_COUNT
+    # A rate whose count covers only part of its place (partialPlaces) carries that into the ratio and the
+    # difference, so each says so on its own row (ADR 0018).
+    biased = "; ".join(
+        f"{r.place}'s count covers only part of the place ({r.part}; the contract's partialPlaces for "
+        f"{r.case_ds.id}), so its rate may be too low and this comparison is biased by it"
+        for r in (a, b)
+        if r.part
+    )
+
+    def with_bias(text: str) -> str:
+        return "; ".join(t for t in (text, biased) if t)
+
     rr_label = f"rate ratio ({name_a} / {name_b})"
     if cb == 0:
         table.append([rr_label, None, None, None, "", "", "",
@@ -673,15 +712,16 @@ def compare_rates(
     else:
         rr = stats.rate_ratio_exact(ca, pa, cb, pb) if small else stats.rate_ratio(ca, pa, cb, pb)
         how = "exact conditional interval (fewer than 5 cases in a group)" if small else ""
-        table.append([rr_label, _sig(rr.value), _sig(rr.lower), _sig(rr.upper), "", "", "", how])  # fmt: skip
+        table.append([rr_label, _sig(rr.value), _sig(rr.lower), _sig(rr.upper), "", "", "", with_bias(how)])  # fmt: skip
     rd_label = f"rate difference per 100,000 ({name_a} - {name_b})"
     if small:
         table.append([rd_label, _sig(rd.value), None, None, "", "", "",
-                      "no interval: with fewer than 5 cases in a group the normal approximation is not "
-                      "trustworthy; use the rate ratio's exact interval"])  # fmt: skip
+                      with_bias("no interval: with fewer than 5 cases in a group the normal approximation is not "
+                                "trustworthy; use the rate ratio's exact interval")])  # fmt: skip
     else:
-        table.append([rd_label, _sig(rd.value), _sig(rd.lower), _sig(rd.upper), "", "", "", ""])  # fmt: skip
+        table.append([rd_label, _sig(rd.value), _sig(rd.lower), _sig(rd.upper), "", "", "", with_bias("")])  # fmt: skip
     qualified = [(ds, s) for ds, s in matches if ds.id == a.case_ds.id and s.label == a.label]
+    side_notes: list[str] = []
     for ds, s in qualified[:1]:
         other = counterpart_series(ds, s)
         if other is None:
@@ -695,7 +735,12 @@ def compare_rates(
                 if r.label == other.label and r.case_ds.id == ds.id
             ]
         except QueryRefused as e:
-            return refusal(e, fmt)
+            # The figure beside the comparison is context: if it can't be read, the comparison still stands.
+            side_notes.append(
+                f"The rates for '{other.label}' that would go beside these couldn't be read ({e}); ask "
+                f"get_rate for '{other.label}' to see them."
+            )
+            beside = []
         for r in beside:
             table.append([f"rate per 100,000 of {r.label}: {r.place} {r.year}",
                           _sig(r.est.value) if r.est else None, _sig(r.est.lower) if r.est else None,
@@ -710,6 +755,7 @@ def compare_rates(
         "unlikely explanation, not that risk differs. " + _CANT_SAY_SURVEILLANCE + " " + CRUDE_WARNING,
         *_rule_notes([a.case_ds]),
         *_qualified_notes([(a.case_ds, s) for s in a.case_ds.semantic.series if s.label == a.label][:1]),
+        *side_notes,
     ]
     if a.year != b.year:
         try:
@@ -816,18 +862,20 @@ def get_trend(
                 part = partial_area(ds, s, seg[0].raw_place)
                 if part and fit_on == "rates":
                     notes.append(
-                        f"{ds.id}: catchment area only: the counts for {seg[0].place} cover only part of it ({part}; "
-                        f"the contract's partialPlaces), so its population overstates the denominator; the trend "
-                        "assumes that part stays the same share of the place."
+                        f"{ds.id}, catchment area only: the counts for {seg[0].place} cover only part of the place "
+                        f"({part}; the contract's partialPlaces), so the {seg[0].place} population overstates the "
+                        "denominator; the trend assumes that part stays the same share of the place."
                     )
                 elif part:
-                    notes.append(f"{ds.id}: the counts for {seg[0].place} cover only part of it ({part}).")
+                    notes.append(
+                        f"{ds.id}: the counts for {seg[0].place} cover only part of the place ({part})."
+                    )
                 span = f"{min(years)}-{max(years)}"
                 if len(pts) < 3:
                     too_few.append(f"{span} ({len(pts)} usable year{'s' if len(pts) != 1 else ''})")
                     continue
                 on_rates = fit_on == "rates"
-                denoms = [pop.get((o.place, o.year), (None, None))[0] for o in pts]
+                denoms = [pop.get((o.place, o.year), (None, None, 0))[0] for o in pts]
                 missing = [str(o.year) for o, d in zip(pts, denoms, strict=True) if d is None or d <= 0]
                 if on_rates and missing:
                     no_denominator.append(f"{pts[0].place} in {', '.join(missing)}")
@@ -839,6 +887,13 @@ def get_trend(
                 )
                 if on_rates:
                     used += [pop[(o.place, o.year)][1] for o in pts[:1]]
+                    short = [str(o.year) for o in pts if pop[(o.place, o.year)][2]]
+                    if short:
+                        notes.append(
+                            f"The {pts[0].place} population for {', '.join(short)} is the sum of the reported values "
+                            "only (some values had no number in the source and are not counted, never as 0), so it "
+                            "may be too low and those years' rates too high, which can bend the trend."
+                        )
                 table.append([
                     pts[0].place, s.label, f"{min(o.year for o in pts)}-{max(o.year for o in pts)}", len(pts),
                     _sig(fit.apc), _sig(fit.lower), _sig(fit.upper),
@@ -1027,9 +1082,26 @@ def age_adjust(
     place = c_rows[0].place
     table = [[place, year, cs.label, _sig(est.value), _sig(est.lower), _sig(est.upper), _sig(crude.value), sum(d),
               sum(n), name, cds.id, pds.id]]  # fmt: skip
+    short = [
+        f"{what} for {o.extra[0]} ({o.suppressed} value{'s' if o.suppressed != 1 else ''} with no number)"
+        for what, rows in (("the count", c_rows), ("the population", p_rows))
+        for o in rows
+        if o.value is not None and o.suppressed
+    ]
     out_notes = [
         "Method: direct standardisation to the 2000 US standard population, with the gamma (Fay-Feuer) 95% "
         "interval that NCHS uses.",
+        *(
+            [
+                "Some age groups' figures are the sum of the reported values only, because some values had no "
+                "number in the source and are not counted (never as 0): "
+                + "; ".join(short)
+                + ". A count that "
+                "is too low makes the rate too low, and a population that is too low makes it too high."
+            ]
+            if short
+            else []
+        ),
         "What this can't say: an age-adjusted rate is a summary for comparing places or years with different age "
         "structures, not the rate anyone actually experienced; it does not adjust for anything but age. "
         + _CANT_SAY_SURVEILLANCE
@@ -1093,6 +1165,10 @@ def check_signal(
         return refusal(e, fmt)
     weekly = {(o.year, int(o.extra[0])): o.value for o in rows}
     flags = {(o.year, int(o.extra[0])): o.flag for o in rows}
+    # A week's count that is itself the sum of reported values only (some rows in it had no number).
+    short_weeks = {
+        (o.year, int(o.extra[0])): o.suppressed for o in rows if o.value is not None and o.suppressed
+    }
     place = rows[0].place if rows else location
     meaning = {c: m for col in ds.contract.columns for c, m in col.flag_codes}
 
@@ -1104,6 +1180,7 @@ def check_signal(
         label = f"{y} weeks {first}-{first + WINDOW - 1}"
         absent = [w for w in span if (y, w) not in weekly]
         empty = [w for w in span if (y, w) in weekly and weekly[(y, w)] is None]
+        short = [w for w in span if (y, w) in short_weeks]
         nums = [float(v) for w in span if (v := weekly.get((y, w))) is not None]
         gaps: list[str] = []
         if absent:
@@ -1116,9 +1193,16 @@ def check_signal(
                 f"week{'s' if len(empty) > 1 else ''} {', '.join(map(str, empty))} with no number"
                 + (f" (publisher flag {why})" if why else " (suppressed or missing)")
             )
+        if short:
+            gaps.append(
+                f"week{'s' if len(short) > 1 else ''} {', '.join(map(str, short))} the sum of the reported values "
+                "only (some had no number)"
+            )
         return (float(sum(nums)) if nums else None), (f"{label}: {', '.join(gaps)}" if gaps else "")
 
     current, current_gap = total(year, week - WINDOW + 1)
+    current_span = range(week - WINDOW + 1, week + 1)
+    not_yet = [w for w in current_span if (year, w) not in weekly]
     history = [
         total(year - k, first)
         for k in range(1, HISTORY_YEARS + 1)
@@ -1136,8 +1220,8 @@ def check_signal(
             held,
             [
                 f"No signal is worked out: no week of {year} weeks {week - WINDOW + 1}-{week} has a number in the "
-                f"data ({current_gap}), so there is no current 4-week total to compare. A week with no number is "
-                "never counted as 0"
+                f"data ({current_gap.split(': ', 1)[-1]}), so there is no current 4-week total to compare. A week "
+                "with no number is never counted as 0"
                 + (
                     f" ('{zero}' is {ds.entry.agency}'s 'no reported cases', read as not reported)"
                     if zero
@@ -1150,7 +1234,10 @@ def check_signal(
             ],
         )
     hist = [h for h, _ in history if h is not None]
-    gaps = [g for g in [current_gap, *(g for _, g in history)] if g]
+    # Periods with no week that has a number are not in the baseline at all; they are named apart from the
+    # periods that add up only some of their weeks.
+    absent = [g for h, g in history if h is None]
+    gaps = [g for g in [current_gap, *(g for h, g in history if h is not None)] if g]
     complete = [h for h, g in history if h is not None and not g]
     try:
         sig = stats.historical_limits(float(current), hist)
@@ -1175,8 +1262,21 @@ def check_signal(
     used = f"{len(hist)} historical 4-week totals" + (
         "; a total with weeks that have no number adds the reported weeks only" if gaps else ""
     )
+    verdict = words[sig.flag]
+    if not_yet:
+        # Weeks of the current period not in the data yet: the total so far can't be judged against whole periods.
+        verdict = (
+            f"not judged: week{'s' if len(not_yet) > 1 else ''} {', '.join(map(str, not_yet))} of the current "
+            f"4 weeks {'are' if len(not_yet) > 1 else 'is'} not in the data yet, so the current total covers part "
+            f"of the period (it would read {verdict})"
+        )
+    elif current_gap:
+        verdict = (
+            f"{verdict}, on a current total that adds the reported weeks only ({current_gap.split(': ', 1)[-1]}), "
+            "so it may be too low"
+        )
     table = [[place, s.label, year, f"{week - WINDOW + 1}-{week}", sig.current, _sig(sig.mean), _sig(sig.sd),
-              _sig(sig.ratio), _sig(sig.lower_limit), _sig(sig.upper_limit), words[sig.flag], used, ds.id]]  # fmt: skip
+              _sig(sig.ratio), _sig(sig.lower_limit), _sig(sig.upper_limit), verdict, used, ds.id]]  # fmt: skip
     if alt is not None:
         table.append([place, s.label, year, f"{week - WINDOW + 1}-{week}", alt.current, _sig(alt.mean),
                       _sig(alt.sd), _sig(alt.ratio), _sig(alt.lower_limit), _sig(alt.upper_limit), words[alt.flag],
@@ -1203,10 +1303,20 @@ def check_signal(
         if gaps
         else []
     ) + notes
+    if absent:
+        notes.insert(
+            0,
+            f"{len(absent)} of the 15 historical 4-week periods have no week with a number in the data, so they are "
+            "not in the baseline: "
+            + "; ".join(absent[:5])
+            + (f"; and {len(absent) - 5} more" if len(absent) > 5 else "")
+            + ".",
+        )
     out_notes = [
         "Method: CDC's historical limits for notifiable diseases (Stroup et al., Stat Med 1989; MMWR notifiable "
-        "disease tables): the current 4-week total over the mean of 15 historical 4-week totals (the same, "
-        "preceding and following 4 weeks in each of the past 5 years), flagged beyond 1 +/- 2 SD / mean.",
+        f"disease tables): the current 4-week total over the mean of {len(hist)} historical 4-week totals (of the "
+        "15 periods: the same, preceding and following 4 weeks in each of the past 5 years), flagged beyond 1 +/- "
+        "2 SD / mean.",
         "What this can't say: a flag means more (or fewer) reports than usual for these weeks, not an outbreak; "
         "reporting delays, changes in testing or reporting, and provisional recent weeks can all cause one. A "
         "case-definition change, a shift in ascertainment (more testing) or in coverage (a jurisdiction starting "

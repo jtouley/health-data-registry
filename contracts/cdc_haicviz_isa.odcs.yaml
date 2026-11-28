@@ -167,7 +167,7 @@ schema:
         dimension: uniqueness
         severity: warn
         type: sql
-        description: "In the Age, Sex, Race and Epi class views that the by-group metrics read together, no group label appears twice in one year and topic (none did on 2026-11-25). A label shared by two views would make those metrics refuse the question, so it is reported here first."
+        description: "In the Age, Sex, Race and Epi class views that the by-group metrics read together, no group label appears twice in one year and topic (none did on 2026-11-25). A label shared by two views would return two published figures for one group, each on its own row, so it is reported here first."
         query: "SELECT COUNT(*) FROM (SELECT yearname, topic, series FROM {object} WHERE viewby IN ('Age', 'Sex', 'Race', 'Epi class') AND series <> 'All cases' GROUP BY yearname, topic, series HAVING COUNT(*) > 1)"
         mustBe: 0
 customProperties:

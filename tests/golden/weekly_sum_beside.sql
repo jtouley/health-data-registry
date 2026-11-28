@@ -1,0 +1,4 @@
+WITH base AS (SELECT * FROM "toy_cases" WHERE NOT coalesce((upper(area) = 'US RESIDENTS'), false) AND "area" IN (?)),
+agg AS (SELECT "year" AS "year", sum("wk") AS "weekly", count(*) FILTER (WHERE "wk" IS NULL) AS suppressed_rows FROM base GROUP BY ALL),
+beside AS (SELECT "year", sum(v) AS "year_to_date_at_last_week", CASE WHEN min(v_at) = max(v_at) THEN CAST(min(v_at) AS VARCHAR) ELSE min(v_at) || '-' || max(v_at) END AS "year_to_date_week_read", count(*) FILTER (WHERE v IS NULL) AS "year_to_date_series_with_no_number" FROM (SELECT "year" AS "year", "area", arg_max("ytd", "week") FILTER (WHERE "ytd" IS NOT NULL) AS v, max("week") FILTER (WHERE "ytd" IS NOT NULL) AS v_at FROM base GROUP BY ALL) GROUP BY ALL)
+SELECT agg.*, beside."year_to_date_at_last_week", beside."year_to_date_week_read", beside."year_to_date_series_with_no_number" FROM agg LEFT JOIN beside ON agg."year" IS NOT DISTINCT FROM beside."year" ORDER BY ALL

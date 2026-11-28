@@ -138,7 +138,7 @@ class Result:
 
 
 PRESENTATION_RULES = [
-    "Don't add up numbers yourself, least of all rates, percents, estimates or year-to-date (running) totals: ask a "
+    "Don't add up numbers yourself, especially rates, percents, estimates or year-to-date (running) totals: ask a "
     "tool, which works out a sum when asked and says in a note what it can't mean. A year-to-date figure is read "
     "at one week.",
     "Different condition labels (clinical and screening, confirmed and probable, or any two labels) are different "
@@ -950,14 +950,16 @@ def series_rows(
         )
         if get(r, "suppressed_rows"):
             n_empty = int(get(r, "suppressed_rows"))
+            own = str(get(r, "period_status") or "")
+            why = " (the flag column says why)" if "flag" in at else ""
             status = (
-                f"sum of the reported values only: {n_empty} value{'s' if n_empty != 1 else ''} suppressed or "
-                "missing in the source, not counted (never as 0)"
+                f"sum of the reported values only: {n_empty} value{'s' if n_empty != 1 else ''} with no number "
+                f"in the source{why}, not counted (never as 0)"
                 if r[n_keys] is not None
-                else "no total: its one value is suppressed or missing in the source"
+                else f"no total: its one value has no number in the source{why}"
                 if n_empty == 1
-                else f"no total: all {n_empty} values suppressed or missing in the source"
-            )
+                else f"no total: all {n_empty} values have no number in the source{why}"
+            ) + (f"; {own}" if own else "")
         elif get(r, "not_published"):
             # A published cell left empty is a gap, never a blank read as a value (hard rule 2, ADR 0018).
             status = "suppressed or not published: the publisher's cell for this row is empty"

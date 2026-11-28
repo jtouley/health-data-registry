@@ -327,7 +327,7 @@ def compile_metric(
             method += " " + _across_weeks_note(ds, measure.kind == "running_count", ytd is not None)
             if ytd is not None:
                 sql = _with_running_total(ds, ytd, where_sql, select_dims, group_by, group_cols, sel)
-                out_cols = [*out_cols, RUNNING_TOTAL_BESIDE]
+                out_cols = [*out_cols, RUNNING_TOTAL_BESIDE, RUNNING_TOTAL_WEEK, RUNNING_TOTAL_EMPTY]
         elif running_across:
             method += (
                 f" This adds up running totals across {', '.join(running_across)}, so the same cases are counted "
@@ -359,6 +359,9 @@ def compile_metric(
 
 
 RUNNING_TOTAL_BESIDE = "year_to_date_at_last_week"
+# Beside it: the week (or span of weeks, across series) it was read at, and how many series had no number at all.
+RUNNING_TOTAL_WEEK = "year_to_date_week_read"
+RUNNING_TOTAL_EMPTY = "year_to_date_series_with_no_number"
 
 
 def _running_total_beside(ds: Dataset, column: str | None) -> str | None:
@@ -396,7 +399,10 @@ def _across_weeks_note(ds: Dataset, running: bool, beside: bool) -> str:
     )
     tail = (
         f" Beside it, {RUNNING_TOTAL_BESIDE} is {agency}'s year-to-date count at the last week asked for that has "
-        "a number (it counts from the first week of the year), added across the places in each row."
+        "a number (it counts from the first week of the year), read for each place and condition in the row and "
+        f"added up; {RUNNING_TOTAL_WEEK} gives the week it was read at (a span when they differ), and "
+        f"{RUNNING_TOTAL_EMPTY} how many of them had no year-to-date number at any week asked for, which are not "
+        "in it (never counted as 0)."
         if beside
         else ""
     )
@@ -413,25 +419,49 @@ def _with_running_total(
     sel: list[str],
 ) -> str:
     """Wrap a sum across weeks so each row also carries the running total at the last week with a number: read
-    per series (place, condition, year: every dimension but the week and the row's own), then added up."""
+    per series (place, condition, year), then added up, with the week it was read at and how many series had no
+    number at all. A series is every categorical dimension plus the period, never another time column, so a
+    column that changes week by week can't split a series into one per week."""
     sem = ds.semantic
     within = within_period(sem)
+    period = next((d.column for d in sem.dimensions if d.type == "time" and d.column != within), None)
     keys = list(
-        dict.fromkeys(d.column for d in sem.dimensions if d.column != within and d.column not in group_cols)
+        dict.fromkeys(
+            d.column
+            for d in sem.dimensions
+            if (d.type == "categorical" or d.column == period) and d.column not in group_cols
+        )
     )
     y, w = _q(ytd), _q(str(within))
     inner = ", ".join(
-        [*select_dims, *(_q(k) for k in keys), f"arg_max({y}, {w}) FILTER (WHERE {y} IS NOT NULL) AS v"]
+        [
+            *select_dims,
+            *(_q(k) for k in keys),
+            f"arg_max({y}, {w}) FILTER (WHERE {y} IS NOT NULL) AS v",
+            f"max({w}) FILTER (WHERE {y} IS NOT NULL) AS v_at",
+        ]
     )
     inner_sql = _select([inner], "base") + (" GROUP BY ALL" if select_dims or keys else "")
     names = [_q(g) for g in group_by]
-    beside = _select([*names, f"sum(v) AS {_q(RUNNING_TOTAL_BESIDE)}"], f"({inner_sql})")
+    beside = _select(
+        [
+            *names,
+            f"sum(v) AS {_q(RUNNING_TOTAL_BESIDE)}",
+            "CASE WHEN min(v_at) = max(v_at) THEN CAST(min(v_at) AS VARCHAR) "
+            f"ELSE min(v_at) || '-' || max(v_at) END AS {_q(RUNNING_TOTAL_WEEK)}",
+            f"count(*) FILTER (WHERE v IS NULL) AS {_q(RUNNING_TOTAL_EMPTY)}",
+        ],
+        f"({inner_sql})",
+    )
     if names:
         beside += " GROUP BY ALL"
     agg = _select(sel, "base") + (" GROUP BY ALL" if group_cols else "")
-    join = f"LEFT JOIN beside USING ({', '.join(names)})" if names else "CROSS JOIN beside"
+    # NULL-safe, so a group whose key is empty still meets its own running total.
+    on = " AND ".join(f"agg.{n} IS NOT DISTINCT FROM beside.{n}" for n in names)
+    join = f"LEFT JOIN beside ON {on}" if names else "CROSS JOIN beside"
     ctes = f"WITH base AS ({_select(['*'], _q(ds.id), where_sql)}), agg AS ({agg}), beside AS ({beside}) "
-    return ctes + _select(["agg.*", f"beside.{_q(RUNNING_TOTAL_BESIDE)}"], f"agg {join}") + " ORDER BY ALL"
+    out = [f"beside.{_q(c)}" for c in (RUNNING_TOTAL_BESIDE, RUNNING_TOTAL_WEEK, RUNNING_TOTAL_EMPTY)]
+    return ctes + _select(["agg.*", *out], f"agg {join}") + " ORDER BY ALL"
 
 
 def non_additive_columns(ds: Dataset) -> frozenset[str]:
@@ -652,7 +682,8 @@ def _compile_cumulative(
             else ""
         )
         + ("; publisher total rows excluded" if metric.exclude_total_rows and ds.contract.total_rows else "")
-        + ". Weekly counts are never added up, because late reports land in the running total, not the week."
+        + ". It reads the running total rather than adding up weekly counts, because late reports land in the "
+        "running total, not the week."
     )
     return CompiledMetric(sql=sql, params=[*params, *period_params], columns=columns, method=method)
 
@@ -665,19 +696,41 @@ def _added_across(
     sem = ds.semantic
     cols = [_q(g) for g in group_by]
     v = _q(metric.name)
-    sel = [*cols, f"sum({v}) AS {v}", f"count(*) FILTER (WHERE {v} IS NULL) AS suppressed_rows"]
+    # Each row keeps what its parts say: a part that is not its period's total makes the sum incomplete, and the
+    # parts' own statuses and the publisher's flags come along, so a provisional figure or a '-' is never lost.
+    statuses = "string_agg(DISTINCT period_status, '; ' ORDER BY period_status DESC)"
+    status = (
+        f"CASE WHEN count({v}) = 0 THEN {statuses}"
+        " WHEN bool_or(starts_with(period_status, 'incomplete')) THEN 'incomplete: at least one figure added is "
+        f"not its period''s total; ' || {statuses} FILTER (WHERE {v} IS NOT NULL)"
+        f" ELSE {statuses} FILTER (WHERE {v} IS NOT NULL) END"
+    )
+    sel = [
+        *cols,
+        f"sum({v}) AS {v}",
+        f"count(*) FILTER (WHERE {v} IS NULL) AS suppressed_rows",
+        f"{status} AS period_status",
+        "string_agg(DISTINCT flag, ', ' ORDER BY flag) AS flag",
+    ]
     sql = _select(sel, f"({inner.sql})")
     if cols:
         sql += " GROUP BY ALL ORDER BY ALL"
+
+    def misleads(d: str) -> bool:
+        # The same predicate as non_additive_columns: an undeclared categorical dimension fails closed.
+        dim = sem.dimension(d)
+        return bool(dim.non_additive) or (dim.non_additive is None and dim.type == "categorical")
+
     warn = [
-        f"{d} ({sem.dimension(d).non_additive_reason or 'the semantic model declares it non-additive'})"
+        f"{d} ({sem.dimension(d).non_additive_reason or _undeclared(sem.dimension(d))})"
         for d in across
-        if sem.dimension(d).non_additive
+        if misleads(d)
     ]
     note = (
         f" Then added up across {', '.join(across)}: each {', '.join(across)} value's own figure, read as above "
         "(the next table's restated figure is not in the sum). A figure with no number is not counted as 0: "
-        "suppressed_rows says how many had none."
+        "suppressed_rows says how many had none, and period_status and flag carry what each part's own status "
+        "and the publisher's flags say."
         + (
             f" This adds values the semantic model for {ds.id} declares non-additive: {'; '.join(warn)}, so the "
             "total may count the same cases twice or mix different things."
@@ -688,9 +741,15 @@ def _added_across(
     return CompiledMetric(
         sql=sql,
         params=inner.params,
-        columns=[*group_by, metric.name, "suppressed_rows"],
+        columns=[*group_by, metric.name, "suppressed_rows", "period_status", "flag"],
         method=inner.method + note,
     )
+
+
+def _undeclared(dim: Any) -> str:
+    if dim.non_additive is None:
+        return "the semantic model doesn't say whether these values can be added"
+    return "the semantic model declares it non-additive"
 
 
 def _live_enabled() -> bool:

@@ -36,9 +36,10 @@ what it leaves out.
 - **A copy of the data whose checks never ran is never used.** The tool won't let a number look checked when it
   wasn't.
 
-**Where today's tools still differ, and this is changing.** Every empty cell, NNDSS's `-` included, comes back
-empty with its flag, never as 0, and the sums, rates and checks below are worked out with their notes. These
-still differ:
+Every empty cell, NNDSS's `-` included, comes back empty with its flag, never as 0, and the sums, rates and checks
+below are worked out with their notes.
+
+**Where today's tools still differ, and this is changing:**
 
 - A new copy of the data that failed one of its most serious (error-level) data checks is held back too, not only
   one whose checks never ran. You get no refusal: the tool keeps answering from the copy before it, so the
@@ -61,12 +62,13 @@ Every row says which kind of number it is, in its `measure` column. There are fo
   - A `query_sql` sum that takes in a publisher's total rows (the US totals, regional rows) says so, citing the
     contract's `totalRows`, and gives the same sum without them in a column beside it (`…_without_total_rows`).
     `get_series` adds only the places it names, so its sums never take in a total row unasked.
-  - A sum that meets a count with no number adds the reported values only and says how many had none
-    (`suppressed_rows` in `get_series`, `…_values_with_no_number` in `query_sql`). The empty values are never
-    counted as 0, and a sum with no reported value at all stays empty.
+  - A sum that meets a count with no number adds the reported values only and says how many had none (in
+    `get_series`, the row's `period_status`; in `query_sql`, the column `…_values_with_no_number`). The empty
+    values are never counted as 0, and a sum with no reported value at all stays empty. A `query_sql` that
+    replaces an empty value itself (`coalesce(m, 0)`) is answered, with a note that the query made that 0.
   - Rates, percents and estimates come back exactly as published, never added up or averaged. If more than one
-    published figure matches a group you asked for, each comes back on its own row with a note naming the
-    breakdown that tells them apart.
+    published figure matches a group you asked for, each comes back on its own row, with a note that they differ
+    by a breakdown you didn't choose; `describe_dataset` lists its values.
 - **Measures never mix in one answer.** If a question matches series of different kinds (for example, a count from
   one source and a rate from another), the answer opens with a warning and the `measure` column tells them apart.
   A figure you ask for across measures comes back with a note that it is not a count, rate or estimate of
@@ -103,9 +105,10 @@ How NNDSS annual counts are read: the tool takes CDC's running year-to-date colu
 that year. Adding up weekly counts undercounts the year, because late reports land in the running total, not in
 the week they happened: for Michigan in 2023, adding the weekly column gives 62 cases, the year-end running total
 103. A sum of weekly counts across weeks is still worked out when asked, with that note, citing the semantic model
-(weeks are non-additive), and CDC's year-to-date figure beside it: in the named tools, the column
-`year_to_date_at_last_week` (the year-to-date count at the last week asked for that has a number); in `query_sql`,
-the note names the year-to-date column to read at the year's last week. A sum of year-to-date counts across weeks
+(weeks are non-additive), and CDC's year-to-date figure beside it: in a metric's own answer (developers: the metric
+compiler), the column `year_to_date_at_last_week` (the year-to-date count at the last week asked for that has a
+number), with the week it was read at and how many places had none; in `query_sql`, the note names the
+year-to-date column to read at the year's last week. `get_series` reads each year at its last week already. A sum of year-to-date counts across weeks
 says that it counts each case again in every later week. A `query_sql` sum across places that takes in CDC's
 summary rows (the US totals, US territories combined and the nine census divisions) says so and gives the sum
 without them beside it; Non-U.S. Residents is not a summary row and counts as its own bucket. These `query_sql`
@@ -115,8 +118,8 @@ An empty NNDSS count flagged `-` is CDC's "no reported cases": the jurisdiction 
 notes). It is read as **not reported**, the maintainer's declaration of 25 Nov 2026, which reverses the earlier
 reading as a reported zero. It comes back empty, with the flag and its meaning beside it, and is **never counted
 as 0**: no rate or trend point is worked out from it, and a sum that meets it adds the reported values only and
-says how many had no number. `check_signal` adds up the weeks that have a number and names the weeks that don't. In `get_series` and `query_sql` the flag and its
-meaning come back beside the empty value; `get_rate` and `get_trend` name the flag when they leave the year out.
+says how many had no number. `check_signal` adds up the weeks that have a number and names the weeks that don't.
+In `get_series` and `query_sql` the flag and its meaning come back beside the empty value; `get_rate` and `get_trend` name the flag when they leave the year out.
 Every other flag (`U` unavailable, `N` not reportable, `NN`, `NP`, `NC`) leaves the cell empty too.
 
 Other sources:
@@ -229,8 +232,8 @@ like it rose or fell.
   separately here, so each count may combine them as the condition's definition allows, and they cannot be split.
 - **C. auris:** clinical cases and screening (colonisation) cases are separate series. Screening counts people
   found to carry *C. auris*, not new cases of disease (the NNDSS contract's `notIncidence`); its counts are always
-  returned. A rate per 100,000 people from screening counts comes back labelled "screening detections, not
-  incidence", citing that declaration, with the clinical cases' rate beside it on its own row (the contract's
+  returned. A sum of clinical and screening counts, or a rate per 100,000 people from screening counts, comes
+  back labelled "screening detections, not incidence", citing that declaration, with the clinical cases' rate beside it on its own row (the contract's
   `incidenceCounterpart`). Animal rabies works the same way: a rate from it is labelled as not a rate of disease
   in people.
 - **RESP-NET** counts only laboratory-confirmed COVID-19, influenza and RSV hospitalisations.

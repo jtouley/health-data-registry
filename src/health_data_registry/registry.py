@@ -648,9 +648,12 @@ class Column:
     no_cases_code: str | None = None
     # Condition labels whose counts are not new cases of disease in the population (NNDSS: C. auris screening,
     # which counts colonisation found by screening), each with the reason in plain words: (label, why). Declared
-    # on the condition column; a rate per 100,000 from them is worked out when asked and labelled "screening
-    # detections, not incidence" with this reason (ADR 0018).
+    # on the condition column; a rate per 100,000 from them is worked out when asked and labelled with
+    # notIncidenceLabel's words (or "not incidence" when it gives none) and this reason (ADR 0018).
     not_incidence: tuple[tuple[str, str], ...] = ()
+    # For a notIncidence label, the words its rates are labelled with (NNDSS: 'Candida auris, screening' ->
+    # 'screening detections, not incidence', ADR 0018): (label, words).
+    not_incidence_label: tuple[tuple[str, str], ...] = ()
     # For a notIncidence label, the label of the same source whose counts are the incidence figure to put beside
     # it (NNDSS: 'Candida auris, screening' -> 'Candida auris, clinical'): (label, counterpart label).
     incidence_counterpart: tuple[tuple[str, str], ...] = ()
@@ -849,7 +852,14 @@ def _custom(props: Any) -> dict[str, Any]:
     return out
 
 
-_PAIR_PROPS = ("flagCodes", "partialPlaces", "renamedLabels", "notIncidence", "incidenceCounterpart")
+_PAIR_PROPS = (
+    "flagCodes",
+    "partialPlaces",
+    "renamedLabels",
+    "notIncidence",
+    "notIncidenceLabel",
+    "incidenceCounterpart",
+)
 
 
 def _pairs(value: Any, where: str) -> tuple[tuple[str, str], ...]:
@@ -948,6 +958,7 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
                 partial_places=pairs["partialPlaces"],
                 renamed_labels=pairs["renamedLabels"],
                 not_incidence=pairs["notIncidence"],
+                not_incidence_label=pairs["notIncidenceLabel"],
                 incidence_counterpart=pairs["incidenceCounterpart"],
                 no_cases_code=None if zero is None else str(zero),
                 may_be_empty=may_be_empty,
@@ -1439,6 +1450,12 @@ class Dataset:
         column = self._condition_column()
         return None if column is None else dict(column.not_incidence).get(label)
 
+    def not_incidence_label(self, label: str) -> str:
+        """The words a rate from this notIncidence label is labelled with: the contract's notIncidenceLabel, or
+        "not incidence" when it gives none."""
+        column = self._condition_column()
+        return (None if column is None else dict(column.not_incidence_label).get(label)) or "not incidence"
+
     def incidence_counterpart(self, label: str) -> str | None:
         """The label whose counts are the incidence figure beside a notIncidence label's (the contract's
         incidenceCounterpart on the condition column), or None. Never guessed from the label's words."""
@@ -1687,6 +1704,12 @@ def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticMode
 
     # After every column's own checks, so a misplaced notIncidence is named first.
     for c in contract.columns:
+        undeclared = [label for label, _ in c.not_incidence_label if label not in dict(c.not_incidence)]
+        if undeclared:
+            raise RegistryError(
+                f"{entry.id}: notIncidenceLabel names {undeclared[0]!r}, which notIncidence on the same column "
+                "doesn't declare"
+            )
         if c.incidence_counterpart:
             declared = dict(c.not_incidence)
             for label, other in c.incidence_counterpart:
@@ -1700,6 +1723,19 @@ def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticMode
                         f"{entry.id}: incidenceCounterpart gives {other!r} for {label!r}; it must be a catalogued "
                         "condition label that is not itself declared notIncidence"
                     )
+                # Each of the label's series needs one of the counterpart's, read the same way (same metric), or
+                # the figure promised beside it would silently be missing.
+                generic = {g.metric for g in semantic.generic_series}
+                for ser in semantic.series:
+                    if ser.condition != label:
+                        continue
+                    if ser.metric not in generic and not any(
+                        o.condition == other and o.metric == ser.metric for o in semantic.series
+                    ):
+                        raise RegistryError(
+                            f"{entry.id}: incidenceCounterpart gives {other!r} for {label!r}, but the semantic "
+                            f"model has no {other!r} series on {ser.metric} to put beside {ser.label!r}"
+                        )
 
 
 def _check_load_metadata(entry: CatalogEntry, contract: Contract) -> None:

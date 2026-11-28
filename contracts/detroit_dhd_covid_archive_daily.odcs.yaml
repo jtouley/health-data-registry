@@ -7,7 +7,7 @@ status: draft
 domain: infectious_disease
 description:
   purpose: "Daily COVID-19 cases in the City of Detroit, March 2020 to May 2026, as the Detroit Health Department's archived public COVID-19 dashboard charts them on its Timeline Cases tab."
-  usage: "Read one day, or add days into weeks, months or years for Detroit; a period with any day shown as '<16' has no total. Read live from the city; never stored."
+  usage: "Read one day, or add days into weeks, months or years for Detroit; a period with any day shown as '<16' gives the sum of the days that have a number, with how many had none (never counted as 0). Read live from the city; never stored."
   limitations: "An archived dashboard, not a dataset: the case definition and the meaning of the disease date are not in the data, and the layout can change without notice (the worksheet layout hash stops the load when it does)."
   authoritativeDefinitions:
     - {type: canonicalUrl, url: "https://codtableau.detroitmi.gov/t/DHD/views/CityofDetroit-PublicCOVIDDashboard/TimelineCasesDashboard", description: "Dashboard view read (fetched 2026-11-24)"}

@@ -163,7 +163,7 @@ def test_every_real_catalogued_label_compiles_with_its_aggregation_rule() -> Non
                 cm = compile_metric(ds, s.metric, filters=filters, group_by=group)
                 kind = ds.semantic.measure(metric.measure).kind
                 if metric.aggregation == "cumulative_latest":
-                    assert "Weekly counts are never added up" in cm.method
+                    assert "rather than adding up weekly counts" in cm.method
                 elif kind in ("rate", "percent", "estimate"):
                     assert "not summed" in cm.method and "sum(" not in cm.sql
                 checked += 1
@@ -207,7 +207,7 @@ def test_generic_series_keeps_the_rules(vocab: tuple[Registry, Engine]) -> None:
     assert sorted(r[:3] for r in tul["rows"]) == [["Michigan", 2023, 7], ["Ohio", 2023, 5]]
     assert any("Provenance for toy_cases:" in n for n in tul["notes"])
     bru = _json(tools.get_series(reg, eng, condition="Brucellosis", fmt="json"))
-    assert bru["rows"][0][2] is None and "suppressed or missing" in bru["rows"][0][6]  # never a zero
+    assert bru["rows"][0][2] is None and "has no number" in bru["rows"][0][6]  # never a zero
     # A word shared by two labels returns both, labelled, never added.
     q = _json(tools.get_series(reg, eng, condition="q fever", fmt="json"))
     assert sorted((r[0], r[2], r[9]) for r in q["rows"]) == [("Ohio", 1, "Q fever, Chronic"),

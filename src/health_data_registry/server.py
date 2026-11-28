@@ -265,7 +265,8 @@ def build_server(
         """Is it rising? Annual percent change with a 95% interval from a Poisson regression on year. Split where
         the case definition changed; provisional years are left out unless include_provisional is true; needs at
         least 3 usable years. fit_on "rates" (default) needs Census population for every year and refuses
-        otherwise; "counts" is a trend in case counts that ignores population change."""
+        otherwise; "counts" is a trend in case counts that ignores population change. Rates from counts that are
+        not incidence (C. auris screening) are fitted when asked and labelled so, with the clinical trend beside."""
         return safe(
             "get_trend",
             lambda: analysis.get_trend(
@@ -307,8 +308,9 @@ def build_server(
     ) -> Out:
         """Is this week unusual? The last 4 weeks' cases against the same, preceding and following 4 weeks of the
         past 5 years, in the style of CDC's historical limits for notifiable diseases. A signal is not an outbreak.
-        A week with no number (CDC's '-', read as not reported) is never counted as zero, so it refuses any window
-        that includes one, which is common for rare conditions."""
+        A week with no number (CDC's '-', read as not reported) is never counted as zero: the 4-week totals add the
+        weeks that have a number and name the ones that don't, and the signal says when the current total may be
+        too low."""
         return safe(
             "check_signal",
             lambda: analysis.check_signal(

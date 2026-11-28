@@ -87,7 +87,7 @@ models:
           contract: contracts/cdc_haicviz_mugsi.odcs.yaml
           checks: Across the views that the by-group metrics read together, no group label other than 'All cases'
             appears twice in one year, organism and topic (none did on 2026-11-25). A label shared by two views
-            would make those metrics refuse the question, so it is reported here first.
+            would return two published figures for one group, each on its own row, so it is reported here first.
   - odcs_check:
       name: cdc_haicviz_mugsi_organism_is_cre_or_crab
       arguments:
@@ -269,7 +269,6 @@ models:
   - name: is_total_row
     data_type: boolean
     description: True on the publisher's total and summary rows (the contract's totalRows). They are kept as rows;
-      a sum that takes one in with the rows it totals counts those cases twice, so the served answer says so and
-      gives the sum without it (hard rule 2, ADR 0018).
+      adding one to the rows it totals counts those cases twice.
     meta:
       derived_from_contract: true

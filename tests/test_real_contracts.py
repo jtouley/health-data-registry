@@ -88,9 +88,12 @@ def test_nndss_sum_of_non_total_rows_equals_the_total_row(real: tuple[Registry, 
 def test_nndss_year_to_date_is_read_at_one_week(real: tuple[Registry, Engine]) -> None:
     _, eng = real
     # Not read at one week: added up across weeks with the note, and the running total at the last week beside
-    # it (was refused; ADR 0018). Here every row is week 52, so the two agree.
+    # it (was refused; ADR 0018). Here every row is week 52, so the two agree; DC's '-' has no year-to-date
+    # number at any week, so it is the one series counted apart from the figure beside the sum.
     out = eng.query_metric("cdc_nndss_weekly", "year_to_date_cases", filters={"condition": "Legionellosis"})
-    assert out["rows"] == [[110, 1, "-", 110]] and "counted again in every later week" in out["method"]
+    assert (
+        out["rows"] == [[110, 1, "-", 110, "52", 1]] and "counted again in every later week" in out["method"]
+    )
 
 
 def test_nndss_no_reported_cases_stays_empty_with_its_flag(real: tuple[Registry, Engine]) -> None:

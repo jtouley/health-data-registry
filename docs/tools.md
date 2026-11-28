@@ -205,8 +205,9 @@ fetch time and case definition.
 `measure`, `condition`, `case_status`, `case_definition`, `source_id`, `retrieved_at`. Then notes: the method, the publisher's web
 address, the main caveats, whether the contract is still a draft, and whether the local copy is a partial sample.
 `lower` and `upper` are filled only where the publisher gives bounds. Empty values are missing, suppressed or not
-reported (CDC's `-`, no reported cases), never zeros; `flag` says which. A value the source adds up from several
-rows, some of them empty, is the sum of the reported ones, and `period_status` says how many had no number.
+reported (CDC's `-`, no reported cases), never zeros; `flag` says which. A value the tool adds up from several of
+the source's rows, some of them empty, is the sum of the reported ones, and `period_status` says how many had no
+number.
 
 **Try:** "How many clinical C. auris cases did Michigan and Ohio report each year from 2022 to 2025?" The
 [README example](../README.md#example) charts CDC's figures for Michigan alone, each year-end count beside CDC's
@@ -257,8 +258,9 @@ so, naming the contract rule behind it:
 - Animal rabies counts rabid animals: "not a rate of disease in people".
 - A count that covers only part of a place (New York State without New York City; a RESP-NET site's catchment
   counties): "catchment area only", because the whole place's population overstates the denominator.
-- A count that the source adds up from several rows, some of them empty: the rate is from the reported ones only,
-  so it may be too low.
+- A count that the tool adds up from several of the source's rows, some of them empty: the rate is from the
+  reported ones only, so it may be too low. A population with a gap is named the same way: the rate may be too
+  high.
 
 **Try:** "What was the crude rate of reported legionellosis per 100,000 in Michigan in 2024?"
 
@@ -407,7 +409,10 @@ the same, preceding and following 4 weeks in each of the past 5 years.
 **Returns:** `location`, `condition`, `year`, `weeks`, `current_4_week_total`, `historical_mean`, `historical_sd`,
 `ratio`, `lower_limit`, `upper_limit`, `signal` (above, below or within limits), `periods_used`, `source_id`,
 `computed`. A week with no number, CDC's `-` (read as not reported) included, is never counted as zero: a 4-week
-total adds up the weeks that have a number, and a note names the weeks that don't. When the current 4 weeks are
+total adds up the weeks that have a number, and a note names the weeks that don't. When the current total misses
+a week, `signal` says it may be too low; when a current week isn't in the data yet, `signal` gives no verdict.
+A historical period with no week in the data is left out of the baseline, and the method says how many totals
+the limits use. When the current 4 weeks are
 complete, a second row gives the same check on the historical totals that have a number for every week. When
 none of the current 4 weeks has a number, it gives no signal and returns the weekly counts held for those weeks,
 with the question to ask next. A signal means more or fewer reports than usual, not an outbreak.
@@ -437,12 +442,16 @@ behind each note:
   `…_without_total_rows`, gives the same sum without them.
 - A sum that meets a count with no number (CDC's `-` included) adds the reported values only, never counting the
   empty ones as 0, and a column beside it, `…_values_with_no_number`, says how many there were. A filter on the
-  count it adds up, which can drop those values before the sum sees them, gets a note.
+  count it adds up, which can drop those values before the sum sees them, gets a note, and that column is left
+  empty rather than 0. A query that swaps an empty value for a number itself (`coalesce(m1, 0)`) is answered,
+  with a note that the query made that number.
 - A sum of weekly counts across weeks says that weekly counts undercount the year and names the year-to-date
   column to read instead; a sum of year-to-date counts across weeks says that it counts each case again every
   week.
 
-The columns beside a sum come only for a sum that is a whole item of the outer `SELECT`; for one inside an
+The columns beside a sum are named after the sum's own name (`AS n` gives `n_without_total_rows`), or, for an
+unnamed sum, after what it adds up (`sum(m1)` gives `sum_m1_without_total_rows`). They come only for a sum that is
+a whole item of the outer `SELECT`; for one inside an
 expression, a window or an inner query, the note says how to get the same figure. These notes cover sums only,
 not other ways of combining values (an average, a product, a largest value). Prefer the named tools: they apply
 every rule of the contract for you.
@@ -454,8 +463,8 @@ A tool never shows a stack trace or an error code to you. It says, in plain word
 Under the rule [show everything; qualify, don't decide](data-conventions.md#show-everything-qualify-dont-decide),
 a figure that may mislead comes back with a note instead of a refusal. When the figure itself can't be worked out
 (nothing to divide, no week with a number), the tool returns the closest data it holds, says how it differs from
-what you asked, and suggests the next question. The only data problem that holds data back is a data check that never ran. Today a copy of the
-data that failed a serious data check is also held back. That case shows you no refusal: the tool answers from
+what you asked, and suggests the next question. The only data problem that holds data back is a data check that
+never ran. Today a copy of the data that failed a serious data check is also held back. That case shows you no refusal: the tool answers from
 the copy before it, and the fetch time in the provenance line says how old that copy is. If the
 numbers look older than the publisher's page, run the [Something's wrong](helpers.md#somethings-wrong) helper.
 
@@ -467,7 +476,6 @@ The common ones:
 | "… has no rows for: …" | That place isn't in the source (for example, a state in a source that covers EIP sites only) | Check `describe_dataset` for the places it covers |
 | "None of the loaded sources split this by sex yet" | No sex breakdown in these series | Ask again without sex |
 | "'…' matches more than one series …" | `compare_rates` needs the same series on both sides | Use the full name of one series |
-
 | "Population counts (Census) aren't loaded yet …" | `get_rate` has no denominator on this setup | Use `get_series`, or a published rate |
 | "… could not be reached to download …" | A restricted source (WHO) is fetched from the publisher, and the publisher's site didn't answer | Try again in a few minutes |
 | "The hub release … has no file …" or "… does not list …" | The hub release the server reads from is incomplete | Try again later, or [open an issue](https://github.com/jtouley/health-data-registry/issues) |

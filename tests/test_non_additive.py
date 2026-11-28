@@ -486,9 +486,13 @@ def test_changed_models_carry_a_new_version() -> None:
     reg = load_registry(ROOT)
     for ds_id in ("cdc_haicviz_cdi", "cdc_respnet"):
         assert reg.get(ds_id).semantic.version == "0.2.0", ds_id
-    assert reg.get("cdc_nndss_weekly").semantic.version == "0.3.0"  # weeks non-additive, '-' never 0 (#173)
+    # 0.3.0: weeks non-additive, '-' never 0 (#173); 0.4.0: sums across weeks qualified, not refused (#226)
+    assert reg.get("cdc_nndss_weekly").semantic.version == "0.4.0"
     for ds_id in ("detroit_dhd_epi_annual", "detroit_dhd_resp_ed_weekly"):
-        assert reg.get(ds_id).semantic.version == "0.1.1", ds_id
+        # detroit_dhd_epi_annual 0.1.2: a sum with a suppressed row gives the reported rows' sum (#226)
+        assert reg.get(ds_id).semantic.version == (
+            "0.1.2" if ds_id == "detroit_dhd_epi_annual" else "0.1.1"
+        ), ds_id
 
 
 PCT = SEMANTIC.replace(

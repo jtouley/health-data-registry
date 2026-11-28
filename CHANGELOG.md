@@ -10,23 +10,30 @@ All notable changes to this project are documented here. The format follows
 
 - Refusals become qualified answers, under hard rule 2, "show everything; qualify, don't decide" (ADR 0018,
   #226). A figure that may mislead is worked out when asked, with a plain-words note citing the contract or
-  semantic-model rule behind it and, where there is one, the figure without that problem beside it. A tool
-  refuses only when nothing catalogued touches the question, and `-` is still never 0.
+  semantic-model rule behind it and, where there is one, the figure without that problem beside it. Fewer
+  answers are refusals; some remain (for example a sum across overlapping places or conditions, a sum over an
+  inner query, a trend in rates with no population for a year), and `-` is still never 0.
   - A sum of weekly counts across weeks says that weekly counts undercount the year and gives CDC's
-    year-to-date count beside it (`year_to_date_at_last_week` in the metric compiler; `query_sql` names the
-    column). A sum of running totals across weeks, or across places or years, is added up with a note.
+    year-to-date count beside it (`year_to_date_at_last_week` in the metric compiler, with the week it was read
+    at and how many places had none; `query_sql` names the column). A sum of running totals across weeks, or
+    across places or years, is added up with a note, keeping each part's period status and flags.
   - A sum that meets a count with no number adds the reported values only and says how many had none
-    (`suppressed_rows`; `…_values_with_no_number` in `query_sql`), instead of having no total or stopping.
+    (`suppressed_rows`; `…_values_with_no_number` in `query_sql`), instead of having no total or stopping. A
+    population with a gap is named on every rate worked out from it. A `query_sql` that turns an empty value
+    into a number itself (`coalesce`) gets a note saying so.
   - A `query_sql` sum that takes in the publisher's total rows keeps them and says so, with the sum without them
     beside it (`…_without_total_rows`), instead of leaving them out.
   - `get_rate`, `compare_rates` and `get_trend` work out a rate from *C. auris* screening counts, labelled
-    "screening detections, not incidence" from the NNDSS contract's `notIncidence`, with the clinical cases'
-    rate beside it (the contract's new `incidenceCounterpart`); animal rabies is labelled as not a rate of
-    disease in people; a count that covers only part of a place is labelled "catchment area only".
+    "screening detections, not incidence" (the NNDSS contract's `notIncidence` and new `notIncidenceLabel`),
+    with the clinical cases' rate beside it (the contract's new `incidenceCounterpart`); animal rabies is
+    labelled as not a rate of disease in people; a count that covers only part of a place is labelled
+    "catchment area only", and so are a rate ratio and difference built on it.
   - When more than one published rate matches a group, each comes back on its own row with a note.
   - `check_signal` adds up the weeks that have a number, names those that don't and, where it can, gives the
-    same check on the complete 4-week periods beside it. With no current week that has a number, it returns the
-    weekly counts held and the question to ask next.
+    same check on the complete 4-week periods beside it. Its `signal` says when the current total may be too
+    low, gives no verdict while a current week isn't in the data yet, and the method says how many historical
+    totals it used. With no current week that has a number, it returns the weekly counts held and the question to
+    ask next.
   - `compare_rates` with no rate on one side returns what each side holds and the next question, not a refusal.
   - The tool text Claude receives and the docs no longer say "never add them"; they say what a tool's note
     means.

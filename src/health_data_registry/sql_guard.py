@@ -277,7 +277,9 @@ def guard_sql(
         sum_rules: catalogued table name -> its SumRules. A sum that takes in total rows, meets a value with no
             number, or adds weekly counts across weeks is worked out as asked, and the returned ``notes`` say what
             it may mislead about; a sum in the outer query's select list gets a column beside it with the sum
-            without the total rows and the number of values with no number.
+            without the total rows and the number of values with no number. A caller that serves the result
+            must put ``notes`` in the answer: with sum_rules nothing is refused, so the notes are the only place
+            a sum's qualification lives.
 
     Raises:
         SqlRefused: anything outside the read-only shape, with a plain-language reason.
@@ -951,7 +953,40 @@ def _select_item(select: exp.Select, node: exp.Expr) -> tuple[exp.Expr, str] | N
     item = top.parent if isinstance(top.parent, exp.Alias) else top
     if not any(e is item for e in select.expressions):
         return None
-    return top, item.alias if isinstance(item, exp.Alias) and item.alias else "sum"
+    if isinstance(item, exp.Alias) and item.alias:
+        return top, item.alias
+    # Unaliased: named from the columns it adds up (sum(cases) -> sum_cases), so two sums' columns never share
+    # a name that says nothing about which sum they go with.
+    inside = list(dict.fromkeys(c.name for c in node.find_all(exp.Column)))
+    return top, "_".join(["sum", *inside])
+
+
+def _replaced(column: exp.Column, top: exp.Expr) -> bool:
+    """True when, between the column and the sum `top`, the query swaps an empty value for something else
+    (coalesce or ifnull, or a CASE with a literal branch), as in sum(coalesce(m1, 0)): the sum then counts a value
+    with no number as that literal."""
+    node = column.parent
+    while node is not None and node is not top:
+        if isinstance(node, exp.Coalesce):
+            return True
+        if isinstance(node, exp.Case) and any(
+            isinstance(_bare(b), exp.Literal)
+            for b in [*(i.args.get("true") for i in node.args.get("ifs") or []), node.args.get("default")]
+            if b is not None
+        ):
+            return True
+        node = node.parent
+    return False
+
+
+def _sum_replaced(node: exp.Expr, select: exp.Select) -> bool:
+    """True when a coalesce or ifnull around the sum (inside its select item) turns an empty sum into a number."""
+    parent = node.parent
+    while parent is not None and parent is not select:
+        if isinstance(parent, exp.Coalesce):
+            return True
+        parent = parent.parent
+    return False
 
 
 def _filtered(top: exp.Expr, agg: exp.Expr, predicate: exp.Expr) -> exp.Expr:
@@ -1010,11 +1045,25 @@ def _apply_sum_rules(
             continue
         a = alias.casefold()
         across_weeks: set[str] = set()
+        across_items: list[str] = []
         totals_beside: list[str] = []
         totals_unseen = False
         empties_beside: list[str] = []
-        empties_unseen = False
+        empties_unseen: set[str] = set()
         summed_measures: set[str] = set()
+        replaced: set[str] = set()
+        sum_replaced = False
+
+        def own(c: exp.Column, a: str = a) -> bool:
+            return c.table.casefold() == a or (not c.table and owners.get(c.name.casefold()) == a)
+
+        # WHERE m1 IS NOT NULL (or m1 > 0) before sum(m1) can drop the counts with no number before the sum sees
+        # them, so a count of them beside the sum would read 0 as fact: it is left empty instead.
+        where_measures = {
+            c.name.casefold()
+            for c in (where.find_all(exp.Column) if where is not None else ())
+            if c.name.casefold() in rule.measures and own(c)
+        }
         for n in sums:
             held = set(pinned) | grouped
             window = n.find_ancestor(exp.Window)
@@ -1030,9 +1079,12 @@ def _apply_sum_rules(
 
             inside = _sum_columns(n, a, owners)
             added = [c for c in inside if _added(c, n)]
-            if rule.within and not is_held(rule.within):
-                across_weeks |= {c.name for c in added if c.name.casefold() in rule.per_week}
             item = _select_item(select, n)
+            if rule.within and not is_held(rule.within):
+                weekly = {c.name for c in added if c.name.casefold() in rule.per_week}
+                across_weeks |= weekly
+                if weekly:
+                    across_items.append(item[1] if item else "a sum inside an expression")
             # A sum that reads this table (or adds up its rows, as count-like sums over one table do) across areas.
             if rule.total_rows and (inside or len(sources) == 1) and not any(is_held(c) for c in rule.areas):
                 if item is None:
@@ -1050,40 +1102,43 @@ def _apply_sum_rules(
             measured = [c for c in added if c.name.casefold() in rule.measures]
             if measured:
                 summed_measures |= {c.name.casefold() for c in measured}
+                replaced |= {c.name for c in measured if _replaced(c, n)}
+                sum_replaced = sum_replaced or _sum_replaced(n, select)
                 if item is None:
-                    empties_unseen = True
+                    empties_unseen |= {c.name for c in measured}
                 else:
                     empty = exp.or_(*(exp.Is(this=c.copy(), expression=exp.Null()) for c in measured))
-                    empties_beside.append(
-                        _beside(
-                            select,
-                            _filtered(item[0], exp.Count(this=exp.Star()), empty),
-                            f"{item[1]}_values_with_no_number",
-                        )
+                    hidden = any(c.name.casefold() in where_measures for c in measured)
+                    counted = (
+                        exp.cast(exp.Null(), "BIGINT")
+                        if hidden
+                        else _filtered(item[0], exp.Count(this=exp.Star()), empty)
                     )
+                    empties_beside.append(_beside(select, counted, f"{item[1]}_values_with_no_number"))
         notes += _sum_notes(
             source.name,
             rule,
             sorted(across_weeks),
+            list(dict.fromkeys(across_items)),
             totals_beside,
             totals_unseen,
             empties_beside,
-            empties_unseen,
+            sorted(empties_unseen),
+            sorted(replaced),
+            sum_replaced,
         )
-        # WHERE m1 IS NOT NULL (or m1 > 0) before sum(m1) drops the counts with no number before the sum sees them.
         filtered = sorted(
             {
                 c.name
                 for c in (where.find_all(exp.Column) if where is not None else ())
-                if c.name.casefold() in summed_measures
-                and (c.table.casefold() == a or (not c.table and owners.get(c.name.casefold()) == a))
+                if own(c) and c.name.casefold() in summed_measures
             }
         )
         if filtered:
             notes.append(
                 f"This query's WHERE tests the count it adds up ({', '.join(filtered)}), which can drop the counts "
-                "that have no number before the sum sees them, so the sum and its count of values with no number "
-                "can't show them. Ask without that condition to see how many had no number."
+                "that have no number before the sum sees them, so the sum can't show them and its column of values "
+                "with no number is left empty (not 0). Ask without that condition to see how many had no number."
             )
     return notes
 
@@ -1092,10 +1147,13 @@ def _sum_notes(
     table: str,
     rule: SumRules,
     across_weeks: Sequence[str],
+    across_items: Sequence[str],
     totals_beside: Sequence[str],
     totals_unseen: bool,
     empties_beside: Sequence[str],
-    empties_unseen: bool,
+    empties_unseen: Sequence[str],
+    replaced: Sequence[str] = (),
+    sum_replaced: bool = False,
 ) -> list[str]:
     """The plain-words notes on one table's sums: what each may mislead about, the rule it comes from, and the
     figure without that problem (a column beside the sum, or how to get it)."""
@@ -1108,15 +1166,16 @@ def _sum_notes(
         else ""
     )
     ytd = f"the year-to-date count ({rule.year_to_date})" if rule.year_to_date else "the year-to-date count"
+    where = f" in {', '.join(across_items)}" if across_items else ""
     if weekly:
         notes.append(
-            f"This adds up weekly counts ({', '.join(weekly)}) across weeks. Weekly counts undercount the year: "
+            f"This adds up weekly counts ({', '.join(weekly)}) across weeks{where}. Weekly counts undercount the year: "
             f"reports that arrive late are added to the year-to-date count, not to the week they belong to{why}. "
             f"The figure without that problem is {ytd} at the year's last week; get_series gives it for each year."
         )
     if running:
         notes.append(
-            f"This adds up running totals ({', '.join(running)}) across weeks, so each case is counted again in "
+            f"This adds up running totals ({', '.join(running)}) across weeks{where}, so each case is counted again in "
             f"every later week{why}. A running total read at one week is the figure without that problem; "
             "get_series gives the year's for each year."
         )
@@ -1144,11 +1203,29 @@ def _sum_notes(
             if empties_beside
             else ""
         )
-        unseen = " count(*) FILTER (WHERE <the count> IS NULL) counts them." if empties_unseen else ""
+        unseen = (
+            f" count(*) FILTER (WHERE {' OR '.join(f'{c} IS NULL' for c in empties_unseen)}) counts them."
+            if empties_unseen
+            else ""
+        )
+        empty = "" if replaced or sum_replaced else ", and is empty when none has a number"
         notes.append(
             f"A count in {table} with no number (not reported, unavailable or suppressed; the flag column next to "
-            f"it gives the publisher's reason) is never counted as 0: each sum adds the reported values only, and "
-            f"is empty when none has a number.{meaning}{count}{unseen}"
+            f"it gives the publisher's reason) is never counted as 0: each sum adds the reported values only"
+            f"{empty}.{meaning}{count}{unseen}"
+        )
+    if replaced:
+        notes.append(
+            f"This query replaces a count with no number inside the sum ({', '.join(replaced)}, with coalesce, "
+            "ifnull or a CASE with a fixed value), so the sum counts each such value as that value (for example 0) "
+            "instead of leaving it out, and a group whose counts all have no number shows that value, not an empty "
+            "sum. Ask without the replacement to see the sum of the reported values only."
+        )
+    if sum_replaced:
+        notes.append(
+            "This query turns an empty sum into a number (coalesce or ifnull around the sum), so a group whose "
+            "counts all have no number shows that number, not an empty value. Ask without it to see which groups "
+            "have no number."
         )
     return notes
 

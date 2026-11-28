@@ -185,8 +185,12 @@ def test_check_signal_never_counts_a_dash_week_as_zero(served: tuple[Registry, E
     assert (
         row["current_4_week_total"] == 6
         and row["historical_mean"] == 8
-        and row["signal"] == "below historical limits"
+        and row["signal"].startswith(
+            "below historical limits, on a current total that adds the reported weeks"
+        )
     )
+    # The verdict itself says the current total may be too low (gx review finding 3).
+    assert "week 16" in row["signal"] and row["signal"].endswith("so it may be too low")
     assert "reported weeks only" in row["periods_used"]
     (note,) = [n for n in out["notes"] if n.startswith("Some 4-week totals")]
     assert "2024 weeks 13-16: week 16 with no number (publisher flag '-' = no reported cases)" in note
@@ -219,7 +223,8 @@ def test_query_sql_refuses_adding_weeks_into_a_year(served: tuple[Registry, Engi
     sql = "SELECT sum(m1) FROM cdc_nndss_weekly WHERE label = 'Legionellosis' AND year = 2024 AND states = 'OHIO'"
     out = tools.query_sql(eng, sql, fmt="json")
     # Worked out as asked (was refused): weeks 1-21 add up to 39, week 16's '-' not counted, with the note.
-    assert rows(out) == [{"sum(m1)": 39, "sum_values_with_no_number": 1}]
+    # An unaliased sum's beside column is named from what it adds up (sharp-edges finding 2).
+    assert rows(out) == [{"sum(m1)": 39, "sum_m1_values_with_no_number": 1}]
     note = method(out).split("This adds up weekly counts")[1]
     assert "Weekly counts undercount the year" in note and "late" in note
     assert "semantic model for cdc_nndss_weekly: weeks are non-additive" in note
@@ -255,9 +260,11 @@ def test_the_weekly_metric_is_never_added_into_a_year(served: tuple[Registry, En
     # (week 16's '-' not counted, and named), the running total at the year's last week to 51.
     got = {r["mmwr_year"]: r for r in rows(out)}
     assert got[2023] == {"mmwr_year": 2023, "weekly_cases": 40, "suppressed_rows": 0, "flag": None,
-                         "year_to_date_at_last_week": 40}  # fmt: skip
+                         "year_to_date_at_last_week": 40, "year_to_date_week_read": "20",
+                         "year_to_date_series_with_no_number": 0}  # fmt: skip
     assert got[2024] == {"mmwr_year": 2024, "weekly_cases": 39, "suppressed_rows": 1, "flag": "-",
-                         "year_to_date_at_last_week": 51}  # fmt: skip
+                         "year_to_date_at_last_week": 51, "year_to_date_week_read": "21",
+                         "year_to_date_series_with_no_number": 0}  # fmt: skip
     method = out["method"]
     assert "Weekly counts undercount the year" in method and "late" in method
     assert "semantic model for cdc_nndss_weekly: weeks are non-additive, because late reports" in method
@@ -308,7 +315,8 @@ def test_the_weekly_rule_reads_one_week_however_it_is_pinned(
     )
     # US RESIDENTS: 21 weeks of 9 = 189, and its own year-to-date count at week 21 (the weeks' running total).
     assert rows(out) == [{"mmwr_year": 2024, "us_resident_weekly_cases": 189, "suppressed_rows": 0, "flag": None,
-                          "year_to_date_at_last_week": 189}]  # fmt: skip
+                          "year_to_date_at_last_week": 189, "year_to_date_week_read": "21",
+                          "year_to_date_series_with_no_number": 0}]  # fmt: skip
 
 
 # ------------------------------------------------------------------------------- 3. total rows never in a sum
@@ -366,9 +374,19 @@ def test_query_sql_never_skips_an_empty_value_in_a_sum(served: tuple[Registry, E
     got = rows(tools.query_sql(eng, f"SELECT sum(coalesce(m3, 0)) AS n {base}", fmt="json"))
     assert got == [{"n": 21, "n_without_total_rows": 21, "n_values_with_no_number": 1}]
     # Dropping the empty values first hides them from that count: answered, with a note saying so.
+    # The count beside it is left empty, never a 0 that reads as "no gaps" (gx finding 2, sharp-edges finding 1).
     out = tools.query_sql(eng, f"SELECT sum(m3) AS n {base} AND m3 IS NOT NULL", fmt="json")
-    assert rows(out)[0]["n"] == 21 and rows(out)[0]["n_values_with_no_number"] == 0
-    assert "WHERE tests the count it adds up (m3)" in method(out)
+    assert rows(out)[0]["n"] == 21 and rows(out)[0]["n_values_with_no_number"] is None
+    assert "WHERE tests the count it adds up (m3)" in method(out) and "left empty (not 0)" in method(out)
+    # coalesce over a group whose only value is '-' gives 0: answered, and the note says the query itself made it
+    # (gx finding 1), never "is empty when none has a number".
+    nj = base.replace("IN ('NEW JERSEY', 'MICHIGAN')", "= 'NEW JERSEY'")
+    out = tools.query_sql(eng, f"SELECT sum(coalesce(m3, 0)) AS n {nj}", fmt="json")
+    assert rows(out) == [{"n": 0, "n_values_with_no_number": 1}]  # one area: no total rows in it
+    assert "replaces a count with no number inside the sum (m3" in method(out)
+    assert "is empty when none has a number" not in method(out)
+    out = tools.query_sql(eng, f"SELECT coalesce(sum(m3), 0) AS n {nj}", fmt="json")
+    assert rows(out)[0]["n"] == 0 and "turns an empty sum into a number" in method(out)
     # Counting the empty values tests them, it doesn't add them up: no count beside it.
     counted = rows(tools.query_sql(eng, f"SELECT sum(CASE WHEN m3 IS NULL THEN 1 ELSE 0 END) AS n {base}",
                                    fmt="json"))  # fmt: skip
@@ -423,7 +441,7 @@ def test_compare_rates_and_get_trend_give_no_screening_rate(served: tuple[Regist
     assert "screening detections, not incidence" in got["rate per 100,000: Michigan 2024"]["flags"]
     # The clinical cases' rate beside it, for the year the data has (Michigan 2024: 21 per 1,000,000).
     assert got["rate per 100,000 of C. auris (clinical cases): Michigan 2024"]["estimate"] == 2.1
-    assert any("the contract's notIncidence for cdc_nndss_weekly" in n for n in out["notes"])
+    assert any("(cdc_nndss_weekly contract, notIncidence)" in n for n in out["notes"])
     out = analysis.get_trend(reg, eng, condition=SCREEN, location="Michigan", year_start=2021, year_end=2024,
                              include_provisional=True, fmt="json")  # fmt: skip
     (trend,) = [r for r in rows(out) if r["condition"] == "C. auris (screening, colonisation)"]
@@ -498,7 +516,7 @@ def test_the_guard_applies_each_sum_rule() -> None:
     from health_data_registry.sql_guard import SqlRefused
 
     q = _guard("SELECT sum(m3) FROM cdc_nndss_weekly WHERE week = 52")
-    assert '"sum_without_total_rows"' in q.sql and '"sum_values_with_no_number"' in q.sql
+    assert '"sum_m3_without_total_rows"' in q.sql and '"sum_m3_values_with_no_number"' in q.sql
     assert "FILTER(WHERE NOT COALESCE((NOT cdc_nndss_weekly.location2 IS NULL), FALSE))" in q.sql
     assert "ERROR(" not in q.sql
     assert any("total rows" in n and "totalRows" in n for n in q.notes)
@@ -510,7 +528,7 @@ def test_the_guard_applies_each_sum_rule() -> None:
     )
     window = _guard("SELECT states, sum(m1) OVER (PARTITION BY states, week) FROM cdc_nndss_weekly")
     assert "values_with_no_number" not in window.sql  # a window sum gets no column beside it, only the note
-    assert any("count(*) FILTER (WHERE <the count> IS NULL) counts them" in n for n in window.notes)
+    assert any("count(*) FILTER (WHERE m1 IS NULL) counts them" in n for n in window.notes)
     # Weeks neither pinned nor grouped: worked out, with the note citing the semantic model, under a window too.
     for sql, says in (("SELECT sum(m1) OVER (PARTITION BY states) FROM cdc_nndss_weekly", "undercount the year"),
                       ("SELECT n.states, sum(n.m3) FROM cdc_nndss_weekly AS n WHERE n.week IN (51, 52) GROUP BY 1",
@@ -678,7 +696,9 @@ def test_a_running_total_across_places_is_added_up_with_a_note(served: tuple[Reg
     out = eng.query_metric(NNDSS, "annual_cases", filters={"condition": CLIN, "reporting_area": ["MICHIGAN", "NEW JERSEY"]},
                            group_by=["mmwr_year"], period={"start": 2024, "end": 2024})  # fmt: skip
     # Michigan's 21, New Jersey's '-' not counted and named (was refused: read once per place).
-    assert rows(out) == [{"mmwr_year": 2024, "annual_cases": 21, "suppressed_rows": 1}]
+    # Each part's status and the publisher's flag come along (code-review finding 4).
+    assert rows(out) == [{"mmwr_year": 2024, "annual_cases": 21, "suppressed_rows": 1,
+                          "period_status": "provisional: running total so far (through week 52)", "flag": "-"}]  # fmt: skip
     assert "Then added up across reporting_area" in out["method"]
     assert "suppressed_rows says how many had none" in out["method"]
 
