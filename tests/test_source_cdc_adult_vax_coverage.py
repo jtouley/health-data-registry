@@ -90,12 +90,26 @@ def test_a_plain_disease_question_never_gets_vaccination_coverage() -> None:
         ("Tdap vaccination", 1),
         ("Pneumococcal vaccination", 2),
         ("Shingles vaccination", 1),
+        ("Shingles vaccination coverage", 1),
+        ("pneumococcal vaccine uptake", 2),
     ],
 )
 def test_a_vaccination_question_gets_its_series(question: str, n: int) -> None:
     reg = load_registry(ROOT)
     labels = [s.label for d, s in series_for(reg, question) if d.id == DS]
-    assert len(labels) == n and all("vaccination coverage" in x for x in labels), labels
+    vaccine = question.split()[0].lower()
+    assert len(labels) == n and all("vaccination coverage" in x and vaccine in x.lower() for x in labels), (
+        labels
+    )
+
+
+@pytest.mark.parametrize(
+    "question", ["vaccination", "vaccination coverage", "vaccine uptake", "adult vaccination"]
+)
+def test_a_bare_vaccination_question_gets_no_adult_coverage(question: str) -> None:
+    """Gate words alone name no vaccine, so none of the adult coverage series answers them."""
+    reg = load_registry(ROOT)
+    assert [s.label for d, s in series_for(reg, question) if d.id == DS] == [], question
 
 
 def test_get_series_reads_years_as_published_and_never_counties(
