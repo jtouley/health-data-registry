@@ -3,7 +3,7 @@
   "manifest_version": "0.3",
   "name": "health-data-registry",
   "display_name": "health-data-registry",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Public infectious-disease data from CDC, WHO and other publishers, with the source of every number.",
   "long_description": "A read-only tool that answers plain questions about infectious disease with public, population-level data from CDC, WHO and other publishers. Every answer names its source, version and method. It never asks for patient data. It runs on your computer through uv, a small free program from Astral; tick \"Install uv if missing\" if uv isn't installed yet.",
   "author": {

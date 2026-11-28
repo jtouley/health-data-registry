@@ -1,6 +1,6 @@
 [project]
 name = "health-data-registry"
-version = "0.0.1"
+version = "0.1.0"
 description = "Ask Claude about observed public health data (CDC, WHO and more), alongside the GBD connector, in plain English: a read-only MCP server over reviewed dataset contracts."
 readme = "README.md"
 license = "Apache-2.0"

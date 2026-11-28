@@ -1,6 +1,6 @@
 {
   "name": "health-data-registry",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Ask Claude about public infectious-disease data from CDC, WHO and other publishers: starts the health-data-registry MCP server (Python, via uv).",
   "mcpName": "io.github.jtouley/health-data-registry",
   "license": "Apache-2.0",

@@ -6,6 +6,90 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-28
+
+The first release. The notes for physicians and researchers come first; the sections after them list every
+change for developers.
+
+### For physicians and researchers
+
+Nothing changes in how you connect: keep using the same connector or plugin.
+
+#### New data you can ask about
+
+Four new CDC sources. Each one is a draft: a maintainer has not yet reviewed its data contract (see Known limits).
+
+- **Invasive *Staphylococcus aureus* (CDC HAICViz, iSA).** Case and death rates since 2005 from CDC's Emerging
+  Infections Program. Every rate covers the program's surveillance sites combined. It is never a state figure. CDC
+  does not say whether these figures are MRSA only, so no answer calls them MRSA rates.
+- **Carbapenem-resistant organisms (CDC HAICViz, MuGSI).** Case and death rates for carbapenem-resistant
+  Enterobacterales (CRE) and *Acinetobacter baumannii* (CRAB) since 2012, again for the surveillance sites
+  combined.
+- **Respiratory test positivity (CDC NREVSS).** The weekly national percent of laboratory tests positive for
+  COVID-19, influenza and RSV. There is one figure for the whole country each week. If you ask about a state or
+  region, the answer tells you so.
+- **Kindergarten vaccination coverage and exemptions (CDC SchoolVaxView).** The percent of kindergartners
+  vaccinated, or with an exemption, by vaccine and dose (or exemption type), state and school year, as each state
+  reported it. CDC publishes no confidence intervals for these figures. Answers show the published text beside
+  each number, and a state's "NA" or "NR" comes back as no value, never as 0.
+
+Try: "How has CRE incidence changed since 2015?" or "What share of kindergartners in Michigan had an MMR
+exemption last school year?"
+
+#### What changed in answers
+
+- **"–" means not reported, never 0.** In CDC's weekly notifiable-disease tables (NNDSS), a "–" means no cases
+  were reported. It does not mean zero cases. Answers now return it as an empty value with its flag. Before, it
+  could come back as 0 cases and a rate of 0.0: New Jersey 2024 was one example.
+- **What the tools do with a "–":**
+  - `get_rate` gives no rate for it.
+  - `get_trend` leaves that year out and names the flag.
+  - `compare_rates` declines the comparison.
+  - `check_signal` declines any 4-week window that contains a "–" week. This is common for rare conditions.
+- **Weekly counts are not added up into a year.** Late reports reach only CDC's year-to-date count, so adding
+  weekly counts undercounts the year.
+- ***C. auris* screening is not incidence.** Screening (colonisation) detections come back as counts, without a
+  rate per 100,000 people.
+- **No double counting.** A total never adds up labels that overlap. For example, the server never adds
+  Confirmed, Probable and Total together, and never includes animal rabies in a human count. If a question would
+  need such a sum, the answer explains why it can't give one and what to ask instead.
+- **Uncertainty is always shown.** Every percent, estimate or rate comes with the publisher's own uncertainty
+  range. When the publisher gives none, the answer says so.
+- **Empty cells are labelled.** An empty published cell, such as a *C. difficile* total, comes back as
+  "suppressed or not published", never as a blank or a 0.
+- **Qualified answers, with more coming.** The project's rule is now "show everything; qualify, don't decide".
+  You get every row the publisher sent, with its flags. Where a figure could mislead, the answer will say so in
+  plain words and put the safer figure beside it. For example: "this adds the US total row to the states; without
+  it: N". Some of this still shows up as a refusal with a next step, as described above. Turning those refusals
+  into qualified answers is the next step (#226).
+- **Safer custom queries.** `query_sql` now declines queries that could build values too large to answer safely,
+  and queries that combine two sources the project has not declared a join for. Each refusal tells you what to
+  ask instead. If you used `query_sql` to stack two sources with UNION, ask for each source on its own.
+
+#### Known limits
+
+- **Every data contract is still a draft.** A maintainer has not reviewed these sources' contracts yet. Every
+  answer says so, and `list_caveats` lists what is open. Check key numbers against the publisher's own page
+  before you cite them.
+- **Answers do not come from the reviewed data products yet.** The project builds checked, tested tables (data
+  products) from each source, but answers are still read from the stored copies of each source. The data checks
+  run on every release, but they are not yet on the path every answer takes. Moving answers onto the checked
+  layers is the next release's goal (#283).
+- **Some answers still decline instead of qualifying** (see "What the tools do with a '–'" above).
+- **Some sources are national or site-level only.** NREVSS is national. HAICViz iSA and MuGSI cover CDC's
+  surveillance sites combined, not whole states.
+- **WHO data is read live** from WHO for each question and is never stored or republished. Its terms come with
+  every answer.
+- **Michigan and Detroit dashboards** (measles by county, Detroit's annual and emergency-visit reports) need a
+  browser to read. They answer only on a computer where the local server has its browser add-on installed. The
+  hosted connector can't read them yet, and says so. When a dashboard is down, the answer says that too.
+- **"Prior work"** (`find_prior_work`): the conference-abstract index is not built yet, and the tool says so.
+
+#### How to cite
+
+Every answer names its source, the date it was fetched, the dataset version and how to cite it. Use
+`get_provenance` for the exact links and citation text.
+
 ### Security
 
 - `query_sql` refuses queries that could build values too large to answer safely (#74): `lpad`/`rpad` lengths
@@ -227,4 +311,5 @@ All notable changes to this project are documented here. The format follows
 - Provenance on every result: source address, fetch time, raw-file sha256, version, contract review status,
   licence and citation.
 
-[Unreleased]: https://github.com/jtouley/health-data-registry/commits/main
+[Unreleased]: https://github.com/jtouley/health-data-registry/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/jtouley/health-data-registry/releases/tag/v0.1.0

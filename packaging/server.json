@@ -3,7 +3,7 @@
   "name": "io.github.jtouley/health-data-registry",
   "title": "health-data-registry",
   "description": "Public infectious-disease data from CDC, WHO and other publishers, with the source of every number.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "repository": {
     "url": "https://github.com/jtouley/health-data-registry",
     "source": "github"
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "health-data-registry",
-      "version": "0.0.1",
+      "version": "0.1.0",
       "runtimeHint": "uvx",
       "transport": { "type": "stdio" },
       "packageArguments": [{ "type": "positional", "value": "serve" }],
@@ -37,7 +37,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "health-data-registry",
-      "version": "0.0.1",
+      "version": "0.1.0",
       "runtimeHint": "npx",
       "transport": { "type": "stdio" },
       "environmentVariables": [
