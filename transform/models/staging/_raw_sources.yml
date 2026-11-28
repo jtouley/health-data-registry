@@ -697,7 +697,7 @@ sources:
       or for a wide table the adapter''s structural reshaping of them (see the staging model). Only the full load
       the dataset''s LATEST pointer names is read.'
     meta:
-      raw_contract_version: 0.1.0
+      raw_contract_version: 0.1.1
       contract: contracts/census_county_pop.odcs.yaml
       load: snapshot
       load_key: []

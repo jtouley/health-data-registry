@@ -70,8 +70,8 @@ def validate(registry: Registry, lake: Path) -> int:
         return 1
     for path, contract in models:
         print(f"ok   {contract.id}: model contract {contract.version} ({path})")
+    failed = validate_schemas(registry.root)
     engine = Engine(registry=registry, lake=lake, hub=None, fetch_at_run_time=False)
-    failed = 0
     for ds_id, extra in unlisted_condition_labels(registry, engine).items():
         if extra is None:
             print(f"skip {ds_id}: no local snapshot, so its condition labels weren't checked")
@@ -120,6 +120,21 @@ def gate(a: Any) -> int:
         ok, message = run(a.target, ops, expected=expected, inputs=inputs, run_date=a.run_date)
     print(message, file=sys.stdout if ok else sys.stderr)
     return 0 if ok else 1
+
+
+def validate_schemas(root: Path) -> int:
+    """Every product and contract against Bitol's vendored ODPS and ODCS schemas; prints each problem, returns how
+    many there were."""
+    from health_data_registry.product import VENDORED, schema_files, schema_problems
+
+    problems = schema_problems(root)
+    for line in problems:
+        print(f"FAIL {line}", file=sys.stderr)
+    if not problems:
+        for spec in VENDORED:
+            n = len(schema_files(root, spec))
+            print(f"ok   {n} {spec.glob} files conform to Bitol's {spec.standard} {spec.api_version} schema")
+    return len(problems)
 
 
 def export_public(

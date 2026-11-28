@@ -35,7 +35,7 @@ FLAG_CODES = (
 )
 
 CONTRACT = f"""\
-apiVersion: v3.0.2
+apiVersion: v3.2.0
 kind: DataContract
 id: toy_cases
 version: 0.1.0

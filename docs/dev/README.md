@@ -52,7 +52,11 @@ eval [--sealed DIR] [--run FILE]`. `fetch <source>` refreshes one source. `expor
 whose licence allows redistribution to the open data hub (cards, licence text, Parquet, `manifest.json`, tag
 `release-<run date>`), lists the rest with a card and no data, and stops if a pre-publish check fails; it needs
 `HF_TOKEN` only for an `hf://` target. `validate` loads and cross-checks every catalog entry, contract and
-semantic model.
+semantic model, and checks every `*.odps.yaml` and `*.odcs.yaml` under `contracts/` against Bitol's official ODPS
+v1.1.0 and ODCS v3.2.0 JSON schemas. Both are vendored byte for byte in `src/health_data_registry/schemas/` with
+their sha256 pinned in `product.py`; a copy with another hash is refused, and nothing fetches a schema at run time.
+`scripts/vendor_schemas.py --check` checks the copies; without `--check` it fetches them again over HTTPS and
+writes them only when the hash matches.
 
 The lake lives at `$HDR_LAKE` when it is set to a full path, else in a per-user data folder (Linux
 `$XDG_DATA_HOME` or `~/.local/share`, macOS `~/Library/Application Support`, Windows `%LOCALAPPDATA%`, then

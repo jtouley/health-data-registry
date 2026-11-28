@@ -2,7 +2,7 @@ apiVersion: v3.2.0
 kind: DataContract
 id: detroit_dhd_covid_archive_daily
 name: Daily COVID-19 cases in Detroit (Detroit Health Department COVID-19 Archived Dashboard)
-version: 0.1.0
+version: 0.1.1
 status: draft
 domain: infectious_disease
 description:
@@ -119,7 +119,7 @@ schema:
         type: library
         metric: rowCount
         description: "An archived dashboard: 4,480 rows on 2026-11-24 (2,240 days x 2 chart layers). A different count means the archive changed and the contract needs review."
-        mustBeBetween: [4480, 4480]
+        mustBe: 4480
 customProperties:
   - {property: licence, value: no-terms-stated}
   - {property: redistribution, value: false}

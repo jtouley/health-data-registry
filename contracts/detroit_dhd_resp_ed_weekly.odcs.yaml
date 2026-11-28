@@ -2,7 +2,7 @@ apiVersion: v3.2.0
 kind: DataContract
 id: detroit_dhd_resp_ed_weekly
 name: Share of Detroit emergency department visits for COVID-19, influenza and RSV, by week (Detroit Health Department Respiratory Virus Dashboard)
-version: 0.1.0
+version: 0.1.1
 status: draft
 domain: infectious_disease
 description:
@@ -97,7 +97,7 @@ schema:
         type: library
         metric: rowCount
         description: "3 diagnoses x the 7 most recent weeks the dashboard shows: 21 rows on 2026-11-24. A different count means the dashboard shows another span of weeks and the contract needs review."
-        mustBeBetween: [21, 21]
+        mustBe: 21
       - id: one_row_per_diagnosis_week
         dimension: uniqueness
         severity: error

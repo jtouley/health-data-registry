@@ -90,6 +90,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `validate` checks every data product and contract (sources and dbt models) against Bitol's official ODPS v1.1.0
+  and ODCS v3.2.0 JSON schemas, vendored byte for byte with their sha256 pinned (#301). The fixes the schemas
+  forced: a row count equal to one number is `mustBe: n`, not `mustBeBetween: [n, n]` (Detroit COVID-19 archive,
+  Detroit respiratory ED visits, MDHHS measles); the Crossref, OpenAlex and Europe PMC servers of the four
+  conference-abstract contracts are `type: api`; the Census file server is `type: custom` with its format and
+  encoding. Each changed contract's version is bumped.
 - New source, draft: `nchs_resp_deaths_pct`, NCHS's provisional weekly percent of all deaths among US residents
   involving COVID-19, influenza, RSV or the three combined, by age group, sex and race and Hispanic origin
   (data.cdc.gov 53g5-jf7x). Read as published and never added; a suppressed count (1 to 9) is no value, never zero,

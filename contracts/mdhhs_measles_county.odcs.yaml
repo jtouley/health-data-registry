@@ -2,7 +2,7 @@ apiVersion: v3.2.0
 kind: DataContract
 id: mdhhs_measles_county
 name: Measles cases reported in Michigan by county (MDHHS Measles Tracking Dashboard)
-version: 0.1.0
+version: 0.1.1
 status: draft
 domain: infectious_disease
 description:
@@ -117,7 +117,7 @@ schema:
         type: library
         metric: rowCount
         description: "One row for each of Michigan's 83 counties, zero-case counties included (83 rows on 2026-11-24)."
-        mustBeBetween: [83, 83]
+        mustBe: 83
       - id: one_row_per_county
         dimension: uniqueness
         severity: error

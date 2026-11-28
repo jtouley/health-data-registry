@@ -28,7 +28,7 @@ EST_CATALOG = CATALOG.replace("shape: surveillance_series", "shape: estimate_tab
 )
 
 EST_CONTRACT = """\
-apiVersion: v3.0.2
+apiVersion: v3.2.0
 kind: DataContract
 id: toy_cases
 version: 0.2.0

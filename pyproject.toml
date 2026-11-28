@@ -21,6 +21,7 @@ dependencies = [
     # Linear-time matching for catalogued patterns that run over publisher pages (no catastrophic backtracking).
     "google-re2>=1.1,<2",
     "huggingface-hub>=1.0,<3",
+    "jsonschema>=4.23,<5",
     "mcp>=2.3,<3",
     "pdfminer-six>=20251107",  # CVE-2025-64512: older releases can load a pickled CMap from a crafted PDF
     "pdfplumber>=0.11.8,<1",
@@ -127,7 +128,7 @@ branch = true
 [tool.mutmut]
 # Mutation tests run on the modules a change touches (scripts/mutate_changed.py, `make mutate`), not the whole tree.
 source_paths = ["src/health_data_registry/", "eval/", "scripts/branch_hygiene.py"]
-also_copy = [".github/", "eval/dev/", "eval/drive_prompt.md", "catalog/", "config/", "contracts/", "semantic/", "docs/", "licenses/", "template/", "plugin/", ".claude-plugin/", "scripts/", "tools/", "assets/", "fuzz/", "transform/", "tests/fixtures/", "pyproject.toml", "README.md", "CLAUDE.md"]
+also_copy = [".github/", "eval/dev/", "eval/drive_prompt.md", "catalog/", "config/", "contracts/", "semantic/", "docs/", "licenses/", "template/", "plugin/", ".claude-plugin/", "scripts/", "tools/", "assets/", "fuzz/", "transform/", "tests/fixtures/", "pyproject.toml", "README.md", "CLAUDE.md", ".gitattributes"]
 pytest_add_cli_args = ["-m", "not network", "-x", "-q", "-p", "no:cacheprovider"]
 # The fuzz harness tests match known findings by the name of the sql_guard or adapter function an error is raised
 # in, which mutmut's trampolines rename; they test fuzz/ (never mutated), so mutmut leaves them out.
