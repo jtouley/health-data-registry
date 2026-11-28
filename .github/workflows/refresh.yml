@@ -316,11 +316,11 @@ jobs:
       # Not blocking: every other source (read live, private or a browser-only dashboard) has no rows in the
       # release, so its drift can't change a published number. It is reported here as a warning, and the weekly
       # drift check (drift-check.yml) still fails and opens an issue on it (#218).
+      # `timeout` bounds a hung publisher, and any failure, the timeout included, ends in the warning, so a
+      # release that carries none of these rows is never held by them.
       - name: Drift in sources the release doesn't carry (warning only)
-        timeout-minutes: 15
-        continue-on-error: true # a hang or crash here still can't hold a release that carries none of these rows
         run: |
-          uv run --no-sync health-data-registry check-contracts --scope unpublished \
+          timeout 15m uv run --no-sync health-data-registry check-contracts --scope unpublished \
             || echo "::warning title=Contract drift (not published)::A source this release doesn't carry failed its contract check; see this step's log. The release is not held for it, and drift-check.yml tracks it (#218)."
       # The pre-publish checks include the data: every snapshot has rows, and each data file has exactly the
       # rows its snapshot's manifest records. Any problem stops the run before anything is uploaded.
