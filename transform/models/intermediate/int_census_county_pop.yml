@@ -57,6 +57,39 @@ models:
           rule: year_range
           contract: contracts/census_county_pop.odcs.yaml
           checks: The file layout lists POPESTIMATE2020 to POPESTIMATE2025.
+  - dbt_expectations.expect_table_row_count_to_equal_other_table:
+      name: census_county_pop_rows_staging_to_intermediate
+      arguments:
+        compare_model: ref('stg_census_county_pop')
+      config:
+        severity: error
+        meta:
+          dimension: consistency
+          rule: rows_staging_to_intermediate
+          contract: contracts/census_county_pop.odcs.yaml
+          check: row_count_matches
+          checks: 'The intermediate model has exactly as many rows as staging: it only adds columns beside each
+            staging row (an exact structural fact). It guards the generated intermediate model, which today is a
+            view with no join, filter or aggregation, so it checks our code, not the publisher''s data; it becomes
+            a reconciliation of the data once a mart can change the grain (#131).'
+  - dbt_expectations.expect_table_aggregation_to_equal_other_table:
+      name: census_county_pop_total_population_staging_to_intermediate
+      arguments:
+        expression: sum("population")
+        compare_model: ref('stg_census_county_pop')
+      config:
+        severity: error
+        meta:
+          dimension: consistency
+          rule: total_population_staging_to_intermediate
+          contract: contracts/census_county_pop.odcs.yaml
+          check: total_matches
+          checks: 'The sum of the population estimates (population), over every row, the nation and state rows included
+            beside their counties, is the same in staging and the intermediate model. Each value is an estimate,
+            and this sum adds the nation and states to their counties: it is only a checksum between layers, not
+            an answer. It guards the generated intermediate model, which today is a view with no join, filter or
+            aggregation, so it checks our code, not the publisher''s data; it becomes a reconciliation of the data
+            once a mart can change the grain (#131).'
   columns:
   - name: sumlev
     data_type: varchar
