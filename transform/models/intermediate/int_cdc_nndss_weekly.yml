@@ -201,6 +201,38 @@ models:
           contract: contracts/cdc_nndss_weekly.odcs.yaml
           checks: No row has a value for publisher's row order key (year, week and area position); used only to
             keep the published table order.
+  - dbt_expectations.expect_table_row_count_to_equal_other_table:
+      name: cdc_nndss_weekly_rows_staging_to_intermediate
+      arguments:
+        compare_model: ref('stg_cdc_nndss_weekly')
+      config:
+        severity: error
+        meta:
+          dimension: consistency
+          rule: rows_staging_to_intermediate
+          contract: contracts/cdc_nndss_weekly.odcs.yaml
+          check: row_count_matches
+          checks: 'The intermediate model has exactly as many rows as staging: it only adds columns beside each
+            staging row (an exact structural fact). It guards the generated intermediate model, which today is a
+            view with no join, filter or aggregation, so it checks our code, not the publisher''s data; it becomes
+            a reconciliation of the data once a mart can change the grain (#131).'
+  - dbt_expectations.expect_table_aggregation_to_equal_other_table:
+      name: cdc_nndss_weekly_total_m1_staging_to_intermediate
+      arguments:
+        expression: sum("m1")
+        compare_model: ref('stg_cdc_nndss_weekly')
+      config:
+        severity: error
+        meta:
+          dimension: consistency
+          rule: total_m1_staging_to_intermediate
+          contract: contracts/cdc_nndss_weekly.odcs.yaml
+          check: total_matches
+          checks: 'The total of this week''s reported cases (m1), summed over every row, the publisher''s total-area
+            rows included, is the same in staging and the intermediate model: a checksum between layers, not an
+            answer (it adds any total rows to their parts). It guards the generated intermediate model, which today
+            is a view with no join, filter or aggregation, so it checks our code, not the publisher''s data; it
+            becomes a reconciliation of the data once a mart can change the grain (#131).'
   columns:
   - name: states
     data_type: varchar
