@@ -335,26 +335,61 @@ def series_for(
     """Series whose condition code or clinical label matches the words asked for.
 
     kind "plain" (the default, used by get_series) leaves out weekly and age-specific series, so a year is never
-    built by adding up provisional weeks; "weekly" and "age" return only those (check_signal, age_adjust).
+    built by adding up provisional weeks; "weekly" and "age" return only those (check_signal, age_adjust). A series
+    with asked_with words (vaccination coverage, a percent of deaths) answers only a question that uses one of them.
     """
     want = norm_label(condition)
+    said = set(want.split())
     found: list[tuple[Dataset, Series]] = []
+
+    def asked(s: Series) -> bool:
+        return asks_for(s, said)
 
     def fits(s: Series) -> bool:
         s_kind = "weekly" if s.week_dimension else "age" if s.age_dimension else "plain"
         return s_kind == kind and (measure is None or s.measure == measure)
 
+    def named(s: Series) -> bool:
+        if _names_match(want, {s.condition, s.label}):
+            return True
+        # A gated series is also named by its disease words in any order beside one of its words ("COVID-19
+        # mortality", "deaths from RSV" for "COVID-19 deaths", "RSV deaths"), compared whole, never as a part:
+        # "RSV deaths" never names a combined series whose condition merely holds "RSV".
+        gate = _gate_words(s)
+        core = set(norm_label(s.condition).split()) - gate - _CONNECTORS
+        return bool(gate) and bool(core) and core == said - gate - _CONNECTORS
+
     for ds in registry:
         if source_id and ds.id != source_id:
             continue
-        named = [s for s in ds.semantic.series if _names_match(want, {s.condition, s.label})]
-        if named:
-            found += [(ds, s) for s in named if fits(s)]
+        # A gated series the question doesn't ask for is not counted as named, so the catalog's labels still
+        # answer the question below (a plain "MMR" question beside a gated "MMR vaccination coverage" series).
+        matched = [s for s in ds.semantic.series if asked(s) and named(s)]
+        if matched:
+            found += [(ds, s) for s in matched if fits(s)]
             continue
         # Any other label the publisher uses (the catalog's vocabulary) reads through the generic series.
         for label in catalogued_labels(ds, condition):
-            found += [(ds, s) for s in ds.condition_series(label) if fits(s)]
+            found += [(ds, s) for s in ds.condition_series(label) if fits(s) and asked(s)]
     return found
+
+
+# Words that join a disease to a word like "deaths" without changing what is asked ("deaths from RSV").
+_CONNECTORS = frozenset({"from", "of", "for", "due", "to", "involving", "with", "by", "in", "and"})
+
+
+def _gate_words(s: Series) -> set[str]:
+    return {x for w in s.asked_with for x in norm_label(w).split()}
+
+
+def asks_for(s: Series, said: set[str]) -> bool:
+    """Whether a question (its normalised words) may get series s: always for a series with no asked_with words;
+    else only when the question uses one of them whole and also names something beyond them, so a bare
+    "vaccination" or "deaths" question never gets every gated series."""
+    if not s.asked_with:
+        return True
+    uses = any(set(norm_label(w).split()) <= said for w in s.asked_with)
+    return uses and bool(said - _gate_words(s) - _CONNECTORS)
 
 
 def _names_match(want: str, names: set[str]) -> bool:
@@ -723,6 +758,21 @@ def dimension_values(ds: Dataset, engine: Engine | None) -> dict[str, dict[str, 
     return out
 
 
+def _all_series(ds: Dataset) -> list[Series]:
+    return [
+        *ds.semantic.series,
+        *(g.bind("(any catalogued condition)", None) for g in ds.semantic.generic_series),
+    ]
+
+
+def _only_when_asked_with(ds: Dataset) -> list[str]:
+    """The asked_with words of a dataset whose every series, named or generic, is gated, else []."""
+    series = _all_series(ds)
+    if not series or any(not s.asked_with for s in series):
+        return []
+    return list(dict.fromkeys(w for s in series for w in s.asked_with))
+
+
 def suggest_datasets(
     registry: Registry, question: str, *, engine: Engine | None = None, fmt: Fmt = "csv"
 ) -> Out:
@@ -745,6 +795,7 @@ def suggest_datasets(
     y0, y1 = (min(years), max(years)) if years else (None, None)
     place_words = {w for st in states for w in st.lower().split()}
     topic_words = want - set(_GEO_WORDS) - place_words - {str(y) for y in years}
+    want_words = set(norm_label(" ".join(sorted(topic_words))).split())
     rows: list[list[Any]] = []
     for ds in registry:
         e = ds.entry
@@ -759,6 +810,10 @@ def suggest_datasets(
             why_not.append(f"goes down to {levels_said} only, not {', '.join(missing)}")
         if years and not _years_overlap(ds, y0, y1):
             why_not.append(f"covers {_years(ds)} only")
+        gated = _only_when_asked_with(ds)
+        if gated and topic_words and not any(asks_for(s, want_words) for s in _all_series(ds)):
+            # Every series here answers only a question that uses its words, as get_series does (series_for).
+            why_not.append(f"answers only a question that asks about {' or '.join(repr(w) for w in gated)}")
         named = [f"{s.label} ({s.measure})" for s in ds.semantic.series[:4]]
         labels = [x for x in ds.condition_labels if _tokens(x) & topic_words][:6]
         supports = "; ".join(dict.fromkeys(labels + named))

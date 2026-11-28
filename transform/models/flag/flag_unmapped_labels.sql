@@ -26,6 +26,11 @@ from {{ ref('int_cdc_nrevss_positivity') }}
 where "pathogen" is not null and "pathogen" not in ('COVID-19', 'Influenza', 'RSV')
 group by "pathogen"
 union all
+select 'cdc_nssp_lab_positivity' as dataset, "pathogen" as label, count(*) as row_count
+from {{ ref('int_cdc_nssp_lab_positivity') }}
+where "pathogen" is not null and "pathogen" not in ('COVID-19', 'Influenza', 'RSV')
+group by "pathogen"
+union all
 select 'cdc_respnet' as dataset, "surveillance_network" as label, count(*) as row_count
 from {{ ref('int_cdc_respnet') }}
 where "surveillance_network" is not null and "surveillance_network" not in ('COVID-NET', 'FluSurv-NET', 'RSV-NET', 'Combined')
@@ -35,6 +40,11 @@ select 'cdc_schoolvaxview_kindergarten' as dataset, "vaccine" as label, count(*)
 from {{ ref('int_cdc_schoolvaxview_kindergarten') }}
 where "vaccine" is not null and "vaccine" not in ('DTP, DTaP, or DT', 'Exemption', 'Hepatitis B', 'MMR', 'MMR (PAC)', 'Polio', 'Varicella')
 group by "vaccine"
+union all
+select 'nchs_resp_deaths_pct' as dataset, "pathogen" as label, count(*) as row_count
+from {{ ref('int_nchs_resp_deaths_pct') }}
+where "pathogen" is not null and "pathogen" not in ('COVID-19', 'Influenza', 'RSV', 'Combined')
+group by "pathogen"
 )
 
 select dataset, label, row_count,
