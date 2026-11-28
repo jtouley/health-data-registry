@@ -1,0 +1,130 @@
+dataset: nchs_resp_deaths_pct
+# 0.1.0: first draft. Every figure is read from its one published cell, for one cause, week and demographic group;
+# nothing is added. A percent of all deaths names a virus but is not a count of its cases, so every series answers
+# only a question that asks about deaths (asked_with).
+version: 0.1.0
+dimensions:
+  - {name: cause, column: pathogen, type: categorical, non_additive: true, non_additive_reason: "a death can involve more than one virus, and Combined sits beside the three it includes", description: "The cause the deaths involve: COVID-19, Influenza, RSV, or Combined for the three together."}
+  - {name: week_ending, column: weekending_date, type: time, non_additive: true, non_additive_reason: "a percent for one week can't be added to the next week's", description: "The Saturday that ends the week of reporting."}
+  - {name: group_kind, column: demographic_type, type: categorical, non_additive: true, non_additive_reason: "age groups, race and Hispanic origin groups and sexes each cover all deaths, so adding across kinds counts every death three times", description: "Age Group, Race/Ethnicity or Sex."}
+  - {name: group, column: demographic_values, type: categorical, non_additive: true, non_additive_reason: "each group has its own deaths from all causes, so percents for two groups can't be added", description: "The demographic group, such as '65+ years', 'Hispanic' or 'Female'."}
+measures:
+  - {name: percent_of_deaths, column: percent_deaths, kind: percent, unit: "% of all deaths", description: "Percent of all deaths in the week and group that involved the cause."}
+  - {name: deaths_involving, column: deaths, kind: count, unit: "deaths", description: "Deaths involving the cause."}
+  - {name: all_cause_deaths, column: total_deaths, kind: count, unit: "deaths", description: "Deaths from all causes in the week and group."}
+metrics:
+  - name: weekly_percent_of_deaths
+    description: "Weekly percent of all deaths among US residents in one demographic group that involved one cause, read as published and never added up."
+    measure: percent_of_deaths
+    aggregation: none
+    exclude_total_rows: false
+    uncertainty: none
+    # Structural: the contract has no interval column.
+    uncertainty_reason: "NCHS publishes no confidence interval for these percents; they come from provisional death certificate counts, and the counts behind each percent are published beside it."
+  - name: weekly_deaths_involving
+    description: "Deaths involving one cause in one week and demographic group, as published (empty where suppressed); never added across causes, groups or weeks."
+    measure: deaths_involving
+    aggregation: none
+    exclude_total_rows: false
+  - name: weekly_all_cause_deaths
+    description: "Deaths from all causes in one week and demographic group, as published."
+    measure: all_cause_deaths
+    aggregation: none
+    exclude_total_rows: false
+series:
+  - condition: "COVID-19 deaths"
+    label: "COVID-19 percent of all deaths, ages 0 to 17 (NCHS, national, weekly, provisional)"
+    metric: weekly_percent_of_deaths
+    measure: percent
+    filters: {cause: "COVID-19", group_kind: "Age Group", group: "0-17 years"}
+    place_coverage: "US residents as a whole (this table has no state or regional breakdown)"
+    time_dimension: week_ending
+    asked_with: ["death", "deaths", "mortality"]
+  - condition: "COVID-19 deaths"
+    label: "COVID-19 percent of all deaths, ages 18 to 64 (NCHS, national, weekly, provisional)"
+    metric: weekly_percent_of_deaths
+    measure: percent
+    filters: {cause: "COVID-19", group_kind: "Age Group", group: "18-64 years"}
+    place_coverage: "US residents as a whole (this table has no state or regional breakdown)"
+    time_dimension: week_ending
+    asked_with: ["death", "deaths", "mortality"]
+  - condition: "COVID-19 deaths"
+    label: "COVID-19 percent of all deaths, ages 65 and older (NCHS, national, weekly, provisional)"
+    metric: weekly_percent_of_deaths
+    measure: percent
+    filters: {cause: "COVID-19", group_kind: "Age Group", group: "65+ years"}
+    place_coverage: "US residents as a whole (this table has no state or regional breakdown)"
+    time_dimension: week_ending
+    asked_with: ["death", "deaths", "mortality"]
+  - condition: "Influenza deaths"
+    label: "Influenza percent of all deaths, ages 0 to 17 (NCHS, national, weekly, provisional)"
+    metric: weekly_percent_of_deaths
+    measure: percent
+    filters: {cause: "Influenza", group_kind: "Age Group", group: "0-17 years"}
+    place_coverage: "US residents as a whole (this table has no state or regional breakdown)"
+    time_dimension: week_ending
+    asked_with: ["death", "deaths", "mortality"]
+  - condition: "Influenza deaths"
+    label: "Influenza percent of all deaths, ages 18 to 64 (NCHS, national, weekly, provisional)"
+    metric: weekly_percent_of_deaths
+    measure: percent
+    filters: {cause: "Influenza", group_kind: "Age Group", group: "18-64 years"}
+    place_coverage: "US residents as a whole (this table has no state or regional breakdown)"
+    time_dimension: week_ending
+    asked_with: ["death", "deaths", "mortality"]
+  - condition: "Influenza deaths"
+    label: "Influenza percent of all deaths, ages 65 and older (NCHS, national, weekly, provisional)"
+    metric: weekly_percent_of_deaths
+    measure: percent
+    filters: {cause: "Influenza", group_kind: "Age Group", group: "65+ years"}
+    place_coverage: "US residents as a whole (this table has no state or regional breakdown)"
+    time_dimension: week_ending
+    asked_with: ["death", "deaths", "mortality"]
+  - condition: "RSV deaths"
+    label: "RSV percent of all deaths, ages 0 to 17 (NCHS, national, weekly, provisional)"
+    metric: weekly_percent_of_deaths
+    measure: percent
+    filters: {cause: "RSV", group_kind: "Age Group", group: "0-17 years"}
+    place_coverage: "US residents as a whole (this table has no state or regional breakdown)"
+    time_dimension: week_ending
+    asked_with: ["death", "deaths", "mortality"]
+  - condition: "RSV deaths"
+    label: "RSV percent of all deaths, ages 18 to 64 (NCHS, national, weekly, provisional)"
+    metric: weekly_percent_of_deaths
+    measure: percent
+    filters: {cause: "RSV", group_kind: "Age Group", group: "18-64 years"}
+    place_coverage: "US residents as a whole (this table has no state or regional breakdown)"
+    time_dimension: week_ending
+    asked_with: ["death", "deaths", "mortality"]
+  - condition: "RSV deaths"
+    label: "RSV percent of all deaths, ages 65 and older (NCHS, national, weekly, provisional)"
+    metric: weekly_percent_of_deaths
+    measure: percent
+    filters: {cause: "RSV", group_kind: "Age Group", group: "65+ years"}
+    place_coverage: "US residents as a whole (this table has no state or regional breakdown)"
+    time_dimension: week_ending
+    asked_with: ["death", "deaths", "mortality"]
+  - condition: "Combined respiratory virus deaths"
+    label: "COVID-19, influenza and RSV combined percent of all deaths, ages 0 to 17 (NCHS, national, weekly, provisional)"
+    metric: weekly_percent_of_deaths
+    measure: percent
+    filters: {cause: "Combined", group_kind: "Age Group", group: "0-17 years"}
+    place_coverage: "US residents as a whole (this table has no state or regional breakdown)"
+    time_dimension: week_ending
+    asked_with: ["death", "deaths", "mortality"]
+  - condition: "Combined respiratory virus deaths"
+    label: "COVID-19, influenza and RSV combined percent of all deaths, ages 18 to 64 (NCHS, national, weekly, provisional)"
+    metric: weekly_percent_of_deaths
+    measure: percent
+    filters: {cause: "Combined", group_kind: "Age Group", group: "18-64 years"}
+    place_coverage: "US residents as a whole (this table has no state or regional breakdown)"
+    time_dimension: week_ending
+    asked_with: ["death", "deaths", "mortality"]
+  - condition: "Combined respiratory virus deaths"
+    label: "COVID-19, influenza and RSV combined percent of all deaths, ages 65 and older (NCHS, national, weekly, provisional)"
+    metric: weekly_percent_of_deaths
+    measure: percent
+    filters: {cause: "Combined", group_kind: "Age Group", group: "65+ years"}
+    place_coverage: "US residents as a whole (this table has no state or regional breakdown)"
+    time_dimension: week_ending
+    asked_with: ["death", "deaths", "mortality"]
