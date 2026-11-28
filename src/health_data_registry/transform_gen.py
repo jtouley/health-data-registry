@@ -44,17 +44,19 @@ from typing import Any
 import yaml
 
 from health_data_registry.dbt_raw import PROVENANCE, SHA256_COLUMN, SNAPSHOT_COLUMN
+from health_data_registry.dq_checks import dbt_test
 from health_data_registry.quality import condition_sql, measure_sql, rules_for
 from health_data_registry.registry import (
     Contract,
     Dataset,
     Registry,
+    RegistryError,
     label_key,
     label_key_sql,
     load_registry,
     parse_contract,
 )
-from health_data_registry.staging import silver_schema, typed_select
+from health_data_registry.staging import raw_fields, silver_schema, staged_source, typed_select
 
 MODELS_DIR = Path("transform/models")
 STAGING_DIR = MODELS_DIR / "staging"
@@ -70,6 +72,21 @@ PROVENANCE_DOCS = {
     "source address, retrieval time and dataset version that go with every answer built on this row.",
     SHA256_COLUMN: "The sha256 fingerprint of each raw file the row was parsed from, space-separated in fetch "
     "order: the exact bytes the publisher sent.",
+}
+
+# What the adapter itself adds to a row (never a publisher value; hard rule 15), described as what it is, so the
+# raw source never calls it a publisher field.
+ADDED_DOCS = {
+    "document_url": "Added by the adapter: the address of the document this row was read from, with any access "
+    "key removed.",
+    "document_sha256": "Added by the adapter: the sha256 fingerprint of that document's raw bytes, as kept in the "
+    "lake's raw store.",
+    "document_retrieved_at": "Added by the adapter: when that document was fetched (ISO 8601, UTC).",
+    "failed_checks": "Added by the adapter: each check of the table against its own printed totals that this row "
+    "(or, in the long layout, this cell) failed, as a JSON array of plain sentences; [] when it failed none or none "
+    "applied. No value is changed by a check.",
+    "column_header": "Built by the adapter (long layout): the printed header of the column this cell sits in.",
+    "cell_text": "Built by the adapter (long layout): the cell's text exactly as printed.",
 }
 
 DBT_TYPES = {
@@ -112,30 +129,58 @@ def _dump(header: str, doc: Mapping[str, Any]) -> str:
     return f"# {header}\n{body}"
 
 
+def _staging_steps(ds: Dataset) -> list[tuple[Any, Any]]:
+    from health_data_registry.adapters.extensions import resolved
+
+    return resolved(ds.entry.source.extensions, "staging")
+
+
+def _raw_description(ds: Dataset, f: str, read_into: Mapping[str, list[str]]) -> str:
+    """What one raw field holds: the adapter's own metadata as such; a publisher field and the contract column it
+    is read into, or, for a field a staging step reads, which value it holds and the column it lands in."""
+    into = "; read into " + "; ".join(read_into[f]) if f in read_into else ""
+    if f in ADDED_DOCS:
+        return ADDED_DOCS[f] + into
+    if into:
+        return f"Publisher field {f}, as text{into}"
+    for ext, args in _staging_steps(ds):
+        explained = ext.explain_input(args, f) if ext.explain_input is not None else None
+        if explained is not None:
+            lands, what = explained
+            column = "; ".join(read_into.get(lands, [])) or lands
+            return f"Publisher field {f}, as text: {what} ({ext.name}), into {column}"
+    names = ", ".join(ext.name for ext, _a in _staging_steps(ds))
+    return f"Publisher field {f}, as text; read by staging ({names}) and kept as it is"
+
+
 def raw_sources(registry: Registry) -> str:
     tables = []
     for ds in stored(registry):
-        fields = source_fields(ds.contract)
+        fields = raw_fields(ds.entry, source_fields(ds.contract))
         read_into: dict[str, list[str]] = {}
         for c in ds.contract.columns:
             read_into.setdefault(c.source_field, []).append(f"{c.name} ({c.description})")
         columns = [
-            {
-                "name": f,
-                "data_type": "varchar",
-                "description": f"Publisher field {f}, as text; read into " + "; ".join(read_into[f]),
-            }
+            {"name": f, "data_type": "varchar", "description": _raw_description(ds, f, read_into)}
             for f in fields
         ]
         columns += [
             {"name": p, "data_type": "varchar", "description": PROVENANCE_DOCS[p]} for p in PROVENANCE
         ]
+        steps = _staging_steps(ds)
+        held = (
+            "the file exactly as the publisher laid it out; staging reshapes it ("
+            + ", ".join(ext.name for ext, _a in steps)
+            + ")"
+            if steps
+            else "the publisher's own fields, or for a wide table the adapter's structural reshaping of them (see "
+            "the staging model)"
+        )
         tables.append(
             {
                 "name": ds.id,
                 "description": f"Raw records of {ds.entry.title} as the adapter hands them on, every value as "
-                "text: the publisher's own fields, or for a wide table the adapter's structural reshaping of "
-                "them (see the staging model). Only the full load the dataset's LATEST pointer names is read.",
+                f"text: {held}. Only the full load the dataset's LATEST pointer names is read.",
                 "meta": {
                     "raw_contract_version": ds.contract.version,
                     "contract": ds.entry.contract,
@@ -165,17 +210,31 @@ def raw_sources(registry: Registry) -> str:
 
 def staging_sql(ds: Dataset) -> str:
     provenance = ",\n  ".join(f'"{p}"' for p in PROVENANCE)
+    # The source's staging extensions (if any) wrap the raw relation: the same SQL the lake and the live read run.
+    raw = f"{{{{ source('raw', '{ds.id}') }}}}"
+    sql, _fields, rows_per_row = staged_source(ds.entry, raw, None)
+    steps = _staging_steps(ds)
+    reshape = (
+        "-- Staging steps: "
+        + ", ".join(ext.name for ext, _a in steps)
+        + f" (one raw row makes {rows_per_row} rows; they reshape, never compute or filter). The load checks the\n"
+        "-- file's layout and this row count before LATEST moves (staging.stage_entry); dbt reads only that load.\n"
+        if steps
+        else ""
+    )
     return (
         f"-- {HEADER.format(src=ds.entry.contract)}\n"  # noqa: S608 - generated from quoted contract identifiers
         "-- Types the load the dataset's LATEST pointer names; every business rule lives in intermediate models.\n"
+        f"{reshape}"
         "-- No row is dropped or deduplicated: a duplicate key fails the model's one-row-per-key test.\n"
         f"select\n  {typed_select(ds.contract)},\n  {provenance}\n"
-        f"from {{{{ source('raw', '{ds.id}') }}}}\n"
+        f"from {sql}\n"
     )
 
 
-def _columns(contract: Contract, model: str) -> list[dict[str, Any]]:
-    """The dbt columns of a model: every type, description, constraint and code list from its contract."""
+def _columns(contract: Contract, model: str, made: Mapping[str, str] | None = None) -> list[dict[str, Any]]:
+    """The dbt columns of a model: every type, description, constraint and code list from its contract. ``made``
+    names the staging step that makes a source field the publisher never sent (wide_to_long's key)."""
     columns = []
     for c in silver_schema(contract):
         column = contract.column(c.name)
@@ -200,6 +259,8 @@ def _columns(contract: Contract, model: str) -> list[dict[str, Any]]:
                 **({"not_incidence": dict(column.not_incidence)} if column.not_incidence else {}),
             },
         }
+        if made and c.source_field in made:
+            col["meta"]["made_by"] = made[c.source_field]
         tests: list[dict[str, Any]] = []
         if column.required:
             col["constraints"] = [{"type": "not_null"}]
@@ -226,13 +287,30 @@ def _columns(contract: Contract, model: str) -> list[dict[str, Any]]:
 
 
 def _model_yml(
-    contract: Contract, model: str, contract_path: str, tags: list[str], *, provenance: bool = False
+    contract: Contract,
+    model: str,
+    contract_path: str,
+    tags: list[str],
+    *,
+    provenance: bool = False,
+    extra_tests: list[dict[str, Any]] | None = None,
+    column_tests: Mapping[str, list[dict[str, Any]]] | None = None,
+    steps: list[dict[str, Any]] | None = None,
 ) -> str:
     schema = (contract.raw.get("schema") or [{}])[0]
     pk = primary_key(contract)
+    description = str(schema.get("description") or contract.id).strip()
+    if steps:
+        grain = " and ".join(k for s in steps for k in s["adds_to_grain"])
+        description = description if description.endswith(".") else description + "."
+        description += (
+            f" Staging reshapes the raw load ({', '.join(s['name'] for s in steps)}): one row per raw row"
+            + (f" and {grain}" if grain else "")
+            + "; no row is dropped."
+        )
     entry: dict[str, Any] = {
         "name": model,
-        "description": str(schema.get("description") or contract.id).strip(),
+        "description": description,
         "config": {"materialized": "table", "contract": {"enforced": True}, "tags": tags},
         "meta": {
             "contract": contract_path,
@@ -242,12 +320,17 @@ def _model_yml(
             "primary_key": pk,
         },
     }
+    if steps:
+        entry["meta"]["staging_extensions"] = steps
     if pk:
         # A test, not a dedupe: two rows with one key in a load are a data finding, never resolved in SQL.
         entry["data_tests"] = [
             {"one_row_per_key": {"name": f"{model}_one_row_per_{'_'.join(pk)}", "arguments": {"columns": pk}}}
         ]
-    entry["columns"] = _columns(contract, model)
+    if extra_tests:
+        entry["data_tests"] = entry.get("data_tests", []) + extra_tests
+    made = {k: s["name"] for s in steps or [] for k in s["adds_to_grain"]}
+    entry["columns"] = _with_column_tests(_columns(contract, model, made), column_tests or {})
     if provenance:
         entry["columns"] += [
             {
@@ -262,17 +345,38 @@ def _model_yml(
 
 
 def staging_yml(ds: Dataset) -> str:
-    return _model_yml(ds.contract, f"stg_{ds.id}", ds.entry.contract, ["staging"], provenance=True)
+    steps = []
+    for ext, args in _staging_steps(ds):
+        step = ext.run(args, "raw", list(ext.input_fields(args)))
+        steps.append({"name": ext.name, "hook": "staging", "rows_per_row": step.rows_per_row,
+                      "adds_to_grain": list(step.key_fields)})  # fmt: skip
+    return _model_yml(
+        ds.contract,
+        f"stg_{ds.id}",
+        ds.entry.contract,
+        ["staging"],
+        provenance=True,
+        extra_tests=dq_tests(ds, "staging"),
+        column_tests=dq_column_tests(ds, "staging"),
+        steps=steps or None,
+    )
 
 
 def model_contracts(root: Path) -> list[tuple[Path, Contract]]:
-    """The contracts of models computed in dbt (contracts/models/<id>.odcs.yaml), each parsed like a dataset's."""
+    """The contracts of models computed in dbt (contracts/models/<id>.odcs.yaml), each parsed like a dataset's.
+
+    A model contract may not declare dbt-expectations checks yet: they compare a source's layers, which a model
+    computed in dbt doesn't have. Refused here, where the contract is parsed, so `validate` says so plainly."""
     out = []
     for path in sorted((root / MODEL_CONTRACTS).glob("*.odcs.yaml")):
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-        out.append(
-            (path.relative_to(root), parse_contract(doc, expected_id=path.name.removesuffix(".odcs.yaml")))
-        )
+        contract = parse_contract(doc, expected_id=path.name.removesuffix(".odcs.yaml"))
+        if contract.checks:
+            raise RegistryError(
+                f"{contract.id}: dbt-expectations checks are declared on source contracts only, so far; "
+                "declare a library or sql quality rule on a model contract"
+            )
+        out.append((path.relative_to(root), contract))
     return out
 
 
@@ -415,6 +519,45 @@ def quality_tests(ds: Dataset) -> list[dict[str, Any]]:
     ]
 
 
+def dq_tests(ds: Dataset, model: str) -> list[dict[str, Any]]:
+    """The dbt-expectations tests the contract declares on one layer (staging or intermediate) that run on the
+    model, as dbt config. Each is a `custom` quality rule in the contract; dq_checks.CHECK_TYPES maps its check
+    type to the test. Tests dbt runs under a column are in dq_column_tests."""
+    return [
+        dbt_test(c, ds.id, ds.entry.contract)
+        for c in ds.contract.checks
+        if c.model == model and not c.on_column
+    ]
+
+
+def dq_column_tests(ds: Dataset, model: str) -> dict[str, list[dict[str, Any]]]:
+    """The dbt-expectations tests on one layer that dbt runs under their column, by column name."""
+    out: dict[str, list[dict[str, Any]]] = {}
+    for c in ds.contract.checks:
+        if c.model == model and c.on_column and c.column is not None:
+            out.setdefault(c.column, []).append(dbt_test(c, ds.id, ds.entry.contract))
+    return out
+
+
+def _with_column_tests(
+    columns: list[dict[str, Any]], tests: Mapping[str, list[dict[str, Any]]]
+) -> list[dict[str, Any]]:
+    """The columns, each with the column tests given for it added to its own data_tests."""
+    unknown = sorted(set(tests) - {c["name"] for c in columns})
+    if unknown:
+        raise ValueError(f"a column check names {unknown[0]}, which the model has no column for")
+    return [
+        {**c, "data_tests": c.get("data_tests", []) + tests[c["name"]]} if c["name"] in tests else c
+        for c in columns
+    ]
+
+
+def dq_test_severities(ds: Dataset) -> dict[str, str]:
+    """Every dbt-expectations test a source's contract declares, by test name, with its severity: the release
+    gate expects each one in a build's run record."""
+    return {f"{ds.id}_{c.id}": c.severity for c in ds.contract.checks}
+
+
 UNMAPPED_LABELS = MODELS_DIR / "flag" / "flag_unmapped_labels.sql"
 
 
@@ -471,8 +614,8 @@ def intermediate_yml(ds: Dataset) -> str:
             "contract_version": ds.contract.version,
             "contract_status": ds.contract.status,
         },
-        "data_tests": quality_tests(ds),
-        "columns": columns,
+        "data_tests": quality_tests(ds) + dq_tests(ds, "intermediate"),
+        "columns": _with_column_tests(columns, dq_column_tests(ds, "intermediate")),
     }
     return _dump(HEADER.format(src=ds.entry.contract), {"version": 2, "models": [entry]})
 
