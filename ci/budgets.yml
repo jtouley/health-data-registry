@@ -11,6 +11,11 @@
 #
 # Ratchet: a budget may only tighten. To loosen one, change this file alone, in a pull request of its own, so the
 # maintainer sees and approves just that (scripts/ci_budget.py ratchet; run in the Checks job).
+#
+# full, 28 Nov 2026 (#287): 108 run attempts on main, pre-pr and pull requests (25-28 Nov), every test passing.
+# Tests (Python 3.12) ran p50 222 s, p90 305 s, p99 323 s, max 347 s; 3.13 p50 216, p99 306, max 310; the
+# critical path p50 260, p99 332, max 360. Tests: 420 s, about p99 + 30% (max + 20%). Run: Changes + Tests +
+# CI result = 30 + 420 + 30 = 480 s (tests/test_ci_probes.py checks the sum).
 {
   "pr": {
     "run": 180,
@@ -22,11 +27,11 @@
     }
   },
   "full": {
-    "run": 360,
+    "run": 480,
     "jobs": {
       "Changes": 30,
       "Checks": 240,
-      "Tests (Python *)": 300,
+      "Tests (Python *)": 420,
       "CI result": 30
     }
   }
