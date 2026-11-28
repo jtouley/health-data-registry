@@ -51,11 +51,14 @@ All notable changes to this project are documented here. The format follows
     `notIncidence` declaration (the maintainer's declaration); its counts are still returned.
   - `refresh` exits non-zero when a development sample (`--max-rows`) fails a blocking data check, and every
     answer from that sample says which check failed.
-- `query_sql` refuses a bare name that looks like a function (`read_csv`, `glob`, `getenv`, any `read_*` or
-  `*_scan`, and every table function DuckDB lists) when the query uses it as a column alias, table alias or WITH
-  name, and says to choose another name or put it in double quotes. Before, `FROM deaths read_csv('x')` passed as
-  a harmless alias; it read no file, but the SQL that ran looked like a file read, and the guard's token-soup
-  property test failed whenever it generated that case.
+- `query_sql` refuses a bare name that is the name of a function reaching outside the query (a file reader such
+  as `read_csv`, `glob`, the `duckdb_*` and `pragma_*` catalogue functions, `getenv`, `current_setting`, and the
+  readers of the spatial, sqlite, postgres, mysql, delta, iceberg, ducklake and http extensions) when the query
+  uses it as a column alias, table alias, WITH name or window name, and says to choose another name or put it in
+  double quotes. Before, `FROM deaths read_csv('x')` passed as a harmless alias; it read no file, but the SQL that
+  ran looked like a file read, and the guard's token-soup property test failed whenever it generated that case.
+  Only exact names from a reviewed list are refused: everyday names such as `range`, `summary`, `version`,
+  `care_setting`, `ct_scan` or `delta_cases` stay ordinary names, and a DuckDB upgrade doesn't change the list.
 - A summed count never adds up labels that overlap or count different things (hard rule 2). Semantic-model
   dimensions say `non_additive: true` or `false`, and each `true` says why in plain words
   (`non_additive_reason`), which the refusal and `describe_dataset` show. A metric or series that neither picks

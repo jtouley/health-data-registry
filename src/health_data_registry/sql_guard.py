@@ -36,7 +36,6 @@ are ported. ``polars``/``structlog`` are replaced by plain tuples and stdlib ``l
 
 from __future__ import annotations
 
-import functools
 import logging
 import re
 import threading
@@ -400,49 +399,57 @@ _STATEMENT_WORDS = frozenset(
 )  # fmt: skip
 
 # Function names never used as a bare alias or WITH name (FROM deaths read_csv('x') parses as a table alias named
-# read_csv with a column alias x): refused so the query that runs never even reads like a file read, a table
-# function or a setting. The known ones by name, whole families by prefix or suffix, and every table function the
-# installed DuckDB lists (_table_functions), so a new reader is refused too. A quoted name ("glob") is an ordinary
-# name: it is regenerated quoted, so it can't read as a call.
+# read_csv with a column alias x): refused so the query that runs never even reads like a call to something outside
+# the query, such as a file, the network, the catalogue, a setting, a secret, the environment or an extension.
+# A reviewed, fixed list of exact names, so a DuckDB upgrade never changes what query_sql accepts on its own:
+# - every built-in table function of that kind; tests/test_sql_guard.py fails when the installed DuckDB lists a
+#   table function that is neither here nor in its reviewed list of row generators (range, unnest, summary and
+#   the like, which reach nothing and stay ordinary names);
+# - the readers of the extensions named below, and the scalar functions that read settings or the environment.
+# An extension's function not named here is not covered. This check keeps the SQL readable; harden() is what stops
+# a read. A quoted name ("glob") is an ordinary name: it is regenerated quoted, so it can't read as a call.
 _FUNCTION_NAMES: Final = frozenset(
-    {"read_csv", "read_csv_auto", "read_parquet", "read_json", "read_json_auto", "read_json_objects",
-     "read_ndjson", "read_text", "read_blob", "read_xlsx", "glob", "query", "query_table", "sqlite_scan",
-     "sqlite_attach", "postgres_scan", "postgres_attach", "mysql_scan", "parquet_scan", "parquet_metadata",
-     "parquet_schema", "delta_scan", "iceberg_scan", "getenv", "getvariable", "set_variable", "current_setting",
-     "duckdb_settings", "duckdb_tables", "duckdb_secrets", "pragma_version", "load_extension", "range",
-     "generate_series", "st_read", "http_get", "http_post", "unnest", "which_secret", "sniff_csv", "summary"}
+    {
+        # built in: files, catalogue, settings, secrets, logs, profiling, other SQL, client scans
+        "add_grammar_extension", "arrow_scan", "arrow_scan_dumb", "checkpoint", "create_external_resource",
+        "deregister_external_resource", "destroy_external_resource", "disable_logging", "disable_profiling",
+        "duckdb_approx_database_count", "duckdb_available_metrics", "duckdb_columns", "duckdb_connection_count",
+        "duckdb_constraints", "duckdb_coordinate_systems", "duckdb_databases", "duckdb_dependencies",
+        "duckdb_dialects", "duckdb_eviction_queues", "duckdb_extension_repositories", "duckdb_extensions",
+        "duckdb_external_file_cache", "duckdb_external_resource_types", "duckdb_external_resources",
+        "duckdb_functions", "duckdb_grammar_extensions", "duckdb_indexes", "duckdb_keywords",
+        "duckdb_live_query_metrics", "duckdb_log_contexts", "duckdb_logs", "duckdb_memory", "duckdb_optimizers",
+        "duckdb_prepared_statements", "duckdb_schemas", "duckdb_secret_type_parameters", "duckdb_secret_types",
+        "duckdb_secrets", "duckdb_sequences", "duckdb_settings", "duckdb_table_sample", "duckdb_tables",
+        "duckdb_temporary_files", "duckdb_triggers", "duckdb_types", "duckdb_variables", "duckdb_views",
+        "enable_logging", "enable_profiling", "force_checkpoint", "glob", "json_execute_serialized_sql",
+        "pandas_scan", "parquet_bloom_probe", "parquet_file_metadata", "parquet_full_metadata",
+        "parquet_kv_metadata", "parquet_metadata", "parquet_page_index", "parquet_scan", "parquet_schema",
+        "pragma_collations", "pragma_database_size", "pragma_metadata_info", "pragma_platform", "pragma_show",
+        "pragma_storage_info", "pragma_table_info", "pragma_user_agent", "pragma_version", "python_arrow_scan",
+        "python_map_function", "query", "query_table", "read_blob", "read_csv", "read_csv_auto", "read_duckdb",
+        "read_json", "read_json_auto", "read_json_objects", "read_json_objects_auto", "read_ndjson",
+        "read_ndjson_auto", "read_ndjson_objects", "read_parquet", "read_single_csv_file",
+        "read_single_json_file", "read_single_parquet_file", "read_text", "register_external_resource",
+        "register_external_resource_type", "remove_grammar_extension", "seq_scan", "sniff_csv",
+        "truncate_duckdb_logs", "which_secret",
+        # extensions: excel, spatial, sqlite, postgres, mysql, delta, iceberg, ducklake, httpfs and the http client
+        "read_xlsx", "st_read", "st_read_meta", "st_readosm", "st_readshp", "st_drivers", "sqlite_scan",
+        "sqlite_attach", "sqlite_query", "postgres_scan", "postgres_attach", "postgres_query", "postgres_execute",
+        "mysql_scan", "mysql_attach", "mysql_query", "mysql_execute", "delta_scan", "iceberg_scan",
+        "iceberg_metadata", "iceberg_snapshots", "ducklake_snapshots", "ducklake_table_info",
+        "ducklake_table_changes", "ducklake_list_files", "http_get", "http_post", "http_head",
+        # scalar: settings, variables, the environment, extensions
+        "current_setting", "getenv", "getvariable", "set_variable", "load_extension",
+    }
 )  # fmt: skip
-_FUNCTION_PREFIXES: Final = (
-    "read_", "duckdb_", "pragma_", "parquet_", "sqlite_", "postgres_", "mysql_", "iceberg_", "delta_", "http_",
-)  # fmt: skip
-_FUNCTION_SUFFIXES: Final = ("_scan", "_attach", "_secret", "_secrets", "_setting", "_settings")
-
-
-@functools.cache
-def _table_functions() -> frozenset[str]:
-    """Every table and pragma function the installed DuckDB knows, lower-cased."""
-    with duckdb.connect(":memory:") as con:
-        rows = con.execute(
-            "SELECT DISTINCT function_name FROM duckdb_functions() "
-            "WHERE function_type IN ('table', 'table_macro', 'pragma')"
-        ).fetchall()
-    return frozenset(str(name).casefold() for (name,) in rows)
-
-
-def _looks_like_function(name: str) -> bool:
-    key = name.casefold()
-    return (
-        key in _FUNCTION_NAMES
-        or key.startswith(_FUNCTION_PREFIXES)
-        or key.endswith(_FUNCTION_SUFFIXES)
-        or key in _table_functions()
-    )
 
 
 def _is_definition(node: exp.Identifier) -> bool:
-    """The identifier names something the query defines: a column alias, a table alias (or its column list), a
-    WITH name, or a named window (WINDOW w AS (...), OVER w). An Identifier sits directly under an Alias or a
-    Window only as that name: the aliased expression and the window's columns are Column nodes."""
+    """The identifier names something the query defines, or a named window: a column alias, a table alias (or its
+    column list), a WITH name, a window's name (WINDOW w AS (...)) or a reference to one (OVER w, OVER (w)). An
+    Identifier sits directly under an Alias or a Window only as that name: the aliased expression and the window's
+    columns are Column nodes. A window reference is refused with the definition, since it can only name one."""
     return isinstance(node.parent, exp.TableAlias | exp.Alias | exp.Window)
 
 
@@ -456,11 +463,11 @@ def _check_name(node: exp.Identifier) -> None:
             "forbidden_construct",
             f"{name} can't be used as a name here: choose another name for the column or table.",
         )
-    if _is_definition(node) and _looks_like_function(name):
+    if _is_definition(node) and name.casefold() in _FUNCTION_NAMES:
         raise SqlRefused(
             "forbidden_construct",
-            f"{name} looks like the name of a function, so it can't name a column, table, window or WITH part: choose "
-            f'another name, or put it in double quotes ("{name}").',
+            f"{name} looks like the name of a function, so it can't name a column, table, window or WITH part: "
+            f'choose another name, or put it in double quotes ("{name}").',
         )
 
 

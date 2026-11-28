@@ -699,25 +699,13 @@ def test_guard_quotedStatementWord_isAnOrdinaryName(word: str) -> None:
         "SELECT * FROM deaths AS d(current_setting)",
         "WITH query AS (SELECT state FROM deaths) SELECT state FROM query",
         "SELECT state AS Read_CSV FROM deaths",
-        "SELECT state AS read_anything_new FROM deaths",  # a family by prefix
-        "SELECT state AS duckdb_whatever FROM deaths",
-        "SELECT state AS pragma_x FROM deaths",
-        "SELECT state AS parquet_x FROM deaths",
-        "SELECT state AS sqlite_x FROM deaths",
-        "SELECT state AS postgres_x FROM deaths",
-        "SELECT state AS mysql_x FROM deaths",
-        "SELECT state AS iceberg_x FROM deaths",
-        "SELECT state AS delta_x FROM deaths",
-        "SELECT state AS http_x FROM deaths",
-        "SELECT state AS new_scan FROM deaths",  # a family by suffix
-        "SELECT state AS x_attach FROM deaths",
-        "SELECT state AS x_secret FROM deaths",
-        "SELECT state AS x_secrets FROM deaths",
-        "SELECT state AS x_setting FROM deaths",
-        "SELECT state AS x_settings FROM deaths",
-        "SELECT state AS repeat_row FROM deaths",  # only in DuckDB's own list of table functions
-        "SELECT state AS pg_timezone_names FROM deaths",
-        "SELECT state AS checkpoint FROM deaths",  # a pragma
+        "SELECT state AS duckdb_settings FROM deaths",
+        "SELECT state AS pragma_version FROM deaths",
+        "SELECT state AS parquet_metadata FROM deaths",
+        "SELECT state AS read_ndjson_objects FROM deaths",
+        "SELECT state AS st_readosm FROM deaths",  # an extension reader the installed DuckDB may not list
+        "SELECT state AS ducklake_snapshots FROM deaths",
+        "SELECT state AS checkpoint FROM deaths",
         "SELECT rank() OVER read_csv AS r FROM deaths WINDOW read_csv AS (ORDER BY year)",  # a window name
         "SELECT rank() OVER (read_csv) AS r FROM deaths WINDOW read_csv AS (ORDER BY year)",
     ],
@@ -729,9 +717,30 @@ def test_guard_functionNameAsName_refused(sql: str) -> None:
     assert "function" in e.message and "double quotes" in e.message
 
 
-@pytest.mark.parametrize("fn", sorted({*FORBIDDEN_FUNCTIONS, "summary", "sniff_csv", "read_xlsx"}))
+# Table functions that only make rows from their arguments and reach nothing outside the query: their names stay
+# ordinary names (a clinician's "range" or "summary"). Reviewed; see sql_guard._FUNCTION_NAMES.
+ROW_GENERATORS = frozenset(
+    {"generate_series", "icu_calendar_names", "json_each", "json_tree", "pg_timezone_names", "range", "repeat",
+     "repeat_row", "summary", "test_all_types", "test_vector_types", "unnest"}
+)  # fmt: skip
+
+
+def test_guard_functionNames_coverEveryTableFunctionOfTheInstalledDuckdb() -> None:
+    """The refused names are a fixed list: a DuckDB upgrade that adds a table function fails here, for review,
+    instead of quietly changing what query_sql accepts. Each new one goes in _FUNCTION_NAMES or ROW_GENERATORS."""
+    with duckdb.connect(":memory:") as con:
+        rows = con.execute(
+            "SELECT DISTINCT function_name FROM duckdb_functions() WHERE function_type = 'table'"
+        ).fetchall()
+    listed = {str(name).casefold() for (name,) in rows}
+    assert listed - sql_guard._FUNCTION_NAMES - ROW_GENERATORS == set()
+    assert not ROW_GENERATORS & sql_guard._FUNCTION_NAMES
+
+
+@pytest.mark.parametrize("fn", sorted({*FORBIDDEN_FUNCTIONS, "sniff_csv", "read_xlsx"} - ROW_GENERATORS))
 def test_guard_forbiddenFunctionAsAlias_refusedUnquotedAllowedQuoted(fn: str) -> None:
-    """Every forbidden function name: refused as a bare alias, an ordinary name when quoted."""
+    """Every forbidden function name that reaches outside the query: refused as a bare alias, an ordinary name
+    when quoted."""
     assert refused(f"SELECT state AS {fn} FROM deaths").code in {"forbidden_construct", "parse_error"}
     q = guard(f'SELECT state AS "{fn}" FROM deaths')
     assert f'AS "{fn}"' in q.sql
@@ -759,6 +768,15 @@ def test_guard_quotedFunctionName_isAnOrdinaryName(sql: str) -> None:
         "SELECT state AS reader, deaths AS scan_count FROM deaths",  # near misses of a prefix or suffix
         "SELECT state AS my_read_x, deaths AS scanned FROM deaths",
         "SELECT year AS year_of_death, count(*) AS count FROM deaths GROUP BY 1",  # allowlisted function names
+        # everyday names (code-review and sharp-edges on #101): no prefix or suffix family is refused
+        "SELECT state AS care_setting, deaths AS ct_scan, deaths AS pet_scan FROM deaths",
+        "SELECT deaths AS delta_deaths, deaths AS http_status, deaths AS read_count FROM deaths",
+        "SELECT deaths - lag(deaths) OVER (ORDER BY year) AS delta_cases FROM deaths",
+        # row generators and DuckDB's table macros and pragmas reach nothing, so their names are ordinary names
+        "SELECT state AS range, deaths AS summary, year AS version FROM deaths",
+        "SELECT state AS histogram, deaths AS platform, year AS show FROM deaths",
+        "SELECT state AS functions, deaths AS repeat_row, year AS unnest FROM deaths",
+        "WITH summary AS (SELECT state, sum(deaths) AS n FROM deaths GROUP BY 1) SELECT * FROM summary",
     ],
 )
 def test_guard_ordinaryAlias_accepted(sql: str) -> None:
