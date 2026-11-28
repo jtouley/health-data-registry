@@ -38,7 +38,7 @@ from typing import Any
 
 from health_data_registry import __version__, naming
 from health_data_registry.registry import Dataset
-from health_data_registry.store import RawFetch
+from health_data_registry.store import RawFetch, file_sha256
 
 PRIVATE_DIR = "private"
 HUB_CACHE_DIR = "_hub"
@@ -193,7 +193,25 @@ def write_raw_private(lake: Path, ds: Dataset, fetches: Iterable[RawFetch]) -> N
         if hashlib.sha256(f.content).hexdigest() != f.sha256:
             raise PrivateRefused("sha256_mismatch", f"the bytes from {f.url} don't match their sha256")
         target = folder / f.sha256
-        if not target.exists():
+        if (
+            target.is_symlink()
+        ):  # a link is never followed, nor trusted for its name (as in store.raw_problem)
+            raise PrivateRefused(
+                "raw_mismatch",
+                f"the stored raw file {RAW_DIR}/{f.sha256} of {ds.id} is a link to another file, not the stored "
+                "bytes; nothing was written. Replace it with the file itself from the private raw archive",
+            )
+        if (
+            target.exists()
+        ):  # reused: the stored copy is re-hashed, streamed, never trusted for its name (#269)
+            if file_sha256(target) != f.sha256:
+                raise PrivateRefused(
+                    "raw_mismatch",
+                    f"the stored raw file {RAW_DIR}/{f.sha256} of {ds.id} no longer holds the bytes it is named "
+                    "for; nothing was written. Restore it from the private raw archive, or delete it and crawl "
+                    "the source again",
+                )
+        else:
             tmp = target.with_suffix(".tmp")
             tmp.write_bytes(f.content)
             tmp.chmod(0o600)

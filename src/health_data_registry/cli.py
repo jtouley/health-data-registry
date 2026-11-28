@@ -91,14 +91,16 @@ def validate(registry: Registry, lake: Path) -> int:
 
 
 def gate(a: Any) -> int:
-    """The release gate: the expected models and tests come from the contracts, and the build id from its inputs
-    (the lake's LATEST snapshots, the contracts and the commit). Anything unreadable holds the release."""
+    """The release gate: the expected models and tests come from the contracts, the logical build id from its inputs
+    (the lake's LATEST snapshots, the contracts and the commit), and every raw object those snapshots name is
+    re-hashed. Anything unreadable holds the release."""
     import os
 
     from health_data_registry.release_gate import (
         GateInputMissing,
         build_inputs,
         expected_from,
+        raw_problems_of,
         run,
         run_confirm,
     )
@@ -111,13 +113,18 @@ def gate(a: Any) -> int:
         if not commit:  # without the code's commit, builds of different code would share one build id
             raise ValueError("no commit was given (--commit, or GITHUB_SHA in CI)")
         inputs = build_inputs(registry, lake_root(), commit)
+        raw = raw_problems_of(registry, lake_root())  # every raw object LATEST names must hash to its name
     except (RegistryError, GateInputMissing, ValueError) as e:
         print(f"The release is held: the contracts or the lake could not be read ({e}).", file=sys.stderr)
         return 1
     if a.confirm:
-        ok, message = run_confirm(a.target, ops, a.confirm, expected=expected, inputs=inputs)
+        ok, message = run_confirm(
+            a.target, ops, a.confirm, expected=expected, inputs=inputs, raw_problems=raw
+        )
     else:
-        ok, message = run(a.target, ops, expected=expected, inputs=inputs, run_date=a.run_date)
+        ok, message = run(
+            a.target, ops, expected=expected, inputs=inputs, run_date=a.run_date, raw_problems=raw
+        )
     print(message, file=sys.stdout if ok else sys.stderr)
     return 0 if ok else 1
 

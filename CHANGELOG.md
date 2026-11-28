@@ -30,6 +30,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- A stored raw file is never trusted for its name (#269). Whenever a refresh reuses `raw/<sha256>`, streamed
+  pages included, the file is hashed again, and one that no longer matches is refused in plain words with a next
+  step. The transform refuses a load whose raw files are missing or no longer match, and the release gate holds a
+  build when any raw file a `LATEST` snapshot names is missing or no longer matches, so no hub release is served
+  whose answers would cite a false sha256. The local server does not re-check yet (#281).
 - The hosted server (`serve --http`) refuses to start while `HDR_HTTPS_PROXY` is set, because behind a proxy
   the check against private or loopback addresses is advisory (#270). An operator whose proxy itself allows only
   the catalogued publisher hosts on public addresses opts in with `HDR_PROXY_ENFORCES_ALLOWLIST=1`
@@ -78,6 +83,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- The release gate's build id is now called the logical build id: it names what a build was made from (#271).
 - The README is rewritten for clinicians: five setup steps that each say what you'll see (the Start here
   helper is the check step), a C. auris in Michigan example checked against CDC with every year provisional and
   CDC's later count beside each, a short GBD and PubMed section, and light and dark images from
@@ -90,6 +96,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- The release gate's build record (`ops/builds.jsonl`) carries an artifact digest next to the logical build id: the
+  sha256 of the run record and manifest the gate judged, and one sha256 over them (#271). It identifies the run,
+  not its data, so it differs between any two runs. `gate --confirm` refuses when those files changed after the
+  pass, and the serve row and `SERVING` carry the digest. A content digest of the built tables is still to come.
 - New source, draft: `nchs_resp_deaths_pct`, NCHS's provisional weekly percent of all deaths among US residents
   involving COVID-19, influenza, RSV or the three combined, by age group, sex and race and Hispanic origin
   (data.cdc.gov 53g5-jf7x). Read as published and never added; a suppressed count (1 to 9) is no value, never zero,

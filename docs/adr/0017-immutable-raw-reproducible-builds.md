@@ -54,6 +54,14 @@ a maintainer accepts or rejects them, and each change is exported as a new compl
   Otherwise nothing is written and the refusal says what failed and what to do, for example: "Raw file
   `raw/<sha256>` already holds different bytes; nothing was written. Check the fetch log for this source; if the
   stored file was edited, restore it from the private raw archive."
+- **Reuse re-hashes, as built so far ([#269](https://github.com/jtouley/health-data-registry/issues/269)).** Until
+  `put_raw` lands, `store.write_raw` re-hashes an existing `raw/<sha256>` whenever it is reused, streamed pages
+  included, and refuses a mismatch in plain words (`RawObjectCorrupt`). The `dbt_raw` plugin refuses a load whose
+  stored raw bytes are missing or no longer match the sha256s its snapshot names (only a lake with no `raw/` at
+  all, CI's synthetic fixtures, loads unchecked, with a warning), and the release gate re-hashes every raw object
+  each `LATEST` snapshot names: a missing or mismatched one holds the build. The records file dbt reads
+  (`raw_records/<id>/<snapshot>.ndjson`) is not hashed yet
+  ([#278](https://github.com/jtouley/health-data-registry/issues/278)).
 - **Streamed fetches use the same writer.** `crawl.refresh_dataset` writes each page as it arrives and later hands
   `build_snapshot` a fetch with empty content. Both steps go through `put_raw`; when the content is empty because
   the bytes were already streamed, `put_raw` re-hashes the stored file and refuses a mismatch, instead of skipping
@@ -99,6 +107,23 @@ A dirty tree is refused for a build meant for publishing.
 A snapshot id starts with its newest `retrieved_at`, by design: retrieval time is provenance (hard rule 8).
 Refetching identical bytes later therefore gives a new snapshot id and a new build id, while the content hashes
 (section 5) stay equal. Replaying stored raw (section 5) keeps the original id.
+
+**The logical build id and the artifact digest, as built so far
+([#271](https://github.com/jtouley/health-data-registry/issues/271)).** Until `build.json` lands, the release gate's
+build id (`release_gate.build_id_of`) is a *logical build id*: a hash of what the build was made from (each stored
+dataset's sorted raw sha256s, each contract's version and file hash, the dbt vars and the commit). It leaves out
+snapshot ids and `retrieved_at`, so refetching identical bytes keeps the same logical id. That is the opposite of
+the target `build_id` above, which pins snapshot ids: today's logical id is not that id. When `build.json` lands,
+the target id is recorded next to the logical id in `ops/builds.jsonl`, and rows already recorded keep their
+logical id. The rows a build writes carry their snapshot ids, though, so one logical id can name different physical
+outputs. The build record (`ops/builds.jsonl`) therefore also carries an *artifact digest*: `artifact_sha256`, the
+sha256 of each file the gate judged (dbt's `run_results.json` and `manifest.json`, a fixed list), and
+`artifact_digest`, one sha256 over them. It identifies the physical run, not its data: those files carry dbt's
+invocation id and timings, so the digest differs between any two runs, even of the same inputs, and it does not
+cover the built tables. The gate's pass row repeats the digest, `gate --confirm` refuses unless the judged files are
+unchanged since the pass, and the serve row and `SERVING` carry it, so a served release names the exact run that
+was judged. A content digest of the built outputs, equal for equal data, is the open part of #271 and comes with
+section 5's content hashes.
 
 dbt never resolves `LATEST` or "the newest file" itself. The runner resolves those pointers once, writes the
 resolved names into `build.json`, and the `dbt_raw` plugin reads only the files the manifest names. Stage c's

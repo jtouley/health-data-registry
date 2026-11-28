@@ -88,6 +88,18 @@ def test_raw_responses_stay_in_the_private_area(reg: Registry, tmp_path: Path) -
     bad = RawFetch(url=r.url, content=b"other", sha256=r.sha256, retrieved_at=r.retrieved_at)
     with pytest.raises(private.PrivateRefused, match="don't match"):
         private.write_raw_private(tmp_path, ds, [bad])
+    stored.chmod(0o600)
+    stored.write_bytes(b"abstract text insid")  # cut short on disk: refused on reuse, never trusted
+    with pytest.raises(private.PrivateRefused, match="no longer holds the bytes it is named for") as e:
+        private.write_raw_private(tmp_path, ds, [r])
+    assert e.value.code == "raw_mismatch" and stored.read_bytes() == b"abstract text insid"
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.write_bytes(r.content)
+    stored.unlink()
+    stored.symlink_to(elsewhere)  # the right bytes behind a link: refused, never followed
+    with pytest.raises(private.PrivateRefused, match="is a link to another file") as e:
+        private.write_raw_private(tmp_path, ds, [r])
+    assert e.value.code == "raw_mismatch" and stored.is_symlink()
     with pytest.raises(private.PrivateRefused):
         private.write_raw_private(tmp_path, next(d for d in reg if d.entry.tier != "private"), [r])
 

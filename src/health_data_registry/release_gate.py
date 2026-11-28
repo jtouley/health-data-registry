@@ -13,6 +13,7 @@ for each node's resource type, severity and dimension) and sorts every result in
     data failure    an error-severity test, or a unit test, ran and failed
     warning         a warn-severity test failed: served, and the warning travels with the answers
     incomplete      the run record has no results, or no test or unit test ran: nothing was judged
+    raw objects     a raw object a LATEST snapshot names is missing or no longer hashes to its name
 
 The gate fails closed. Any result type it does not know, with any status but success, holds the build. So does a
 run record and manifest from different dbt runs (their invocation_id must match), and so does a missing model or
@@ -21,9 +22,20 @@ model, one named test per contract quality rule, and each generated dbt-expectat
 test must pass, or warn when its rule is warn-severity. A missing or unreadable artifact holds it too. Every pass
 is kept too (Build.passed), by test and rule, so the build record says which rules qualified the data.
 
-The build id is a content hash of the build's inputs (build_inputs: each stored dataset's sorted raw sha256s,
-each contract's version and file hash, the dbt vars and the code commit), never of a snapshot id, dbt's run id,
-its thread count or the clock, so the same inputs always give the same id.
+The build id is a logical build id: a content hash of the build's inputs (build_inputs: each stored dataset's
+sorted raw sha256s, each contract's version and file hash, the dbt vars and the code commit), never of a snapshot id,
+dbt's run id, its thread count or the clock, so the same inputs always give the same id. Because the rows a build
+writes carry their snapshot ids, one logical build id can name different physical outputs (the same bytes fetched
+again on another day). So the build record also carries an artifact digest (artifact_digest_of): the sha256 of each
+file the gate judged (ARTIFACT_FILES: dbt's run_results.json and manifest.json) and one sha256 over them. It names
+this physical run, not its data: those files carry dbt's invocation id and timings, so the digest differs between
+any two runs, even of the same inputs, and it does not cover the built tables (a content digest of those is the
+open part of issue #271). The pass row repeats it, the confirm refuses unless the files are unchanged since the
+pass, and the serve row and SERVING carry it, so a served release names the exact run that was judged.
+
+Before judging the run, the gate re-hashes every raw object each stored dataset's LATEST snapshot names
+(raw_problems_of): one that is missing, or no longer hashes to its name, holds the build, since every answer built
+on it would cite a false sha256 (hard rule 8).
 
 Two steps, so "served" is only ever recorded for a release that was uploaded:
 
@@ -53,6 +65,7 @@ from typing import Any
 
 BUILDS = "builds.jsonl"
 SERVING_LOG = "serving_log.jsonl"
+RAW_SHOWN = 3  # raw-file problems quoted in a hold reason; the build record keeps them all
 SERVING = "SERVING"
 BUILT_TYPES = ("model", "seed", "snapshot")  # resource types that build a relation
 TEST_TYPES = ("test", "unit_test")
@@ -96,7 +109,12 @@ def expected_from(registry: Any) -> Expected:
 
 
 def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    """Streamed, so a large file (a contract, or a run record of many nodes) is never read into memory whole."""
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 DBT_PROJECT = Path("transform/dbt_project.yml")
@@ -134,14 +152,69 @@ def build_inputs(registry: Any, lake: Path, commit: str) -> dict[str, Any]:
 
 
 def build_id_of(inputs: Mapping[str, Any]) -> str:
-    """The same inputs always give the same id."""
+    """The logical build id: the same inputs always give the same id, whatever bytes the build then wrote."""
     canonical = json.dumps(inputs, sort_keys=True, separators=(",", ":"))
     return "build-" + hashlib.sha256(canonical.encode()).hexdigest()[:12]
 
 
+def raw_problems_of(registry: Any, lake: Path) -> list[str]:
+    """Every raw object a stored dataset's LATEST snapshot names that is missing or no longer hashes to its name,
+    each in plain words with the dataset first; empty when all of them check out. Each file is re-hashed."""
+    from health_data_registry.store import latest_snapshot, raw_problems
+    from health_data_registry.transform_gen import stored
+
+    problems: list[str] = []
+    for ds in stored(registry):
+        try:
+            found = latest_snapshot(lake, ds.id)
+        except (OSError, ValueError):  # Manifest.read turns a damaged manifest into ValueError too
+            problems.append(
+                f"{ds.id}: its LATEST pointer or that snapshot's manifest.json can't be read, so the raw files it "
+                f"cites can't be checked. Run `health-data-registry refresh {ds.id}` to rebuild it"
+            )
+            continue
+        if found is not None:
+            problems += [f"{ds.id}: {why}" for why in raw_problems(lake, found[1].raw_sha256)]
+    return problems
+
+
+# The files the gate judges, and so the files its artifact digest covers: dbt's run record and manifest, the only
+# files the weekly refresh hands the gate. A fixed list, so a local target/ full of compiled SQL, partial-parse state
+# and stale files from earlier runs means the same thing as CI's.
+ARTIFACT_FILES = ("manifest.json", "run_results.json")
+
+
+def artifact_sha256(target: Path) -> dict[str, str]:
+    """The sha256 of each file the gate judged (ARTIFACT_FILES), by its name in dbt's target directory. Raises
+    GateInputMissing when one is missing, can't be read or is a symbolic link: a link is never followed, so the
+    digest always covers the bytes the gate read."""
+    files: dict[str, str] = {}
+    for name in ARTIFACT_FILES:
+        p = target / name
+        if p.is_symlink():
+            raise GateInputMissing(
+                f"{p} is a link to another file, not the file dbt wrote, so the gate can't vouch for what it "
+                "judged; the release is held. Copy dbt's own file into the target directory and run the gate again"
+            )
+        try:
+            files[name] = _sha256(p)
+        except OSError as e:  # an output that can't be read can't be named: hold, never skip it
+            raise GateInputMissing(
+                f"{p}: a file the gate judges could not be read ({e.strerror or 'a read error'}); the release is "
+                "held. Run the transform again so dbt writes it"
+            ) from e
+    return files
+
+
+def artifact_digest_of(files: Mapping[str, str]) -> str:
+    """One sha256 over each judged file's name and sha256: changed bytes in either file give another digest."""
+    canonical = json.dumps(dict(files), sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+
+
 @dataclass(frozen=True)
 class Build:
-    build_id: str
+    build_id: str  # the logical build id (build_id_of): what the build was made from
     generated_at: str
     dbt_version: str
     invocation_id: str
@@ -154,6 +227,10 @@ class Build:
     warnings: list[dict[str, Any]] = field(default_factory=list)
     incomplete: list[str] = field(default_factory=list)
     tests_passed: int = 0
+    raw_objects: list[str] = field(default_factory=list)  # raw objects that don't hash to their name
+    # The files the gate judged (ARTIFACT_FILES): name -> sha256, and one digest over them (artifact_digest_of).
+    artifact_sha256: dict[str, str] = field(default_factory=dict)
+    artifact_digest: str = ""
     # Every check that passed, by test name with its rule, dimension and severity (dbt's run_results.json), so an
     # answer can cite the rule that qualified it, not only the ones that failed.
     passed: list[dict[str, Any]] = field(default_factory=list)
@@ -167,11 +244,21 @@ class Build:
             or self.not_evaluated
             or self.data_failures
             or self.incomplete
+            or self.raw_objects
         )
 
     def reason(self) -> str:
         """Why the build is held, in plain words; empty when it can be served."""
         parts = list(self.incomplete)
+        if self.raw_objects:
+            shown = "; ".join(self.raw_objects[:RAW_SHOWN])
+            more = len(self.raw_objects) - RAW_SHOWN
+            if more > 0:  # the full list stays in the build record (ops/builds.jsonl, raw_objects)
+                shown += f"; and {more} more, listed under raw_objects in {BUILDS}"
+            parts.append(
+                f"{len(self.raw_objects)} raw file(s) its snapshots cite are missing or no longer match their "
+                f"sha256 ({shown})"
+            )
         if self.model_errors:
             parts.append(f"{len(self.model_errors)} model(s) failed to build")
         if self.skipped:
@@ -211,13 +298,18 @@ def _kind(uid: str, node: Mapping[str, Any]) -> str:
 
 
 def read_build(
-    target: Path, *, expected: Expected | None = None, inputs: Mapping[str, Any] | None = None
+    target: Path,
+    *,
+    expected: Expected | None = None,
+    inputs: Mapping[str, Any] | None = None,
+    raw_problems: list[str] | None = None,
 ) -> Build:
     """Sort one dbt build (target/run_results.json and target/manifest.json) into the gate's outcomes.
 
     With `expected`, every expected model must have built and every expected test must have passed (or warned,
     for a warn-severity rule). With `inputs`, the build id is their content hash (build_id_of); without, it is a
-    hash of the run record (tests only).
+    hash of the run record (tests only). `raw_problems` (raw_problems_of) holds the build when not empty. The
+    build records the sha256 of each file it judged (ARTIFACT_FILES) and their artifact digest.
     """
     results = _read(target / "run_results.json")
     manifest = _read(target / "manifest.json")
@@ -312,6 +404,7 @@ def read_build(
         build_id = build_id_of(inputs)
     else:
         build_id = "build-" + hashlib.sha256(f"{invocation}|{generated}".encode()).hexdigest()[:12]
+    outputs = artifact_sha256(target)
     return Build(
         build_id=build_id,
         generated_at=generated,
@@ -326,6 +419,9 @@ def read_build(
         warnings=warnings,
         incomplete=incomplete,
         tests_passed=passed,
+        raw_objects=list(raw_problems or []),
+        artifact_sha256=outputs,
+        artifact_digest=artifact_digest_of(outputs),
         passed=passes,
     )
 
@@ -367,7 +463,8 @@ def _append(path: Path, row: Mapping[str, Any]) -> None:
 
 
 def serving(ops: Path) -> dict[str, Any] | None:
-    """The release in service now ({release_ref, build_id, since}), or None before the first served release."""
+    """The release in service now ({release_ref, build_id, invocation_id, artifact_digest, since}; releases served
+    before the digest was recorded carry only release_ref, build_id and since), or None before the first one."""
     p = ops / SERVING
     if not p.is_file():
         return None
@@ -414,7 +511,7 @@ def decide(
     if build.servable:
         row = {"at": at, "action": "pass", "build_id": build.build_id, "serving": kept,
                "warnings": len(build.warnings), "invocation_id": build.invocation_id,
-               "run_date": run_date}  # fmt: skip
+               "artifact_digest": build.artifact_digest, "run_date": run_date}  # fmt: skip
     else:
         row = {"at": at, "action": "hold", "build_id": build.build_id, "kept": kept, "reason": build.reason()}
     _append(ops / SERVING_LOG, row)
@@ -444,6 +541,13 @@ def confirm(ops: Path, build: Build, release_ref: str, *, now: datetime | None =
             f"build {build.build_id} passed in dbt run {last.get('invocation_id')}, but this run record is from "
             f"{build.invocation_id}; only the run that was judged can be served"
         )
+    # The files judged must be the files confirmed, byte for byte. A pass recorded before the digest existed has
+    # none, and is refused too: the check runs again, never assumed.
+    if last.get("artifact_digest") != build.artifact_digest:
+        raise ValueError(
+            f"the run record or manifest of build {build.build_id} changed after the gate passed it, so what would "
+            "be served is not what was judged; run the gate check again"
+        )
     run_date = last.get("run_date")
     if not run_date:  # a pass with no run date could be served under any date's tag
         raise ValueError(
@@ -457,11 +561,21 @@ def confirm(ops: Path, build: Build, release_ref: str, *, now: datetime | None =
     at = _now(now)
     previous = serving(ops)
     row = {"at": at, "action": "serve", "release_ref": release_ref, "build_id": build.build_id,
+           "invocation_id": build.invocation_id, "artifact_digest": build.artifact_digest,
            "previous": previous["release_ref"] if previous else None, "warnings": len(build.warnings)}  # fmt: skip
     ops.mkdir(parents=True, exist_ok=True)
     tmp = ops / f".{SERVING}.{os.getpid()}.tmp"
     tmp.write_text(
-        json.dumps({"release_ref": release_ref, "build_id": build.build_id, "since": at}) + "\n",
+        json.dumps(
+            {
+                "release_ref": release_ref,
+                "build_id": build.build_id,
+                "invocation_id": build.invocation_id,
+                "artifact_digest": build.artifact_digest,
+                "since": at,
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
     os.replace(tmp, ops / SERVING)
@@ -489,10 +603,11 @@ def run(
     expected: Expected | None = None,
     inputs: Mapping[str, Any] | None = None,
     run_date: str | None = None,
+    raw_problems: list[str] | None = None,
 ) -> tuple[bool, str]:
     """The CLI's check: (passed, plain-words message). Anything unreadable holds the release."""
     try:
-        build = read_build(target, expected=expected, inputs=inputs)
+        build = read_build(target, expected=expected, inputs=inputs, raw_problems=raw_problems)
     except GateInputMissing as e:
         _hold(ops, str(e))
         return False, str(e)
@@ -517,10 +632,12 @@ def run_confirm(
     *,
     expected: Expected | None = None,
     inputs: Mapping[str, Any] | None = None,
+    raw_problems: list[str] | None = None,
 ) -> tuple[bool, str]:
-    """The CLI's confirm, after the upload: (recorded, plain-words message)."""
+    """The CLI's confirm, after the upload: (recorded, plain-words message). A raw object that stopped matching its
+    name since the check holds the release here too."""
     try:
-        build = read_build(target, expected=expected, inputs=inputs)
+        build = read_build(target, expected=expected, inputs=inputs, raw_problems=raw_problems)
 
         row = confirm(ops, build, release_ref)
     except (GateInputMissing, GateStateUnreadable, ValueError) as e:
