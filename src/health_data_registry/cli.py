@@ -421,9 +421,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"registry error: {e}", file=sys.stderr)
         return 2
     if a.cmd == "serve" and a.http:
+        from health_data_registry.hosted import StartRefused
         from health_data_registry.hosted import main as serve_http
 
-        serve_http(host=a.host, port=a.port)
+        try:
+            serve_http(host=a.host, port=a.port)
+        except StartRefused as e:  # a plain refusal with its next step, never a traceback
+            print(e, file=sys.stderr)
+            return 2
         return 0
     if a.cmd == "serve":
         from health_data_registry.server import main as serve
