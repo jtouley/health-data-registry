@@ -49,7 +49,7 @@ import yaml
 from health_data_registry.product import Port, load_ports
 from health_data_registry.quality import blocked_message, expected_ids
 from health_data_registry.registry import Dataset, Registry
-from health_data_registry.store import Manifest, judge_snapshot, latest_snapshot
+from health_data_registry.store import SNAPSHOT_FILES, Manifest, judge_snapshot, latest_snapshot, sha256_file
 
 HF_PREFIX = "hf://datasets/"
 STAGING = Path("build") / "hub"
@@ -102,14 +102,6 @@ class Release:
 
 
 # ------------------------------------------------------------------------------------------------ helpers
-
-
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def hf_repo_id(url: str) -> str:
@@ -620,7 +612,11 @@ def public_sources(registry: Registry) -> list[Dataset]:
 
 
 def lake_snapshots(registry: Registry, lake: Path) -> dict[str, tuple[Path, Manifest]]:
-    """The latest snapshot of every `hosting: public` source; stops the export if one is missing."""
+    """The latest snapshot of every `hosting: public` source; stops the export if one is missing or fails the lake
+    checks (hub.verify_lake_snapshot on data.duckdb and data.parquet), so a file changed after refresh is never
+    published under a new sha256."""
+    from health_data_registry.hub import HubError, verify_lake_snapshot  # hub imports this module
+
     snaps: dict[str, tuple[Path, Manifest]] = {}
     problems: list[str] = []
     for ds in registry:
@@ -631,8 +627,13 @@ def lake_snapshots(registry: Registry, lake: Path) -> dict[str, tuple[Path, Mani
             problems.append(
                 f"{ds.id}: there is no snapshot in the lake to publish; run `health-data-registry fetch {ds.id}`"
             )
-        else:
-            snaps[ds.id] = found
+            continue
+        try:
+            verify_lake_snapshot(ds, *found, files=SNAPSHOT_FILES)
+        except HubError as e:
+            problems.append(f"{ds.id}: {e} Rebuild it with `health-data-registry refresh {ds.id}`.")
+            continue
+        snaps[ds.id] = found
     if problems:
         raise PublishCheckFailed("; ".join(problems))
     return snaps
@@ -709,6 +710,10 @@ def stage(
             target.parent.mkdir()
             shutil.copyfile(snaps[ds.id][0] / "data.parquet", target)
             rows, sha = _parquet_rows(target), sha256_file(target)
+            if sha != snap.files.get("data.parquet"):  # changed between the check and the copy
+                raise PublishCheckFailed(
+                    f"{ds.id}: data.parquet changed while it was being exported; run export-public again"
+                )
             sm["files"][f"data/{ds.id}.parquet"] = {"sha256": sha, "rows": rows}
             lic = _licence_text(registry, ds.entry.licence.id)
             if lic is not None:
