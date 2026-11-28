@@ -135,9 +135,10 @@ src/health_data_registry/
                   runs guarded SQL, wraps every answer with its source, version, SQL and method
   sql_guard.py    governed read-only SQL: one SELECT, allowlisted functions, declared joins only
   fetch.py        HTTPS-only fetcher to catalogued, publicly routable publisher hosts
-  store.py        the lake ($HDR_LAKE, default ./lake): raw/<sha256>, datasets/<id>/run_date=<d>/<snapshot>/
-                  with data.parquet, data.duckdb and manifest.json, LATEST, fetch_log/, and
-                  raw_records/<id>/<snapshot>.ndjson (parsed records that dbt staging reads)
+  store.py        the lake ($HDR_LAKE as a full path, else a per-user data folder): raw/<sha256>,
+                  datasets/<id>/run_date=<d>/<snapshot>/ with data.parquet, data.duckdb and manifest.json,
+                  LATEST, fetch_log/, and raw_records/<id>/<snapshot>.ndjson (parsed records that dbt staging
+                  reads)
   staging.py      the one contract-driven typed projection (names, types, missing codes, required, code
                   lists); the lake, the live read and the generated dbt staging models all use it
   transform_gen.py  `make contracts`: writes transform/'s raw sources, staging and intermediate models,
