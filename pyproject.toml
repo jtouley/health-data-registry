@@ -62,7 +62,7 @@ dev = [
 # server. Not a server dependency and not a default group: deploy and refresh syncs with --no-dev never install
 # it. The sealed workflow installs it with `uv sync --locked --no-dev --group eval`.
 eval = [
-    "anthropic>=1,<2",
+    "anthropic>=1,<3",
 ]
 # dbt on DuckDB for the transform/ project (raw -> staging -> intermediate -> marts). Not a server dependency:
 # the MCP server only reads what the build produces.

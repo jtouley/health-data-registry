@@ -1,0 +1,65 @@
+id: cdc_heptracker
+title: HepTracker Dashboard
+agency: CDC
+publisher: "Centers for Disease Control and Prevention, Division of Viral Hepatitis (HepTracker)"
+level: federal
+country: US
+research_areas: [infectious_disease]
+id_areas: [hepatitis]
+years: {start: 2011, end: null}
+# Area rows: each state and DC, and CDC's 'Total' (nationwide). HHS regions appear only for hepatitis B and C deaths
+# and are not a geography level here.
+geography: [nation, state]
+shape: rate_table
+grain: "One row is one viral hepatitis condition, one year, one grouping (area, age group, sex, race and ethnicity, HHS region or a risk exposure) and one value of that grouping, for cases reported to NNDSS or deaths from NVSS: the count and the rate per 100,000, each as CDC published it or with CDC's code in its place (not reported, unavailable, not reportable, suppressed or unreliable)."
+refresh: annual
+licence:
+  # No licence field in the dataset's Socrata metadata (checked 2026-11-25; Public Access Level: public). A CDC
+  # dataset on data.cdc.gov is a US federal work (17 USC 105); a maintainer confirms the wording on review.
+  id: public-domain-us-federal
+  redistribution: true
+  terms_url: https://www.usa.gov/government-works
+citation: "Centers for Disease Control and Prevention, Division of Viral Hepatitis. HepTracker Dashboard. https://data.cdc.gov/d/jkcx-ndu8 (accessed <retrieved_at>)."
+source:
+  portal: socrata
+  host: data.cdc.gov
+  dataset: jkcx-ndu8
+  landing_url: https://www.cdc.gov/hepatitis/php/data-research/heptracker/index.html
+  api_url: https://data.cdc.gov/resource/jkcx-ndu8.json
+codebook_url: https://www.cdc.gov/hepatitis/php/data-research/methodology.html
+caveats:
+  - "Cases are those reported to CDC's National Notifiable Diseases Surveillance System (NNDSS); deaths come from death certificates in the National Vital Statistics System (NVSS). A case count and a death count are different measures and are never added."
+  - "A count or rate CDC did not publish carries CDC's code instead: — not reported, U unavailable, N not reportable, S suppressed, UR unreliable (column description). Every row is shown with its code; a code is never a zero."
+  - "CDC's 'Total' area row is nationwide (column description); ask without a place to see it. A state's figure is its own row, never added up."
+  - "Rates are never added, and age, sex, race and ethnicity, region and risk groups each cover the same cases again."
+  - "Risk and exposure groups exist for acute hepatitis A, B and C cases only, and have counts but no rates."
+  - "Perinatal hepatitis B and C have counts only, no rates; perinatal hepatitis C starts in 2018."
+gbd:
+  # Proposed GBD keys, not reviewed (hard rules 1 and 3): the acute conditions only. Chronic and perinatal
+  # infection and viral hepatitis deaths span several GBD causes (see the contract's open questions). GBD
+  # locations are the state names; CDC's 'Total' row is matched to no GBD location.
+  location_column: stratum
+  causes:
+    - {condition: "Hepatitis A", cause: "Acute hepatitis A"}
+    - {condition: "Acute Hepatitis B", cause: "Acute hepatitis B"}
+    - {condition: "Acute Hepatitis C", cause: "Acute hepatitis C"}
+conditions:
+  dimension: condition
+  # Provenance: every distinct value of the event column at https://data.cdc.gov/resource/jkcx-ndu8.json, read
+  # 2026-11-25 (nine values; 'Hepatitis B' and 'Hepatitis C' are death rows only, 'Hepatitis A' has both).
+  source: "CDC's names for the viral hepatitis conditions in HepTracker (the Event column, 'Viral Hepatitis Condition'), exactly as published on data.cdc.gov (checked 25 Nov 2026)."
+  labels:
+    - "Hepatitis A"
+    - "Acute Hepatitis B"
+    - "Chronic Hepatitis B"
+    - "Perinatal Hepatitis B"
+    - "Acute Hepatitis C"
+    - "Chronic Hepatitis C"
+    - "Perinatal Hepatitis C"
+    - "Hepatitis B"
+    - "Hepatitis C"
+  aliases: []
+contract: contracts/cdc_heptracker.odcs.yaml
+semantic_model: semantic/cdc_heptracker.yaml
+status: draft
+hosting: public

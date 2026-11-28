@@ -294,17 +294,21 @@ def test_configure_logging_routes_everything_through_the_filter() -> None:
     root = logging.getLogger()
     saved = (list(root.handlers), root.level)
     libs = {
-        n: (list(logging.getLogger(n).handlers), logging.getLogger(n).propagate) for n in ("mcp", "uvicorn")
+        n: (list(logging.getLogger(n).handlers), logging.getLogger(n).propagate)
+        for n in ("mcp", "uvicorn", "httpx2", "httpcore2")
     }
     access = logging.getLogger("uvicorn.access").disabled
     try:
         logging.getLogger("mcp").addHandler(logging.NullHandler())
         logging.getLogger("uvicorn").propagate = False
+        logging.getLogger("httpx2").addHandler(logging.NullHandler())  # the client the lock installs
+        logging.getLogger("httpcore2").propagate = False
         buf = io.StringIO()
         handler = hosted.configure_logging(buf)
         assert root.handlers == [handler] and root.level == logging.INFO
         assert any(isinstance(f, PrivacyFilter) for f in handler.filters)
         assert logging.getLogger("mcp").handlers == [] and logging.getLogger("uvicorn").propagate is True
+        assert logging.getLogger("httpx2").handlers == [] and logging.getLogger("httpcore2").propagate is True
         assert logging.getLogger("uvicorn.access").disabled is True
         logging.getLogger("mcp").warning("leak %s", "zz-secret")
         logging.getLogger(hosted.METRICS_LOGGER).info("counts %s", "{}")
