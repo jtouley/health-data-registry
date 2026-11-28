@@ -20,6 +20,9 @@ class Table:
     rows: tuple[tuple[str, str, tuple[str, ...]], ...]  # (group, label, printed values)
     group_header: str = "Group"
     label_header: str = "Disease"
+    title: str = "Communicable disease report"
+    notes: tuple[str, ...] = ()  # lines printed under the title, before the table (e.g. the area it covers)
+    value_w: float = VALUE_W  # each value column's width (long headers need more)
 
 
 def _esc(text: str) -> str:
@@ -27,7 +30,8 @@ def _esc(text: str) -> str:
 
 
 def _ops(table: Table) -> list[str]:
-    right = VALUES_X + VALUE_W * len(table.headers)
+    w = table.value_w
+    right = VALUES_X + w * len(table.headers)
     ops: list[str] = []
 
     def bar(y_top: float) -> None:  # y measured down from the top of the page, as a reader sees it
@@ -37,13 +41,16 @@ def _ops(table: Table) -> list[str]:
         ops.append(f"BT /F1 {SIZE:g} Tf {x:.2f} {HEIGHT - y_top - SIZE:.2f} Td ({_esc(s)}) Tj ET")
 
     y = 60.0
-    text(GROUP_X, y, "Communicable disease report")
+    text(GROUP_X, y, table.title)
+    for note in table.notes:
+        y += LINE + PAD
+        text(GROUP_X, y, note)
     y += 2 * LINE
     bar(y)
     text(GROUP_X + 2, y + PAD, table.group_header)
     text(LABEL_X + 2, y + PAD, table.label_header)
     for i, h in enumerate(table.headers):
-        text(VALUES_X + i * VALUE_W + 4, y + PAD, h)
+        text(VALUES_X + i * w + 4, y + PAD, h)
     y += 2 * PAD + LINE
     bar(y)
     for group, label, values in table.rows:
@@ -51,7 +58,7 @@ def _ops(table: Table) -> list[str]:
         text(GROUP_X + 2, top, group)
         text(LABEL_X + 2, top, label)
         for i, v in enumerate(values):
-            text(VALUES_X + i * VALUE_W + 4, top, v)
+            text(VALUES_X + i * w + 4, top, v)
         y += 2 * PAD + LINE
         bar(y)
     return ops

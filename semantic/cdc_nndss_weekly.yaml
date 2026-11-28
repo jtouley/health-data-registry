@@ -2,14 +2,14 @@ dataset: cdc_nndss_weekly
 # 0.2.0: weekly counts are added up for one condition label at a time, never across labels.
 # 0.3.0 (issue #173): weekly counts are never added up across weeks (mmwr_week is non-additive), and an empty
 # count flagged '-' is never counted as 0, so a group or year that has one has no total.
-version: 0.3.0
+version: 0.3.1
 # reporting_area is additive only because the contract's totalRows drops the summary areas from every sum that
 # excludes totals (its structural check: 51 state/DC rows + New York City = US RESIDENTS); validate refuses a summed
 # metric that keeps the total rows and adds areas. Weeks and years are separate periods; running totals are read at
 # one week (single_value_of). Weeks are non-additive: late reports reach only the year-to-date count, so a year's
 # weekly counts add up to less than its year-to-date count at the last week (annual_cases reads that).
 dimensions:
-  - {name: reporting_area, column: states, type: categorical, non_additive: false, description: "State, New York City, territory, census division or US summary area where the cases were reported (by residence)."}
+  - {name: reporting_area, column: states, type: categorical, non_additive: false, description: "The jurisdiction that reported the cases (a state, New York City or a territory), a regional or US summary area, or non-US residents. A case is counted where it is submitted, by its country of usual residence; whether the regions are census divisions or HHS regions is an open question in the contract."}
   - {name: mmwr_year, column: year, type: time, non_additive: false, description: "MMWR (epidemiological) year."}
   - {name: mmwr_week, column: week, type: time, non_additive: true, non_additive_reason: "late reports reach only the year-to-date count, so a year's weekly counts add up to less than the year's own count", description: "MMWR week within the year (1-52 or 53)."}
   - name: condition
@@ -87,7 +87,8 @@ series:
     filters: {condition: "Candida auris, clinical"}
     location_dimension: reporting_area
     time_dimension: mmwr_year
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "confirmed only from MMWR year 2023 (CSTE 22-ID-05; NNDSS Notice to Data Users, 2023); 2022 clinical rows may include probable cases (the notice says so for annual data)"
+    case_definition: "CSTE 22-ID-05 (2023): https://ndc.services.cdc.gov/case-definitions/candida-auris-2023/"
   - condition: "Candida auris, clinical"
     label: "C. auris (clinical cases)"
     metric: us_resident_annual_cases
@@ -95,7 +96,8 @@ series:
     filters: {condition: "Candida auris, clinical"}
     location_dimension: reporting_area
     time_dimension: mmwr_year
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "confirmed only from MMWR year 2023 (CSTE 22-ID-05; NNDSS Notice to Data Users, 2023); 2022 clinical rows may include probable cases (the notice says so for annual data)"
+    case_definition: "CSTE 22-ID-05 (2023): https://ndc.services.cdc.gov/case-definitions/candida-auris-2023/"
   - condition: "Candida auris, screening"
     label: "C. auris (screening, colonisation)"
     metric: annual_cases
@@ -103,7 +105,8 @@ series:
     filters: {condition: "Candida auris, screening"}
     location_dimension: reporting_area
     time_dimension: mmwr_year
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "confirmed only (notifiable from 2023; CSTE 22-ID-05)"
+    case_definition: "CSTE 22-ID-05 (2023): https://ndc.services.cdc.gov/case-definitions/candida-auris-2023/"
   - condition: "Candida auris, screening"
     label: "C. auris (screening, colonisation)"
     metric: us_resident_annual_cases
@@ -111,7 +114,8 @@ series:
     filters: {condition: "Candida auris, screening"}
     location_dimension: reporting_area
     time_dimension: mmwr_year
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "confirmed only (notifiable from 2023; CSTE 22-ID-05)"
+    case_definition: "CSTE 22-ID-05 (2023): https://ndc.services.cdc.gov/case-definitions/candida-auris-2023/"
   - condition: "Legionellosis"
     label: "Legionellosis"
     metric: annual_cases
@@ -185,7 +189,8 @@ series:
     location_dimension: reporting_area
     time_dimension: mmwr_year
     week_dimension: mmwr_week
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "confirmed only from MMWR year 2023 (CSTE 22-ID-05; NNDSS Notice to Data Users, 2023); 2022 clinical rows may include probable cases (the notice says so for annual data)"
+    case_definition: "CSTE 22-ID-05 (2023): https://ndc.services.cdc.gov/case-definitions/candida-auris-2023/"
   - condition: "Candida auris, clinical"
     label: "C. auris (clinical cases)"
     metric: us_resident_weekly_cases
@@ -194,7 +199,8 @@ series:
     location_dimension: reporting_area
     time_dimension: mmwr_year
     week_dimension: mmwr_week
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "confirmed only from MMWR year 2023 (CSTE 22-ID-05; NNDSS Notice to Data Users, 2023); 2022 clinical rows may include probable cases (the notice says so for annual data)"
+    case_definition: "CSTE 22-ID-05 (2023): https://ndc.services.cdc.gov/case-definitions/candida-auris-2023/"
   - condition: "Candida auris, screening"
     label: "C. auris (screening, colonisation)"
     metric: weekly_cases
@@ -203,7 +209,8 @@ series:
     location_dimension: reporting_area
     time_dimension: mmwr_year
     week_dimension: mmwr_week
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "confirmed only (notifiable from 2023; CSTE 22-ID-05)"
+    case_definition: "CSTE 22-ID-05 (2023): https://ndc.services.cdc.gov/case-definitions/candida-auris-2023/"
   - condition: "Candida auris, screening"
     label: "C. auris (screening, colonisation)"
     metric: us_resident_weekly_cases
@@ -212,7 +219,8 @@ series:
     location_dimension: reporting_area
     time_dimension: mmwr_year
     week_dimension: mmwr_week
-    case_status: "as the publisher's label says (NNDSS has no separate case-status column)"
+    case_status: "confirmed only (notifiable from 2023; CSTE 22-ID-05)"
+    case_definition: "CSTE 22-ID-05 (2023): https://ndc.services.cdc.gov/case-definitions/candida-auris-2023/"
   - condition: "Legionellosis"
     label: "Legionellosis"
     metric: weekly_cases

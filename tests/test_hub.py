@@ -943,7 +943,9 @@ def _one_source_release(root: Path, ds_id: str, contract_version: str) -> Path:
     return out
 
 
-@pytest.mark.parametrize(("ds_id", "release_version"), [("census_county_pop", "0.1.0")])
+@pytest.mark.parametrize(
+    ("ds_id", "release_version"), [("census_county_pop", "0.1.0"), ("cdc_nndss_weekly", "0.1.0")]
+)
 def test_hosted_read_accepts_the_declared_older_release(
     tmp_path: Path, ds_id: str, release_version: str
 ) -> None:

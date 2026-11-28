@@ -1,0 +1,23 @@
+dataset: wayne_cd_reports
+version: 0.1.0
+# Each cell is returned as printed, one report and one column at a time: reports overlap (rolling five quarters,
+# year to date, annual, 5-year), so nothing here adds across reports or columns.
+dimensions:
+  - {name: report, column: document_url, type: categorical, non_additive: true, non_additive_reason: "reports overlap: the same quarter is printed in several reports, pulled on different dates", description: "The report the count is printed in (its link)."}
+  - {name: report_column, column: column_header, type: categorical, non_additive: true, non_additive_reason: "a report's columns overlap (quarters, year to date, year, multi-year total)", description: "The report column as printed, e.g. 'Q2_2026', 'YTD 2026', '2024', '2021- 2025 Total'."}
+  - {name: period_kind, column: period_kind, type: categorical, non_additive: true, non_additive_reason: "each kind counts a different span", description: "What the column counts: one quarter, the year to date through the report's quarter, a calendar year, a multi-year total, or the multi-year average."}
+  - {name: year, column: period_year, type: time, non_additive: true, non_additive_reason: "the same year is printed in several columns and reports", description: "The year the column counts (the first year of a multi-year total)."}
+  - {name: disease_group, column: disease_group, type: categorical, non_additive: false, description: "The report's disease group, e.g. Foodborne, STI, Vaccine Preventable."}
+  - {name: disease, column: disease, type: categorical, non_additive: true, non_additive_reason: "each is a different condition", description: "The condition as printed in the report."}
+measures:
+  - {name: printed_number, column: printed_number, kind: count, unit: "cases", description: "Cases in the column's period for the area the report states (confirmed and probable, MDSS), or the multi-year average column's average cases per year; empty where the report prints '*' (1 to 5 cases)."}
+metrics:
+  - name: printed_cases
+    description: "Each cell's number exactly as the report prints it, one row per report, disease and column; never added up."
+    measure: printed_number
+    aggregation: none
+    exclude_total_rows: false
+    uncertainty: none
+    uncertainty_reason: "The reports print no interval."
+    filters: []
+series: []

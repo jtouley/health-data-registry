@@ -12,7 +12,7 @@ models:
   meta:
     contract: contracts/cdc_nndss_weekly.odcs.yaml
     contract_id: cdc_nndss_weekly
-    contract_version: 0.1.0
+    contract_version: 0.1.1
     contract_status: draft
   data_tests:
   - odcs_check:
@@ -237,9 +237,11 @@ models:
   - name: states
     data_type: varchar
     description: 'Reporting area: the US total, a census division, a state, New York City, a territory, US territories
-      combined, or non-US residents. Cases are counted where the patient usually lives. New York excludes New York
-      City (structural check against US RESIDENTS, 2024). Upper case through 2024, title case from 2025 (source:
-      live data, https://data.cdc.gov/resource/x9gk-5huc.json).'
+      combined, or non-US residents. A case is counted in the jurisdiction that submits it, by the country of usual
+      residence (COUR) algorithm; cases whose country of usual residence is outside the US and territories go to
+      Non-U.S. Residents (Readers'' Guide rev. 12/10/2024, pp. 8 and 10; Notice to Data Users, 2020 annual data).
+      New York excludes New York City (structural check against US RESIDENTS, 2024). Upper case through 2024, title
+      case from 2025 (source: live data, https://data.cdc.gov/resource/x9gk-5huc.json).'
     meta:
       logical_type: string
       physical_type: VARCHAR

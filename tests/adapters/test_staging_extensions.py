@@ -331,7 +331,9 @@ def row_level_staging_is_refused(name: str) -> None:
     from tests.adapters.helpers import entry
 
     args = {"wide_to_long": {"keep": ["Age", "Sex"], "stubs": ["Onset "], "key_field": "Year",
-                             "expected_keys": ["2024"]}}[name]  # fmt: skip
+                             "expected_keys": ["2024"]},
+            "period_header_parser": {"field": "Age", "year_field": "Sex",
+                                     "rules": [{"pattern": "(\\d+)", "kind": "year", "year": 1}]}}[name]  # fmt: skip
     e = entry("https_file", {"format": "csv"}, extensions=[{"name": name, "hook": "staging", "args": args}])
     with pytest.raises(RowLevelRefused):
         stage_entry(

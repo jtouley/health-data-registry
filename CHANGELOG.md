@@ -90,6 +90,20 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- New source, draft, private tier: `wayne_cd_reports`, Wayne County's (Out-Wayne) select communicable disease case
+  counts from its quarterly, annual and 5-year PDF reports (#299). It is configuration on the generic `pdf_table`
+  type (ADR 0016 row 9), with no code for one county: two new named extensions, `printed_facts` (hook `parse`:
+  facts a report prints once, such as its title year, area and retrieval date, as printed) and
+  `period_header_parser` (hook `staging`: a printed column header becomes the period it names, by ordered rules in
+  the catalog; a header no rule reads stays empty and a contract rule says so). Each printed cell is one row, kept
+  as printed, read live and never stored. A contract may declare a numeric column's `groupSeparator`, so "1,204"
+  is typed as 1204 in staging while the raw layer keeps the comma.
+- NNDSS C. auris facts from CDC's own documents (#299): the reporting jurisdiction by country of usual residence
+  (`geographyBasis`), confirmed-only C. auris case status from 2023 under CSTE 22-ID-05
+  (`caseStatusByCondition`, and the series' case status and case definition), the CDC licence statement, and the
+  22-ID-05 case definition as an authoritative link, which settles the contract's open question. Research notes in
+  `docs/sources/c-auris/` and `docs/sources/cdc-wonder.md`. Hub releases built with contract 0.1.0 stay readable
+  (a declared compatible pair: the change is descriptions and labels only).
 - `validate` checks every data product and contract (sources and dbt models) against Bitol's official ODPS v1.1.0
   and ODCS v3.2.0 JSON schemas, vendored byte for byte with their sha256 pinned (#301). The fixes the schemas
   forced: a row count equal to one number is `mustBe: n`, not `mustBeBetween: [n, n]` (Detroit COVID-19 archive,

@@ -83,6 +83,9 @@ COMPATIBLE_CONTRACTS: dict[str, dict[str, set[str]]] = {
     # 0.1.1 (#301) changes only the server's ODCS type metadata (https to custom, with its format and encoding);
     # no field, type, value, key or quality rule changed, so a 0.1.0 release has the same columns and meanings.
     "census_county_pop": {"0.1.0": {"0.1.1"}},
+    # 0.1.1 (#299) adds descriptions, links and labels only (geographyBasis, caseStatusByCondition, the licence
+    # quote, the 22-ID-05 case definition, open questions); no field, type, value, key or quality rule changed.
+    "cdc_nndss_weekly": {"0.1.0": {"0.1.1"}},
 }
 
 DEFAULT_CACHE_MAX_BYTES = 5 * 1024**3

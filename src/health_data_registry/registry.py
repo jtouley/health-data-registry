@@ -654,6 +654,9 @@ class Column:
     # load (e.g. a field the publisher leaves empty in every row). Every other declared field must appear, and
     # it gets no fill-rate check (quality.fill_rate_rules).
     may_be_empty: bool = False
+    # customProperties.groupSeparator: the publisher prints thousands with this mark ("1,204"); staging reads the
+    # number without it. The raw layer keeps the text as printed (hard rule 15). Numeric columns only.
+    group_separator: str | None = None
 
     def partial_note(self, label: str) -> str | None:
         """The contract's note when this place label covers only part of the place it is named after."""
@@ -921,6 +924,12 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
         may_be_empty = cp.get("mayBeEmpty", False)
         if not isinstance(may_be_empty, bool):
             raise RegistryError(f"{expected_id}.{name}: mayBeEmpty must be true or false")
+        sep = cp.get("groupSeparator")
+        if sep is not None and (sep not in (",", " ", "'") or ptype not in ("BIGINT", "INTEGER", "DOUBLE")):
+            raise RegistryError(
+                f"{expected_id}.{name}: groupSeparator is the publisher's thousands mark (',', ' ' or \"'\") on a "
+                "BIGINT, INTEGER or DOUBLE column"
+            )
         pairs = {k: _pairs(cp.get(k), f"{expected_id}.{name}.{k}") for k in _PAIR_PROPS}
         zero = cp.get("noCasesCode")
         if zero is not None and (cp.get("flagFor") is None or str(zero) not in dict(pairs["flagCodes"])):
@@ -946,6 +955,7 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
                 not_incidence=pairs["notIncidence"],
                 no_cases_code=None if zero is None else str(zero),
                 may_be_empty=may_be_empty,
+                group_separator=None if sep is None else str(sep),
             )
         )
     if not cols:

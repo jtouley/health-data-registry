@@ -25,13 +25,14 @@ source:
 codebook_url: https://www.cdc.gov/nndss/docs/Readers-Guide-WONDER-Tables-20210421-508.pdf
 caveats:
   - "Counts for the most recent reporting years are provisional and can change in later weeks as jurisdictions send late or corrected reports; each week's table is published as it stood that week."
-  - "Cases are assigned to the reporting jurisdiction (state of residence); cases whose usual residence is outside the US are counted under Non-U.S. Residents."
+  - "Cases are assigned to the reporting jurisdiction that submits them, by the country of usual residence (COUR) algorithm; cases whose country of usual residence is outside the US and its territories are counted under Non-U.S. Residents, not in any state (NNDSS Readers' Guide rev. 12/10/2024, pp. 8 and 10; Notice to Data Users, 2020 annual data). Not every jurisdiction reports country of usual residence."
   - "Flag U means the jurisdiction could not send data; N means the condition was not reportable there; NN not nationally notifiable; NP notifiable but not published; NC not calculated."
   - "A flag of '-' with an empty count is CDC's 'no reported cases': the jurisdiction did not submit any cases that week. It is read as not reported (the maintainer's declaration), so the count has no number and is never counted as 0: a total, rate or trend point that needs it is not given."
   - "The previous 52-week maximum and year-to-date counts cover only the period when the condition was reportable in that jurisdiction, so they can be incomplete."
   - "Year-to-date counts are cumulative: read the latest week of a year, never sum year-to-date values across weeks."
-  - "Candida auris clinical cases and screening (colonization) cases are separate series and are not added together."
-  - "Case status (confirmed, probable) is not published: each count may combine statuses as each condition's case definition allows, and cannot be split."
+  - "Candida auris clinical cases and screening (colonization) cases are separate series and are not added together, nor to CDC's Tracking C. auris page counts or AR Lab Network isolate counts, which count different things (docs/sources/c-auris/)."
+  - "Candida auris: from MMWR year 2023 only confirmed cases are published, clinical and screening, under CSTE position statement 22-ID-05; screening became notifiable in 2023; before 2023 confirmed and probable clinical cases were published (NNDSS Notice to Data Users, 2023 annual data; case definition https://ndc.services.cdc.gov/case-definitions/candida-auris-2023/)."
+  - "Case status (confirmed, probable) is not a column: each count may combine statuses as each condition's case definition allows, and cannot be split. Candida auris is the exception CDC states (confirmed only from 2023)."
   - "New York (state) excludes New York City, which is reported as its own area."
   - "Reporting-area names are upper case for 2022-2024 and title case from 2025 (for example MICHIGAN versus Michigan)."
   - "Total rows include US residents, US territories and non-US residents; US RESIDENTS excludes territories."

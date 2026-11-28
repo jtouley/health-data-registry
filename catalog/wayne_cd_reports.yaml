@@ -1,0 +1,94 @@
+id: wayne_cd_reports
+title: Wayne County (Out-Wayne) select communicable disease case counts, quarterly, annual and 5-year reports
+agency: Wayne County HHVS
+publisher: Wayne County Department of Health, Human & Veterans Services, Public Health (Michigan)
+level: county
+country: US
+research_areas: [infectious_disease]
+id_areas: [stis, hepatitis, enteric, vaccine_preventable, respiratory, vector_borne, hais_amr, tb]
+years: {start: 2021, end: null}
+geography: [county]
+shape: frequency_table
+grain: "One row is one printed cell of one report: a disease (in its disease group) in one report column (a quarter, a year to date, a year, a multi-year total or a multi-year average), for the area the report states, as printed in that report."
+refresh: quarterly
+licence:
+  # The county states no terms of use on the Statistics & Reports page (read 2026-11-24), and local-government
+  # works are not US federal public domain. Not on the reviewed list: read at run time, held in memory, never
+  # mirrored or published (ADR 0009). The private tier: listed on the hub, never hosted there.
+  id: no-stated-terms
+  redistribution: false
+  terms_url: https://www.waynecountymi.gov/Government/Departments/Health-Human-Veterans-Services/Public-Health/Statistics-Reports
+citation: "Wayne County Department of Health, Human & Veterans Services. Select reportable communicable disease case counts (quarterly, annual and 5-year reports). https://www.waynecountymi.gov/Government/Departments/Health-Human-Veterans-Services/Public-Health/Statistics-Reports (accessed <retrieved_at>)."
+source:
+  type: pdf_table
+  host: www.waynecountymi.gov
+  dataset: statistics-reports
+  landing_url: https://www.waynecountymi.gov/Government/Departments/Health-Human-Veterans-Services/Public-Health/Statistics-Reports
+  api_url: https://www.waynecountymi.gov/Government/Departments/Health-Human-Veterans-Services/Public-Health/Statistics-Reports
+  # A .gov host: paced at least 10 s apart under the maintainer's government-host policy. A 401, 403 or 429 on a
+  # report is still a block, recorded and never worked around.
+  government_host: true
+  # Only the layouts checked (2021 onward): the annual reports (quarterly-report-2021.pdf ...) and everything in
+  # the county's current file store, where the 2025-on quarterly reports and the 2021-2025 5-year report sit.
+  # Reports from 2014-2020 use other layouts and are not read.
+  scope_paths:
+    - '(?i)/files/content/mainsite/.+\.pdf'
+    - '(?i)/.*quarterly-report-20(?:2[1-9]|[3-9][0-9])\.pdf'
+  pdf_table:
+    index_link_pattern: '(?i)(?:/files/content/mainsite/.+|/.*quarterly-report-20(?:2[1-9]|[3-9][0-9]))\.pdf'
+    max_documents: 40
+    layout: long  # the column headers change from report to report; staging parses each one
+    table:
+      group_header: Group
+      label_header: Disease
+      suppression_marks: ["*"]
+      trailing_total: '(?i)(?:sub)?totals?\b.*'
+    reconcile:
+      total_rows: '(?i)(?:sub)?totals?\b.*'
+      columns: ['Q[1-4].*', 'YTD \d{4}', '\d{4}', '.*Totals?']
+      column_sums:
+        - {total: 'YTD (\d{4})', parts: 'Q[1-4]_(\d{4})'}
+        - {total: 'Q1-Q4 (\d{4}) Total', parts: 'Q[1-4] (\d{4}) \(.*\)'}
+      max_failed_rows: 2
+    live: {max_documents: 3, order_by: year_in_filename}
+  extensions:
+    - name: printed_facts
+      hook: parse
+      args:
+        facts:
+          report_year: '(?i)(?:Counts for|\(Q1-Q4\)|Quarter [1-4])\s+(\d{4})'
+          area_statement: '(?i)(excluding (?:the city of )?Detroit|Out-Wayne)'
+          data_retrieved_on: '(?i)Retrieved on (\d{1,2}/\d{1,2}/\d{4})'
+    - name: period_header_parser
+      hook: staging
+      args:
+        field: column_header
+        year_field: report_year
+        rules:
+          - {pattern: 'Q([1-4])_(\d{4})', kind: quarter, quarter: 1, year: 2}
+          - {pattern: 'Q([1-4]) (\d{4}) \(\d{1,2}/\d{1,2}-\d{1,2}/\d{1,2}\)', kind: quarter, quarter: 1, year: 2}
+          - {pattern: 'Q([1-4])(?: \(\d{1,2}/\d{1,2}-\d{1,2}/\d{1,2}\))?', kind: quarter, quarter: 1, year_from_field: true}
+          - {pattern: 'YTD (\d{4})', kind: year_to_date, year: 1}
+          - {pattern: 'Q1-Q4 (\d{4}) Total', kind: year, year: 1}
+          - {pattern: 'Totals?', kind: year, year_from_field: true}
+          - {pattern: '(\d{4})', kind: year, year: 1}
+          - {pattern: '(\d{4})- ?(\d{4}) Total', kind: multi_year_total, year: 1, year_end: 2}
+          - {pattern: '[1-9][0-9]*-Year Average', kind: multi_year_average}
+codebook_url: https://www.waynecountymi.gov/Government/Departments/Health-Human-Veterans-Services/Public-Health/Statistics-Reports
+caveats:
+  - "Excludes Detroit: the quarterly and annual reports count Wayne County outside the City of Detroit (Out-Wayne), which has its own health department, and say so (area_statement). The 5-year report doesn't say, so its rows don't claim it either way until a maintainer confirms it. Never read these counts as all of Wayne County."
+  - "Counts of 1 to 5 are printed as '*' in reports from 2025 on. A '*' is kept exactly as printed and is never filled in, guessed or counted as zero."
+  - "Counts include confirmed and probable cases from the Michigan Disease Surveillance System (MDSS), as the reports state, and are preliminary: newer reports print the date the data were retrieved (data_retrieved_on), and the same quarter can differ between reports."
+  - "Each report is its own table. Reports overlap (rolling five quarters, year to date, annual, 5-year), so each count is returned as printed, one report and one column at a time, and never added across reports or columns."
+  - "A condition with 0 or suppressed counts in each of the previous five quarters is left out of a report, so a missing row is not a zero."
+  - "'YTD' runs through the report's own quarter in every year shown: 'YTD 2025' in the Q1 2026 report is Q1 2025 alone."
+  - "Subtotal rows and the grand-total line are the county's own totals. Where a printed total disagrees with its parts or with the rows it covers, the cell keeps a failed_checks note."
+  - "A question reads at most the three newest reports live (by the year in each file name), to keep the wait short."
+  - "No terms of use are stated, so these reports are read from the county at run time, held in memory only and never stored or published."
+  - "Only the 2021-onward layouts are read: the 2021-2024 annual reports, the 2025-onward quarterly reports and the 2021-2025 5-year report."
+gbd:
+  location_column: null
+  causes: []
+contract: contracts/wayne_cd_reports.odcs.yaml
+semantic_model: semantic/wayne_cd_reports.yaml
+status: draft

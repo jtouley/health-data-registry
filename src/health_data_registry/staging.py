@@ -18,6 +18,7 @@ What staging applies, and the contract property each comes from:
     types                 physicalType, which must agree with logicalType (registry.LOGICAL_TYPES); a count with a
                           fraction stops the load instead of becoming a different count
     missing-value codes   customProperties.missingCodes become NULL (never on a flag column: hard rule 4)
+    thousands marks       customProperties.groupSeparator ("1,204" read as 1204; numeric columns only)
     required columns      required: true; an empty value stops the load, on the lake and the live path alike
                           (a row with no place or year can't be placed, and hard rule 1 forbids a guess)
     declared fields       every customProperties.sourceField must appear in a full load, unless the contract
@@ -138,6 +139,9 @@ def typed_select(contract: Contract) -> str:
         if c.missing_codes:
             codes = ", ".join(_lit(m) for m in c.missing_codes)
             src = f"CASE WHEN trim({src}) IN ({codes}) THEN NULL ELSE {src} END"
+        if c.group_separator:
+            # The publisher's thousands mark ("1,204"): read without it. The raw text keeps it as printed.
+            src = f"replace(trim({src}), {_lit(c.group_separator)}, '')"
         if c.physical_type == "BOOLEAN":
             expr = f"CASE lower(trim({src})) WHEN 'true' THEN true WHEN 'false' THEN false ELSE NULL END"
         elif c.physical_type == "VARCHAR":
