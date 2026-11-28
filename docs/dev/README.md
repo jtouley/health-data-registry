@@ -473,7 +473,11 @@ Every table's provenance line must be complete and carry the sha256 of the raw b
 
 ## Adding a dataset
 
-One pull request, four parts. Scope is infectious disease only for now.
+One pull request, four parts. Scope is infectious disease, the population denominators of its rates, and
+area-level covariates that explain its rates, such as social vulnerability
+([ADR 0019](../adr/0019-covariates-for-infectious-disease-rates.md)). A covariate's catalog entry sets
+`research_areas: [covariate]` and declares no conditions, series, GBD cause or `id_areas` (it keeps the GBD
+location crosswalk), so it never answers a question on its own.
 
 1. `catalog/<id>.yaml`: agency, publisher, level, years, geography, shape, grain, refresh cadence, licence and
    terms, citation, source host and dataset, codebook URL, caveats, and the GBD cause and location crosswalk.
@@ -485,6 +489,10 @@ One pull request, four parts. Scope is infectious disease only for now.
    summed with total rows excluded; rates and estimates are never summed.
 4. Blind questions: 8–10 clinician questions by an author who has not seen the connector or written the contract,
    each answer computed twice, sealed with a hash under `eval/sealed/`.
+
+For a covariate: step 1's crosswalk is the GBD location crosswalk only, with no GBD cause; the catalog entry and
+semantic model declare no conditions or series; and the blind questions are infectious-disease questions that set
+the covariate beside a rate (county Lyme rates by SVI quartile), never questions about the covariate alone.
 
 Then:
 
