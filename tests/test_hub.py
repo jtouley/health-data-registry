@@ -772,7 +772,11 @@ def test_query_sql_across_sources_keeps_every_source(tmp_path: Path, reg: Regist
     from health_data_registry import tools
 
     eng = engine(reg, tmp_path, released, fetch_at_run_time=True, getter=lambda u: raw_fetch(u, RECORDS))
-    out = tools.query_sql(eng, "SELECT year FROM toy_cases UNION ALL SELECT year FROM toy_listed", fmt="json")
+    sql = "SELECT year FROM toy_cases UNION ALL SELECT year FROM toy_listed"
+    undeclared = tools.query_sql(eng, sql, fmt="json")  # no join declared between them: refused (#74)
+    assert isinstance(undeclared, dict) and undeclared.get("refused") == "undeclared_join", undeclared
+    eng.declared_joins = frozenset({frozenset({"toy_cases", "toy_listed"})})  # as a reviewed join would be
+    out = tools.query_sql(eng, sql, fmt="json")
     assert isinstance(out, dict) and "rows" in out, out
     prov = [n for n in out["notes"] if n.startswith("Provenance for ")]
     assert [p.split(":")[0] for p in prov] == ["Provenance for toy_cases", "Provenance for toy_listed"]
