@@ -54,7 +54,10 @@ whose licence allows redistribution to the open data hub (cards, licence text, P
 `HF_TOKEN` only for an `hf://` target. `validate` loads and cross-checks every catalog entry, contract and
 semantic model.
 
-The lake lives at `$HDR_LAKE` (default `./lake`, ignored by git), partitioned by source and run date
+The lake lives at `$HDR_LAKE` when it is set to a full path, else in a per-user data folder (Linux
+`$XDG_DATA_HOME` or `~/.local/share`, macOS `~/Library/Application Support`, Windows `%LOCALAPPDATA%`, then
+`health-data-registry/lake`); never in the folder the tool is started from. Set `HDR_LAKE=$PWD/lake` to keep a
+repo-local lake (`lake/` is ignored by git). It is partitioned by source and run date
 (`datasets/<id>/run_date=<date>/<snapshot>/`), with raw bytes under `raw/<sha256>` and one fetch-log row per
 attempt under `fetch_log/source=<id>/`. `refresh --max-rows N` takes a development sample and marks the snapshot
 partial. The lake is for maintainers and CI: the server reads a hosted source from the hub release in `$HDR_HUB`
@@ -118,11 +121,17 @@ A pull request's CI should pass the first time. So a commit is checked twice bef
    again and repeat the steps below.
 1. **`make precheck`** runs the CI checks locally plus a drift check, and stops at the first failure: all
    pre-commit hooks (actionlint with shellcheck included), lint, typecheck, tests with the coverage floor, the
-   smoke journey, `make transform` (dbt on the fixtures), the Projects kit build, and the generated-files drift
-   check (`make docs` and `make contracts`, then nothing may change). Mutation tests are not in it, as they are not
-   in CI: they run nightly ([CI](#ci)); `make mutate` runs them locally. Each step prints a PASS or FAIL line, and a
-   summary follows. It checks the working tree, so commit first: CI checks the commit you push. It runs on macOS's
-   bash 3.2 as well.
+   smoke journey, `make transform` (dbt on the fixtures; see the note on dbt packages below), the Projects kit
+   build, and the generated-files drift check (`make docs` and `make contracts`, then nothing may change). Mutation
+   tests are not in it, as they are not in CI: they run nightly ([CI](#ci)); `make mutate` runs them locally. Each
+   step prints a PASS or FAIL line, and a summary follows. It checks the working tree, so commit first: CI checks
+   the commit you push. It runs on macOS's bash 3.2 as well.
+
+   `make transform` installs the dbt packages (`dbt deps`) only when `transform/dbt_packages/` is not already the
+   locked install, then checks every installed file against the reviewed sha256s in
+   `transform/package-digests.yml` (`scripts/dbt_packages.py`). The first install needs `hub.getdbt.com` and
+   `codeload.github.com`; where a session's network blocks either, the step stops there until the packages are
+   installed.
 2. **Push to `pre-pr/<branch>`** (`git push origin HEAD:pre-pr/<branch>`). CI and CodeQL run on every push to
    `pre-pr/**`, against `origin/main`, with only what the change can affect while main has a merge queue (see
    [CI](#ci) below). A newer push to the same pre-pr branch cancels the older run and its queued jobs.

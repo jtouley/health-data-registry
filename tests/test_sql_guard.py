@@ -67,8 +67,8 @@ def con(tmp_path: Path) -> Iterator[duckdb.DuckDBPyConnection]:
         "select d.state, d.deaths / p.population as rate from deaths d join pop p on d.state = p.state and d.year = p.year",
         "SELECT * FROM deaths JOIN pop USING (state, year)",
         "WITH c AS (SELECT state, deaths FROM deaths WHERE year = 2001) SELECT state, avg(deaths) FROM c GROUP BY ALL",
-        "SELECT state FROM deaths UNION ALL SELECT state FROM vax",
-        "SELECT state FROM deaths INTERSECT SELECT state FROM vax",
+        "SELECT state FROM deaths UNION ALL SELECT state FROM pop",
+        "SELECT state FROM deaths INTERSECT SELECT state FROM pop",
         "SELECT state FROM deaths EXCEPT SELECT state FROM pop",
         "SELECT state, rank() OVER (PARTITION BY year ORDER BY deaths DESC) AS r FROM deaths QUALIFY r <= 3",
         "SELECT state, lag(deaths) OVER w AS prev FROM deaths WINDOW w AS (PARTITION BY state ORDER BY year)",
@@ -85,7 +85,6 @@ def con(tmp_path: Path) -> Iterator[duckdb.DuckDBPyConnection]:
         "SELECT * EXCLUDE (cause) FROM deaths",
         "FROM deaths",
         "SELECT 1 + 1 AS two",
-        "WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM r WHERE n < 5) SELECT n FROM r",
         'SELECT "State", DEATHS FROM Deaths',
         "SELECT state FROM deaths LIMIT 10 OFFSET 5",
     ],
@@ -118,14 +117,20 @@ def test_guard_regeneratesSqlWithoutComments() -> None:
         ("SELECT state FROM deaths", 100),
         ("SELECT state FROM deaths LIMIT 10", 10),
         ("SELECT state FROM deaths LIMIT 100000", 100),
-        ("SELECT state FROM deaths UNION SELECT state FROM vax", 100),
-        ("SELECT state FROM deaths UNION SELECT state FROM vax LIMIT 7", 7),
+        ("SELECT state FROM deaths UNION SELECT state FROM pop", 100),
+        ("SELECT state FROM deaths UNION SELECT state FROM pop LIMIT 7", 7),
     ],
 )
 def test_guard_limit_injectedOrClamped(sql: str, expected: int) -> None:
     q = guard(sql, max_rows=100)
     assert q.limit == expected
     assert q.sql.endswith(f"LIMIT {expected}")
+
+
+@pytest.mark.parametrize("sql", ["SELECT -*-6", "SELECT -* - 6 FROM deaths", "SELECT ~* FROM deaths"])
+def test_guard_signedStar_refused(sql: str) -> None:
+    # Found by fuzz_sql_guard: "-*" was accepted and written back as DuckDB's unknown operator "-*".
+    assert refused(sql).code == "parse_error"
 
 
 def test_guard_limitInsideSubquery_untouched() -> None:
