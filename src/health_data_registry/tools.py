@@ -21,7 +21,14 @@ import duckdb
 from health_data_registry import geo
 from health_data_registry.deadline import DeadlineExceeded
 from health_data_registry.paging import paged, respond
-from health_data_registry.query import Engine, QueryRefused, next_step_for
+from health_data_registry.query import (
+    DEFAULT_NEXT_STEP,
+    SQL_NEXT_STEP,
+    SQL_NEXT_STEPS,
+    Engine,
+    QueryRefused,
+    next_step_for,
+)
 from health_data_registry.registry import Dataset, Registry, Series, UnknownDataset, norm_label, spelling_key
 
 Fmt = Literal["csv", "json"]
@@ -328,26 +335,61 @@ def series_for(
     """Series whose condition code or clinical label matches the words asked for.
 
     kind "plain" (the default, used by get_series) leaves out weekly and age-specific series, so a year is never
-    built by adding up provisional weeks; "weekly" and "age" return only those (check_signal, age_adjust).
+    built by adding up provisional weeks; "weekly" and "age" return only those (check_signal, age_adjust). A series
+    with asked_with words (vaccination coverage, a percent of deaths) answers only a question that uses one of them.
     """
     want = norm_label(condition)
+    said = set(want.split())
     found: list[tuple[Dataset, Series]] = []
+
+    def asked(s: Series) -> bool:
+        return asks_for(s, said)
 
     def fits(s: Series) -> bool:
         s_kind = "weekly" if s.week_dimension else "age" if s.age_dimension else "plain"
         return s_kind == kind and (measure is None or s.measure == measure)
 
+    def named(s: Series) -> bool:
+        if _names_match(want, {s.condition, s.label}):
+            return True
+        # A gated series is also named by its disease words in any order beside one of its words ("COVID-19
+        # mortality", "deaths from RSV" for "COVID-19 deaths", "RSV deaths"), compared whole, never as a part:
+        # "RSV deaths" never names a combined series whose condition merely holds "RSV".
+        gate = _gate_words(s)
+        core = set(norm_label(s.condition).split()) - gate - _CONNECTORS
+        return bool(gate) and bool(core) and core == said - gate - _CONNECTORS
+
     for ds in registry:
         if source_id and ds.id != source_id:
             continue
-        named = [s for s in ds.semantic.series if _names_match(want, {s.condition, s.label})]
-        if named:
-            found += [(ds, s) for s in named if fits(s)]
+        # A gated series the question doesn't ask for is not counted as named, so the catalog's labels still
+        # answer the question below (a plain "MMR" question beside a gated "MMR vaccination coverage" series).
+        matched = [s for s in ds.semantic.series if asked(s) and named(s)]
+        if matched:
+            found += [(ds, s) for s in matched if fits(s)]
             continue
         # Any other label the publisher uses (the catalog's vocabulary) reads through the generic series.
         for label in catalogued_labels(ds, condition):
-            found += [(ds, s) for s in ds.condition_series(label) if fits(s)]
+            found += [(ds, s) for s in ds.condition_series(label) if fits(s) and asked(s)]
     return found
+
+
+# Words that join a disease to a word like "deaths" without changing what is asked ("deaths from RSV").
+_CONNECTORS = frozenset({"from", "of", "for", "due", "to", "involving", "with", "by", "in", "and"})
+
+
+def _gate_words(s: Series) -> set[str]:
+    return {x for w in s.asked_with for x in norm_label(w).split()}
+
+
+def asks_for(s: Series, said: set[str]) -> bool:
+    """Whether a question (its normalised words) may get series s: always for a series with no asked_with words;
+    else only when the question uses one of them whole and also names something beyond them, so a bare
+    "vaccination" or "deaths" question never gets every gated series."""
+    if not s.asked_with:
+        return True
+    uses = any(set(norm_label(w).split()) <= said for w in s.asked_with)
+    return uses and bool(said - _gate_words(s) - _CONNECTORS)
 
 
 def _names_match(want: str, names: set[str]) -> bool:
@@ -716,6 +758,21 @@ def dimension_values(ds: Dataset, engine: Engine | None) -> dict[str, dict[str, 
     return out
 
 
+def _all_series(ds: Dataset) -> list[Series]:
+    return [
+        *ds.semantic.series,
+        *(g.bind("(any catalogued condition)", None) for g in ds.semantic.generic_series),
+    ]
+
+
+def _only_when_asked_with(ds: Dataset) -> list[str]:
+    """The asked_with words of a dataset whose every series, named or generic, is gated, else []."""
+    series = _all_series(ds)
+    if not series or any(not s.asked_with for s in series):
+        return []
+    return list(dict.fromkeys(w for s in series for w in s.asked_with))
+
+
 def suggest_datasets(
     registry: Registry, question: str, *, engine: Engine | None = None, fmt: Fmt = "csv"
 ) -> Out:
@@ -738,6 +795,7 @@ def suggest_datasets(
     y0, y1 = (min(years), max(years)) if years else (None, None)
     place_words = {w for st in states for w in st.lower().split()}
     topic_words = want - set(_GEO_WORDS) - place_words - {str(y) for y in years}
+    want_words = set(norm_label(" ".join(sorted(topic_words))).split())
     rows: list[list[Any]] = []
     for ds in registry:
         e = ds.entry
@@ -750,6 +808,10 @@ def suggest_datasets(
             why_not.append(f"goes down to {', '.join(e.geography)} only, not {', '.join(missing)}")
         if years and not _years_overlap(ds, y0, y1):
             why_not.append(f"covers {_years(ds)} only")
+        gated = _only_when_asked_with(ds)
+        if gated and topic_words and not any(asks_for(s, want_words) for s in _all_series(ds)):
+            # Every series here answers only a question that uses its words, as get_series does (series_for).
+            why_not.append(f"answers only a question that asks about {' or '.join(repr(w) for w in gated)}")
         named = [f"{s.label} ({s.measure})" for s in ds.semantic.series[:4]]
         labels = [x for x in ds.condition_labels if _tokens(x) & topic_words][:6]
         supports = "; ".join(dict.fromkeys(labels + named))
@@ -1320,8 +1382,9 @@ def unlisted_condition_labels(registry: Registry, engine: Engine) -> dict[str, l
             continue
         try:
             values = engine.distinct_values(ds.id, ds.semantic.dimension(dim).column)
-        except QueryRefused:
-            out[ds.id] = None
+        except QueryRefused as e:
+            # A local copy that failed its checks is reported (validate must not pass over it); no copy is None.
+            out[ds.id] = f"its local snapshot could not be read: {e}" if e.code == "lake_unverified" else None
             continue
         except (duckdb.Error, OSError) as e:
             out[ds.id] = (
@@ -1330,6 +1393,9 @@ def unlisted_condition_labels(registry: Registry, engine: Engine) -> dict[str, l
             continue
         out[ds.id] = sorted({str(v) for v in values} - set(ds.condition_labels))
     return out
+
+
+SQL_OTHER_TOOLS = "The other tools (get_series, describe_dataset) can usually answer the same question."
 
 
 def query_sql(
@@ -1351,16 +1417,16 @@ def _query_sql(engine: Engine, sql: str, fmt: Fmt) -> Result | Out:
         out = engine.query_sql(sql)
     except (SqlRefused, QueryRefused) as e:
         code = getattr(e, "code", "refused")
-        return message(
-            f"That query can't run: {e} The other tools (get_series, describe_dataset) can usually answer the "
-            "same question.",
-            fmt,
-            refused=code,
-            # A sum rule's refusal gives only the reason; its own next step says what to ask instead.
-            next_step=next_step_for(code)
-            if code in _SUM_RULE_CODES
-            else "Use get_series, get_rate or describe_dataset, which answer most questions without SQL.",
-        )
+        # A refusal with a next step of its own (too_large, too_slow, lake_unverified, a sum rule's, ...) keeps
+        # it; the others point to the tools that answer most questions without SQL.
+        if code in _SUM_RULE_CODES:
+            step = next_step_for(code)
+        elif isinstance(e, SqlRefused):
+            step = SQL_NEXT_STEPS.get(code, SQL_NEXT_STEP)
+        else:
+            step = SQL_NEXT_STEP if e.next_step == DEFAULT_NEXT_STEP else e.next_step
+        tail = "" if code == "lake_unverified" else " " + SQL_OTHER_TOOLS
+        return message(f"That query can't run: {e}{tail}", fmt, refused=code, next_step=step)
     sources = [out["source"]] if out.get("source") else list(out.get("sources") or [])
     notes = [f"SQL run: {out['sql']}", f"Method: {out['method']}"]
     for src in sources:  # every table the query read, never only the first

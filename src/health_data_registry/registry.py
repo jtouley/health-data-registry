@@ -39,7 +39,7 @@ _ID = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
 _SQL_IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
 # A publisher field name goes into generated SQL and dbt Jinja: braces, quotes, backslashes and control
 # characters are refused rather than escaped in every place it lands.
-_UNSAFE_FIELD = re.compile(r"[{}\\'\"\x00-\x1f\x7f]")
+_UNSAFE_FIELD = re.compile(r"[{}\\'\"`\x00-\x1f\x7f]")
 
 DUCKDB_TYPES = frozenset({"VARCHAR", "BIGINT", "INTEGER", "DOUBLE", "DATE", "BOOLEAN", "TIMESTAMP"})
 # The ODCS logicalType each physical type may carry: the two must say the same thing about a column.
@@ -654,6 +654,15 @@ class Column:
     # load (e.g. a field the publisher leaves empty in every row). Every other declared field must appear, and
     # it gets no fill-rate check (quality.fill_rate_rules).
     may_be_empty: bool = False
+    # customProperties.thousandsSeparator: the character the publisher groups digits with in a numeric text field
+    # ("1,234"), an exact structural fact of the publisher's text. Staging drops it only from a value written as
+    # whole groups of three digits, so "1,5" is never read as 15.
+    thousands_separator: str | None = None
+    # customProperties.inlineCodes: true on a VARCHAR flag column that reads the same publisher field as the
+    # numeric column it flags, because the publisher writes a code in place of the number (HepTracker's 'S').
+    # Staging then keeps any text that isn't a plain number in the flag and reads it as empty in the number,
+    # instead of stopping the load. Declared, never inferred from two columns sharing a field.
+    inline_codes: bool = False
 
     def partial_note(self, label: str) -> str | None:
         """The contract's note when this place label covers only part of the place it is named after."""
@@ -807,6 +816,9 @@ class Contract:
     rate_denominator: str | None = None
     # The contract's quality rules (quality.Rule), run on every snapshot and live read and as named dbt tests.
     quality: tuple[Any, ...] = ()
+    # The contract's dbt-expectations checks (dq_checks.Check): reconciliation, freshness and value ranges, run as
+    # named dbt tests in the transform build only.
+    checks: tuple[Any, ...] = ()
     raw_load: RawLoad = field(default_factory=RawLoad)
 
     @property
@@ -912,12 +924,28 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
         source_field = str(cp.get("sourceField") or name)
         if _UNSAFE_FIELD.search(source_field):
             raise RegistryError(
-                f"{expected_id}.{name}: sourceField {source_field!r} has a brace, quote, backslash or control "
-                "character, which generated SQL and dbt can't carry safely"
+                f"{expected_id}.{name}: sourceField {source_field!r} has a brace, quote, backtick, backslash or "
+                "control character, which generated SQL, dbt and a Socrata query can't carry safely"
             )
         may_be_empty = cp.get("mayBeEmpty", False)
         if not isinstance(may_be_empty, bool):
             raise RegistryError(f"{expected_id}.{name}: mayBeEmpty must be true or false")
+        sep = cp.get("thousandsSeparator")
+        if sep is not None and (
+            ptype not in ("BIGINT", "INTEGER", "DOUBLE")
+            or not isinstance(sep, str)
+            or sep not in (",", " ", "'")
+        ):
+            raise RegistryError(
+                f"{expected_id}.{name}: thousandsSeparator is one character (a comma, a space or an apostrophe) "
+                "on a numeric column"
+            )
+        inline = cp.get("inlineCodes", False)
+        if not isinstance(inline, bool) or (inline and (cp.get("flagFor") is None or ptype != "VARCHAR")):
+            raise RegistryError(
+                f"{expected_id}.{name}: inlineCodes is true or false, and true only on a VARCHAR flag column "
+                "(flagFor)"
+            )
         pairs = {k: _pairs(cp.get(k), f"{expected_id}.{name}.{k}") for k in _PAIR_PROPS}
         zero = cp.get("noCasesCode")
         if zero is not None and (cp.get("flagFor") is None or str(zero) not in dict(pairs["flagCodes"])):
@@ -943,10 +971,13 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
                 not_incidence=pairs["notIncidence"],
                 no_cases_code=None if zero is None else str(zero),
                 may_be_empty=may_be_empty,
+                thousands_separator=sep,
+                inline_codes=inline,
             )
         )
     if not cols:
         raise RegistryError(f"{expected_id}: contract declares no properties")
+    _check_inline_codes(expected_id, cols)
     names = [c.name for c in cols]
     if len(set(names)) != len(names):
         raise RegistryError(f"{expected_id}: duplicate column names in contract")
@@ -966,6 +997,7 @@ def parse_contract(doc: Mapping[str, Any], *, expected_id: str) -> Contract:
         geography_basis=_text(top_custom.get("geographyBasis")),
         rate_denominator=_text(top_custom.get("rateDenominator")),
         quality=_quality(doc, expected_id),
+        checks=_checks(doc, expected_id),
         raw_load=_raw_load(
             top_custom.get("rawLoad"),
             expected_id,
@@ -981,6 +1013,15 @@ def _quality(doc: Mapping[str, Any], where: str) -> tuple[Any, ...]:
     try:
         return parse_rules(doc, where)
     except QualityRuleInvalid as e:
+        raise RegistryError(str(e)) from e
+
+
+def _checks(doc: Mapping[str, Any], where: str) -> tuple[Any, ...]:
+    from health_data_registry.dq_checks import CheckInvalid, parse_checks
+
+    try:
+        return parse_checks(doc, where)
+    except CheckInvalid as e:
         raise RegistryError(str(e)) from e
 
 
@@ -1076,6 +1117,17 @@ class Metric(_Strict):
     single_value_of: list[str] = Field(default_factory=list)
 
 
+def _check_asked_with(words: list[str]) -> list[str]:
+    """Each asked_with entry must hold a word: an empty or punctuation-only entry would match every question
+    and so turn the gate off."""
+    empty = [w for w in words if not norm_label(w)]
+    if empty:
+        raise ValueError(
+            f"asked_with entries {empty!r} hold no word, so they would let every question through"
+        )
+    return words
+
+
 SeriesMeasure = Literal["cases", "deaths", "rate", "percent", "estimate", "population"]
 
 
@@ -1102,6 +1154,16 @@ class Series(_Strict):
     week_dimension: str | None = None
     # An age-specific series (age_adjust): counts or populations split by this age-group dimension.
     age_dimension: str | None = None
+    # Words of which a question must use at least one for this series to answer it, e.g. "vaccination" and
+    # "coverage" for a vaccination coverage series, or "deaths" for a percent of deaths. Such a figure names a
+    # disease but is not a measure of the disease itself, so a plain disease question ("COVID-19 in Ohio") never
+    # gets it unasked. Empty: any question that names the series' condition.
+    asked_with: list[str] = Field(default_factory=list)
+
+    @field_validator("asked_with")
+    @classmethod
+    def _asked_with_words(cls, v: list[str]) -> list[str]:
+        return _check_asked_with(v)
 
     def held_dimensions(self) -> list[str]:
         """The dimensions each answer row of this series holds at one value: filtered to one value
@@ -1135,6 +1197,12 @@ class GenericSeries(_Strict):
     case_definition: str | None = None
     week_dimension: str | None = None
     age_dimension: str | None = None
+    asked_with: list[str] = Field(default_factory=list)  # as on Series
+
+    @field_validator("asked_with")
+    @classmethod
+    def _asked_with_words(cls, v: list[str]) -> list[str]:
+        return _check_asked_with(v)
 
     def bind(self, label: str, dimension: str | None) -> Series:
         """The series for one publisher label: the template with `dimension` filtered to exactly that label."""
@@ -1470,6 +1538,14 @@ def load_dataset(root: Path, entry_path: Path) -> Dataset:
         if not p.is_file():
             raise RegistryError(f"{entry.id}: missing {p.relative_to(root)}")
     contract = parse_contract(_yaml(contract_path), expected_id=entry.id)
+    if contract.checks and not entry.licence.redistribution:
+        # dbt-expectations checks run only in the dbt build, which reads stored sources (transform_gen.stored):
+        # on a live or restricted source such a check would be accepted and never run.
+        raise RegistryError(
+            f"{entry.id}: dbt-expectations checks run only in the dbt build, which reads stored sources, and "
+            f"{entry.licence.id} keeps this source out of the lake; declare a library or sql quality rule, "
+            "which runs on every live read"
+        )
     try:
         semantic = SemanticModel.model_validate(_yaml(semantic_path))
     except ValidationError as e:
@@ -1622,6 +1698,25 @@ def _cross_check(entry: CatalogEntry, contract: Contract, semantic: SemanticMode
                 raise RegistryError(
                     f"{entry.id}: notIncidence names {unknown[0]!r}, which is not in the catalog's conditions.labels"
                 )
+
+
+def _check_inline_codes(contract_id: str, cols: list[Column]) -> None:
+    """A flag reading its number's own publisher field declares inlineCodes, and only such a flag does."""
+    by_name = {c.name: c for c in cols}
+    for c in cols:
+        number = by_name.get(c.flag_for) if c.flag_for is not None else None
+        shares = number is not None and number.source_field == c.source_field
+        numeric = number is not None and number.physical_type in ("BIGINT", "INTEGER", "DOUBLE")
+        if c.inline_codes and not (shares and numeric):
+            raise RegistryError(
+                f"{contract_id}.{c.name}: inlineCodes needs flagFor to name a numeric column that reads the same "
+                "sourceField"
+            )
+        if shares and numeric and not c.inline_codes:
+            raise RegistryError(
+                f"{contract_id}.{c.name}: it reads the same sourceField as {c.flag_for}, so the publisher writes "
+                "codes in place of the number; declare inlineCodes: true to keep them, or read another field"
+            )
 
 
 def _check_load_metadata(entry: CatalogEntry, contract: Contract) -> None:
