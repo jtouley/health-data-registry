@@ -68,6 +68,9 @@ flowchart TB
     router --> silver
     router --> raw
     router -.->|nothing touches the question| handoff
+    queue["Source request queue<br/>propose_source: metadata only;<br/>triaged, then built through the factory"]
+    router -.->|a source we don't hold| queue
+    queue -.->|accepted and merged| raw
     raw --> silver --> marts --> products
     ontology -.-> products
     ontology -.-> marts
@@ -85,8 +88,8 @@ flowchart TB
 | Marts | Conformed dims and one fact per published dataset, spanning every row and attribute | Each `dim_*` and `fct_*` model's ODCS contract | Counts, rates, trends, comparisons, signals, coverage, exploration | Everything silver has, plus product tests: business-logic unit tests and accepted values |
 | Data products | Curated views over the facts, one per ODPS output port | The port's ODPS entry and the view's ODCS contract | The question kinds the port is curated for | The mart's checks, plus the port's own product tests |
 
-Decisions 1 to 4 are the parts of this architecture: the layered read path, one quality engine, one ontology with
-conformed dimensions, and the router.
+Decisions 1 to 5 are the parts of this architecture: the layered read path, one quality engine, one ontology with
+conformed dimensions, the router, and demand-driven ingestion of sources we don't hold yet.
 
 ## Context
 
@@ -452,10 +455,70 @@ ran blocks, ADR 0018), `publisher_unreachable`, `publisher_bad_table`, `no_snaps
 4. The "no answer" share needs to know which questions have data nearby. Is that a new label on DEV only, since
    TEST's labels are frozen (hard rule 14), with TEST measured through its existing classes?
 
+## Decision 5. Demand-driven ingestion
+
+Issue [#285](https://github.com/jtouley/health-data-registry/issues/285). A clinician's session will find public
+sources we don't hold. They are captured, reviewed and built, and the router answers from the fallback meanwhile.
+
+### The decision
+
+- **`propose_source` records source metadata only.** The client calls it with the publisher, the dataset's URL or
+  landing page, the condition, the geography and the years. Its arguments are those fields only: the condition is
+  a `dim_condition` term or a short label, with a length cap, and there is no free-text field. It never records
+  the clinician's question or any conversation text (hard rule 4; no logging of questions). The hosted server
+  rate-limits it per session and overall, as `hosted.py` does for every tool.
+- **An append-only request queue in the ops control plane.** Each request is a series of events: `proposed`,
+  `triaged`, `accepted` or `rejected` (with a reason), `built`, `ingested`. Events are never rewritten, as for the
+  release gate's logs. The same source proposed again adds weight to the open request; it never makes a duplicate.
+- **Triage before anything is fetched,** against the hard rules:
+  - rule 2 (ADR 0018): the publisher's rows, flags and uncertainty ranges can be kept as sent;
+  - rule 3: its contracts stay drafts until a maintainer reviews them;
+  - rule 4: no record-level data that could re-identify a person;
+  - rule 6: a primary publisher (ADR 0002), over HTTPS, on a host that gets catalogued;
+  - rule 10: its licence decides whether it is mirrored, read live, or kept private;
+  - rule 11: infectious disease, or a denominator (or a covariate, if ADR 0019 in #276 is accepted).
+- **A factory build of each accepted source.** An accepted request becomes one source pull request: catalog
+  entry as adapter-type config (ADR 0016), contracts at every layer, semantic model with its question kinds,
+  dbt models and tests. It follows "How changes land" like any other source.
+- **The router answers from the fallback meanwhile** (decision 0), and says the source is queued and its state.
+- **Nothing is fetched at question time from an uncatalogued host.** `fetch.py`'s catalogued-host rule is
+  unchanged; a proposed URL is data in the queue, never a fetch target, until its catalog entry merges.
+- **Visible.** `list_sources` shows open requests and their state.
+
+### What changes from today
+
+| File | Change |
+|---|---|
+| `tools.py`, `server.py` | A `propose_source` tool; `list_sources` shows open requests |
+| `hosted.py` | Rate limits for `propose_source`; its arguments stay out of every log |
+| New ops module (beside `release_gate.py`) | The append-only request queue: write events, read state, merge duplicates |
+| `helpers.py` | A helper step for "this source isn't held yet: propose it" |
+
+### Migration order
+
+1. The queue's event format, with its ODCS contract as a control-plane export, and its tests.
+2. `propose_source` on stdio, writing to the local lake's ops queue.
+3. The hosted server writes to the private ops queue (open question 1).
+4. The router names queued requests in its fallback answers.
+5. The triage step: a checklist in the issue template first, automation later (open question 2).
+
+### What it closes or supersedes
+
+- Implements #285.
+
+### Open questions for the maintainer
+
+1. The server is read-only today. Does the hosted server get a write path that can only append to the request
+   queue, or does it return the proposal for the clinician to file, with the maintainer's agent filing it?
+2. Who triages, and how fast: a scheduled agent with maintainer sign-off, or the maintainer alone?
+3. Does a proposal from the hosted server count the same as one from a local session?
+
 ## Consequences
 
 - Every number a clinician sees comes from a tested model of one gate-passed build, and says which layer, which
   checks and which qualifications apply.
+- A source a clinician needs and we don't hold is queued for review and built through the factory, never fetched
+  ad hoc.
 - The facts hold all the data; the data products stay curated and grow with usage.
 - Adding a source adds declarations (contract rules, coverage, ontology terms, question kinds), not code or word
   lists.
